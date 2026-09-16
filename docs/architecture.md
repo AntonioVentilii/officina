@@ -129,6 +129,10 @@ The runner interface is small: `start(role, task, step) -> run`, a stream of nor
 | Risky tool call needs a person | `always_ask` permission policy      | surfaces in the inbox as a confirmation request                                                      |
 
 - **Secrets never enter the sandbox.** Git access goes through the Anthropic-side git proxy, which injects the repository token after the request leaves the container. Other credentials use vault `environment_variable` entries limited to specific hosts.
+- **Results come through one tool.** Every role ends by calling a custom `submit_result` tool whose input schema is generated from the role's output contract. The engine validates the call; an invalid result goes back to the agent with the problems listed, and a third invalid result fails the run.
+- **Repository access is scoped by token, not by prompt.** Roles that only read receive an installation token with read-only contents permission, so even a manipulated agent cannot push. Only the builder gets write access, and only its task branch `officina/task-<number>` is accepted: a push anywhere else fails the step and blocks the task.
+- **Stale results are discarded.** A result is applied only if the task is still in the state the agent worked on (same stage, spec version and head commit, not blocked or paused), checked on the locked row. Parallel reviewers therefore do not conflict, while a result for work that people changed meanwhile is dropped.
+- **One active run per task and role**, enforced by a unique index, so overlapping scheduler passes never start the same work twice.
 - **The agent pushes a branch; Officina opens the PR** with its GitHub App after the engine's own checks, so the sandbox never needs PR permissions.
 - **Beta.** Managed Agents is in beta, which is why the runner is an interface.
 

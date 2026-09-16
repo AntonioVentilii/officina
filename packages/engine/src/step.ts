@@ -1,0 +1,273 @@
+import {
+  branchForTask,
+  commandForOutput,
+  nextAgentRoles,
+  parseProjectConfig,
+  type Actor,
+  type AgentOutput,
+  type RoleOutput,
+  type Task
+} from '@officina/core';
+import {
+  appendRunEvent,
+  applyCommand,
+  feedbackSinceLastPush,
+  finishRun,
+  linkPullRequest,
+  listComments,
+  loadAgentVersions,
+  loadTaskContext,
+  saveSpecVersion,
+  setRunExternalId,
+  startRun
+} from '@officina/db';
+import type { GitHubClient } from '@officina/github';
+import {
+  executeRun,
+  type ManagedAgentsPort,
+  type RunnerRole,
+  type RunOutcome
+} from '@officina/runner';
+import type { Pool } from 'pg';
+import { buildBrief } from './brief';
+
+export type GitHubPort = Pick<GitHubClient, 'installationToken' | 'pushFacts' | 'openPullRequest'>;
+
+export interface EngineDependencies {
+  readonly pool: Pool;
+  readonly github: GitHubPort;
+  readonly agents: ManagedAgentsPort;
+  readonly environmentId: string;
+}
+
+export type StepResult =
+  | { readonly status: 'applied' }
+  | { readonly status: 'blocked'; readonly reason: string }
+  | { readonly status: 'discarded'; readonly reason: string }
+  | {
+      readonly status: 'skipped';
+      readonly reason:
+        | 'not_found'
+        | 'not_due'
+        | 'not_installed'
+        | 'agent_not_synced'
+        | 'invalid_config'
+        | 'already_running';
+    };
+
+const RUNNER = 'managed_agents';
+const ENGINE: Actor = { kind: 'engine' };
+
+const describeOutcome = (outcome: Exclude<RunOutcome, { kind: 'result' }>): string => {
+  switch (outcome.kind) {
+    case 'invalid_result':
+      return `its result did not match the contract: ${outcome.errors.join('; ')}`;
+    case 'no_result':
+      return 'it finished without submitting a result';
+    case 'budget_reached':
+      return 'it reached the spending limit for this step';
+    case 'failed':
+      return outcome.reason;
+  }
+};
+
+/** Only the state the agent saw may receive its result. */
+const sameWork = (seen: Task) => (current: Task) =>
+  current.stage === seen.stage &&
+  current.specVersion === seen.specVersion &&
+  current.headSha === seen.headSha &&
+  !current.blocked &&
+  !current.paused;
+
+const blockTask = async (pool: Pool, taskId: string, question: string) => {
+  await applyCommand(pool, {
+    taskId,
+    command: { type: 'block', question, askedOf: { role: 'maintainer' } },
+    actor: ENGINE
+  });
+};
+
+/** Runs one agent role for one task, from claiming the run to applying (or discarding) its result. */
+export const runAgentStep = async (
+  deps: EngineDependencies,
+  taskId: string,
+  role: RunnerRole
+): Promise<StepResult> => {
+  const { pool } = deps;
+  const context = await loadTaskContext(pool, taskId);
+  if (!context) return { status: 'skipped', reason: 'not_found' };
+  if (!nextAgentRoles(context.task).includes(role)) return { status: 'skipped', reason: 'not_due' };
+  if (context.installationId === null) return { status: 'skipped', reason: 'not_installed' };
+  const agent = (await loadAgentVersions(pool)).find((record) => record.role === role);
+  if (!agent) return { status: 'skipped', reason: 'agent_not_synced' };
+  const parsedConfig = parseProjectConfig(context.rawConfig);
+  if (!parsedConfig.ok) return { status: 'skipped', reason: 'invalid_config' };
+  const config = parsedConfig.config;
+
+  const claim = await startRun(pool, {
+    taskId,
+    stage: context.task.stage,
+    role,
+    agentVersion: agent.version,
+    runner: RUNNER
+  });
+  if (!claim.ok) return { status: 'skipped', reason: 'already_running' };
+  const runId = claim.runId;
+  const actor: Actor = { kind: 'agent', role, version: agent.version };
+  const repoRef = { installationId: context.installationId, repo: context.repo };
+  const taskBranch = branchForTask(context.number);
+  const firstRound = context.task.headSha === null;
+
+  try {
+    const token = await deps.github.installationToken(repoRef, {
+      contents: role === 'builder' ? 'write' : 'read'
+    });
+    const lane = context.task.lane ?? 'standard';
+    const rawLanes = (context.rawConfig as { lanes?: { red?: { paths?: string[] } } }).lanes;
+    const brief = buildBrief({
+      role,
+      taskNumber: context.number,
+      title: context.title,
+      repo: context.repo,
+      defaultBranch: context.defaultBranch,
+      taskBranch,
+      docsEntry: config.docs.entry,
+      specTemplate: config.docs.specTemplate,
+      specVersion: context.task.specVersion,
+      spec: context.latestSpec,
+      verify: config.verify,
+      protectedPaths: rawLanes?.red?.paths ?? [],
+      requestThread: role === 'spec' ? await listComments(pool, taskId) : [],
+      feedback: role === 'builder' ? await feedbackSinceLastPush(pool, taskId) : [],
+      firstRound
+    });
+
+    const report = await executeRun(deps.agents, {
+      role,
+      brief,
+      session: {
+        agentId: agent.externalAgentId,
+        agentVersion: agent.version,
+        environmentId: deps.environmentId,
+        title: `Officina #${context.number} ${role}`,
+        metadata: { task_id: taskId, run_id: runId, role },
+        repository: {
+          url: `https://github.com/${context.repo}`,
+          token,
+          branch:
+            role === 'spec' || (role === 'builder' && firstRound)
+              ? context.defaultBranch
+              : taskBranch
+        },
+        budgetCents: Math.round(config.lanes[lane].budgetUsd * 100)
+      },
+      onSessionCreated: (sessionId) => setRunExternalId(pool, runId, sessionId),
+      onEvent: (event) => appendRunEvent(pool, runId, event.type, event)
+    });
+
+    const outcome = report.outcome;
+    if (outcome.kind !== 'result') {
+      const reason = describeOutcome(outcome);
+      await finishRun(pool, runId, {
+        status: 'failed',
+        costCents: report.costCents,
+        result: outcome
+      });
+      await blockTask(pool, taskId, `The ${role} agent could not complete its step: ${reason}.`);
+      return { status: 'blocked', reason };
+    }
+
+    const output = outcome.output;
+    let roleOutput: RoleOutput;
+    if (role === 'builder') {
+      const built = output as AgentOutput<'builder'>;
+      if (built.outcome === 'pushed' && built.branch !== taskBranch) {
+        const reason = `it pushed to ${built.branch} instead of ${taskBranch}`;
+        await finishRun(pool, runId, {
+          status: 'failed',
+          costCents: report.costCents,
+          result: output
+        });
+        await blockTask(pool, taskId, `The builder agent could not complete its step: ${reason}.`);
+        return { status: 'blocked', reason };
+      }
+      roleOutput =
+        built.outcome === 'pushed'
+          ? {
+              role,
+              output: built,
+              facts: await deps.github.pushFacts({
+                ...repoRef,
+                base: context.defaultBranch,
+                branch: taskBranch
+              })
+            }
+          : { role, output: built };
+    } else {
+      roleOutput = { role, output } as RoleOutput;
+    }
+
+    const mapped = commandForOutput(context.task, roleOutput);
+    if (!mapped.ok) throw new Error(mapped.error);
+
+    const applied = await applyCommand(pool, {
+      taskId,
+      command: mapped.command,
+      actor,
+      guard: sameWork(context.task),
+      onApplied: async (client, task) => {
+        if (role === 'spec' && (output as AgentOutput<'spec'>).outcome === 'specced') {
+          await saveSpecVersion(client, {
+            taskId,
+            version: task.specVersion,
+            body: (output as Extract<AgentOutput<'spec'>, { outcome: 'specced' }>).spec,
+            createdBy: actor
+          });
+        }
+      }
+    });
+    if (!applied.ok) {
+      await finishRun(pool, runId, {
+        status: 'failed',
+        costCents: report.costCents,
+        result: { discarded: applied.error, output }
+      });
+      return { status: 'discarded', reason: applied.error };
+    }
+
+    if (role === 'builder' && applied.task.stage === 'reviewing' && context.pullRequest === null) {
+      const built = output as Extract<AgentOutput<'builder'>, { outcome: 'pushed' }>;
+      const body = [
+        `Implements the approved spec of Officina task #${context.number}.`,
+        `Verified:\n${built.verified.map((item) => `- ${item}`).join('\n') || '- nothing reported'}`,
+        `Not verified:\n${built.notVerified.map((item) => `- ${item}`).join('\n') || '- nothing reported'}`,
+        context.issue ? `Closes #${context.issue}` : null
+      ]
+        .filter(Boolean)
+        .join('\n\n');
+      const pr = await deps.github.openPullRequest({
+        ...repoRef,
+        base: context.defaultBranch,
+        branch: taskBranch,
+        title: context.title,
+        body
+      });
+      await linkPullRequest(pool, taskId, pr.number);
+      await appendRunEvent(pool, runId, 'officina.pull_request_opened', pr);
+    }
+
+    await finishRun(pool, runId, {
+      status: 'succeeded',
+      costCents: report.costCents,
+      result: output
+    });
+    return { status: 'applied' };
+  } catch (error) {
+    await finishRun(pool, runId, {
+      status: 'failed',
+      costCents: null,
+      result: { error: (error as Error).message }
+    });
+    throw error;
+  }
+};

@@ -77,9 +77,16 @@ describe('GitHub client', () => {
     expect(calls[0]!.body).toEqual({ repositories: ['vici-app'] });
     expect(calls[0]!.authorization).toStartWith('Bearer ey');
 
+    const readOnly = await client.installationToken(ref, { contents: 'read' });
+    expect(readOnly).not.toBe(first);
+    expect(calls[1]!.body).toEqual({
+      repositories: ['vici-app'],
+      permissions: { contents: 'read' }
+    });
+
     nowMs = Date.parse('2026-09-16T12:56:00Z');
     expect(await client.installationToken(ref)).not.toBe(first);
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(3);
   });
 
   test('push facts come from the branch head and the compare, counting renames under both names', async () => {

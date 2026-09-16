@@ -38,6 +38,11 @@ export interface GitHubClientOptions {
   readonly now?: () => number;
 }
 
+/** Repository permissions requested for an installation token, never more than the app was granted. */
+export type TokenPermissions = Readonly<
+  Partial<Record<'contents' | 'pull_requests' | 'issues', 'read' | 'write'>>
+>;
+
 export interface RepoRef {
   readonly installationId: number;
   /** `owner/name` */
@@ -79,10 +84,14 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
 
   /**
    * Installation tokens are scoped to the one repository being worked on, not everything the
-   * app is installed on, and reused until shortly before they expire.
+   * app is installed on, optionally narrowed to specific permissions (an agent that only reads gets
+   * a token that cannot push), and reused until shortly before they expire.
    */
-  const installationToken = async ({ installationId, repo }: RepoRef): Promise<string> => {
-    const key = `${installationId}:${repo}`;
+  const installationToken = async (
+    { installationId, repo }: RepoRef,
+    permissions?: TokenPermissions
+  ): Promise<string> => {
+    const key = `${installationId}:${repo}:${JSON.stringify(permissions ?? {})}`;
     const cached = tokens.get(key);
     if (cached && cached.expiresAtMs - REFRESH_MARGIN_MS > now()) return cached.token;
 
@@ -90,7 +99,11 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     const repoName = repo.split('/')[1];
     const created = await request<{ token: string; expires_at: string }>(
       `/app/installations/${installationId}/access_tokens`,
-      { method: 'POST', token: jwt, body: { repositories: [repoName] } }
+      {
+        method: 'POST',
+        token: jwt,
+        body: permissions ? { repositories: [repoName], permissions } : { repositories: [repoName] }
+      }
     );
     tokens.set(key, { token: created.token, expiresAtMs: Date.parse(created.expires_at) });
     return created.token;
