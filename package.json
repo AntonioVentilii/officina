@@ -3,11 +3,12 @@
   "private": true,
   "type": "module",
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "apps/*"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "bun test packages/core",
+    "test": "bun test packages/core packages/github",
     "test:db": "bun packages/db/test/with-postgres.ts",
     "format": "prettier --write .",
     "lint": "prettier --check ."

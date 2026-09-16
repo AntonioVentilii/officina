@@ -1,0 +1,19 @@
+{
+  "name": "@officina/api",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@officina/core": "workspace:*",
+    "@officina/db": "workspace:*",
+    "@officina/github": "workspace:*",
+    "elysia": "^1.4.30",
+    "pg": "^8.23.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.23.1"
+  }
+}

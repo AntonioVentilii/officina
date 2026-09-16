@@ -10,14 +10,16 @@ Officina: a collaborative agent workshop. The design lives in [`docs/architectur
 
 - `bun install`
 - `bun run typecheck`, `bun run lint`, `bun run format`
-- `bun run test`: core domain tests, no I/O
-- `bun run test:db`: database tests against a throwaway Postgres container (needs Docker)
+- `bun run test`: core and GitHub integration tests, no network or database
+- `bun run test:db`: database and API tests against a throwaway Postgres container (needs Docker)
 - `DATABASE_URL=... bun packages/db/src/migrate.ts`: apply migrations
 
 ## Layout
 
 - `packages/core`: pure domain logic (config, lanes, approval policies, task lifecycle). No I/O; every stage change goes through `decide()`.
-- `packages/db`: SQL migrations and the migration runner. Stage, lane and role values must match `packages/core`; a DB test enforces it.
+- `packages/db`: SQL migrations, the migration runner and the task store (`applyCommand` applies one command atomically with its audit events). Stage, lane and role values must match `packages/core`; a DB test enforces it.
+- `packages/github`: GitHub App authentication (repository-scoped installation tokens), push facts read from the real diff, pull requests and comments, webhook signature verification and event parsing. Tests use a fake `fetch`, never the network.
+- `apps/api`: the Elysia HTTP server (`/health`, `/github/webhook`). `main.ts` validates the environment and runs migrations on boot.
 
 ## Rules
 

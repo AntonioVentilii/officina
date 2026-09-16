@@ -1,8 +1,8 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { Pool } from 'pg';
 import type { Actor, Command } from '@officina/core';
-import { CONFIG_YAML } from '../../core/test/fixtures';
-import { applyCommand, createTask, loadTask, migrate } from '../src';
+import { applyCommand, createTask, loadTask } from '../src';
+import { resetAndSeed } from './seed';
 
 const url = process.env.TEST_DATABASE_URL;
 
@@ -13,27 +13,10 @@ describe.skipIf(!url)('task store', () => {
   let antonioId: string;
 
   beforeEach(async () => {
-    await pool.query('drop schema public cascade; create schema public;');
-    const client = await pool.connect();
-    try {
-      await migrate(client);
-    } finally {
-      client.release();
-    }
-    const seeded = await pool.query<{ project_id: string; member_id: string }>(
-      `with w as (insert into workspaces (name) values ('vici') returning id),
-       m as (insert into members (workspace_id, display_name, email)
-             select id, 'Antonio', 'antonio@example.com' from w returning id, workspace_id),
-       p as (insert into projects (workspace_id, name, github_repo, config)
-             select workspace_id, 'vici-app', 'ViciApp/vici-app', $1::jsonb from m returning id),
-       r as (insert into project_roles (project_id, member_id, role)
-             select p.id, m.id, 'owner' from p, m returning project_id, member_id)
-       select project_id, member_id from r`,
-      [JSON.stringify(Bun.YAML.parse(CONFIG_YAML))]
-    );
-    projectId = seeded.rows[0]!.project_id;
-    antonioId = seeded.rows[0]!.member_id;
-    antonio = { kind: 'member', memberId: antonioId };
+    const seeded = await resetAndSeed(pool);
+    projectId = seeded.projectId;
+    antonioId = seeded.ownerId;
+    antonio = seeded.owner;
   });
 
   afterAll(async () => {

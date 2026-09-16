@@ -23,10 +23,14 @@ Stage them without deploying: `fly secrets set --app vici-officina --stage NAME=
 | `ANTHROPIC_API_KEY`        | Claude Console, workspace Officina -> API keys -> Create key.                                                                                                                                                 |
 | `DATABASE_URL`             | Set automatically when Postgres is attached at the first deploy.                                                                                                                                              |
 
+## Runtime
+
+The API is built from the root `Dockerfile` and configured by `fly.toml` (region `ams`, health check on `/health`). On boot it validates its environment and applies pending migrations. Required environment: `DATABASE_URL`, `GITHUB_WEBHOOK_SECRET` (at least 32 characters); `PORT` defaults to 8080.
+
 ## At first deploy
 
 1. Create and attach Postgres to `vici-officina`.
-2. Deploy; confirm `https://vici-officina.fly.dev/health`.
+2. Generate and stage `GITHUB_WEBHOOK_SECRET`, then `fly deploy`; confirm `https://vici-officina.fly.dev/health`.
 3. Activate the GitHub App webhook with `GITHUB_WEBHOOK_SECRET`.
 4. Set a monthly spend limit on the Officina Anthropic workspace.
 5. Install the GitHub App on `ViciApp/vici-app` only (selected repositories).
