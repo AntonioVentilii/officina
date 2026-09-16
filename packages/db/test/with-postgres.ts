@@ -16,7 +16,7 @@ await run(
     '--name',
     name,
     '-e',
-    'POSTGRES_PASSWORD=officina',
+    'POSTGRES_HOST_AUTH_METHOD=trust',
     '-p',
     `${port}:5432`,
     'postgres:17-alpine'
@@ -39,7 +39,7 @@ try {
     stderr: 'inherit',
     env: {
       ...process.env,
-      TEST_DATABASE_URL: `postgres://postgres:officina@localhost:${port}/postgres`
+      TEST_DATABASE_URL: `postgres://postgres@localhost:${port}/postgres`
     }
   }).exited;
   process.exitCode = exitCode;
