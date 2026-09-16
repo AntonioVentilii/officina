@@ -38,7 +38,7 @@ Roles are per project and live in Officina, never in repository permissions. A m
 - **Triage.** Maintainers see new requests in a triage column: merge duplicates, set priority, move to speccing, or decline with a reason. Votes inform priority, they never decide it.
 - **Threads.** Every task has one thread: comments, @mentions, attachments, agent messages and system events in one timeline. Agents read the thread as data, never as instructions.
 - **Spec review.** Specs are versioned documents with inline comments and suggested edits. The spec agent revises the spec from the comments; approvals always refer to a specific spec version.
-- **Approval policies.** Each lane defines who must approve each human gate, as roles or approval domains with a quorum (for example "requester AND one `product` approver"). Policies are config, not code.
+- **Approval policies.** Each lane defines who must approve each human gate, as roles or approval domains with a quorum (for example "requester AND one `product` approver"). Policies are config, not code. Two rules hold whatever a policy says: a requirement that no current member can meet (for example a `product` approver when nobody holds that domain) is **waived and recorded as waived**, so a one-person project is never stuck and a new member's requirements switch on the moment they join; and every gate always needs **at least one maintainer or owner**, a floor that is never waived. One member's approval satisfies every requirement they are eligible for.
 - **Assignment.** Build and review steps have an assignee: an agent role, or a member who claims it. A member can take over from an agent mid-task (the branch and the thread carry the context) and hand back.
 - **Notifications.** In-app inbox for everything that needs a person: approvals, questions, mentions, tool-call confirmations. Delivery by email and web push; chat integrations later. Each member picks their channels.
 - **Presence.** The board and task pages are real-time for everyone viewing them: who is looking, who is typing, which agent is running.
@@ -172,15 +172,15 @@ docs:
   entry: AGENTS.md # what every agent reads first
   spec_template: docs/specs/template.md
   spec_dir: docs/specs
-verify: ["npm ci", "npm run lint", "npm run check"] # run by the builder before pushing
+verify: ['npm ci', 'npm run lint', 'npm run check'] # run by the builder before pushing
 lanes:
   red:
-    paths: [".github/**", "src/payments/**"]
+    paths: ['.github/**', 'src/payments/**']
     agents_build: false
     approvals:
       spec_review: [{ role: owner }]
   standard:
-    paths: ["**"] # everything not matched by a stricter lane
+    paths: ['**'] # everything not matched by a stricter lane
     wip: 3
     diff_lines: 800
     budget_usd: 25
@@ -188,7 +188,7 @@ lanes:
       spec_review: [{ role: maintainer }]
       verifying: [{ domain: product, when: user_visible }, { role: maintainer }]
   green:
-    paths: ["src/i18n/**"]
+    paths: ['src/i18n/**']
     wip: 5
     budget_usd: 5
     approvals:

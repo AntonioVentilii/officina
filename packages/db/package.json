@@ -1,0 +1,15 @@
+{
+  "name": "@officina/db",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "pg": "^8.23.0",
+    "@officina/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.23.1"
+  }
+}
