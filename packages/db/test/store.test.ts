@@ -1,0 +1,222 @@
+import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
+import { Pool } from 'pg';
+import type { Actor, Command } from '@officina/core';
+import { CONFIG_YAML } from '../../core/test/fixtures';
+import { applyCommand, createTask, loadTask, migrate } from '../src';
+
+const url = process.env.TEST_DATABASE_URL;
+
+describe.skipIf(!url)('task store', () => {
+  const pool = new Pool({ connectionString: url });
+  let projectId: string;
+  let antonio: Actor;
+  let antonioId: string;
+
+  beforeEach(async () => {
+    await pool.query('drop schema public cascade; create schema public;');
+    const client = await pool.connect();
+    try {
+      await migrate(client);
+    } finally {
+      client.release();
+    }
+    const seeded = await pool.query<{ project_id: string; member_id: string }>(
+      `with w as (insert into workspaces (name) values ('vici') returning id),
+       m as (insert into members (workspace_id, display_name, email)
+             select id, 'Antonio', 'antonio@example.com' from w returning id, workspace_id),
+       p as (insert into projects (workspace_id, name, github_repo, config)
+             select workspace_id, 'vici-app', 'ViciApp/vici-app', $1::jsonb from m returning id),
+       r as (insert into project_roles (project_id, member_id, role)
+             select p.id, m.id, 'owner' from p, m returning project_id, member_id)
+       select project_id, member_id from r`,
+      [JSON.stringify(Bun.YAML.parse(CONFIG_YAML))]
+    );
+    projectId = seeded.rows[0]!.project_id;
+    antonioId = seeded.rows[0]!.member_id;
+    antonio = { kind: 'member', memberId: antonioId };
+  });
+
+  afterAll(async () => {
+    await pool.end();
+  });
+
+  const apply = async (taskId: string, command: Command, actor: Actor) => {
+    const result = await applyCommand(pool, { taskId, command, actor });
+    if (!result.ok) throw new Error(`${command.type}: ${result.error}`);
+    return result;
+  };
+
+  const agent = (
+    role: 'spec' | 'builder' | 'reviewer_spec' | 'reviewer_correctness' | 'chooser'
+  ): Actor => ({
+    kind: 'agent',
+    role,
+    version: 1
+  });
+
+  const copyPaths = ['src/lib/constants/messages/en.ts'];
+
+  test('persists a solo task from request to done with a full audit trail', async () => {
+    const { task } = await createTask(pool, {
+      projectId,
+      title: 'Fix copy',
+      requesterId: antonioId
+    });
+    const id = task.id;
+    const engine: Actor = { kind: 'engine' };
+    await apply(id, { type: 'submit_request' }, antonio);
+    await apply(id, { type: 'accept' }, antonio);
+    await apply(
+      id,
+      { type: 'post_spec', predictedPaths: copyPaths, userVisible: true },
+      agent('spec')
+    );
+    await apply(id, { type: 'approve' }, antonio);
+    await apply(
+      id,
+      { type: 'dispatch', assignee: { kind: 'agent', role: 'builder' }, openInLane: 0 },
+      engine
+    );
+    await apply(
+      id,
+      { type: 'push', headSha: 'abc', changedPaths: copyPaths, diffLines: 4 },
+      agent('builder')
+    );
+    await apply(id, { type: 'review', verdict: 'approve', notes: 'ok' }, agent('reviewer_spec'));
+    await apply(
+      id,
+      { type: 'review', verdict: 'approve', notes: 'ok' },
+      agent('reviewer_correctness')
+    );
+    await apply(id, { type: 'choose', userVisible: true }, agent('chooser'));
+    await apply(id, { type: 'approve' }, antonio);
+    const last = await apply(id, { type: 'merged' }, engine);
+
+    expect(last.task.stage).toBe('done');
+    expect(last.version).toBe(11);
+    expect((await loadTask(pool, id))?.task).toEqual(last.task);
+
+    const stages = await pool.query<{ to: string }>(
+      `select payload->>'to' as to from task_events where task_id = $1 and type = 'stage_changed' order by id`,
+      [id]
+    );
+    expect(stages.rows.map((row) => row.to)).toEqual([
+      'triage',
+      'speccing',
+      'spec_review',
+      'ready',
+      'building',
+      'reviewing',
+      'choosing',
+      'verifying',
+      'merging',
+      'done'
+    ]);
+    const approvals = await pool.query<{ gate: string; subject: string }>(
+      'select gate, subject from approvals where task_id = $1 order by created_at',
+      [id]
+    );
+    expect(approvals.rows).toEqual([
+      { gate: 'spec_review', subject: 'spec:1' },
+      { gate: 'verifying', subject: 'sha:abc' }
+    ]);
+    const firstEvent = await pool.query<{ type: string; actor: Actor }>(
+      'select type, actor from task_events where task_id = $1 order by id limit 1',
+      [id]
+    );
+    expect(firstEvent.rows[0]).toEqual({ type: 'created', actor: antonio });
+  });
+
+  test('a rejected command changes nothing', async () => {
+    const { task } = await createTask(pool, { projectId, title: 'Nope', requesterId: antonioId });
+    const result = await applyCommand(pool, {
+      taskId: task.id,
+      command: { type: 'merged' },
+      actor: { kind: 'engine' }
+    });
+    expect(result).toEqual({ ok: false, error: 'wrong_stage' });
+    const stored = await loadTask(pool, task.id);
+    expect(stored?.version).toBe(0);
+    const events = await pool.query('select 1 from task_events where task_id = $1', [task.id]);
+    expect(events.rowCount).toBe(1);
+  });
+
+  test('a stale version is a conflict, and so is the loser of a concurrent write', async () => {
+    const { task } = await createTask(pool, { projectId, title: 'Race', requesterId: antonioId });
+    await apply(task.id, { type: 'submit_request' }, antonio);
+    expect(
+      await applyCommand(pool, {
+        taskId: task.id,
+        command: { type: 'accept' },
+        actor: antonio,
+        expectedVersion: 0
+      })
+    ).toEqual({ ok: false, error: 'conflict' });
+
+    const results = await Promise.all([
+      applyCommand(pool, {
+        taskId: task.id,
+        command: { type: 'accept' },
+        actor: antonio,
+        expectedVersion: 1
+      }),
+      applyCommand(pool, {
+        taskId: task.id,
+        command: { type: 'decline', reason: 'dup' },
+        actor: antonio,
+        expectedVersion: 1
+      })
+    ]);
+    expect(results.filter((result) => result.ok)).toHaveLength(1);
+    expect(results.filter((result) => !result.ok)).toEqual([{ ok: false, error: 'conflict' }]);
+  });
+
+  test('change requests are kept with their note and subject', async () => {
+    const { task } = await createTask(pool, {
+      projectId,
+      title: 'Spec me',
+      requesterId: antonioId
+    });
+    await apply(task.id, { type: 'submit_request' }, antonio);
+    await apply(task.id, { type: 'accept' }, antonio);
+    await apply(
+      task.id,
+      { type: 'post_spec', predictedPaths: copyPaths, userVisible: false },
+      agent('spec')
+    );
+    await apply(task.id, { type: 'request_changes', note: 'cover Italian too' }, antonio);
+    const rows = await pool.query(
+      'select gate, subject, decision, note from approvals where task_id = $1',
+      [task.id]
+    );
+    expect(rows.rows).toEqual([
+      { gate: 'spec_review', subject: 'spec:1', decision: 'changes', note: 'cover Italian too' }
+    ]);
+  });
+
+  test('task numbers are sequential per project', async () => {
+    await createTask(pool, { projectId, title: 'One', requesterId: antonioId });
+    await createTask(pool, { projectId, title: 'Two', requesterId: antonioId });
+    const numbers = await pool.query<{ number: number }>(
+      'select number from tasks where project_id = $1 order by number',
+      [projectId]
+    );
+    expect(numbers.rows.map((row) => row.number)).toEqual([1, 2]);
+  });
+
+  test('an invalid project config stops every command', async () => {
+    const { task } = await createTask(pool, {
+      projectId,
+      title: 'Bad config',
+      requesterId: antonioId
+    });
+    await pool.query(`update projects set config = '{"version": 2}' where id = $1`, [projectId]);
+    expect(
+      await applyCommand(pool, {
+        taskId: task.id,
+        command: { type: 'submit_request' },
+        actor: antonio
+      })
+    ).toEqual({ ok: false, error: 'invalid_config' });
+  });
+});
