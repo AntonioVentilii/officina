@@ -1,0 +1,11 @@
+{
+  "name": "@officina/github",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@officina/core": "workspace:*"
+  }
+}
