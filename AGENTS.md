@@ -6,6 +6,19 @@ Entry point for every AI agent working on this repository. Read it first.
 
 Officina: a collaborative agent workshop. The design lives in [`docs/architecture.md`](./docs/architecture.md), which is the source of truth. Read it before changing anything; if code and that document disagree, flag it.
 
+## Commands
+
+- `bun install`
+- `bun run typecheck`, `bun run lint`, `bun run format`
+- `bun run test`: core domain tests, no I/O
+- `bun run test:db`: database tests against a throwaway Postgres container (needs Docker)
+- `DATABASE_URL=... bun packages/db/src/migrate.ts`: apply migrations
+
+## Layout
+
+- `packages/core`: pure domain logic (config, lanes, approval policies, task lifecycle). No I/O; every stage change goes through `decide()`.
+- `packages/db`: SQL migrations and the migration runner. Stage, lane and role values must match `packages/core`; a DB test enforces it.
+
 ## Rules
 
 - **Collaborative first.** Every feature must work for several people on the same task. A design that only works for one user is incomplete.

@@ -1,0 +1,564 @@
+import type { Gate, ProjectConfig, Requirement } from './config';
+import { computeLane, redPaths, stricterLane, type Lane } from './lanes';
+import { evaluatePolicy, type Approval } from './policies';
+import { hasRole, type Member, type Role } from './roles';
+
+export const STAGES = [
+  'request',
+  'triage',
+  'speccing',
+  'spec_review',
+  'ready',
+  'building',
+  'reviewing',
+  'choosing',
+  'verifying',
+  'merging',
+  'done',
+  'declined',
+  'cancelled'
+] as const;
+export type Stage = (typeof STAGES)[number];
+
+export const TERMINAL_STAGES: ReadonlySet<Stage> = new Set(['done', 'declined', 'cancelled']);
+
+export const AGENT_ROLES = [
+  'interviewer',
+  'spec',
+  'builder',
+  'reviewer_spec',
+  'reviewer_correctness',
+  'chooser',
+  'learner'
+] as const;
+export type AgentRole = (typeof AGENT_ROLES)[number];
+
+/** Every one of these must approve the same head commit before a task leaves review. */
+export const REVIEWER_ROLES = ['reviewer_spec', 'reviewer_correctness'] as const;
+export type ReviewerRole = (typeof REVIEWER_ROLES)[number];
+
+export type Actor =
+  | { readonly kind: 'member'; readonly memberId: string }
+  | { readonly kind: 'agent'; readonly role: AgentRole; readonly version: number }
+  | { readonly kind: 'engine' };
+
+export type Assignee =
+  | { readonly kind: 'member'; readonly memberId: string }
+  | { readonly kind: 'agent'; readonly role: 'builder' };
+
+export interface Blocked {
+  readonly question: string;
+  readonly askedOf: { readonly memberId: string } | { readonly role: Role };
+}
+
+export interface Task {
+  readonly id: string;
+  readonly requesterId: string;
+  readonly stage: Stage;
+  readonly lane: Lane | null;
+  readonly specVersion: number;
+  readonly headSha: string | null;
+  readonly userVisible: boolean;
+  readonly assignee: Assignee | null;
+  readonly blocked: Blocked | null;
+  readonly paused: boolean;
+  /** Times work went back to building since the last dispatch. */
+  readonly fixRounds: number;
+  readonly reviews: Readonly<Partial<Record<ReviewerRole, 'approve'>>>;
+}
+
+export const newTask = (id: string, requesterId: string): Task => ({
+  id,
+  requesterId,
+  stage: 'request',
+  lane: null,
+  specVersion: 0,
+  headSha: null,
+  userVisible: false,
+  assignee: null,
+  blocked: null,
+  paused: false,
+  fixRounds: 0,
+  reviews: {}
+});
+
+export type Command =
+  | { readonly type: 'submit_request' }
+  | { readonly type: 'accept' }
+  | { readonly type: 'decline'; readonly reason: string }
+  | {
+      readonly type: 'post_spec';
+      readonly predictedPaths: readonly string[];
+      readonly userVisible: boolean;
+    }
+  | { readonly type: 'approve' }
+  | { readonly type: 'request_changes'; readonly note: string }
+  | { readonly type: 'dispatch'; readonly assignee: Assignee; readonly openInLane: number }
+  | { readonly type: 'claim' }
+  | { readonly type: 'release' }
+  | {
+      readonly type: 'push';
+      readonly headSha: string;
+      readonly changedPaths: readonly string[];
+      readonly diffLines: number;
+    }
+  | { readonly type: 'review'; readonly verdict: 'approve' | 'changes'; readonly notes: string }
+  | { readonly type: 'choose'; readonly userVisible: boolean }
+  | { readonly type: 'merged' }
+  | { readonly type: 'ci_failed'; readonly details: string }
+  | { readonly type: 'block'; readonly question: string; readonly askedOf: Blocked['askedOf'] }
+  | { readonly type: 'answer'; readonly text: string }
+  | { readonly type: 'pause' }
+  | { readonly type: 'resume' }
+  | { readonly type: 'cancel'; readonly reason: string };
+
+export type Guardrail = 'red_paths' | 'diff_too_large' | 'fix_rounds_exhausted';
+
+export type DomainEvent =
+  | { readonly type: 'stage_changed'; readonly from: Stage; readonly to: Stage }
+  | { readonly type: 'lane_changed'; readonly from: Lane | null; readonly to: Lane }
+  | { readonly type: 'spec_versioned'; readonly version: number }
+  | { readonly type: 'user_visible_changed'; readonly userVisible: boolean }
+  | {
+      readonly type: 'approval_recorded';
+      readonly gate: Gate;
+      readonly subject: string;
+      readonly memberId: string;
+      readonly satisfied: boolean;
+      readonly pending: readonly Requirement[];
+      readonly waived: readonly Requirement[];
+    }
+  | { readonly type: 'changes_requested'; readonly stage: Stage; readonly note: string }
+  | { readonly type: 'assigned'; readonly assignee: Assignee | null }
+  | {
+      readonly type: 'pushed';
+      readonly headSha: string;
+      readonly changedPaths: readonly string[];
+      readonly diffLines: number;
+    }
+  | {
+      readonly type: 'review_recorded';
+      readonly reviewer: ReviewerRole | 'member';
+      readonly verdict: 'approve' | 'changes';
+      readonly notes: string;
+    }
+  | { readonly type: 'guardrail_tripped'; readonly guardrail: Guardrail; readonly details: string }
+  | { readonly type: 'ci_failed'; readonly details: string }
+  | { readonly type: 'blocked'; readonly blocked: Blocked }
+  | { readonly type: 'unblocked'; readonly answer: string }
+  | { readonly type: 'paused' }
+  | { readonly type: 'resumed' }
+  | { readonly type: 'closed'; readonly stage: 'declined' | 'cancelled'; readonly reason: string };
+
+export type DecisionError =
+  | 'terminal'
+  | 'wrong_stage'
+  | 'not_allowed'
+  | 'agents_cannot_approve'
+  | 'blocked'
+  | 'paused'
+  | 'already_blocked'
+  | 'not_blocked'
+  | 'already_paused'
+  | 'not_paused'
+  | 'no_lane'
+  | 'no_head'
+  | 'wip_limit'
+  | 'agents_cannot_build_lane';
+
+export type Decision =
+  | { readonly ok: true; readonly task: Task; readonly events: readonly DomainEvent[] }
+  | { readonly ok: false; readonly error: DecisionError };
+
+export interface DecideContext {
+  readonly config: ProjectConfig;
+  readonly members: readonly Member[];
+  /** Every approval already recorded on this task, for any subject. */
+  readonly approvals: readonly Approval[];
+}
+
+const fail = (error: DecisionError): Decision => ({ ok: false, error });
+
+const ok = (task: Task, events: DomainEvent[]): Decision => ({ ok: true, task, events });
+
+const moveTo = (task: Task, to: Stage, changes: Partial<Task> = {}): [Task, DomainEvent] => [
+  { ...task, ...changes, stage: to },
+  { type: 'stage_changed', from: task.stage, to }
+];
+
+const memberFor = (actor: Actor, context: DecideContext): Member | undefined =>
+  actor.kind === 'member'
+    ? context.members.find((member) => member.id === actor.memberId)
+    : undefined;
+
+const isMemberWith = (actor: Actor, context: DecideContext, role: Role): boolean => {
+  const member = memberFor(actor, context);
+  return member !== undefined && hasRole(member, role);
+};
+
+const gateSubject = (task: Task, gate: Gate): string | null =>
+  gate === 'spec_review' ? `spec:${task.specVersion}` : task.headSha && `sha:${task.headSha}`;
+
+/**
+ * Sends work back to building. Once the lane's fix rounds are used up the task returns to `ready`
+ * unassigned and asks a maintainer to decide, instead of looping between agents forever.
+ */
+const backToBuilding = (task: Task, context: DecideContext, why: DomainEvent): Decision => {
+  const lane = task.lane ?? 'standard';
+  const limit = context.config.lanes[lane].fixRounds;
+  if (task.fixRounds >= limit) {
+    const blocked: Blocked = {
+      question: `Fix rounds exhausted (${limit}). Re-dispatch, claim the task, or cancel it.`,
+      askedOf: { role: 'maintainer' }
+    };
+    const [moved, stageEvent] = moveTo(task, 'ready', {
+      assignee: null,
+      fixRounds: 0,
+      reviews: {},
+      blocked
+    });
+    return ok(moved, [
+      why,
+      {
+        type: 'guardrail_tripped',
+        guardrail: 'fix_rounds_exhausted',
+        details: `limit ${limit}`
+      },
+      stageEvent,
+      { type: 'assigned', assignee: null },
+      { type: 'blocked', blocked }
+    ]);
+  }
+  const [moved, stageEvent] = moveTo(task, 'building', {
+    fixRounds: task.fixRounds + 1,
+    reviews: {}
+  });
+  return ok(moved, [why, stageEvent]);
+};
+
+const ALLOWED_WHILE_HELD: ReadonlySet<Command['type']> = new Set([
+  'answer',
+  'resume',
+  'cancel',
+  'block',
+  'pause'
+]);
+
+export const decide = (
+  task: Task,
+  command: Command,
+  actor: Actor,
+  context: DecideContext
+): Decision => {
+  if (TERMINAL_STAGES.has(task.stage)) {
+    return fail('terminal');
+  }
+  if (!ALLOWED_WHILE_HELD.has(command.type)) {
+    if (task.blocked) return fail('blocked');
+    if (task.paused) return fail('paused');
+  }
+
+  switch (command.type) {
+    case 'submit_request': {
+      if (task.stage !== 'request') return fail('wrong_stage');
+      const member = memberFor(actor, context);
+      const allowed =
+        member !== undefined &&
+        hasRole(member, 'contributor') &&
+        (member.id === task.requesterId || hasRole(member, 'maintainer'));
+      if (!allowed) return fail('not_allowed');
+      const [moved, event] = moveTo(task, 'triage');
+      return ok(moved, [event]);
+    }
+
+    case 'accept': {
+      if (task.stage !== 'triage') return fail('wrong_stage');
+      if (!isMemberWith(actor, context, 'maintainer')) return fail('not_allowed');
+      const [moved, event] = moveTo(task, 'speccing');
+      return ok(moved, [event]);
+    }
+
+    case 'decline': {
+      if (task.stage !== 'triage') return fail('wrong_stage');
+      if (!isMemberWith(actor, context, 'maintainer')) return fail('not_allowed');
+      const [moved, event] = moveTo(task, 'declined');
+      return ok(moved, [event, { type: 'closed', stage: 'declined', reason: command.reason }]);
+    }
+
+    case 'post_spec': {
+      if (task.stage !== 'speccing') return fail('wrong_stage');
+      const allowed =
+        (actor.kind === 'agent' && actor.role === 'spec') ||
+        isMemberWith(actor, context, 'contributor');
+      if (!allowed) return fail('not_allowed');
+      const predicted = computeLane(command.predictedPaths, context.config.laneMatcher);
+      const lane = task.lane ? stricterLane(task.lane, predicted) : predicted;
+      const specVersion = task.specVersion + 1;
+      const userVisible = task.userVisible || command.userVisible;
+      const [moved, stageEvent] = moveTo(task, 'spec_review', { lane, specVersion, userVisible });
+      const events: DomainEvent[] = [{ type: 'spec_versioned', version: specVersion }];
+      if (lane !== task.lane) events.push({ type: 'lane_changed', from: task.lane, to: lane });
+      if (userVisible !== task.userVisible)
+        events.push({ type: 'user_visible_changed', userVisible });
+      events.push(stageEvent);
+      return ok(moved, events);
+    }
+
+    case 'approve': {
+      if (task.stage !== 'spec_review' && task.stage !== 'verifying') return fail('wrong_stage');
+      if (actor.kind !== 'member') return fail('agents_cannot_approve');
+      const member = memberFor(actor, context);
+      if (member === undefined || !hasRole(member, 'contributor')) return fail('not_allowed');
+      if (task.lane === null) return fail('no_lane');
+      const gate: Gate = task.stage;
+      const subject = gateSubject(task, gate);
+      if (subject === null) return fail('no_head');
+      const approval: Approval = { memberId: member.id, subject };
+      const result = evaluatePolicy(
+        context.config.lanes[task.lane].approvals[gate],
+        [...context.approvals, approval],
+        {
+          members: context.members,
+          requesterId: task.requesterId,
+          userVisible: task.userVisible,
+          subject
+        }
+      );
+      const recorded: DomainEvent = {
+        type: 'approval_recorded',
+        gate,
+        subject,
+        memberId: member.id,
+        satisfied: result.satisfied,
+        pending: result.pending,
+        waived: result.waived
+      };
+      if (!result.satisfied) return ok(task, [recorded]);
+      const [moved, stageEvent] = moveTo(task, gate === 'spec_review' ? 'ready' : 'merging');
+      return ok(moved, [recorded, stageEvent]);
+    }
+
+    case 'request_changes': {
+      if (!isMemberWith(actor, context, 'contributor')) return fail('not_allowed');
+      const why: DomainEvent = { type: 'changes_requested', stage: task.stage, note: command.note };
+      if (task.stage === 'spec_review') {
+        const [moved, stageEvent] = moveTo(task, 'speccing');
+        return ok(moved, [why, stageEvent]);
+      }
+      if (task.stage === 'verifying') return backToBuilding(task, context, why);
+      return fail('wrong_stage');
+    }
+
+    case 'dispatch': {
+      if (task.stage !== 'ready') return fail('wrong_stage');
+      if (actor.kind !== 'engine') return fail('not_allowed');
+      if (task.lane === null) return fail('no_lane');
+      const settings = context.config.lanes[task.lane];
+      if (command.assignee.kind === 'agent') {
+        if (!settings.agentsBuild) return fail('agents_cannot_build_lane');
+        if (command.openInLane >= settings.wip) return fail('wip_limit');
+      } else {
+        const assigneeId = command.assignee.memberId;
+        const assignee = context.members.find((member) => member.id === assigneeId);
+        if (assignee === undefined || !hasRole(assignee, 'maintainer')) {
+          return fail('not_allowed');
+        }
+      }
+      const [moved, stageEvent] = moveTo(task, 'building', { assignee: command.assignee });
+      return ok(moved, [stageEvent, { type: 'assigned', assignee: command.assignee }]);
+    }
+
+    case 'claim': {
+      if (actor.kind !== 'member' || !isMemberWith(actor, context, 'maintainer')) {
+        return fail('not_allowed');
+      }
+      const assignee: Assignee = { kind: 'member', memberId: actor.memberId };
+      if (task.stage === 'ready') {
+        const [moved, stageEvent] = moveTo(task, 'building', { assignee });
+        return ok(moved, [stageEvent, { type: 'assigned', assignee }]);
+      }
+      if (task.stage === 'building') {
+        return ok({ ...task, assignee }, [{ type: 'assigned', assignee }]);
+      }
+      return fail('wrong_stage');
+    }
+
+    case 'release': {
+      if (task.stage !== 'building') return fail('wrong_stage');
+      const isAssignee =
+        actor.kind === 'member' &&
+        task.assignee?.kind === 'member' &&
+        task.assignee.memberId === actor.memberId;
+      if (!isAssignee && !isMemberWith(actor, context, 'maintainer')) return fail('not_allowed');
+      const [moved, stageEvent] = moveTo(task, 'ready', { assignee: null });
+      return ok(moved, [stageEvent, { type: 'assigned', assignee: null }]);
+    }
+
+    case 'push': {
+      if (task.stage !== 'building') return fail('wrong_stage');
+      const assignee = task.assignee;
+      const isAssignee =
+        assignee !== null &&
+        ((assignee.kind === 'agent' && actor.kind === 'agent' && actor.role === 'builder') ||
+          (assignee.kind === 'member' &&
+            actor.kind === 'member' &&
+            actor.memberId === assignee.memberId));
+      if (!isAssignee) return fail('not_allowed');
+
+      const pushed: DomainEvent = {
+        type: 'pushed',
+        headSha: command.headSha,
+        changedPaths: command.changedPaths,
+        diffLines: command.diffLines
+      };
+      const actual = computeLane(command.changedPaths, context.config.laneMatcher);
+      const lane = stricterLane(task.lane ?? 'standard', actual);
+      const laneEvents: DomainEvent[] =
+        lane !== task.lane ? [{ type: 'lane_changed', from: task.lane, to: lane }] : [];
+
+      if (assignee.kind === 'agent' && !context.config.lanes[lane].agentsBuild) {
+        const touched = redPaths(command.changedPaths, context.config.laneMatcher);
+        const blocked: Blocked = {
+          question: `An agent changed paths an agent may not change: ${touched.join(', ')}. Claim the task or cancel it.`,
+          askedOf: { role: 'owner' }
+        };
+        const [moved, stageEvent] = moveTo(task, 'ready', { lane, assignee: null, blocked });
+        return ok(moved, [
+          pushed,
+          ...laneEvents,
+          { type: 'guardrail_tripped', guardrail: 'red_paths', details: touched.join(', ') },
+          stageEvent,
+          { type: 'assigned', assignee: null },
+          { type: 'blocked', blocked }
+        ]);
+      }
+
+      const maxLines = context.config.lanes[lane].diffLines;
+      if (command.diffLines > maxLines) {
+        const blocked: Blocked = {
+          question: `The change has ${command.diffLines} lines, over the ${lane} lane limit of ${maxLines}. Split the spec or reduce the change.`,
+          askedOf: { role: 'maintainer' }
+        };
+        return ok({ ...task, lane, blocked }, [
+          pushed,
+          ...laneEvents,
+          {
+            type: 'guardrail_tripped',
+            guardrail: 'diff_too_large',
+            details: `${command.diffLines} > ${maxLines}`
+          },
+          { type: 'blocked', blocked }
+        ]);
+      }
+
+      const [moved, stageEvent] = moveTo(task, 'reviewing', {
+        lane,
+        headSha: command.headSha,
+        reviews: {}
+      });
+      return ok(moved, [pushed, ...laneEvents, stageEvent]);
+    }
+
+    case 'review': {
+      if (task.stage !== 'reviewing') return fail('wrong_stage');
+      let reviewer: ReviewerRole | 'member';
+      if (actor.kind === 'agent' && (REVIEWER_ROLES as readonly string[]).includes(actor.role)) {
+        reviewer = actor.role as ReviewerRole;
+      } else if (isMemberWith(actor, context, 'maintainer')) {
+        reviewer = 'member';
+      } else {
+        return fail('not_allowed');
+      }
+      const recorded: DomainEvent = {
+        type: 'review_recorded',
+        reviewer,
+        verdict: command.verdict,
+        notes: command.notes
+      };
+      if (command.verdict === 'changes') return backToBuilding(task, context, recorded);
+
+      // A maintainer's own review stands in for the agent reviewers.
+      const reviews =
+        reviewer === 'member' ? task.reviews : { ...task.reviews, [reviewer]: 'approve' as const };
+      const complete =
+        reviewer === 'member' || REVIEWER_ROLES.every((role) => reviews[role] === 'approve');
+      if (!complete) return ok({ ...task, reviews }, [recorded]);
+      const [moved, stageEvent] = moveTo(task, 'choosing', { reviews });
+      return ok(moved, [recorded, stageEvent]);
+    }
+
+    case 'choose': {
+      if (task.stage !== 'choosing') return fail('wrong_stage');
+      const isMaintainer = isMemberWith(actor, context, 'maintainer');
+      const allowed =
+        (actor.kind === 'agent' && actor.role === 'chooser') ||
+        actor.kind === 'engine' ||
+        isMaintainer;
+      if (!allowed) return fail('not_allowed');
+      // Only a maintainer may mark a change as not user-visible, since that can drop a required approval.
+      const userVisible = isMaintainer
+        ? command.userVisible
+        : task.userVisible || command.userVisible;
+      const [moved, stageEvent] = moveTo(task, 'verifying', { userVisible });
+      const events: DomainEvent[] =
+        userVisible !== task.userVisible ? [{ type: 'user_visible_changed', userVisible }] : [];
+      return ok(moved, [...events, stageEvent]);
+    }
+
+    case 'merged': {
+      if (task.stage !== 'merging') return fail('wrong_stage');
+      if (actor.kind !== 'engine') return fail('not_allowed');
+      const [moved, event] = moveTo(task, 'done');
+      return ok(moved, [event]);
+    }
+
+    case 'ci_failed': {
+      if (task.stage !== 'merging') return fail('wrong_stage');
+      if (actor.kind !== 'engine') return fail('not_allowed');
+      return backToBuilding(task, context, { type: 'ci_failed', details: command.details });
+    }
+
+    case 'block': {
+      if (task.blocked) return fail('already_blocked');
+      const allowed = actor.kind !== 'member' || isMemberWith(actor, context, 'contributor');
+      if (!allowed) return fail('not_allowed');
+      const blocked: Blocked = { question: command.question, askedOf: command.askedOf };
+      return ok({ ...task, blocked }, [{ type: 'blocked', blocked }]);
+    }
+
+    case 'answer': {
+      if (!task.blocked) return fail('not_blocked');
+      const member = memberFor(actor, context);
+      if (member === undefined) return fail('not_allowed');
+      const askedOf = task.blocked.askedOf;
+      const allowed =
+        hasRole(member, 'owner') ||
+        ('memberId' in askedOf ? askedOf.memberId === member.id : hasRole(member, askedOf.role));
+      if (!allowed) return fail('not_allowed');
+      return ok({ ...task, blocked: null }, [{ type: 'unblocked', answer: command.text }]);
+    }
+
+    case 'pause': {
+      if (!isMemberWith(actor, context, 'maintainer')) return fail('not_allowed');
+      if (task.paused) return fail('already_paused');
+      return ok({ ...task, paused: true }, [{ type: 'paused' }]);
+    }
+
+    case 'resume': {
+      if (!isMemberWith(actor, context, 'maintainer')) return fail('not_allowed');
+      if (!task.paused) return fail('not_paused');
+      return ok({ ...task, paused: false }, [{ type: 'resumed' }]);
+    }
+
+    case 'cancel': {
+      const member = memberFor(actor, context);
+      const allowed =
+        member !== undefined &&
+        (hasRole(member, 'maintainer') ||
+          (member.id === task.requesterId && hasRole(member, 'contributor')));
+      if (!allowed) return fail('not_allowed');
+      const [moved, event] = moveTo(task, 'cancelled', { assignee: null, blocked: null });
+      return ok(moved, [event, { type: 'closed', stage: 'cancelled', reason: command.reason }]);
+    }
+  }
+};
