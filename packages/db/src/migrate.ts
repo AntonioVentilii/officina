@@ -1,11 +1,11 @@
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { Client } from 'pg';
+import { Client, type ClientBase } from 'pg';
 
 const MIGRATIONS_DIR = join(import.meta.dir, '..', 'migrations');
 
 /** Applies pending migrations in filename order, each in its own transaction. Returns the applied names. */
-export const migrate = async (client: Client): Promise<string[]> => {
+export const migrate = async (client: ClientBase): Promise<string[]> => {
   await client.query(
     `create table if not exists schema_migrations (
        name text primary key,

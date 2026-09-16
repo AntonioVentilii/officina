@@ -1,0 +1,195 @@
+import { z } from 'zod';
+import type { Blocked, Command, Task } from './lifecycle';
+
+/*
+ * What each agent role must return. Agent output is untrusted: it is validated here, and anything
+ * that decides risk (changed paths, diff size, head commit) comes from the engine's own reading of
+ * GitHub, never from the agent's claims.
+ */
+
+const text = z.string().trim().min(1);
+
+const askedOfSchema = z.enum(['requester', 'maintainer', 'owner']);
+
+const blockedSchema = z.strictObject({
+  outcome: z.literal('blocked'),
+  question: text,
+  askedOf: askedOfSchema.default('maintainer')
+});
+
+export const interviewerOutputSchema = z.discriminatedUnion('outcome', [
+  z.strictObject({ outcome: z.literal('question'), question: text }),
+  z.strictObject({
+    outcome: z.literal('complete'),
+    title: text,
+    summary: text,
+    acceptance: z.array(text).min(1)
+  })
+]);
+
+export const specOutputSchema = z.discriminatedUnion('outcome', [
+  z.strictObject({
+    outcome: z.literal('specced'),
+    spec: text,
+    predictedPaths: z.array(text).min(1),
+    userVisible: z.boolean()
+  }),
+  blockedSchema
+]);
+
+export const builderOutputSchema = z.discriminatedUnion('outcome', [
+  z.strictObject({
+    outcome: z.literal('pushed'),
+    branch: text.regex(/^officina\//, 'branch must start with officina/'),
+    verified: z.array(text),
+    notVerified: z.array(text)
+  }),
+  z.strictObject({ outcome: z.literal('failed'), why: text }),
+  blockedSchema
+]);
+
+export const reviewerOutputSchema = z.discriminatedUnion('outcome', [
+  z.strictObject({ outcome: z.literal('approve'), summary: text }),
+  z.strictObject({
+    outcome: z.literal('changes'),
+    items: z
+      .array(
+        z.strictObject({
+          file: text,
+          line: z.number().int().positive().optional(),
+          issue: text
+        })
+      )
+      .min(1)
+  })
+]);
+
+export const chooserOutputSchema = z.strictObject({
+  userVisible: z.boolean(),
+  checklist: z.array(text).min(1),
+  suggestedDomains: z.array(text).default([]),
+  beforeAfter: z
+    .array(z.strictObject({ key: text, locale: text, before: z.string(), after: z.string() }))
+    .default([])
+});
+
+export const learnerOutputSchema = z.strictObject({
+  learnings: z.array(z.strictObject({ text, proposedChange: text, evidence: text })).max(3)
+});
+
+export const OUTPUT_SCHEMAS = {
+  interviewer: interviewerOutputSchema,
+  spec: specOutputSchema,
+  builder: builderOutputSchema,
+  reviewer_spec: reviewerOutputSchema,
+  reviewer_correctness: reviewerOutputSchema,
+  chooser: chooserOutputSchema,
+  learner: learnerOutputSchema
+} as const;
+
+export type ContractRole = keyof typeof OUTPUT_SCHEMAS;
+export type AgentOutput<R extends ContractRole> = z.infer<(typeof OUTPUT_SCHEMAS)[R]>;
+
+export type OutputResult<R extends ContractRole> =
+  | { readonly ok: true; readonly output: AgentOutput<R> }
+  | { readonly ok: false; readonly errors: readonly string[] };
+
+export const parseAgentOutput = <R extends ContractRole>(
+  role: R,
+  raw: unknown
+): OutputResult<R> => {
+  const parsed = OUTPUT_SCHEMAS[role].safeParse(raw);
+  if (parsed.success) {
+    return { ok: true, output: parsed.data as AgentOutput<R> };
+  }
+  return {
+    ok: false,
+    errors: parsed.error.issues.map(
+      (issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`
+    )
+  };
+};
+
+/** Facts the engine establishes itself after a builder reports a push. */
+export interface PushFacts {
+  readonly headSha: string;
+  readonly changedPaths: readonly string[];
+  readonly diffLines: number;
+}
+
+const blockCommand = (
+  task: Task,
+  question: string,
+  askedOf: z.infer<typeof askedOfSchema>
+): Command => {
+  const target: Blocked['askedOf'] =
+    askedOf === 'requester' ? { memberId: task.requesterId } : { role: askedOf };
+  return { type: 'block', question, askedOf: target };
+};
+
+export type RoleOutput =
+  | { readonly role: 'spec'; readonly output: AgentOutput<'spec'> }
+  | {
+      readonly role: 'builder';
+      readonly output: AgentOutput<'builder'>;
+      readonly facts?: PushFacts;
+    }
+  | {
+      readonly role: 'reviewer_spec' | 'reviewer_correctness';
+      readonly output: AgentOutput<'reviewer_spec'>;
+    }
+  | { readonly role: 'chooser'; readonly output: AgentOutput<'chooser'> };
+
+export type CommandResult =
+  | { readonly ok: true; readonly command: Command }
+  | { readonly ok: false; readonly error: 'missing_push_facts' };
+
+/** Translates a validated agent output into the lifecycle command the engine applies for it. */
+export const commandForOutput = (task: Task, result: RoleOutput): CommandResult => {
+  switch (result.role) {
+    case 'spec': {
+      const output = result.output;
+      if (output.outcome === 'blocked') {
+        return { ok: true, command: blockCommand(task, output.question, output.askedOf) };
+      }
+      return {
+        ok: true,
+        command: {
+          type: 'post_spec',
+          predictedPaths: output.predictedPaths,
+          userVisible: output.userVisible
+        }
+      };
+    }
+    case 'builder': {
+      const output = result.output;
+      if (output.outcome === 'blocked') {
+        return { ok: true, command: blockCommand(task, output.question, output.askedOf) };
+      }
+      if (output.outcome === 'failed') {
+        return {
+          ok: true,
+          command: blockCommand(task, `The build failed: ${output.why}`, 'maintainer')
+        };
+      }
+      if (result.facts === undefined) return { ok: false, error: 'missing_push_facts' };
+      return { ok: true, command: { type: 'push', ...result.facts } };
+    }
+    case 'reviewer_spec':
+    case 'reviewer_correctness': {
+      const output = result.output;
+      if (output.outcome === 'approve') {
+        return { ok: true, command: { type: 'review', verdict: 'approve', notes: output.summary } };
+      }
+      const notes = output.items
+        .map(
+          (item, index) =>
+            `${index + 1}. ${item.file}${item.line ? `:${item.line}` : ''} ${item.issue}`
+        )
+        .join('\n');
+      return { ok: true, command: { type: 'review', verdict: 'changes', notes } };
+    }
+    case 'chooser':
+      return { ok: true, command: { type: 'choose', userVisible: result.output.userVisible } };
+  }
+};
