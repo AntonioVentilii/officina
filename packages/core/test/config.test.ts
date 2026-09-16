@@ -10,6 +10,7 @@ describe('project config', () => {
     expect(result.config.lanes.standard).toMatchObject({ agentsBuild: true, wip: 3, fixRounds: 2 });
     expect(result.config.lanes.standard.approvals.spec_review).toEqual([{ role: 'maintainer' }]);
     expect(result.config.docs.specTemplate).toBeNull();
+    expect(result.config.runtime.allowedHosts).toEqual([]);
   });
 
   test('red lane never lets agents build, even when config asks for it', () => {

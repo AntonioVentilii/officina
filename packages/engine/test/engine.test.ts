@@ -58,9 +58,10 @@ describe.skipIf(!url)('engine', () => {
 
   beforeEach(async () => {
     seeded = await resetAndSeed(pool);
-    await pool.query('update projects set github_installation_id = 99 where id = $1', [
-      seeded.projectId
-    ]);
+    await pool.query(
+      "update projects set github_installation_id = 99, agent_environment_id = 'env_1' where id = $1",
+      [seeded.projectId]
+    );
     for (const role of RUNNER_ROLES) {
       await saveAgentVersion(pool, {
         role,
@@ -92,11 +93,7 @@ describe.skipIf(!url)('engine', () => {
 
   const taskInReady = async (github = fakeGitHub(), agents = createFakePort(succeed)) => {
     const taskId = await taskInSpeccing();
-    await runAgentStep(
-      { pool, github: github.port, agents, environmentId: 'env_1' },
-      taskId,
-      'spec'
-    );
+    await runAgentStep({ pool, github: github.port, agents }, taskId, 'spec');
     await applyOrThrow(pool, taskId, { type: 'approve' }, seeded.owner);
     return taskId;
   };
@@ -113,11 +110,7 @@ describe.skipIf(!url)('engine', () => {
     const taskId = await taskInSpeccing();
     const github = fakeGitHub();
     const agents = createFakePort(succeed);
-    const result = await runAgentStep(
-      { pool, github: github.port, agents, environmentId: 'env_1' },
-      taskId,
-      'spec'
-    );
+    const result = await runAgentStep({ pool, github: github.port, agents }, taskId, 'spec');
 
     expect(result).toEqual({ status: 'applied' });
     expect((await loadTask(pool, taskId))?.task).toMatchObject({
@@ -152,7 +145,7 @@ describe.skipIf(!url)('engine', () => {
   test('ticks carry a ready task through build, parallel reviews and choosing', async () => {
     const github = fakeGitHub();
     const agents = createFakePort(succeed);
-    const deps = { pool, github: github.port, agents, environmentId: 'env_1' };
+    const deps = { pool, github: github.port, agents };
     const taskId = await taskInReady(github, agents);
 
     const first = await tick(deps, seeded.projectId);
@@ -193,7 +186,7 @@ describe.skipIf(!url)('engine', () => {
         : succeed(request)
     );
     const taskId = await taskInReady(github, agents);
-    await tick({ pool, github: github.port, agents, environmentId: 'env_1' }, seeded.projectId);
+    await tick({ pool, github: github.port, agents }, seeded.projectId);
 
     const stored = await loadTask(pool, taskId);
     expect(stored?.task.blocked?.question).toContain('officina/elsewhere');
@@ -210,11 +203,7 @@ describe.skipIf(!url)('engine', () => {
       toolUse(bad),
       idle('end_turn')
     ]);
-    const result = await runAgentStep(
-      { pool, github: fakeGitHub().port, agents, environmentId: 'env_1' },
-      taskId,
-      'spec'
-    );
+    const result = await runAgentStep({ pool, github: fakeGitHub().port, agents }, taskId, 'spec');
     expect(result.status).toBe('blocked');
     const stored = await loadTask(pool, taskId);
     expect(stored?.task).toMatchObject({
@@ -233,13 +222,9 @@ describe.skipIf(!url)('engine', () => {
       runner: 'managed_agents'
     });
     const agents = createFakePort(succeed);
-    expect(
-      await runAgentStep(
-        { pool, github: fakeGitHub().port, agents, environmentId: 'env_1' },
-        taskId,
-        'spec'
-      )
-    ).toEqual({ status: 'skipped', reason: 'already_running' });
+    expect(await runAgentStep({ pool, github: fakeGitHub().port, agents }, taskId, 'spec')).toEqual(
+      { status: 'skipped', reason: 'already_running' }
+    );
     expect(agents.sessions).toHaveLength(0);
   });
 
@@ -256,11 +241,7 @@ describe.skipIf(!url)('engine', () => {
       toolUse(RESULTS.spec),
       idle('end_turn')
     ]);
-    const result = await runAgentStep(
-      { pool, github: fakeGitHub().port, agents, environmentId: 'env_1' },
-      taskId,
-      'spec'
-    );
+    const result = await runAgentStep({ pool, github: fakeGitHub().port, agents }, taskId, 'spec');
     expect(result).toEqual({ status: 'discarded', reason: 'conflict' });
     expect((await loadTask(pool, taskId))?.task.stage).toBe('cancelled');
     expect((await pool.query('select 1 from spec_versions')).rowCount).toBe(0);
@@ -274,11 +255,7 @@ describe.skipIf(!url)('engine', () => {
     });
     const agents = createFakePort(succeed);
     expect(
-      await runAgentStep(
-        { pool, github: fakeGitHub().port, agents, environmentId: 'env_1' },
-        task.id,
-        'spec'
-      )
+      await runAgentStep({ pool, github: fakeGitHub().port, agents }, task.id, 'spec')
     ).toEqual({ status: 'skipped', reason: 'not_due' });
     expect(agents.sessions).toHaveLength(0);
   });

@@ -32,6 +32,12 @@ const projectConfigSchema = z.strictObject({
   }),
   setup: z.array(z.string().min(1)).optional(),
   verify: z.array(z.string().min(1)).optional(),
+  runtime: z
+    .strictObject({
+      /** Extra hosts agent sandboxes may reach beyond package registries, e.g. a private registry. */
+      allowed_hosts: z.array(z.string().min(1)).optional()
+    })
+    .optional(),
   lanes: z
     .strictObject({
       red: laneSchema.optional(),
@@ -63,6 +69,7 @@ export interface ProjectConfig {
   };
   readonly setup: readonly string[];
   readonly verify: readonly string[];
+  readonly runtime: { readonly allowedHosts: readonly string[] };
   readonly lanes: Readonly<Record<Lane, LaneSettings>>;
   readonly laneMatcher: LaneMatcher;
 }
@@ -121,6 +128,7 @@ export const parseProjectConfig = (input: unknown): ConfigResult => {
       },
       setup: raw.setup ?? [],
       verify: raw.verify ?? [],
+      runtime: { allowedHosts: raw.runtime?.allowed_hosts ?? [] },
       lanes: {
         green: normalizeLane('green', raw.lanes?.green),
         standard: normalizeLane('standard', raw.lanes?.standard),

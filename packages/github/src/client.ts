@@ -138,6 +138,40 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     return { headSha, changedPaths, diffLines };
   };
 
+  /** The installation of this app on a repository, authenticated as the app itself. */
+  const repoInstallationId = async (repo: string): Promise<number> => {
+    const jwt = createAppJwt(options.appId, options.privateKeyPem, Math.floor(now() / 1000));
+    const installation = await request<{ id: number }>(`/repos/${repo}/installation`, {
+      token: jwt
+    });
+    return installation.id;
+  };
+
+  const defaultBranch = async (ref: RepoRef): Promise<string> => {
+    const token = await installationToken(ref, { contents: 'read' });
+    return (await request<{ default_branch: string }>(`/repos/${ref.repo}`, { token }))
+      .default_branch;
+  };
+
+  /** A file's text at a branch, or `null` when it does not exist there. */
+  const fileContent = async (
+    ref: RepoRef & { readonly path: string; readonly branch: string }
+  ): Promise<string | null> => {
+    const token = await installationToken(ref, { contents: 'read' });
+    try {
+      const file = await request<{ content: string; encoding: string }>(
+        `/repos/${ref.repo}/contents/${ref.path.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(ref.branch)}`,
+        { token }
+      );
+      return Buffer.from(file.content, file.encoding === 'base64' ? 'base64' : 'utf8').toString(
+        'utf8'
+      );
+    } catch (error) {
+      if (error instanceof GitHubError && error.status === 404) return null;
+      throw error;
+    }
+  };
+
   const openPullRequest = async (
     ref: RepoRef & {
       readonly base: string;
@@ -169,7 +203,15 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     });
   };
 
-  return { installationToken, pushFacts, openPullRequest, commentOnIssue };
+  return {
+    installationToken,
+    repoInstallationId,
+    defaultBranch,
+    fileContent,
+    pushFacts,
+    openPullRequest,
+    commentOnIssue
+  };
 };
 
 export type GitHubClient = ReturnType<typeof createGitHubClient>;

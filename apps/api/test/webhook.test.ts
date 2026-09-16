@@ -122,6 +122,46 @@ describe.skipIf(!url)('api', () => {
     expect(await unlinked.json()).toEqual({ status: 'applied', outcomes: [] });
   });
 
+  test('a config push to the default branch refreshes a valid config and keeps the last one otherwise', async () => {
+    let served = 'version: 1\ndocs: { entry: CONTRIBUTING.md }\n';
+    const withGitHub = createApp({
+      pool,
+      webhookSecret: SECRET,
+      github: { fileContent: async () => served }
+    });
+    await pool.query('update projects set github_installation_id = 99 where id = $1', [
+      seeded.projectId
+    ]);
+    const push = (delivery: string, branch = 'main') =>
+      deliver(withGitHub, {
+        event: 'push',
+        delivery,
+        payload: {
+          ref: `refs/heads/${branch}`,
+          commits: [{ modified: ['.github/officina.yml'] }],
+          repository
+        }
+      });
+    const entry = async () =>
+      (await pool.query(`select config->'docs'->>'entry' as entry from projects`)).rows[0].entry;
+
+    expect(await (await push('d-5')).json()).toEqual({
+      status: 'applied',
+      outcomes: [{ projectId: seeded.projectId, config: 'updated' }]
+    });
+    expect(await entry()).toBe('CONTRIBUTING.md');
+
+    served = 'version: 7';
+    const invalid = (await (await push('d-6')).json()) as { outcomes: { config: string }[] };
+    expect(invalid.outcomes[0]!.config).toBe('invalid');
+    expect(await entry()).toBe('CONTRIBUTING.md');
+
+    expect(await (await push('d-7', 'feature')).json()).toEqual({
+      status: 'applied',
+      outcomes: []
+    });
+  });
+
   test('malformed requests are rejected', async () => {
     const missingDelivery = await app.handle(
       new Request('http://officina.test/github/webhook', {

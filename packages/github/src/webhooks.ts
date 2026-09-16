@@ -15,6 +15,13 @@ export const verifyWebhookSignature = (
 };
 
 export type WebhookAction =
+  | {
+      readonly kind: 'push';
+      readonly repo: string;
+      /** Branch name, without `refs/heads/`. */
+      readonly branch: string;
+      readonly changedPaths: readonly string[];
+    }
   | { readonly kind: 'pull_request_merged'; readonly repo: string; readonly prNumber: number }
   | {
       readonly kind: 'checks_failed';
@@ -51,6 +58,24 @@ export const parseWebhookEvent = (event: string | null, payload: unknown): Webho
       return { kind: 'pull_request_merged', repo, prNumber: body.pull_request.number };
     }
     return null;
+  }
+
+  if (event === 'push') {
+    const body = payload as {
+      ref?: string;
+      commits?: { added?: string[]; modified?: string[]; removed?: string[] }[];
+    };
+    if (!body.ref?.startsWith('refs/heads/')) return null;
+    const changedPaths = [
+      ...new Set(
+        (body.commits ?? []).flatMap((commit) => [
+          ...(commit.added ?? []),
+          ...(commit.modified ?? []),
+          ...(commit.removed ?? [])
+        ])
+      )
+    ];
+    return { kind: 'push', repo, branch: body.ref.slice('refs/heads/'.length), changedPaths };
   }
 
   if (event === 'check_suite') {

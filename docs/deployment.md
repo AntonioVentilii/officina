@@ -11,30 +11,30 @@ Infrastructure for the Vici instance of Officina. Identifiers here are not secre
 | GitHub App          | **Officina Workshop**, slug `officina-workshop`, App ID `4965437`, owned by `@AntonioVentilii` | The name "Officina" is reserved on GitHub. Installable on any account. Webhook inactive until deployed. Permissions: contents, issues, pull requests read/write; checks and metadata read-only; no Actions, Workflows or Administration. Callback `https://vici-officina.fly.dev/auth/github/callback` (strict matching). Not installed on any repository yet. |
 | Anthropic workspace | **Officina**, `wrkspc_01GSzPabbQGWhbSVM7LQE7oV`, geo US                                        | Managed Agents available. No API key and no spend limit yet.                                                                                                                                                                                                                                                                                                   |
 
-## Secrets to set (by a human, never by an agent)
+## Secrets
 
 Stage them without deploying: `fly secrets set --app vici-officina --stage NAME=value`.
 
-| Secret                     | Where it comes from                                                                                                                                                                                           |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GITHUB_APP_PRIVATE_KEY`   | GitHub App settings -> Private keys -> Generate. Set from the downloaded file: `fly secrets set --app vici-officina --stage GITHUB_APP_PRIVATE_KEY="$(cat <path-to>.private-key.pem)"`, then delete the file. |
-| `GITHUB_APP_CLIENT_SECRET` | GitHub App settings -> Client secrets -> Generate.                                                                                                                                                            |
-| `GITHUB_WEBHOOK_SECRET`    | Generate locally (`openssl rand -hex 32`); paste the same value in the GitHub App webhook settings when activating the webhook.                                                                               |
-| `ANTHROPIC_API_KEY`        | Claude Console, workspace Officina -> API keys -> Create key.                                                                                                                                                 |
-| `DATABASE_URL`             | Set automatically when Postgres is attached at the first deploy.                                                                                                                                              |
+| Secret                   | Status | Where it comes from                                                                                                               |
+| ------------------------ | ------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| `GITHUB_APP_ID`          | staged | `4965437`                                                                                                                         |
+| `GITHUB_APP_PRIVATE_KEY` | staged | Generated on the GitHub App settings page and piped from the downloaded file without being read; the file was moved to the Trash. |
+| `GITHUB_WEBHOOK_SECRET`  | to do  | Generate with `openssl rand -hex 32`, stage it, and set the same value on the GitHub App webhook.                                 |
+| `ANTHROPIC_API_KEY`      | to do  | Claude Console, workspace Officina, API keys.                                                                                     |
+| `DATABASE_URL`           | to do  | Set when Postgres is attached.                                                                                                    |
+
+Without `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY` and `ANTHROPIC_API_KEY` the API still runs and logs `engine disabled` with the missing names.
 
 ## Runtime
 
-The API is built from the root `Dockerfile` and configured by `fly.toml` (region `ams`, health check on `/health`). On boot it validates its environment and applies pending migrations. Required environment: `DATABASE_URL`, `GITHUB_WEBHOOK_SECRET` (at least 32 characters); `PORT` defaults to 8080.
+The API is built from the root `Dockerfile` (which includes `agents/`) and configured by `fly.toml` (region `ams`, health check on `/health`, one machine always on because the scheduler runs inside it). On boot it validates its environment, applies pending migrations, fails runs orphaned by a previous process and interrupts their sessions, then starts the scheduler every `SCHEDULER_INTERVAL_MS` (default 15 seconds). Run exactly one machine: orphaned-run recovery assumes a single scheduler.
 
-## Agents
-
-Before the engine runs, a Managed Agents environment must exist in the Officina workspace (cloud, `limited` networking with package managers allowed, plus any hosts the project's verify commands need), and the role agents must be synced from `agents/*.md` with `syncAgents`, which stores their ids and versions in `agent_versions`.
-
-## At first deploy
+## First deploy
 
 1. Create and attach Postgres to `vici-officina`.
-2. Generate and stage `GITHUB_WEBHOOK_SECRET`, then `fly deploy`; confirm `https://vici-officina.fly.dev/health`.
-3. Activate the GitHub App webhook with `GITHUB_WEBHOOK_SECRET`.
-4. Set a monthly spend limit on the Officina Anthropic workspace.
-5. Install the GitHub App on `ViciApp/vici-app` only (selected repositories).
+2. Stage `GITHUB_WEBHOOK_SECRET` and `ANTHROPIC_API_KEY`, then `fly deploy`; confirm `https://vici-officina.fly.dev/health` and a log line `api listening` with `engine: true`.
+3. Sync the agents: `fly ssh console --app vici-officina -C "bun apps/api/src/cli.ts setup-agents"`.
+4. Install the GitHub App on `ViciApp/vici-app` only (selected repositories).
+5. Register the project: `fly ssh console --app vici-officina -C "bun apps/api/src/cli.ts add-project --workspace vici --repo ViciApp/vici-app --owner-email <email> --owner-name Antonio"`. Until `.github/officina.yml` is merged in vici-app, pass it with `--config-file`.
+6. Activate the GitHub App webhook with the same `GITHUB_WEBHOOK_SECRET`.
+7. Set a monthly spend limit on the Officina Anthropic workspace.

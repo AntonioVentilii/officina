@@ -22,7 +22,8 @@ describe.skipIf(!url)('migrations', () => {
     expect(await migrate(client)).toEqual([
       '0001_init.sql',
       '0002_webhook_deliveries.sql',
-      '0003_runs_and_agents.sql'
+      '0003_runs_and_agents.sql',
+      '0004_project_environments.sql'
     ]);
     expect(await migrate(client)).toEqual([]);
   });

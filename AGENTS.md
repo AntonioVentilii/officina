@@ -13,6 +13,8 @@ Officina: a collaborative agent workshop. The design lives in [`docs/architectur
 - `bun run test`: core, GitHub and runner tests, no network or database
 - `bun run test:db`: database, engine and API tests against a throwaway Postgres container (needs Docker)
 - `DATABASE_URL=... bun packages/db/src/migrate.ts`: apply migrations
+- `bun apps/api/src/cli.ts setup-agents`: sync the role agents from `agents/*.md`
+- `bun apps/api/src/cli.ts add-project --workspace <name> --repo <owner/name> --owner-email <email> --owner-name <name> [--config-file <path>]`: register a repository
 
 ## Layout
 
@@ -22,7 +24,7 @@ Officina: a collaborative agent workshop. The design lives in [`docs/architectur
 - `packages/runner`: runs one agent role in one Managed Agents session. Role definitions (tools per role, the `submit_result` tool built from the output contract), agent sync, and `executeRun`. Only `src/sdk.ts` touches the SDK; everything else uses `ManagedAgentsPort`, which tests fake.
 - `packages/engine`: `runAgentStep` (claim, brief, run, verify the push, apply the result, open the pull request) and `tick` (dispatch ready tasks, run due steps).
 - `agents/`: one system prompt per agent role. Changing a prompt produces a new agent version on the next sync.
-- `apps/api`: the Elysia HTTP server (`/health`, `/github/webhook`). `main.ts` validates the environment and runs migrations on boot.
+- `apps/api`: `main.ts` starts the HTTP server and, when GitHub App and Anthropic credentials are present, the scheduler (`engine.ts`, `scheduler.ts`), which fails runs orphaned by a previous process on boot. `setup.ts` and `cli.ts` register projects and sync agents. Earlier notes on the Elysia HTTP server (`/health`, `/github/webhook`). `main.ts` validates the environment and runs migrations on boot.
 
 ## Rules
 

@@ -2,14 +2,16 @@ import { hasDelivery, recordDelivery } from '@officina/db';
 import { parseWebhookEvent, verifyWebhookSignature } from '@officina/github';
 import { Elysia } from 'elysia';
 import type { Pool } from 'pg';
-import { handleWebhookAction } from './webhooks';
+import { handleWebhookAction, type ConfigReader } from './webhooks';
 
 export interface AppDependencies {
   readonly pool: Pool;
   readonly webhookSecret: string;
+  /** Needed to refresh project configs on push; without it config pushes are ignored. */
+  readonly github?: ConfigReader;
 }
 
-export const createApp = ({ pool, webhookSecret }: AppDependencies) =>
+export const createApp = ({ pool, webhookSecret, github }: AppDependencies) =>
   new Elysia()
     .get('/health', () => ({ ok: true }))
     .post(
@@ -41,7 +43,7 @@ export const createApp = ({ pool, webhookSecret }: AppDependencies) =>
         }
 
         const action = parseWebhookEvent(event, payload);
-        const outcomes = action ? await handleWebhookAction(pool, action) : [];
+        const outcomes = action ? await handleWebhookAction(pool, action, github) : [];
         // Recorded only after processing, so a delivery that failed mid-way is retried by GitHub.
         await recordDelivery(pool, deliveryId, event);
         return { status: action ? 'applied' : 'ignored', outcomes };

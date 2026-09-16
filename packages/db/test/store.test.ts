@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { Pool } from 'pg';
 import type { Actor, Command } from '@officina/core';
-import { applyCommand, createTask, loadTask } from '../src';
+import { applyCommand, createTask, failOrphanedRuns, loadTask, startRun } from '../src';
 import { resetAndSeed } from './seed';
 
 const url = process.env.TEST_DATABASE_URL;
@@ -201,5 +201,31 @@ describe.skipIf(!url)('task store', () => {
         actor: antonio
       })
     ).toEqual({ ok: false, error: 'invalid_config' });
+  });
+
+  test('runs left running by a previous process are failed so their step can run again', async () => {
+    const { task } = await createTask(pool, { projectId, title: 'Orphan', requesterId: antonioId });
+    const claim = await startRun(pool, {
+      taskId: task.id,
+      stage: 'speccing',
+      role: 'spec',
+      agentVersion: 1,
+      runner: 'managed_agents'
+    });
+    if (!claim.ok) throw new Error('claim failed');
+    await pool.query(`update runs set external_id = 'sesn_old' where id = $1`, [claim.runId]);
+
+    expect(await failOrphanedRuns(pool)).toEqual([{ id: claim.runId, externalId: 'sesn_old' }]);
+    expect(
+      (
+        await startRun(pool, {
+          taskId: task.id,
+          stage: 'speccing',
+          role: 'spec',
+          agentVersion: 1,
+          runner: 'managed_agents'
+        })
+      ).ok
+    ).toBe(true);
   });
 });
