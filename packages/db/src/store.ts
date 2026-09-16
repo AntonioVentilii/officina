@@ -122,10 +122,21 @@ const subjectFor = (task: Task, gate: Gate): string =>
  * and the new state plus every event lands in the same transaction or not at all.
  * `expectedVersion` lets a client that acted on a stale view get `conflict` instead of a surprise.
  */
-export const applyCommand = (
-  pool: Pool,
-  input: { taskId: string; command: Command; actor: Actor; expectedVersion?: number }
-): Promise<ApplyResult> =>
+export interface ApplyInput {
+  readonly taskId: string;
+  readonly command: Command;
+  readonly actor: Actor;
+  readonly expectedVersion?: number;
+  /**
+   * Checked against the locked, current task. Agent results use it to require the state the agent
+   * actually worked on (same stage, same head commit), so a stale result is never applied.
+   */
+  readonly guard?: (task: Task) => boolean;
+  /** Runs inside the same transaction after the new state is written, e.g. to store a spec version. */
+  readonly onApplied?: (client: PoolClient, task: Task) => Promise<void>;
+}
+
+export const applyCommand = (pool: Pool, input: ApplyInput): Promise<ApplyResult> =>
   inTransaction(pool, async (client) => {
     const { rows } = await client.query<TaskRow & { config: unknown }>(
       `select t.*, p.config from tasks t join projects p on p.id = t.project_id
@@ -155,6 +166,7 @@ export const applyCommand = (
     ).rows;
 
     const before = toStored(row).task;
+    if (input.guard && !input.guard(before)) return { ok: false, error: 'conflict' };
     const decision = decide(before, input.command, input.actor, {
       config: parsedConfig.config,
       members,
@@ -205,5 +217,6 @@ export const applyCommand = (
       }
     }
 
+    await input.onApplied?.(client, task);
     return { ok: true, task, version: updated.rows[0]!.version, events: decision.events };
   });

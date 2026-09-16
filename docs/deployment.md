@@ -27,6 +27,10 @@ Stage them without deploying: `fly secrets set --app vici-officina --stage NAME=
 
 The API is built from the root `Dockerfile` and configured by `fly.toml` (region `ams`, health check on `/health`). On boot it validates its environment and applies pending migrations. Required environment: `DATABASE_URL`, `GITHUB_WEBHOOK_SECRET` (at least 32 characters); `PORT` defaults to 8080.
 
+## Agents
+
+Before the engine runs, a Managed Agents environment must exist in the Officina workspace (cloud, `limited` networking with package managers allowed, plus any hosts the project's verify commands need), and the role agents must be synced from `agents/*.md` with `syncAgents`, which stores their ids and versions in `agent_versions`.
+
 ## At first deploy
 
 1. Create and attach Postgres to `vici-officina`.

@@ -34,7 +34,7 @@ try {
   // pg_isready passes before the init script restarts the server; give it a moment.
   await Bun.sleep(1500);
 
-  const exitCode = await Bun.spawn(['bun', 'test', 'packages/db', 'apps/api'], {
+  const exitCode = await Bun.spawn(['bun', 'test', 'packages/db', 'packages/engine', 'apps/api'], {
     stdout: 'inherit',
     stderr: 'inherit',
     env: {

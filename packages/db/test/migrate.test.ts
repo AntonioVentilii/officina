@@ -19,7 +19,11 @@ describe.skipIf(!url)('migrations', () => {
   });
 
   test('apply once and are idempotent', async () => {
-    expect(await migrate(client)).toEqual(['0001_init.sql', '0002_webhook_deliveries.sql']);
+    expect(await migrate(client)).toEqual([
+      '0001_init.sql',
+      '0002_webhook_deliveries.sql',
+      '0003_runs_and_agents.sql'
+    ]);
     expect(await migrate(client)).toEqual([]);
   });
 

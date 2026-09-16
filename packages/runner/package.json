@@ -1,0 +1,13 @@
+{
+  "name": "@officina/runner",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "0.126.0",
+    "@officina/core": "workspace:*",
+    "zod": "^4.6.5"
+  }
+}

@@ -1,0 +1,74 @@
+import type Anthropic from '@anthropic-ai/sdk';
+import type { AgentCreateParams } from '@anthropic-ai/sdk/resources/beta/agents/agents';
+import type { EventSendParams } from '@anthropic-ai/sdk/resources/beta/sessions/events';
+import type { SessionCreateParams } from '@anthropic-ai/sdk/resources/beta/sessions/sessions';
+import type { AgentWrite, ManagedAgentsPort, OutboundEvent, SessionEvent } from './port';
+
+const toSdkEvent = (event: OutboundEvent): EventSendParams['events'][number] => {
+  switch (event.type) {
+    case 'user.message':
+      return { type: 'user.message', content: [{ type: 'text', text: event.text }] };
+    case 'user.custom_tool_result':
+      return {
+        type: 'user.custom_tool_result',
+        custom_tool_use_id: event.toolUseId,
+        content: [{ type: 'text', text: event.text }],
+        is_error: event.isError
+      };
+    case 'user.interrupt':
+      return { type: 'user.interrupt' };
+  }
+};
+
+const agentParams = (agent: AgentWrite): AgentCreateParams => ({
+  name: agent.name,
+  model: agent.model,
+  system: agent.system,
+  tools: agent.tools
+});
+
+export const createSdkPort = (client: Anthropic): ManagedAgentsPort => ({
+  async createSession(request) {
+    const params: SessionCreateParams = {
+      agent: { type: 'agent', id: request.agentId, version: request.agentVersion },
+      environment_id: request.environmentId,
+      title: request.title,
+      metadata: { ...request.metadata },
+      resources: [
+        {
+          type: 'github_repository',
+          url: request.repository.url,
+          authorization_token: request.repository.token,
+          checkout: { type: 'branch', name: request.repository.branch }
+        }
+      ],
+      budget: {
+        type: 'limit',
+        max_list_cost: { amount: String(request.budgetCents), currency: 'USD' }
+      }
+    };
+    const session = await client.beta.sessions.create(params);
+    return { id: session.id };
+  },
+  async openStream(sessionId) {
+    const stream = await client.beta.sessions.events.stream(sessionId);
+    return stream as unknown as AsyncIterable<SessionEvent>;
+  },
+  async send(sessionId, events) {
+    await client.beta.sessions.events.send(sessionId, { events: events.map(toSdkEvent) });
+  },
+  async sessionCostCents(sessionId) {
+    const session = await client.beta.sessions.retrieve(sessionId);
+    const amount = session.usage?.list_cost?.amount;
+    return amount === undefined ? null : Number(amount);
+  },
+  async createAgent(agent) {
+    const created = await client.beta.agents.create(agentParams(agent));
+    return { id: created.id, version: created.version };
+  },
+  async updateAgent(agentId, agent) {
+    // No expected version: this sync loop owns the agents it manages.
+    const updated = await client.beta.agents.update(agentId, agentParams(agent));
+    return { id: updated.id, version: updated.version };
+  }
+});
