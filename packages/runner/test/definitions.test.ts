@@ -1,6 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
-import { RESULT_TOOL, RUNNER_ROLES, buildDefinition, loadDefinitions, syncAgents } from '../src';
+import {
+  RESULT_TOOL,
+  RUNNER_ROLES,
+  buildDefinition,
+  ensureEnvironment,
+  loadDefinitions,
+  syncAgents
+} from '../src';
 import { createFakePort } from './fake-port';
 
 const toolset = (role: (typeof RUNNER_ROLES)[number]) =>
@@ -58,5 +65,21 @@ describe('syncAgents', () => {
     expect(port.agentWrites.at(-1)!.id).toBe(first.agents[1]!.externalAgentId);
     expect(second.agents[0]).toEqual(first.agents[0]!);
     expect(second.agents[1]!.version).toBe(3);
+  });
+});
+
+describe('ensureEnvironment', () => {
+  test('creates the environment once and updates its allowed hosts afterwards', async () => {
+    const port = createFakePort(() => []);
+    const first = await ensureEnvironment(port, { name: 'officina-vici-app', allowedHosts: [] });
+    expect(first).toEqual({ id: 'env_1', created: true });
+    const second = await ensureEnvironment(port, {
+      name: 'officina-vici-app',
+      allowedHosts: ['registry.example.com']
+    });
+    expect(second).toEqual({ id: 'env_1', created: false });
+    expect(port.environments.get('officina-vici-app')?.allowedHosts).toEqual([
+      'registry.example.com'
+    ]);
   });
 });

@@ -2,7 +2,14 @@ import type Anthropic from '@anthropic-ai/sdk';
 import type { AgentCreateParams } from '@anthropic-ai/sdk/resources/beta/agents/agents';
 import type { EventSendParams } from '@anthropic-ai/sdk/resources/beta/sessions/events';
 import type { SessionCreateParams } from '@anthropic-ai/sdk/resources/beta/sessions/sessions';
-import type { AgentWrite, ManagedAgentsPort, OutboundEvent, SessionEvent } from './port';
+import type { EnvironmentCreateParams } from '@anthropic-ai/sdk/resources/beta/environments/environments';
+import type {
+  AgentWrite,
+  EnvironmentWrite,
+  ManagedAgentsPort,
+  OutboundEvent,
+  SessionEvent
+} from './port';
 
 const toSdkEvent = (event: OutboundEvent): EventSendParams['events'][number] => {
   switch (event.type) {
@@ -27,7 +34,38 @@ const agentParams = (agent: AgentWrite): AgentCreateParams => ({
   tools: agent.tools
 });
 
+/** Deny-by-default egress: package registries plus the hosts a project explicitly allows. */
+const environmentConfig = (
+  environment: EnvironmentWrite
+): NonNullable<EnvironmentCreateParams['config']> => ({
+  type: 'cloud',
+  networking: {
+    type: 'limited',
+    allow_package_managers: true,
+    allow_mcp_servers: false,
+    allowed_hosts: [...environment.allowedHosts]
+  }
+});
+
 export const createSdkPort = (client: Anthropic): ManagedAgentsPort => ({
+  async findEnvironmentByName(name) {
+    for await (const environment of client.beta.environments.list()) {
+      if (environment.name === name) return { id: environment.id };
+    }
+    return null;
+  },
+  async createEnvironment(environment) {
+    const created = await client.beta.environments.create({
+      name: environment.name,
+      config: environmentConfig(environment)
+    });
+    return { id: created.id };
+  },
+  async updateEnvironment(environmentId, environment) {
+    await client.beta.environments.update(environmentId, {
+      config: environmentConfig(environment)
+    });
+  },
   async createSession(request) {
     const params: SessionCreateParams = {
       agent: { type: 'agent', id: request.agentId, version: request.agentVersion },

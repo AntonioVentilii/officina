@@ -137,6 +137,24 @@ describe('GitHub client', () => {
     expect(facts.diffLines).toBe(Number.MAX_SAFE_INTEGER);
   });
 
+  test('finds the installation, the default branch and file contents', async () => {
+    const { fetchImpl, calls } = fakeGitHub({
+      'GET /repos/ViciApp/vici-app/installation': () => json({ id: 99 }),
+      'POST /app/installations/99/access_tokens': tokenRoute('2099-01-01T00:00:00Z'),
+      'GET /repos/ViciApp/vici-app': () => json({ default_branch: 'main' }),
+      'GET /repos/ViciApp/vici-app/contents/.github/officina.yml': () =>
+        json({ content: Buffer.from('version: 1\n').toString('base64'), encoding: 'base64' })
+    });
+    const client = createGitHubClient({ appId: '1', privateKeyPem, fetch: fetchImpl });
+    expect(await client.repoInstallationId('ViciApp/vici-app')).toBe(99);
+    expect(calls[0]!.authorization).toStartWith('Bearer ey');
+    expect(await client.defaultBranch(ref)).toBe('main');
+    expect(await client.fileContent({ ...ref, path: '.github/officina.yml', branch: 'main' })).toBe(
+      'version: 1\n'
+    );
+    expect(await client.fileContent({ ...ref, path: 'missing.yml', branch: 'main' })).toBeNull();
+  });
+
   test('opens pull requests and surfaces GitHub errors with status and path', async () => {
     const { fetchImpl, calls } = fakeGitHub({
       'POST /app/installations/99/access_tokens': tokenRoute('2099-01-01T00:00:00Z'),

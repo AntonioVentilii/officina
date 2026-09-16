@@ -11,6 +11,7 @@ export interface StoredTaskContext {
   readonly repo: string;
   readonly installationId: number | null;
   readonly defaultBranch: string;
+  readonly environmentId: string | null;
   readonly rawConfig: unknown;
   readonly pullRequest: number | null;
   readonly issue: number | null;

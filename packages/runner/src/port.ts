@@ -42,7 +42,15 @@ export interface AgentWrite {
   readonly tools: AgentTools;
 }
 
+export interface EnvironmentWrite {
+  readonly name: string;
+  readonly allowedHosts: readonly string[];
+}
+
 export interface ManagedAgentsPort {
+  findEnvironmentByName(name: string): Promise<{ id: string } | null>;
+  createEnvironment(environment: EnvironmentWrite): Promise<{ id: string }>;
+  updateEnvironment(environmentId: string, environment: EnvironmentWrite): Promise<void>;
   createSession(request: SessionRequest): Promise<{ id: string }>;
   openStream(sessionId: string): Promise<AsyncIterable<SessionEvent>>;
   send(sessionId: string, events: readonly OutboundEvent[]): Promise<void>;

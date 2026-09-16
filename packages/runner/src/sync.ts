@@ -1,5 +1,5 @@
 import type { AgentDefinition } from './definitions';
-import type { ManagedAgentsPort } from './port';
+import type { EnvironmentWrite, ManagedAgentsPort } from './port';
 
 export interface SyncedAgent {
   readonly role: string;
@@ -44,4 +44,17 @@ export const syncAgents = async (
     changed.push(definition.role);
   }
   return { agents, changed };
+};
+
+/** Creates the environment, or brings an existing one with the same name up to date. */
+export const ensureEnvironment = async (
+  port: ManagedAgentsPort,
+  environment: EnvironmentWrite
+): Promise<{ id: string; created: boolean }> => {
+  const existing = await port.findEnvironmentByName(environment.name);
+  if (existing) {
+    await port.updateEnvironment(existing.id, environment);
+    return { id: existing.id, created: false };
+  }
+  return { ...(await port.createEnvironment(environment)), created: true };
 };

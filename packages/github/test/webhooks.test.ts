@@ -44,6 +44,24 @@ describe('webhook events', () => {
     ).toBeNull();
   });
 
+  test('a branch push lists the changed paths once', () => {
+    expect(
+      parseWebhookEvent('push', {
+        ref: 'refs/heads/main',
+        commits: [
+          { added: ['a.ts'], modified: ['.github/officina.yml'], removed: [] },
+          { modified: ['.github/officina.yml'] }
+        ],
+        repository
+      })
+    ).toEqual({
+      kind: 'push',
+      repo: 'ViciApp/vici-app',
+      branch: 'main',
+      changedPaths: ['a.ts', '.github/officina.yml']
+    });
+  });
+
   test('a failed check suite on pull requests', () => {
     expect(
       parseWebhookEvent('check_suite', {
@@ -72,7 +90,7 @@ describe('webhook events', () => {
     expect(parseWebhookEvent('check_suite', suite('success'))).toBeNull();
     expect(parseWebhookEvent('check_suite', suite('neutral'))).toBeNull();
     expect(parseWebhookEvent('check_suite', suite('failure', []))).toBeNull();
-    expect(parseWebhookEvent('push', { repository })).toBeNull();
+    expect(parseWebhookEvent('push', { ref: 'refs/tags/v1', repository })).toBeNull();
     expect(parseWebhookEvent('pull_request', 'not an object')).toBeNull();
   });
 });

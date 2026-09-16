@@ -1,5 +1,6 @@
 import type {
   AgentWrite,
+  EnvironmentWrite,
   ManagedAgentsPort,
   OutboundEvent,
   SessionEvent,
@@ -31,6 +32,7 @@ export interface FakePort extends ManagedAgentsPort {
   readonly sent: { sessionId: string; events: readonly OutboundEvent[] }[];
   readonly log: string[];
   readonly agentWrites: { id: string | null; agent: AgentWrite }[];
+  readonly environments: Map<string, EnvironmentWrite & { id: string }>;
 }
 
 export const createFakePort = (
@@ -41,6 +43,7 @@ export const createFakePort = (
   const sent: FakePort['sent'] = [];
   const log: string[] = [];
   const agentWrites: FakePort['agentWrites'] = [];
+  const environments = new Map<string, EnvironmentWrite & { id: string }>();
   let agentVersion = 0;
 
   return {
@@ -48,6 +51,19 @@ export const createFakePort = (
     sent,
     log,
     agentWrites,
+    environments,
+    async findEnvironmentByName(name) {
+      const found = environments.get(name);
+      return found ? { id: found.id } : null;
+    },
+    async createEnvironment(environment) {
+      const id = `env_${environments.size + 1}`;
+      environments.set(environment.name, { ...environment, id });
+      return { id };
+    },
+    async updateEnvironment(environmentId, environment) {
+      environments.set(environment.name, { ...environment, id: environmentId });
+    },
     async createSession(request) {
       sessions.push(request);
       const id = `sesn_${sessions.length}`;

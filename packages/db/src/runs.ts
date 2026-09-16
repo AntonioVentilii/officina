@@ -66,13 +66,14 @@ export const loadTaskContext = async (
     github_repo: string;
     github_installation_id: string | null;
     default_branch: string;
+    agent_environment_id: string | null;
     config: unknown;
     github_pr: number | null;
     github_issue: number | null;
     spec: string | null;
   }>(
     `select t.number, t.title, t.project_id, t.github_pr, t.github_issue,
-            p.github_repo, p.github_installation_id, p.default_branch, p.config,
+            p.github_repo, p.github_installation_id, p.default_branch, p.agent_environment_id, p.config,
             (select body from spec_versions s where s.task_id = t.id order by version desc limit 1) as spec
      from tasks t join projects p on p.id = t.project_id where t.id = $1`,
     [taskId]
@@ -87,6 +88,7 @@ export const loadTaskContext = async (
     // bigint arrives as a string; installation ids fit comfortably in a JS number.
     installationId: row.github_installation_id === null ? null : Number(row.github_installation_id),
     defaultBranch: row.default_branch,
+    environmentId: row.agent_environment_id,
     rawConfig: row.config,
     pullRequest: row.github_pr,
     issue: row.github_issue,

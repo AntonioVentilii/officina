@@ -6,9 +6,12 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "0.126.0",
     "@officina/core": "workspace:*",
     "@officina/db": "workspace:*",
+    "@officina/engine": "workspace:*",
     "@officina/github": "workspace:*",
+    "@officina/runner": "workspace:*",
     "elysia": "^1.4.30",
     "pg": "^8.23.0",
     "zod": "^4.6.5"

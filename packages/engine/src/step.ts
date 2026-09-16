@@ -37,7 +37,6 @@ export interface EngineDependencies {
   readonly pool: Pool;
   readonly github: GitHubPort;
   readonly agents: ManagedAgentsPort;
-  readonly environmentId: string;
 }
 
 export type StepResult =
@@ -50,6 +49,7 @@ export type StepResult =
         | 'not_found'
         | 'not_due'
         | 'not_installed'
+        | 'no_environment'
         | 'agent_not_synced'
         | 'invalid_config'
         | 'already_running';
@@ -98,6 +98,8 @@ export const runAgentStep = async (
   if (!context) return { status: 'skipped', reason: 'not_found' };
   if (!nextAgentRoles(context.task).includes(role)) return { status: 'skipped', reason: 'not_due' };
   if (context.installationId === null) return { status: 'skipped', reason: 'not_installed' };
+  if (context.environmentId === null) return { status: 'skipped', reason: 'no_environment' };
+  const environmentId = context.environmentId;
   const agent = (await loadAgentVersions(pool)).find((record) => record.role === role);
   if (!agent) return { status: 'skipped', reason: 'agent_not_synced' };
   const parsedConfig = parseProjectConfig(context.rawConfig);
@@ -148,7 +150,7 @@ export const runAgentStep = async (
       session: {
         agentId: agent.externalAgentId,
         agentVersion: agent.version,
-        environmentId: deps.environmentId,
+        environmentId,
         title: `Officina #${context.number} ${role}`,
         metadata: { task_id: taskId, run_id: runId, role },
         repository: {
