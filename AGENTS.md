@@ -24,7 +24,7 @@ Officina: a collaborative agent workshop. The design lives in [`docs/architectur
 - `packages/runner`: runs one agent role in one Managed Agents session. Role definitions (tools per role, the `submit_result` tool built from the output contract), agent sync, and `executeRun`. Only `src/sdk.ts` touches the SDK; everything else uses `ManagedAgentsPort`, which tests fake.
 - `packages/engine`: `runAgentStep` (claim, brief, run, verify the push, apply the result, open the pull request) and `tick` (dispatch ready tasks, run due steps).
 - `agents/`: one system prompt per agent role. Changing a prompt produces a new agent version on the next sync.
-- `apps/api`: `main.ts` starts the HTTP server and, when GitHub App and Anthropic credentials are present, the scheduler (`engine.ts`, `scheduler.ts`), which fails runs orphaned by a previous process on boot. `setup.ts` and `cli.ts` register projects and sync agents. Earlier notes on the Elysia HTTP server (`/health`, `/github/webhook`). `main.ts` validates the environment and runs migrations on boot.
+- `apps/api`: the Elysia HTTP server (`/health`, `/github/webhook`). `main.ts` validates the environment, runs migrations and, when GitHub App and Anthropic credentials are present, starts the scheduler (`engine.ts`, `scheduler.ts`), failing runs orphaned by a previous process first. `setup.ts` and `cli.ts` register projects and sync agents.
 
 ## Rules
 
