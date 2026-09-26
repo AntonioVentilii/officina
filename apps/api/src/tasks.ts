@@ -132,11 +132,13 @@ export const actOnTask = async (
 const money = (cents: number | null) =>
   cents === null ? 'cost unknown' : `$${(cents / 100).toFixed(2)}`;
 
+const article = (word: string) => (/^[aeiou]/i.test(word) ? `an ${word}` : `a ${word}`);
+
 const describeRequirement = (requirement: Requirement): string =>
   'role' in requirement
-    ? `a ${requirement.role}`
+    ? article(requirement.role)
     : 'domain' in requirement
-      ? `a ${requirement.domain} approver`
+      ? article(`${requirement.domain} approver`)
       : 'the requester';
 
 const NEXT_STEP: Partial<Record<string, string>> = {

@@ -39,7 +39,13 @@ export const startScheduler = (options: SchedulerOptions): Scheduler => {
       const running = options
         .runStep(work)
         .then((result) => log('step finished', { ...work, result }))
-        .catch((error: Error) => log('step failed', { ...work, error: error.message }))
+        .catch((error: Error) =>
+          log('step failed', {
+            ...work,
+            error: error.message,
+            stack: String(error.stack).split('\n').slice(0, 8).join('\n')
+          })
+        )
         .finally(() => inFlight.delete(key));
       inFlight.set(key, running);
     }
