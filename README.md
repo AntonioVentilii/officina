@@ -17,6 +17,7 @@ Risk lanes, computed from the paths a change touches, decide what agents may do 
 ## Docs
 
 - [Architecture](./docs/architecture.md): principles, roles, lifecycle, agents, runner, data model, security, phases.
+- [Running a task](./docs/running-a-task.md): the exact commands to take a change from request to merged pull request.
 - [Deployment](./docs/deployment.md): infrastructure identifiers and the secrets a human must set.
 - [AGENTS.md](./AGENTS.md): entry point for agents working on this repository.
 
