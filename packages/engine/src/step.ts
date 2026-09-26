@@ -265,11 +265,15 @@ export const runAgentStep = async (
     });
     return { status: 'applied' };
   } catch (error) {
-    await finishRun(pool, runId, {
-      status: 'failed',
-      costCents: null,
-      result: { error: (error as Error).message }
-    });
+    const message = (error as Error).message;
+    await finishRun(pool, runId, { status: 'failed', costCents: null, result: { error: message } });
+    // Blocking stops the scheduler from retrying a step that fails the same way every time;
+    // answering the question retries it.
+    await blockTask(
+      pool,
+      taskId,
+      `The ${role} step failed unexpectedly: ${message}. Answer this question to retry it.`
+    ).catch(() => {});
     throw error;
   }
 };

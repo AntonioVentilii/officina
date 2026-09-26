@@ -259,4 +259,26 @@ describe.skipIf(!url)('engine', () => {
     ).toEqual({ status: 'skipped', reason: 'not_due' });
     expect(agents.sessions).toHaveLength(0);
   });
+
+  test('an unexpected failure blocks the task instead of being retried forever', async () => {
+    const taskId = await taskInSpeccing();
+    const broken = {
+      ...fakeGitHub().port,
+      installationToken: async () => {
+        throw new Error('connection refused');
+      }
+    } as GitHubPort;
+    const deps = { pool, github: broken, agents: createFakePort(succeed) };
+
+    await expect(runAgentStep(deps, taskId, 'spec')).rejects.toThrow('connection refused');
+    const stored = await loadTask(pool, taskId);
+    expect(stored?.task.blocked?.question).toContain(
+      'The spec step failed unexpectedly: connection refused'
+    );
+    expect(await runAgentStep(deps, taskId, 'spec')).toEqual({
+      status: 'skipped',
+      reason: 'not_due'
+    });
+    expect((await runStatuses(taskId)).map((run) => run.status)).toEqual(['failed']);
+  });
 });
