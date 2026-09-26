@@ -3,4 +3,5 @@ export * from './store';
 export * from './github';
 export * from './runs';
 export * from './projects';
+export * from './tasks';
 export type { StoredTaskContext } from './types';
