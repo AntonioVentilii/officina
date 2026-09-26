@@ -1,6 +1,14 @@
 app = "vici-officina"
 primary_region = "ams"
 
+# Public identifiers for Anthropic workload identity federation: the machine proves its identity
+# with a Fly OIDC token, so no Anthropic API key is stored anywhere.
+[env]
+  ANTHROPIC_FEDERATION_RULE_ID = "fdrl_018jgpUk8osKSBgzbZnAna6D"
+  ANTHROPIC_ORGANIZATION_ID = "b4c6858e-c21f-469d-b0e7-d615481fbc2c"
+  ANTHROPIC_SERVICE_ACCOUNT_ID = "svac_0186Y6oZ4rytk8sDqDJiT2sV"
+  ANTHROPIC_WORKSPACE_ID = "wrkspc_01GSzPabbQGWhbSVM7LQE7oV"
+
 [http_service]
   internal_port = 8080
   force_https = true

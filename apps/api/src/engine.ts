@@ -1,13 +1,20 @@
-import Anthropic from '@anthropic-ai/sdk';
 import { collectDueSteps, runAgentStep, type EngineDependencies } from '@officina/engine';
 import { failOrphanedRuns, listSchedulableProjectIds } from '@officina/db';
 import type { GitHubClient } from '@officina/github';
-import { createSdkPort, type ManagedAgentsPort, type RunnerRole } from '@officina/runner';
+import {
+  createAnthropicClient,
+  createSdkPort,
+  type AnthropicAuth,
+  type ManagedAgentsPort,
+  type RunnerRole
+} from '@officina/runner';
 import type { Pool } from 'pg';
 import { startScheduler, type Scheduler } from './scheduler';
 
-export const createAgentsPort = (apiKey: string): ManagedAgentsPort =>
-  createSdkPort(new Anthropic({ apiKey }));
+export const createAgentsPort = (
+  auth: AnthropicAuth,
+  onRefreshError?: (error: unknown) => void
+): ManagedAgentsPort => createSdkPort(createAnthropicClient(auth, onRefreshError));
 
 /**
  * Starts the engine inside this process. Runs orphaned by a previous process are failed first, and

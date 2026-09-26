@@ -1,5 +1,6 @@
 import { migrate } from '@officina/db';
 import { createGitHubClient } from '@officina/github';
+import { anthropicAuthFrom } from '@officina/runner';
 import { Pool } from 'pg';
 import { z } from 'zod';
 import { createApp } from './app';
@@ -12,6 +13,11 @@ const env = z
     PORT: z.coerce.number().int().positive().default(8080),
     GITHUB_APP_ID: z.string().min(1).optional(),
     GITHUB_APP_PRIVATE_KEY: z.string().min(1).optional(),
+    // Workload identity federation: public identifiers, no stored key. Falls back to an API key.
+    ANTHROPIC_FEDERATION_RULE_ID: z.string().min(1).optional(),
+    ANTHROPIC_ORGANIZATION_ID: z.string().min(1).optional(),
+    ANTHROPIC_SERVICE_ACCOUNT_ID: z.string().min(1).optional(),
+    ANTHROPIC_WORKSPACE_ID: z.string().min(1).optional(),
     ANTHROPIC_API_KEY: z.string().min(1).optional(),
     SCHEDULER_INTERVAL_MS: z.coerce.number().int().positive().default(15_000)
   })
@@ -35,22 +41,31 @@ const github =
     ? createGitHubClient({ appId: env.GITHUB_APP_ID, privateKeyPem: env.GITHUB_APP_PRIVATE_KEY })
     : undefined;
 
+const anthropicAuth = anthropicAuthFrom(process.env);
+
 const scheduler =
-  github && env.ANTHROPIC_API_KEY
+  github && anthropicAuth
     ? await startEngine({
         pool,
         github,
-        agents: createAgentsPort(env.ANTHROPIC_API_KEY),
+        agents: createAgentsPort(anthropicAuth, (error) =>
+          log('anthropic credentials refresh failed, keeping cached token', {
+            error: (error as Error).message
+          })
+        ),
         intervalMs: env.SCHEDULER_INTERVAL_MS,
         log
       })
     : undefined;
 
-if (!scheduler) {
+if (scheduler) {
+  log('anthropic credentials', { mode: anthropicAuth?.kind });
+} else {
   const missing = [
     !env.GITHUB_APP_ID && 'GITHUB_APP_ID',
     !env.GITHUB_APP_PRIVATE_KEY && 'GITHUB_APP_PRIVATE_KEY',
-    !env.ANTHROPIC_API_KEY && 'ANTHROPIC_API_KEY'
+    !anthropicAuth &&
+      'ANTHROPIC_FEDERATION_RULE_ID (with organization and service account) or ANTHROPIC_API_KEY'
   ].filter(Boolean);
   log('engine disabled', { missing });
 }
