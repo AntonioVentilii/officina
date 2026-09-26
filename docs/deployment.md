@@ -4,12 +4,12 @@ Infrastructure for the Vici instance of Officina. Identifiers here are not secre
 
 ## Resources
 
-| Resource            | Identifier                                                                                     | Notes                                                                                                                                                                                                                                                                                                                                                          |
-| ------------------- | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Fly.io app          | `vici-officina` (org `vici`)                                                                   | `https://vici-officina.fly.dev`; no machines until the first deploy. The name `officina` is taken on Fly.                                                                                                                                                                                                                                                      |
-| Postgres            | not created yet                                                                                | Provisioned at the first deploy, so it does not bill while nothing runs.                                                                                                                                                                                                                                                                                       |
-| GitHub App          | **Officina Workshop**, slug `officina-workshop`, App ID `4965437`, owned by `@AntonioVentilii` | The name "Officina" is reserved on GitHub. Installable on any account. Webhook inactive until deployed. Permissions: contents, issues, pull requests read/write; checks and metadata read-only; no Actions, Workflows or Administration. Callback `https://vici-officina.fly.dev/auth/github/callback` (strict matching). Not installed on any repository yet. |
-| Anthropic workspace | **Officina**, `wrkspc_01GSzPabbQGWhbSVM7LQE7oV`, geo US                                        | Managed Agents available. No API key and no spend limit yet.                                                                                                                                                                                                                                                                                                   |
+| Resource            | Identifier                                                                                     | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ------------------- | ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Fly.io app          | `vici-officina` (org `vici`), deployed                                                         | `https://vici-officina.fly.dev`, live. Exactly one machine (`fly scale count 1`): the scheduler runs inside it, and Fly's default high-availability pair would mean two schedulers. IPv4 (shared) and IPv6 allocated by hand after the first deploy failed to. The name `officina` is taken on Fly.                                                                                                                                                                                                        |
+| Postgres            | `officina-pg` (org `vici`, ams, shared-cpu-1x, 1 GB)                                           | Unmanaged Fly Postgres, attached to the app as `DATABASE_URL`. Managed Postgres was tried first and destroyed: its cheapest plan is $38 a month.                                                                                                                                                                                                                                                                                                                                                           |
+| GitHub App          | **Officina Workshop**, slug `officina-workshop`, App ID `4965437`, owned by `@AntonioVentilii` | The name "Officina" is reserved on GitHub. Installable on any account. Webhook inactive until deployed. Permissions: contents, issues, pull requests read/write; checks and metadata read-only; no Actions, Workflows or Administration. Callback `https://vici-officina.fly.dev/auth/github/callback` (strict matching). Installed on `ViciApp/vici-app` only (installation `165108978`). Webhook active. Subscribed events: check_suite, issue_comment, issues, pull_request, pull_request_review, push. |
+| Anthropic workspace | **Officina**, `wrkspc_01GSzPabbQGWhbSVM7LQE7oV`, geo US                                        | Agents synced; per-project environment `env_01BLpDE9hPGeGhGTRfntdrQX`. No API key anywhere (federation). Spend limit still to set.                                                                                                                                                                                                                                                                                                                                                                         |
 
 ## Secrets
 
@@ -44,7 +44,13 @@ The rule only accepts tokens whose subject starts with `vici:vici-officina:` and
 
 The API is built from the root `Dockerfile` (which includes `agents/`) and configured by `fly.toml` (region `ams`, health check on `/health`, one machine always on because the scheduler runs inside it). On boot it validates its environment, applies pending migrations, fails runs orphaned by a previous process and interrupts their sessions, then starts the scheduler every `SCHEDULER_INTERVAL_MS` (default 15 seconds). Run exactly one machine: orphaned-run recovery assumes a single scheduler.
 
-## First deploy
+## Project: vici-app
+
+Registered as project `010b5462-fb9f-4c75-8b71-39643a8b1e7a` in workspace `vici`, owner `antonioventilii@gmail.com`. Its config came from the adoption spec while `.github/officina.yml` is not yet merged in vici-app; once it is, a push to `main` refreshes it automatically.
+
+## First deploy (done 2026-09-26)
+
+Kept as the runbook for a second instance.
 
 1. Create and attach Postgres to `vici-officina`.
 2. Stage `GITHUB_WEBHOOK_SECRET`, then `fly deploy`; confirm `https://vici-officina.fly.dev/health`, a log line `api listening` with `engine: true`, and `anthropic credentials` with `mode: federation`.
@@ -54,3 +60,9 @@ The API is built from the root `Dockerfile` (which includes `agents/`) and confi
 6. Activate the GitHub App webhook with the same `GITHUB_WEBHOOK_SECRET`.
 7. Set a monthly spend limit on the Officina Anthropic workspace.
 8. Check the federation rule's authentication log in the Console for a successful exchange.
+
+## Still open
+
+- Set a monthly spend limit on the Officina Anthropic workspace.
+- Merge `.github/officina.yml` and `docs/ai/officina.md` in vici-app, then drop the machine-local config copy.
+- No webhook delivery has been received yet; the first event on vici-app will confirm the signature path.
