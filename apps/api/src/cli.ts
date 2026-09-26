@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { createGitHubClient } from '@officina/github';
+import { anthropicAuthFrom } from '@officina/runner';
 import { Pool } from 'pg';
 import { createAgentsPort } from './engine';
 import { SetupError, addProject, setupAgents } from './setup';
@@ -9,7 +10,7 @@ const USAGE = `usage:
   bun apps/api/src/cli.ts setup-agents
   bun apps/api/src/cli.ts add-project --workspace <name> --repo <owner/name> --owner-email <email> --owner-name <name> [--config-file <path>]
 
-Reads DATABASE_URL, ANTHROPIC_API_KEY, GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY from the environment.`;
+Reads DATABASE_URL, the Anthropic credentials (federation identifiers or ANTHROPIC_API_KEY), GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY from the environment.`;
 
 const required = (name: string): string => {
   const value = process.env[name];
@@ -37,7 +38,13 @@ const main = async () => {
   }
 
   const pool = new Pool({ connectionString: required('DATABASE_URL') });
-  const agents = createAgentsPort(required('ANTHROPIC_API_KEY'));
+  const auth = anthropicAuthFrom(process.env);
+  if (!auth) {
+    throw new SetupError(
+      'set ANTHROPIC_FEDERATION_RULE_ID, ANTHROPIC_ORGANIZATION_ID and ANTHROPIC_SERVICE_ACCOUNT_ID (or ANTHROPIC_API_KEY)'
+    );
+  }
+  const agents = createAgentsPort(auth);
   try {
     if (command === 'setup-agents') {
       const { changed } = await setupAgents(pool, agents, PROMPTS_DIR);
