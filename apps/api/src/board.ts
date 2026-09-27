@@ -64,6 +64,20 @@ export const roleLabel = (role: string) => ROLE_LABELS[role] ?? role;
 
 const article = (word: string) => (/^[aeiou]/i.test(word) ? `an ${word}` : `a ${word}`);
 
+/**
+ * The maintainer floor adds nothing to read when an owner or maintainer is already required, since
+ * that approval meets both.
+ */
+const readable = (pending: readonly Requirement[]) =>
+  pending.filter(
+    (requirement) =>
+      !(
+        'role' in requirement &&
+        requirement.role === 'maintainer' &&
+        pending.some((other) => other !== requirement && 'role' in other && other.role === 'owner')
+      )
+  );
+
 const describeRequirement = (requirement: Requirement): string =>
   'role' in requirement
     ? article(requirement.role)
@@ -169,7 +183,9 @@ const waitingOn = (
       const noun = row.stage === 'spec_review' ? 'Spec approval' : 'Verification';
       return {
         kind: 'people',
-        label: pending.length ? `${noun} by ${pending.map(describeRequirement).join(', ')}` : noun,
+        label: pending.length
+          ? `${noun} by ${readable(pending).map(describeRequirement).join(' and ')}`
+          : noun,
         me: pending.some((requirement) => isEligible(member, requirement, row.requesterId))
       };
     }
@@ -347,13 +363,14 @@ export const taskView = async (
       type: event.type,
       actor: label(event.actor),
       actorKind: event.actor.kind,
+      actorRole: event.actor.kind === 'agent' ? event.actor.role : null,
       payload: event.payload,
       at: event.createdAt
     })),
     runs: runs.map((run) => runView(run, consoleWorkspace)),
     approval: approval && {
       gate: approval.gate,
-      pending: approval.pending.map(describeRequirement),
+      pending: readable(approval.pending).map(describeRequirement),
       waived: approval.waived.map(describeRequirement),
       approvedBy: approval.approvedBy
     },

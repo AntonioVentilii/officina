@@ -11,11 +11,16 @@
     "test": "bun test packages/core packages/github packages/runner apps/api",
     "test:db": "bun packages/db/test/with-postgres.ts",
     "format": "prettier --write .",
-    "lint": "prettier --check ."
+    "lint": "prettier --check .",
+    "dev": "bun apps/api/src/dev.ts",
+    "dev:board": "cd apps/board && bun run dev",
+    "check:board": "cd apps/board && bun run check",
+    "build:board": "cd apps/board && bun run build"
   },
   "devDependencies": {
     "@types/bun": "^1.4.2",
     "prettier": "^3.9.7",
+    "prettier-plugin-svelte": "^4.1.1",
     "typescript": "^7.0.2"
   }
 }

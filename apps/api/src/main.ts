@@ -1,6 +1,7 @@
 import { migrate } from '@officina/db';
 import { createGitHubClient } from '@officina/github';
 import { anthropicAuthFrom } from '@officina/runner';
+import { join } from 'node:path';
 import { Pool } from 'pg';
 import { z } from 'zod';
 import { createApp } from './app';
@@ -83,7 +84,8 @@ const server = createApp({
     publicUrl: env.OFFICINA_PUBLIC_URL,
     consoleWorkspace: env.ANTHROPIC_WORKSPACE_ID,
     realtime
-  }
+  },
+  boardDir: join(import.meta.dir, '..', '..', 'board', 'build')
 }).listen({
   port: env.PORT,
   hostname: '0.0.0.0'

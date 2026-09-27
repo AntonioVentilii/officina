@@ -3,6 +3,7 @@ import { parseWebhookEvent, verifyWebhookSignature } from '@officina/github';
 import { Elysia } from 'elysia';
 import type { Pool } from 'pg';
 import { createBoardApi, type BoardApiDependencies } from './api';
+import { createBoardServer } from './static';
 import { handleWebhookAction, type ConfigReader } from './webhooks';
 
 export interface AppDependencies {
@@ -12,10 +13,13 @@ export interface AppDependencies {
   readonly github?: ConfigReader;
   /** The board's API; without it only health and webhooks are served. */
   readonly board?: Omit<BoardApiDependencies, 'pool'>;
+  /** The board's static build, served for every other path. */
+  readonly boardDir?: string;
 }
 
-export const createApp = ({ pool, webhookSecret, github, board }: AppDependencies) =>
-  new Elysia()
+export const createApp = ({ pool, webhookSecret, github, board, boardDir }: AppDependencies) => {
+  const serveBoard = boardDir ? createBoardServer(boardDir) : null;
+  return new Elysia()
     .use(board ? createBoardApi({ pool, ...board }) : new Elysia())
     .get('/health', () => ({ ok: true }))
     .post(
@@ -53,6 +57,12 @@ export const createApp = ({ pool, webhookSecret, github, board }: AppDependencie
         return { status: action ? 'applied' : 'ignored', outcomes };
       },
       { parse: 'none' }
-    );
+    )
+    .get('/*', ({ request, set }) => {
+      if (serveBoard) return serveBoard(new URL(request.url).pathname);
+      set.status = 404;
+      return { error: 'not found' };
+    });
+};
 
 export type App = ReturnType<typeof createApp>;

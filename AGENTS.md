@@ -12,6 +12,8 @@ Officina: a collaborative agent workshop. The design lives in [`docs/architectur
 - `bun run typecheck`, `bun run lint`, `bun run format`
 - `bun run test`: core, GitHub and runner tests, no network or database
 - `bun run test:db`: database, engine and API tests against a throwaway Postgres container (needs Docker)
+- `bun run dev` then `bun run dev:board`: the board at `http://localhost:5173` against a throwaway Postgres with a demo workshop in every stage and simulated agents; the first command prints a sign-in link (needs Docker)
+- `bun run check:board`, `bun run build:board`: svelte-check and the static build of the board
 - `DATABASE_URL=... bun packages/db/src/migrate.ts`: apply migrations
 - `bun apps/api/src/cli.ts setup-agents`: sync the role agents from `agents/*.md`
 - `bun apps/api/src/cli.ts add-project --workspace <name> --repo <owner/name> --owner-email <email> --owner-name <name> [--config-file <path>]`: register a repository
@@ -24,7 +26,8 @@ Officina: a collaborative agent workshop. The design lives in [`docs/architectur
 - `packages/runner`: runs one agent role in one Managed Agents session. `credentials.ts` and `fly-oidc.ts` authenticate by workload identity federation on Fly (no stored key), with an API key as the local-development fallback. Role definitions (tools per role, the `submit_result` tool built from the output contract), agent sync, and `executeRun`. Only `src/sdk.ts` touches the SDK; everything else uses `ManagedAgentsPort`, which tests fake.
 - `packages/engine`: `runAgentStep` (claim, brief, run, verify the push, apply the result, open the pull request) and `tick` (dispatch ready tasks, run due steps).
 - `agents/`: one system prompt per agent role. Changing a prompt produces a new agent version on the next sync.
-- `apps/api`: the Elysia HTTP server (`/health`, `/github/webhook`). `main.ts` validates the environment, runs migrations and, when GitHub App and Anthropic credentials are present, starts the scheduler (`engine.ts`, `scheduler.ts`), failing runs orphaned by a previous process first. `setup.ts` and `cli.ts` register projects and sync agents.
+- `apps/board`: the board, a SvelteKit single-page app built to static files that the API serves. It reads `/api/*`, listens to `/api/stream` (server-sent events that only say what changed, so views refetch) and sends decisions as `POST`s with the `x-officina-request` header. Agent-written text is rendered through `Markdown.svelte`, which sanitizes it.
+- `apps/api`: the Elysia HTTP server (`/health`, `/github/webhook`, the board API in `api.ts` and `board.ts`, sign-in links in `people.ts`, realtime in `realtime.ts`, the board's static files in `static.ts`). `main.ts` validates the environment, runs migrations and, when GitHub App and Anthropic credentials are present, starts the scheduler (`engine.ts`, `scheduler.ts`), failing runs orphaned by a previous process first. `setup.ts` and `cli.ts` register projects and sync agents.
 
 ## Rules
 
