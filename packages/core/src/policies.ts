@@ -25,7 +25,11 @@ export interface PolicyResult {
 /** Every gate needs at least one maintainer or owner, whatever the lane policy says. */
 export const APPROVAL_FLOOR: Requirement = { role: 'maintainer' };
 
-const isEligible = (member: Member, requirement: Requirement, requesterId: string): boolean => {
+export const isEligible = (
+  member: Member,
+  requirement: Requirement,
+  requesterId: string
+): boolean => {
   if (!hasRole(member, 'contributor')) {
     return false;
   }

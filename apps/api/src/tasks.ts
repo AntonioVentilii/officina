@@ -70,12 +70,29 @@ const resolve = async (pool: Pool, target: Target) => {
   return { projectId, memberId, actor };
 };
 
+/** A person acting on one project, already identified (by a session, or by the CLI's --as). */
+export interface ProjectActor {
+  readonly projectId: string;
+  readonly memberId: string;
+}
+
 /** Opens a request: creates the task, records the request text as the first comment, submits it. */
 export const createRequest = async (
   pool: Pool,
   input: Target & { readonly title: string; readonly request: string }
+): Promise<{ number: number; stage: string }> =>
+  createRequestAs(pool, {
+    ...(await resolve(pool, input)),
+    title: input.title,
+    request: input.request
+  });
+
+export const createRequestAs = async (
+  pool: Pool,
+  input: ProjectActor & { readonly title: string; readonly request: string }
 ): Promise<{ number: number; stage: string }> => {
-  const { projectId, memberId, actor } = await resolve(pool, input);
+  const { projectId, memberId } = input;
+  const actor: Actor = { kind: 'member', memberId };
   const { task } = await createTask(pool, { projectId, title: input.title, requesterId: memberId });
   await addComment(pool, task.id, actor, input.request);
   const submitted = await applyCommand(pool, {
@@ -117,8 +134,19 @@ const toCommand = (action: TaskAction): Command => {
 export const actOnTask = async (
   pool: Pool,
   input: Target & { readonly number: number; readonly action: TaskAction }
+): Promise<{ stage: string; satisfied?: boolean }> =>
+  actOnTaskAs(pool, {
+    ...(await resolve(pool, input)),
+    number: input.number,
+    action: input.action
+  });
+
+export const actOnTaskAs = async (
+  pool: Pool,
+  input: ProjectActor & { readonly number: number; readonly action: TaskAction }
 ): Promise<{ stage: string; satisfied?: boolean }> => {
-  const { projectId, actor } = await resolve(pool, input);
+  const { projectId } = input;
+  const actor: Actor = { kind: 'member', memberId: input.memberId };
   const taskId = await findTaskIdByNumber(pool, projectId, input.number);
   if (!taskId) throw new TaskCommandError(`task #${input.number} not found`);
   if (input.action.type === 'answer') await addComment(pool, taskId, actor, input.action.text);

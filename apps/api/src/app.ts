@@ -2,6 +2,7 @@ import { hasDelivery, recordDelivery } from '@officina/db';
 import { parseWebhookEvent, verifyWebhookSignature } from '@officina/github';
 import { Elysia } from 'elysia';
 import type { Pool } from 'pg';
+import { createBoardApi, type BoardApiDependencies } from './api';
 import { handleWebhookAction, type ConfigReader } from './webhooks';
 
 export interface AppDependencies {
@@ -9,10 +10,13 @@ export interface AppDependencies {
   readonly webhookSecret: string;
   /** Needed to refresh project configs on push; without it config pushes are ignored. */
   readonly github?: ConfigReader;
+  /** The board's API; without it only health and webhooks are served. */
+  readonly board?: Omit<BoardApiDependencies, 'pool'>;
 }
 
-export const createApp = ({ pool, webhookSecret, github }: AppDependencies) =>
+export const createApp = ({ pool, webhookSecret, github, board }: AppDependencies) =>
   new Elysia()
+    .use(board ? createBoardApi({ pool, ...board }) : new Elysia())
     .get('/health', () => ({ ok: true }))
     .post(
       '/github/webhook',

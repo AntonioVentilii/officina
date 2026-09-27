@@ -5,6 +5,7 @@ import { Pool } from 'pg';
 import { z } from 'zod';
 import { createApp } from './app';
 import { createAgentsPort, startEngine } from './engine';
+import { startRealtime } from './realtime';
 
 const env = z
   .object({
@@ -72,10 +73,17 @@ if (scheduler) {
   log('engine disabled', { missing });
 }
 
+const realtime = await startRealtime({ connectionString: env.DATABASE_URL, pool, log });
+
 const server = createApp({
   pool,
   webhookSecret: env.GITHUB_WEBHOOK_SECRET,
-  ...(github ? { github } : {})
+  ...(github ? { github } : {}),
+  board: {
+    publicUrl: env.OFFICINA_PUBLIC_URL,
+    consoleWorkspace: env.ANTHROPIC_WORKSPACE_ID,
+    realtime
+  }
 }).listen({
   port: env.PORT,
   hostname: '0.0.0.0'
@@ -86,6 +94,7 @@ const shutdown = async (signal: string) => {
   log('shutting down', { signal });
   await scheduler?.stop();
   await server.stop();
+  await realtime.close();
   await pool.end();
   process.exit(0);
 };
