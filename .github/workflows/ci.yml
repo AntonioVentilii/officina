@@ -20,6 +20,8 @@ jobs:
       - run: bun run lint
       - run: bun run typecheck
       - run: bun run test
+      - run: bun run check:board
+      - run: bun run build:board
 
   db:
     runs-on: ubuntu-latest

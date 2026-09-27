@@ -1,0 +1,62 @@
+import { ApiError, get, post } from '$lib/api';
+import type { Me, Project } from '$lib/types';
+
+const PROJECT_KEY = 'officina.project';
+
+const stored = (key: string): string | null => {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+};
+
+const store = (key: string, value: string) => {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Private windows may refuse storage; the choice then lasts for this visit only.
+  }
+};
+
+class Session {
+  me = $state<Me | null>(null);
+  status = $state<'loading' | 'signed-out' | 'ready' | 'error'>('loading');
+  error = $state<string | null>(null);
+  projectId = $state<string | null>(null);
+
+  project = $derived<Project | null>(
+    this.me?.projects.find((project) => project.id === this.projectId) ?? null
+  );
+
+  async load() {
+    try {
+      const me = await get<Me>('/api/me');
+      this.me = me;
+      const preferred = stored(PROJECT_KEY);
+      this.projectId =
+        me.projects.find((project) => project.id === preferred)?.id ?? me.projects[0]?.id ?? null;
+      this.status = 'ready';
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        this.status = 'signed-out';
+      } else {
+        this.status = 'error';
+        this.error = (error as Error).message;
+      }
+    }
+  }
+
+  selectProject(id: string) {
+    this.projectId = id;
+    store(PROJECT_KEY, id);
+  }
+
+  async signOut() {
+    await post('/auth/sign-out');
+    this.me = null;
+    this.status = 'signed-out';
+  }
+}
+
+export const session = new Session();
