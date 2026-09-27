@@ -4,6 +4,21 @@ How to take a change from request to merged pull request with Officina, today. E
 the deployed server through `scripts/officina`, from a clone of this repository, with `fly` logged
 in. Commands act as the project owner unless you pass `--as <email>`.
 
+## The board
+
+Everything below can also be done on the board at the public URL. Get a sign-in link (valid 30
+minutes, works once):
+
+```bash
+scripts/officina login-link
+```
+
+To bring someone in, give them a role and send them the link it prints (valid 7 days):
+
+```bash
+scripts/officina invite --email gio@example.com --name "Gio" --role contributor --domains product
+```
+
 ## The flow at a glance
 
 | You run                            | Then what happens                                                                                                                |

@@ -29,7 +29,7 @@ Roles are per project and live in Officina, never in repository permissions. A m
 | **Approver**    | a contributor tagged with an approval domain (for example `product`, `design`, `legal`)             |
 | **Watcher**     | read the board and threads, comment                                                                 |
 
-**Identity.** Email magic link and Google sign-in for everyone; linking a GitHub account is optional and only required for merging. Actions Officina performs on GitHub are done by the Officina GitHub App and name the member who triggered them. A merge approval is submitted with the member's own GitHub user token, so it counts as their code-owner review.
+**Identity.** Today a member signs in with a one-time link: an owner mints it with `login-link`, or `invite` adds a person with a role and returns their first link. The token travels in the URL fragment, so it never reaches a server log; only its hash is stored, it works once, and it becomes an `HttpOnly`, `SameSite=Lax` session cookie. Emailed magic links and Google sign-in come next, for everyone; linking a GitHub account is optional and only required for merging. Actions Officina performs on GitHub are done by the Officina GitHub App and name the member who triggered them. A merge approval is submitted with the member's own GitHub user token, so it counts as their code-owner review.
 
 ## 3. Collaboration model
 
@@ -47,7 +47,7 @@ Roles are per project and live in Officina, never in repository permissions. A m
 ## 4. System overview
 
 ```
-  Board (SvelteKit PWA) <--- WebSocket (realtime) ---+
+  Board (SvelteKit PWA) <--- Server-sent events -----+
         |  HTTPS                                      |
         v                                             |
   API (Bun + Elysia) ---- Engine (deterministic) ---- Postgres (state, events, audit)
@@ -63,14 +63,16 @@ Roles are per project and live in Officina, never in repository permissions. A m
                              +--> self-hosted worker (later)
 ```
 
-| Component      | Responsibility                                                                                                                           |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| **Board**      | Every human surface (section 9). Installable PWA so approvals work from a phone.                                                         |
-| **API**        | Auth, members, tasks, threads, approvals, config; webhook intake from GitHub and from the runner.                                        |
-| **Engine**     | State machine, scheduler (priorities, WIP limits), dispatcher (starts runs), claim and lease handling, healer sweeps, policy evaluation. |
-| **Postgres**   | Single source of orchestration state; append-only `task_events` is the audit log. `LISTEN/NOTIFY` feeds the realtime channel.            |
-| **Runner**     | Executes one agent role for one task step and streams events back. Pluggable (section 7).                                                |
-| **GitHub App** | Installed per repository: reads code, pushes `officina/*` branches, opens PRs, mirrors comments, receives webhooks.                      |
+| Component    | Responsibility                                                                                                                           |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| **Board**    | Every human surface (section 9). Installable PWA so approvals work from a phone.                                                         |
+| **API**      | Auth, members, tasks, threads, approvals, config; webhook intake from GitHub and from the runner.                                        |
+| **Engine**   | State machine, scheduler (priorities, WIP limits), dispatcher (starts runs), claim and lease handling, healer sweeps, policy evaluation. |
+| **Postgres** | Single source of orchestration state; append-only `task_events` is the audit log. `LISTEN/NOTIFY` feeds the realtime channel.            |
+
+**Realtime.** Triggers on tasks, task events, comments, runs and run events call `pg_notify`, so every writer (engine, CLI, webhooks, API) reaches open boards without knowing about them. The API holds one `LISTEN` connection and fans changes out over server-sent events, filtered to the projects each viewer belongs to. Events only say what changed; the board refetches, so a missed event costs a refresh, never a wrong state. Server-sent events rather than WebSocket: the board only listens, and every action is an ordinary authenticated `POST`.
+| **Runner** | Executes one agent role for one task step and streams events back. Pluggable (section 7). |
+| **GitHub App** | Installed per repository: reads code, pushes `officina/*` branches, opens PRs, mirrors comments, receives webhooks. |
 
 Stack: Bun, Elysia, Postgres (raw `pg`), SvelteKit with Svelte 5 for the board, deployed on Fly.io. One boring stack; deviations need a reason.
 

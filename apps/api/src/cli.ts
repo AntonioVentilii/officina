@@ -4,6 +4,7 @@ import { createGitHubClient } from '@officina/github';
 import { anthropicAuthFrom } from '@officina/runner';
 import { Pool } from 'pg';
 import { createAgentsPort } from './engine';
+import { invite, loginLink } from './people';
 import { SetupError, addProject, setupAgents } from './setup';
 import {
   TaskCommandError,
@@ -29,6 +30,11 @@ const USAGE = `usage (on your machine, prefix with scripts/officina; on the serv
 
     Every task command also takes --repo <owner/name> (optional with a single project)
     and --as <email> (defaults to the project owner).
+
+  People
+    login-link    [--email <email>]          one-time sign-in link to the board, valid 30 minutes
+    invite        --email <email> --name "<name>" --role watcher|contributor|maintainer|owner
+                  [--domains product,legal]  adds or updates a member; the link is valid 7 days
 
   Setup
     setup-agents
@@ -77,7 +83,11 @@ const main = async () => {
       note: { type: 'string' },
       text: { type: 'string' },
       reason: { type: 'string' },
-      as: { type: 'string' }
+      as: { type: 'string' },
+      email: { type: 'string' },
+      name: { type: 'string' },
+      role: { type: 'string' },
+      domains: { type: 'string' }
     }
   });
   const [command, subcommand] = positionals;
@@ -147,6 +157,34 @@ const main = async () => {
         default:
           throw new TaskCommandError(USAGE);
       }
+    }
+
+    if (command === 'login-link') {
+      console.log(
+        await loginLink(pool, {
+          publicUrl: required('OFFICINA_PUBLIC_URL'),
+          email: values.email,
+          repo: values.repo
+        })
+      );
+      return;
+    }
+
+    if (command === 'invite') {
+      console.log(
+        await invite(pool, {
+          publicUrl: required('OFFICINA_PUBLIC_URL'),
+          email: need(values.email, 'email'),
+          name: need(values.name, 'name'),
+          role: need(values.role, 'role'),
+          domains: (values.domains ?? '')
+            .split(',')
+            .map((domain) => domain.trim())
+            .filter(Boolean),
+          repo: values.repo
+        })
+      );
+      return;
     }
 
     if (command === 'setup-agents') {
