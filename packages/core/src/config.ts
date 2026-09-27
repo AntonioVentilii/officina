@@ -32,6 +32,23 @@ const projectConfigSchema = z.strictObject({
   }),
   setup: z.array(z.string().min(1)).optional(),
   verify: z.array(z.string().min(1)).optional(),
+  pull_request: z
+    .strictObject({
+      /** Regular expression every pull request title must match, e.g. the repo's commit convention. */
+      title_pattern: z
+        .string()
+        .min(1)
+        .refine((pattern) => {
+          try {
+            new RegExp(pattern);
+            return true;
+          } catch {
+            return false;
+          }
+        }, 'must be a valid regular expression')
+        .optional()
+    })
+    .optional(),
   runtime: z
     .strictObject({
       /** Extra hosts agent sandboxes may reach beyond package registries, e.g. a private registry. */
@@ -70,6 +87,7 @@ export interface ProjectConfig {
   readonly setup: readonly string[];
   readonly verify: readonly string[];
   readonly runtime: { readonly allowedHosts: readonly string[] };
+  readonly pullRequest: { readonly titlePattern: string | null };
   readonly lanes: Readonly<Record<Lane, LaneSettings>>;
   readonly laneMatcher: LaneMatcher;
 }
@@ -129,6 +147,7 @@ export const parseProjectConfig = (input: unknown): ConfigResult => {
       setup: raw.setup ?? [],
       verify: raw.verify ?? [],
       runtime: { allowedHosts: raw.runtime?.allowed_hosts ?? [] },
+      pullRequest: { titlePattern: raw.pull_request?.title_pattern ?? null },
       lanes: {
         green: normalizeLane('green', raw.lanes?.green),
         standard: normalizeLane('standard', raw.lanes?.standard),

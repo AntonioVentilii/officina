@@ -32,6 +32,8 @@ export const executeRun = async (
     readonly session: SessionRequest;
     readonly brief: string;
     readonly onSessionCreated?: (sessionId: string) => Promise<void> | void;
+    /** Project-specific checks beyond the contract, e.g. the pull request title format. */
+    readonly validate?: ((output: AgentOutput<RunnerRole>) => readonly string[]) | undefined;
     readonly onEvent?: (event: SessionEvent) => Promise<void> | void;
   }
 ): Promise<RunReport> => {
@@ -66,7 +68,8 @@ export const executeRun = async (
         input.role,
         (event.input as { result?: unknown } | undefined)?.result
       );
-      if (parsed.ok) {
+      const problems = parsed.ok ? (input.validate?.(parsed.output) ?? []) : parsed.errors;
+      if (parsed.ok && problems.length === 0) {
         result = parsed.output;
         await port.send(sessionId, [
           {
@@ -78,12 +81,12 @@ export const executeRun = async (
         ]);
         continue;
       }
-      lastErrors = parsed.errors;
+      lastErrors = problems;
       await port.send(sessionId, [
         {
           type: 'user.custom_tool_result',
           toolUseId,
-          text: `Result rejected:\n${parsed.errors.map((error) => `- ${error}`).join('\n')}`,
+          text: `Result rejected:\n${problems.map((error) => `- ${error}`).join('\n')}`,
           isError: true
         }
       ]);

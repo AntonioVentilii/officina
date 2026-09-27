@@ -11,6 +11,7 @@ import {
   applyCommand,
   createTask,
   findTaskIdByNumber,
+  latestChooserResult,
   listApprovedSubjects,
   listProjectMembers,
   listRuns,
@@ -20,6 +21,7 @@ import {
   resolveProjectMember,
   type StoreError
 } from '@officina/db';
+import { checklistMarkdown } from '@officina/engine';
 import type { Pool } from 'pg';
 
 export class TaskCommandError extends Error {}
@@ -208,6 +210,11 @@ export const describeTask = async (
 
   if (context.pullRequest)
     lines.push('', `Pull request: https://github.com/${context.repo}/pull/${context.pullRequest}`);
+  const checklist = checklistMarkdown(
+    await latestChooserResult(pool, taskId),
+    `task ${context.number}`
+  );
+  if (checklist) lines.push('', checklist);
   if (context.latestSpec)
     lines.push('', `Spec, version ${task.specVersion}:`, '', context.latestSpec);
 

@@ -16,6 +16,7 @@ export interface BriefInput {
   readonly requestThread: readonly string[];
   readonly feedback: readonly string[];
   readonly firstRound: boolean;
+  readonly prTitlePattern: string | null;
 }
 
 const fence = (text: string): string => {
@@ -34,7 +35,7 @@ const list = (items: readonly string[]): string =>
  */
 export const buildBrief = (input: BriefInput): string => {
   const sections = [
-    `# Officina task #${input.taskNumber}, role: ${input.role}`,
+    `# Officina task ${input.taskNumber}, role: ${input.role}`,
     [
       `Repository: \`${input.repo}\`, default branch \`${input.defaultBranch}\`, task branch \`${input.taskBranch}\`.`,
       `Read \`${input.docsEntry}\` first.`,
@@ -60,7 +61,8 @@ export const buildBrief = (input: BriefInput): string => {
     sections.push(
       `## Round\n\n${input.firstRound ? 'First round: create the task branch from the default branch.' : 'Fix round: the task branch is checked out. Address every note below.'}`,
       `## Verify commands\n\n${list(input.verify)}`,
-      `## Protected paths (never change these)\n\n${list(input.protectedPaths)}`
+      `## Protected paths (never change these)\n\n${list(input.protectedPaths)}`,
+      `## Pull request title\n\nReturn \`prTitle\` in the repository's own format${input.prTitlePattern ? `; it must match the regular expression \`${input.prTitlePattern}\`` : ''}. Leave the spec's \`Status:\` line as it is: Officina updates it.`
     );
     if (input.feedback.length) {
       sections.push(`## Notes to address\n\n${input.feedback.map(fence).join('\n\n')}`);

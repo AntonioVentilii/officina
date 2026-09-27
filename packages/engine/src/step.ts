@@ -30,14 +30,30 @@ import {
 } from '@officina/runner';
 import type { Pool } from 'pg';
 import { buildBrief } from './brief';
+import { postChecklist, syncSpecStatus, type SyncGitHubPort } from './github-sync';
 
-export type GitHubPort = Pick<GitHubClient, 'installationToken' | 'pushFacts' | 'openPullRequest'>;
+export type GitHubPort = Pick<GitHubClient, 'installationToken' | 'openPullRequest'> &
+  SyncGitHubPort;
 
 export interface EngineDependencies {
   readonly pool: Pool;
   readonly github: GitHubPort;
   readonly agents: ManagedAgentsPort;
+  /** Where people open a task, e.g. `https://officina.example`; task links in pull requests use it. */
+  readonly publicUrl: string;
 }
+
+/**
+ * A markdown link to a task. A bare `#N` would link the repository's issue or pull request N.
+ */
+export const taskLink = (publicUrl: string, taskNumber: number) =>
+  `[Officina task ${taskNumber}](${publicUrl.replace(/\/$/, '')}/tasks/${taskNumber})`;
+
+const titleProblems = (pattern: string | null) => (output: AgentOutput<RunnerRole>) => {
+  const built = output as AgentOutput<'builder'>;
+  if (!pattern || built.outcome !== 'pushed' || new RegExp(pattern).test(built.prTitle)) return [];
+  return [`prTitle "${built.prTitle}" does not match the required pattern ${pattern}`];
+};
 
 export type StepResult =
   | { readonly status: 'applied' }
@@ -141,7 +157,8 @@ export const runAgentStep = async (
       protectedPaths: rawLanes?.red?.paths ?? [],
       requestThread: role === 'spec' ? await listComments(pool, taskId) : [],
       feedback: role === 'builder' ? await feedbackSinceLastPush(pool, taskId) : [],
-      firstRound
+      firstRound,
+      prTitlePattern: config.pullRequest.titlePattern
     });
 
     const report = await executeRun(deps.agents, {
@@ -163,6 +180,7 @@ export const runAgentStep = async (
         },
         budgetCents: Math.round(config.lanes[lane].budgetUsd * 100)
       },
+      validate: role === 'builder' ? titleProblems(config.pullRequest.titlePattern) : undefined,
       onSessionCreated: (sessionId) => setRunExternalId(pool, runId, sessionId),
       onEvent: (event) => appendRunEvent(pool, runId, event.type, event)
     });
@@ -240,7 +258,7 @@ export const runAgentStep = async (
     if (role === 'builder' && applied.task.stage === 'reviewing' && context.pullRequest === null) {
       const built = output as Extract<AgentOutput<'builder'>, { outcome: 'pushed' }>;
       const body = [
-        `Implements the approved spec of Officina task #${context.number}.`,
+        `Implements the approved spec of ${taskLink(deps.publicUrl, context.number)}.`,
         `Verified:\n${built.verified.map((item) => `- ${item}`).join('\n') || '- nothing reported'}`,
         `Not verified:\n${built.notVerified.map((item) => `- ${item}`).join('\n') || '- nothing reported'}`,
         context.issue ? `Closes #${context.issue}` : null
@@ -251,11 +269,29 @@ export const runAgentStep = async (
         ...repoRef,
         base: context.defaultBranch,
         branch: taskBranch,
-        title: context.title,
+        title: built.prTitle,
         body
       });
       await linkPullRequest(pool, taskId, pr.number);
       await appendRunEvent(pool, runId, 'officina.pull_request_opened', pr);
+      await syncSpecStatus(pool, deps.github, {
+        taskId,
+        ref: repoRef,
+        branch: taskBranch,
+        base: context.defaultBranch,
+        specDir: config.docs.specDir,
+        status: `In progress (#${pr.number})`
+      });
+    }
+
+    if (role === 'chooser' && context.pullRequest !== null) {
+      await postChecklist(pool, deps.github, {
+        taskId,
+        ref: repoRef,
+        pullRequest: context.pullRequest,
+        taskLink: taskLink(deps.publicUrl, context.number),
+        result: output
+      });
     }
 
     await finishRun(pool, runId, {
