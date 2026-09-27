@@ -1,5 +1,10 @@
-import { collectDueSteps, runAgentStep, type EngineDependencies } from '@officina/engine';
-import { failOrphanedRuns, listSchedulableProjectIds } from '@officina/db';
+import {
+  collectDueSteps,
+  finishVerifiedSpecs,
+  runAgentStep,
+  type EngineDependencies
+} from '@officina/engine';
+import { failOrphanedRuns, listActiveTaskIds, listSchedulableProjectIds } from '@officina/db';
 import type { GitHubClient } from '@officina/github';
 import {
   createAnthropicClient,
@@ -25,9 +30,15 @@ export const startEngine = async (input: {
   github: GitHubClient;
   agents: ManagedAgentsPort;
   intervalMs: number;
+  publicUrl: string;
   log: (message: string, details?: Record<string, unknown>) => void;
 }): Promise<Scheduler> => {
-  const deps: EngineDependencies = { pool: input.pool, github: input.github, agents: input.agents };
+  const deps: EngineDependencies = {
+    pool: input.pool,
+    github: input.github,
+    agents: input.agents,
+    publicUrl: input.publicUrl
+  };
 
   for (const run of await failOrphanedRuns(input.pool)) {
     input.log('orphaned run failed', run);
@@ -43,6 +54,13 @@ export const startEngine = async (input: {
       const due = [];
       for (const projectId of await listSchedulableProjectIds(input.pool)) {
         due.push(...(await collectDueSteps(deps, projectId)).due);
+        await finishVerifiedSpecs(
+          input.pool,
+          input.github,
+          await listActiveTaskIds(input.pool, projectId)
+        ).catch((error: unknown) =>
+          input.log('spec status update failed', { projectId, error: (error as Error).message })
+        );
       }
       return due;
     },

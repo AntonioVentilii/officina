@@ -4,10 +4,12 @@ import { RUNNER_ROLES, type SessionRequest } from '@officina/runner';
 import { Pool } from 'pg';
 import { applyOrThrow, resetAndSeed, type Seeded } from '../../db/test/seed';
 import { createFakePort, idle, toolUse, type ScriptItem } from '../../runner/test/fake-port';
-import { runAgentStep, tick, type GitHubPort } from '../src';
+import { finishVerifiedSpecs, runAgentStep, tick, type GitHubPort } from '../src';
 
 const url = process.env.TEST_DATABASE_URL;
 const COPY = 'src/lib/constants/messages/en.ts';
+const SPEC = 'docs/specs/2026-09-27-impr-settings-title.md';
+const PUBLIC_URL = 'https://officina.example';
 
 const RESULTS: Record<string, unknown> = {
   spec: {
@@ -19,12 +21,17 @@ const RESULTS: Record<string, unknown> = {
   builder: {
     outcome: 'pushed',
     branch: 'officina/task-1',
+    prTitle: 'fix(settings): rename the settings title',
     verified: ['npm run check'],
     notVerified: []
   },
   reviewer_spec: { outcome: 'approve', summary: 'Matches the spec.' },
   reviewer_correctness: { outcome: 'approve', summary: 'No issues.' },
-  chooser: { userVisible: true, checklist: ['Open settings and read the title.'] }
+  chooser: {
+    userVisible: true,
+    checklist: ['Open settings and read the title.'],
+    beforeAfter: [{ key: 'settings.title', locale: 'en', before: 'Settings', after: 'Preferences' }]
+  }
 };
 
 const succeed = (request: SessionRequest): ScriptItem[] => [
@@ -42,7 +49,17 @@ const fakeGitHub = () => {
     },
     pushFacts: async (...args: unknown[]) => {
       calls.push({ method: 'pushFacts', args });
-      return { headSha: 'sha1', changedPaths: [COPY], diffLines: 3 };
+      return { headSha: 'sha1', changedPaths: [COPY, SPEC], diffLines: 3 };
+    },
+    readFile: async (...args: unknown[]) => {
+      calls.push({ method: 'readFile', args });
+      return { text: '# Settings title\n\nStatus: Draft\n', sha: 'blob1' };
+    },
+    updateFile: async (...args: unknown[]) => {
+      calls.push({ method: 'updateFile', args });
+    },
+    commentOnIssue: async (...args: unknown[]) => {
+      calls.push({ method: 'commentOnIssue', args });
     },
     openPullRequest: async (...args: unknown[]) => {
       calls.push({ method: 'openPullRequest', args });
@@ -60,6 +77,13 @@ describe.skipIf(!url)('engine', () => {
     seeded = await resetAndSeed(pool);
     await pool.query(
       "update projects set github_installation_id = 99, agent_environment_id = 'env_1' where id = $1",
+      [seeded.projectId]
+    );
+    await pool.query(
+      `update projects set config = jsonb_set(
+         jsonb_set(config, '{docs,spec_dir}', '"docs/specs"'),
+         '{pull_request}', '{"title_pattern": "^(feat|fix)\\\\([a-z-]+\\\\): .+$"}'
+       ) where id = $1`,
       [seeded.projectId]
     );
     for (const role of RUNNER_ROLES) {
@@ -93,7 +117,11 @@ describe.skipIf(!url)('engine', () => {
 
   const taskInReady = async (github = fakeGitHub(), agents = createFakePort(succeed)) => {
     const taskId = await taskInSpeccing();
-    await runAgentStep({ pool, github: github.port, agents }, taskId, 'spec');
+    await runAgentStep(
+      { pool, github: github.port, agents, publicUrl: PUBLIC_URL },
+      taskId,
+      'spec'
+    );
     await applyOrThrow(pool, taskId, { type: 'approve' }, seeded.owner);
     return taskId;
   };
@@ -110,7 +138,11 @@ describe.skipIf(!url)('engine', () => {
     const taskId = await taskInSpeccing();
     const github = fakeGitHub();
     const agents = createFakePort(succeed);
-    const result = await runAgentStep({ pool, github: github.port, agents }, taskId, 'spec');
+    const result = await runAgentStep(
+      { pool, github: github.port, agents, publicUrl: PUBLIC_URL },
+      taskId,
+      'spec'
+    );
 
     expect(result).toEqual({ status: 'applied' });
     expect((await loadTask(pool, taskId))?.task).toMatchObject({
@@ -145,7 +177,7 @@ describe.skipIf(!url)('engine', () => {
   test('ticks carry a ready task through build, parallel reviews and choosing', async () => {
     const github = fakeGitHub();
     const agents = createFakePort(succeed);
-    const deps = { pool, github: github.port, agents };
+    const deps = { pool, github: github.port, agents, publicUrl: PUBLIC_URL };
     const taskId = await taskInReady(github, agents);
 
     const first = await tick(deps, seeded.projectId);
@@ -161,6 +193,19 @@ describe.skipIf(!url)('engine', () => {
       base: 'main',
       branch: 'officina/task-1'
     });
+    const opened = github.calls.find((call) => call.method === 'openPullRequest')!.args[0] as {
+      title: string;
+      body: string;
+    };
+    expect(opened.title).toBe('fix(settings): rename the settings title');
+    expect(opened.body).toContain('[Officina task 1](https://officina.example/tasks/1)');
+    expect(opened.body).not.toMatch(/(^|\s)#1\b/);
+    expect(github.calls.find((call) => call.method === 'updateFile')!.args[0]).toMatchObject({
+      path: SPEC,
+      branch: 'officina/task-1',
+      sha: 'blob1',
+      text: '# Settings title\n\nStatus: In progress (#42)\n'
+    });
 
     const second = await tick(deps, seeded.projectId);
     expect(second.steps.map((step) => step.role).sort()).toEqual([
@@ -173,6 +218,47 @@ describe.skipIf(!url)('engine', () => {
     stored = await loadTask(pool, taskId);
     expect(stored?.task.stage).toBe('verifying');
     expect((await runStatuses(taskId)).every((run) => run.status === 'succeeded')).toBe(true);
+    const comments = github.calls.filter((call) => call.method === 'commentOnIssue');
+    expect(comments).toHaveLength(1);
+    const comment = comments[0]!.args[0] as { issueNumber: number; body: string };
+    expect(comment.issueNumber).toBe(42);
+    expect(comment.body).toContain('- [ ] Open settings and read the title.');
+    expect(comment.body).toContain('| `settings.title` | en | Settings | Preferences |');
+
+    await applyOrThrow(pool, taskId, { type: 'approve' }, seeded.owner);
+    expect((await loadTask(pool, taskId))?.task.stage).toBe('merging');
+    await finishVerifiedSpecs(pool, github.port, [taskId]);
+    await finishVerifiedSpecs(pool, github.port, [taskId]);
+    const updates = github.calls.filter((call) => call.method === 'updateFile');
+    expect(updates).toHaveLength(2);
+    expect((updates[1]!.args[0] as { text: string }).text).toContain('Status: Implemented (#42)');
+  });
+
+  test('a pull request title outside the repository format is sent back to the builder', async () => {
+    const github = fakeGitHub();
+    const agents = createFakePort((request) =>
+      request.metadata.role === 'builder'
+        ? [
+            toolUse({ ...(RESULTS.builder as object), prTitle: 'Rename settings title' }),
+            idle('requires_action'),
+            toolUse(RESULTS.builder),
+            idle('requires_action'),
+            idle('end_turn')
+          ]
+        : succeed(request)
+    );
+    const taskId = await taskInReady(github, agents);
+    await tick({ pool, github: github.port, agents, publicUrl: PUBLIC_URL }, seeded.projectId);
+
+    expect((await loadTask(pool, taskId))?.task.stage).toBe('reviewing');
+    const rejection = agents.sent.find((sent) =>
+      JSON.stringify(sent.events).includes('does not match the required pattern')
+    );
+    expect(rejection).toBeDefined();
+    expect(
+      (github.calls.find((call) => call.method === 'openPullRequest')!.args[0] as { title: string })
+        .title
+    ).toBe('fix(settings): rename the settings title');
   });
 
   test('a push to any other branch blocks the task and opens no pull request', async () => {
@@ -186,7 +272,7 @@ describe.skipIf(!url)('engine', () => {
         : succeed(request)
     );
     const taskId = await taskInReady(github, agents);
-    await tick({ pool, github: github.port, agents }, seeded.projectId);
+    await tick({ pool, github: github.port, agents, publicUrl: PUBLIC_URL }, seeded.projectId);
 
     const stored = await loadTask(pool, taskId);
     expect(stored?.task.blocked?.question).toContain('officina/elsewhere');
@@ -203,7 +289,11 @@ describe.skipIf(!url)('engine', () => {
       toolUse(bad),
       idle('end_turn')
     ]);
-    const result = await runAgentStep({ pool, github: fakeGitHub().port, agents }, taskId, 'spec');
+    const result = await runAgentStep(
+      { pool, github: fakeGitHub().port, agents, publicUrl: PUBLIC_URL },
+      taskId,
+      'spec'
+    );
     expect(result.status).toBe('blocked');
     const stored = await loadTask(pool, taskId);
     expect(stored?.task).toMatchObject({
@@ -222,9 +312,13 @@ describe.skipIf(!url)('engine', () => {
       runner: 'managed_agents'
     });
     const agents = createFakePort(succeed);
-    expect(await runAgentStep({ pool, github: fakeGitHub().port, agents }, taskId, 'spec')).toEqual(
-      { status: 'skipped', reason: 'already_running' }
-    );
+    expect(
+      await runAgentStep(
+        { pool, github: fakeGitHub().port, agents, publicUrl: PUBLIC_URL },
+        taskId,
+        'spec'
+      )
+    ).toEqual({ status: 'skipped', reason: 'already_running' });
     expect(agents.sessions).toHaveLength(0);
   });
 
@@ -241,7 +335,11 @@ describe.skipIf(!url)('engine', () => {
       toolUse(RESULTS.spec),
       idle('end_turn')
     ]);
-    const result = await runAgentStep({ pool, github: fakeGitHub().port, agents }, taskId, 'spec');
+    const result = await runAgentStep(
+      { pool, github: fakeGitHub().port, agents, publicUrl: PUBLIC_URL },
+      taskId,
+      'spec'
+    );
     expect(result).toEqual({ status: 'discarded', reason: 'conflict' });
     expect((await loadTask(pool, taskId))?.task.stage).toBe('cancelled');
     expect((await pool.query('select 1 from spec_versions')).rowCount).toBe(0);
@@ -255,7 +353,11 @@ describe.skipIf(!url)('engine', () => {
     });
     const agents = createFakePort(succeed);
     expect(
-      await runAgentStep({ pool, github: fakeGitHub().port, agents }, task.id, 'spec')
+      await runAgentStep(
+        { pool, github: fakeGitHub().port, agents, publicUrl: PUBLIC_URL },
+        task.id,
+        'spec'
+      )
     ).toEqual({ status: 'skipped', reason: 'not_due' });
     expect(agents.sessions).toHaveLength(0);
   });
@@ -268,7 +370,7 @@ describe.skipIf(!url)('engine', () => {
         throw new Error('connection refused');
       }
     } as GitHubPort;
-    const deps = { pool, github: broken, agents: createFakePort(succeed) };
+    const deps = { pool, github: broken, agents: createFakePort(succeed), publicUrl: PUBLIC_URL };
 
     await expect(runAgentStep(deps, taskId, 'spec')).rejects.toThrow('connection refused');
     const stored = await loadTask(pool, taskId);

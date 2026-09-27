@@ -48,6 +48,7 @@ describe('agent output contracts', () => {
     const pushed = parseAgentOutput('builder', {
       outcome: 'pushed',
       branch: 'officina/t1-copy',
+      prTitle: 'fix(copy): update the settings title',
       verified: ['npm run check'],
       notVerified: []
     });

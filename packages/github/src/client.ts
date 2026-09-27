@@ -153,6 +153,54 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
       .default_branch;
   };
 
+  const contentsPath = (repo: string, path: string) =>
+    `/repos/${repo}/contents/${path.split('/').map(encodeURIComponent).join('/')}`;
+
+  /** A file's text and blob sha at a branch, or `null` when it does not exist there. */
+  const readFile = async (
+    ref: RepoRef & { readonly path: string; readonly branch: string }
+  ): Promise<{ text: string; sha: string } | null> => {
+    const token = await installationToken(ref, { contents: 'read' });
+    try {
+      const file = await request<{ content: string; encoding: string; sha: string }>(
+        `${contentsPath(ref.repo, ref.path)}?ref=${encodeURIComponent(ref.branch)}`,
+        { token }
+      );
+      return {
+        text: Buffer.from(file.content, file.encoding === 'base64' ? 'base64' : 'utf8').toString(
+          'utf8'
+        ),
+        sha: file.sha
+      };
+    } catch (error) {
+      if (error instanceof GitHubError && error.status === 404) return null;
+      throw error;
+    }
+  };
+
+  /** Commits a new version of one file to a branch; `sha` is the blob being replaced. */
+  const updateFile = async (
+    ref: RepoRef & {
+      readonly path: string;
+      readonly branch: string;
+      readonly text: string;
+      readonly sha: string;
+      readonly message: string;
+    }
+  ): Promise<void> => {
+    const token = await installationToken(ref, { contents: 'write' });
+    await request(contentsPath(ref.repo, ref.path), {
+      method: 'PUT',
+      token,
+      body: {
+        message: ref.message,
+        content: Buffer.from(ref.text, 'utf8').toString('base64'),
+        sha: ref.sha,
+        branch: ref.branch
+      }
+    });
+  };
+
   /** A file's text at a branch, or `null` when it does not exist there. */
   const fileContent = async (
     ref: RepoRef & { readonly path: string; readonly branch: string }
@@ -208,6 +256,8 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     repoInstallationId,
     defaultBranch,
     fileContent,
+    readFile,
+    updateFile,
     pushFacts,
     openPullRequest,
     commentOnIssue

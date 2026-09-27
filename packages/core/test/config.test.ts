@@ -33,6 +33,21 @@ describe('project config', () => {
     expect(result.errors.some((error) => error.startsWith('lanes'))).toBe(true);
   });
 
+  test('accepts a pull request title pattern and rejects one that is not a valid regex', () => {
+    const valid = parseProjectConfig({
+      version: 1,
+      docs: { entry: 'AGENTS.md' },
+      pull_request: { title_pattern: '^fix\\(.+\\): .+$' }
+    });
+    expect(valid.ok && valid.config.pullRequest.titlePattern).toBe('^fix\\(.+\\): .+$');
+    const invalid = parseProjectConfig({
+      version: 1,
+      docs: { entry: 'AGENTS.md' },
+      pull_request: { title_pattern: '^fix(' }
+    });
+    expect(invalid.ok).toBe(false);
+  });
+
   test('rejects invalid YAML without throwing', () => {
     const result = parseProjectConfigYaml('version: [1');
     expect(result.ok).toBe(false);

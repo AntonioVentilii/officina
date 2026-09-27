@@ -176,3 +176,32 @@ export const listComments = async (pool: Pool, taskId: string): Promise<string[]
       [taskId]
     )
   ).rows.map((row) => row.body);
+
+/** Records an engine action in the task's audit log. */
+export const appendTaskEvent = async (
+  pool: Pool,
+  input: { taskId: string; actor: Actor; type: string; payload: unknown }
+) => {
+  await pool.query(
+    'insert into task_events (task_id, actor, type, payload) values ($1, $2, $3, $4)',
+    [input.taskId, JSON.stringify(input.actor), input.type, JSON.stringify(input.payload)]
+  );
+};
+
+export const hasTaskEvent = async (pool: Pool, taskId: string, type: string, payload: unknown) =>
+  ((
+    await pool.query(
+      'select 1 from task_events where task_id = $1 and type = $2 and payload @> $3::jsonb',
+      [taskId, type, JSON.stringify(payload)]
+    )
+  ).rowCount ?? 0) > 0;
+
+/** The latest successful chooser result for a task, if any. */
+export const latestChooserResult = async (pool: Pool, taskId: string): Promise<unknown> =>
+  (
+    await pool.query<{ result: unknown }>(
+      `select result from runs where task_id = $1 and agent_role = 'chooser' and status = 'succeeded'
+       order by created_at desc limit 1`,
+      [taskId]
+    )
+  ).rows[0]?.result ?? null;

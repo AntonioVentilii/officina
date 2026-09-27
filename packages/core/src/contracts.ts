@@ -41,6 +41,8 @@ export const builderOutputSchema = z.discriminatedUnion('outcome', [
   z.strictObject({
     outcome: z.literal('pushed'),
     branch: text.regex(/^officina\//, 'branch must start with officina/'),
+    /** The pull request title, in the repository's required format. */
+    prTitle: text.max(120),
     verified: z.array(text),
     notVerified: z.array(text)
   }),

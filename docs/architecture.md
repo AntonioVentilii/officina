@@ -175,7 +175,9 @@ version: 1
 docs:
   entry: AGENTS.md # what every agent reads first
   spec_template: docs/specs/template.md
-  spec_dir: docs/specs
+  spec_dir: docs/specs # the engine sets a spec's `Status:` line to In progress / Implemented
+pull_request:
+  title_pattern: '^(feat|fix|docs|chore)\([a-z-]+\): .+$' # the builder's PR title must match
 verify: ['npm ci', 'npm run lint', 'npm run check'] # run by the builder before pushing
 lanes:
   red:

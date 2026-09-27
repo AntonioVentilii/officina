@@ -8,6 +8,7 @@ primary_region = "ams"
   ANTHROPIC_ORGANIZATION_ID = "b4c6858e-c21f-469d-b0e7-d615481fbc2c"
   ANTHROPIC_SERVICE_ACCOUNT_ID = "svac_0186Y6oZ4rytk8sDqDJiT2sV"
   ANTHROPIC_WORKSPACE_ID = "wrkspc_01GSzPabbQGWhbSVM7LQE7oV"
+  OFFICINA_PUBLIC_URL = "https://vici-officina.fly.dev"
 
 [http_service]
   internal_port = 8080

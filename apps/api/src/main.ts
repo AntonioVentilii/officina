@@ -19,7 +19,8 @@ const env = z
     ANTHROPIC_SERVICE_ACCOUNT_ID: z.string().min(1).optional(),
     ANTHROPIC_WORKSPACE_ID: z.string().min(1).optional(),
     ANTHROPIC_API_KEY: z.string().min(1).optional(),
-    SCHEDULER_INTERVAL_MS: z.coerce.number().int().positive().default(15_000)
+    SCHEDULER_INTERVAL_MS: z.coerce.number().int().positive().default(15_000),
+    OFFICINA_PUBLIC_URL: z.url().default('http://localhost:8080')
   })
   .parse(process.env);
 
@@ -54,6 +55,7 @@ const scheduler =
           })
         ),
         intervalMs: env.SCHEDULER_INTERVAL_MS,
+        publicUrl: env.OFFICINA_PUBLIC_URL,
         log
       })
     : undefined;
