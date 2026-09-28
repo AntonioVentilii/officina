@@ -1,7 +1,80 @@
 import { branchForTask, parseProjectConfig, type Actor } from '@officina/core';
 import { appendTaskEvent, hasTaskEvent, loadTaskContext } from '@officina/db';
-import type { GitHubClient, RepoRef } from '@officina/github';
+import type { GitHubAsUser, GitHubClient, RepoRef } from '@officina/github';
 import type { Pool } from 'pg';
+
+/**
+ * A markdown link to a task. A bare `#N` would link the repository's issue or pull request N.
+ */
+export const taskLink = (publicUrl: string, taskNumber: number) =>
+  `[Officina task ${taskNumber}](${publicUrl.replace(/\/$/, '')}/tasks/${taskNumber})`;
+
+/** Acting on GitHub as the member who verified a task, with their own linked account. */
+export interface OnBehalf {
+  readonly publicUrl: string;
+  tokenFor(memberId: string): Promise<{ token: string; login: string } | null>;
+  readonly asUser: Pick<GitHubAsUser, 'pullRequest' | 'approve' | 'mergeWhenReady'>;
+}
+
+/**
+ * Once a task is verified and its spec marked Implemented, approves the pull request on GitHub as
+ * the member whose approval passed the gate, and asks GitHub to merge it when its rules are met.
+ * Officina never merges on its own: without that member's linked account nothing happens and they
+ * merge on GitHub as before. It is tried once; a failure is recorded for people to see.
+ */
+export const approveOnGitHub = async (
+  pool: Pool,
+  onBehalf: OnBehalf,
+  input: { taskId: string; taskNumber: number; repo: string; pullRequest: number }
+) => {
+  const tried = await pool.query(
+    `select 1 from task_events where task_id = $1 and type in ('github_approved', 'github_approval_failed')`,
+    [input.taskId]
+  );
+  if (tried.rowCount) return;
+  const verifier = (
+    await pool.query<{ member_id: string }>(
+      `select payload->>'memberId' as member_id from task_events
+       where task_id = $1 and type = 'approval_recorded' and payload->>'gate' = 'verifying'
+         and (payload->>'satisfied')::boolean
+       order by id desc limit 1`,
+      [input.taskId]
+    )
+  ).rows[0]?.member_id;
+  if (!verifier) return;
+  const account = await onBehalf.tokenFor(verifier);
+  if (!account) return;
+  const actor: Actor = { kind: 'member', memberId: verifier };
+  try {
+    const pr = await onBehalf.asUser.pullRequest(account.token, input.repo, input.pullRequest);
+    if (pr.merged || pr.state !== 'open') return;
+    await onBehalf.asUser.approve(
+      account.token,
+      input.repo,
+      input.pullRequest,
+      pr.head.sha,
+      `Verified in ${taskLink(onBehalf.publicUrl, input.taskNumber)}.`
+    );
+    const merge = await onBehalf.asUser.mergeWhenReady(
+      account.token,
+      input.repo,
+      input.pullRequest
+    );
+    await appendTaskEvent(pool, {
+      taskId: input.taskId,
+      actor,
+      type: 'github_approved',
+      payload: { login: account.login, headSha: pr.head.sha, merge }
+    });
+  } catch (error) {
+    await appendTaskEvent(pool, {
+      taskId: input.taskId,
+      actor,
+      type: 'github_approval_failed',
+      payload: { login: account.login, error: (error as Error).message.slice(0, 500) }
+    });
+  }
+};
 
 export type SyncGitHubPort = Pick<
   GitHubClient,
@@ -121,7 +194,8 @@ export const postChecklist = async (
 export const finishVerifiedSpecs = async (
   pool: Pool,
   github: SyncGitHubPort,
-  taskIds: readonly string[]
+  taskIds: readonly string[],
+  onBehalf?: OnBehalf
 ) => {
   for (const taskId of taskIds) {
     const context = await loadTaskContext(pool, taskId);
@@ -142,5 +216,14 @@ export const finishVerifiedSpecs = async (
       specDir: config.config.docs.specDir,
       status: `Implemented (#${context.pullRequest})`
     });
+    // After the status commit, so the approval covers the final head.
+    if (onBehalf) {
+      await approveOnGitHub(pool, onBehalf, {
+        taskId,
+        taskNumber: context.number,
+        repo: context.repo,
+        pullRequest: context.pullRequest
+      });
+    }
   }
 };

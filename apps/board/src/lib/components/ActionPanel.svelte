@@ -21,8 +21,19 @@
   let busy = $state(false);
 
   const can = (action: TaskDetail['actions'][number]) => task.actions.includes(action);
+  const lastEvent = (type: string) =>
+    [...task.events].reverse().find((event) => event.type === type);
+  const githubApproved = $derived(
+    lastEvent('github_approved')?.payload as { login: string; merge: string } | undefined
+  );
+  const githubFailed = $derived(
+    lastEvent('github_approval_failed')?.payload as { login: string; error: string } | undefined
+  );
   const gate = $derived(
     task.stage === 'spec_review' ? 'spec' : task.stage === 'verifying' ? 'result' : null
+  );
+  const mergesToo = $derived(
+    gate === 'result' && Boolean(session.me?.github) && Boolean(task.pullRequest)
   );
 
   const act = async (body: Record<string, string>, done: string) => {
@@ -134,14 +145,46 @@
       <GitMerge size={18} />
       <div class="grow">
         <div class="kicker">Verified</div>
-        <div class="label">
-          Approve and merge the pull request on GitHub; the task closes itself.
-        </div>
+        {#if githubApproved}
+          <div class="label">
+            Approved on GitHub as @{githubApproved.login}.
+            {githubApproved.merge === 'merged'
+              ? 'Merged; the task closes itself.'
+              : 'Auto-merge is on: GitHub merges once checks pass and threads are resolved.'}
+          </div>
+        {:else if githubFailed}
+          <div class="label">
+            Approving on GitHub as @{githubFailed.login} failed: approve and merge there.
+          </div>
+          <div class="approval faint">{githubFailed.error}</div>
+        {:else if session.me?.github}
+          <div class="label">
+            Approving on GitHub as @{session.me.github.login} once the spec is marked Implemented…
+          </div>
+        {:else}
+          <div class="label">
+            Approve and merge the pull request on GitHub; the task closes itself.
+          </div>
+          {#if session.me?.githubAvailable}
+            <div class="approval faint">
+              <a class="inline" href="/auth/github/start?mode=link" data-sveltekit-reload
+                >Connect GitHub</a
+              >
+              and your next verification approves and merges from here.
+            </div>
+          {/if}
+        {/if}
       </div>
       {#if task.pullRequestUrl}
-        <a class="btn primary" href={task.pullRequestUrl} target="_blank" rel="noopener noreferrer"
-          >Open pull request</a
+        <a
+          class="btn"
+          class:primary={!githubApproved}
+          href={task.pullRequestUrl}
+          target="_blank"
+          rel="noopener noreferrer"
         >
+          Open pull request
+        </a>
       {/if}
     </div>
   </section>
@@ -202,7 +245,11 @@
                 gate === 'spec' ? 'Spec approved; it goes to build' : 'Verified'
               )}
           >
-            <CircleCheck size={15} />{gate === 'spec' ? 'Approve spec' : 'Approve result'}
+            <CircleCheck size={15} />{gate === 'spec'
+              ? 'Approve spec'
+              : mergesToo
+                ? 'Approve and merge'
+                : 'Approve result'}
           </button>
         {/if}
       </div>
@@ -332,6 +379,11 @@
     display: flex;
     justify-content: flex-end;
     margin-top: 6px;
+  }
+
+  .inline {
+    color: var(--info);
+    text-decoration: underline;
   }
 
   .link {

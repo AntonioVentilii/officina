@@ -37,13 +37,18 @@ export const redeemLoginLink = async (
   );
   const memberId = rows[0]?.member_id;
   if (!memberId) return null;
+  return { sessionToken: await createSession(db, memberId), memberId };
+};
+
+/** Opens a session for a member whose identity was just proven; returns its token. */
+export const createSession = async (db: Queryable, memberId: string): Promise<string> => {
   const sessionToken = newToken();
   await db.query(
     `insert into sessions (token_hash, member_id, expires_at)
      values ($1, $2, now() + make_interval(secs => $3))`,
     [hashToken(sessionToken), memberId, SESSION_TTL_MS / 1000]
   );
-  return { sessionToken, memberId };
+  return sessionToken;
 };
 
 export interface SessionMember {

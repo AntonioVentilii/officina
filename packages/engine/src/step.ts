@@ -34,7 +34,9 @@ import {
 import type { Pool } from 'pg';
 import { MAX_INTERVIEW_QUESTIONS, buildBrief, type ChooserContext } from './brief';
 import { runLearnerStep } from './learner';
-import { postChecklist, syncSpecStatus, type SyncGitHubPort } from './github-sync';
+import { postChecklist, syncSpecStatus, taskLink, type SyncGitHubPort } from './github-sync';
+
+export { taskLink };
 
 export type GitHubPort = Pick<GitHubClient, 'installationToken' | 'openPullRequest'> &
   SyncGitHubPort;
@@ -52,8 +54,6 @@ export interface EngineDependencies {
 /**
  * A markdown link to a task. A bare `#N` would link the repository's issue or pull request N.
  */
-export const taskLink = (publicUrl: string, taskNumber: number) =>
-  `[Officina task ${taskNumber}](${publicUrl.replace(/\/$/, '')}/tasks/${taskNumber})`;
 
 const INTERVIEW_BUDGET_CENTS = 200;
 

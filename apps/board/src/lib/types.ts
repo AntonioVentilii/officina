@@ -29,6 +29,8 @@ export interface Project {
 export interface Me {
   readonly member: { readonly id: string; readonly name: string; readonly email: string };
   readonly projects: readonly Project[];
+  readonly github: { readonly login: string } | null;
+  readonly githubAvailable: boolean;
 }
 
 export interface WaitingOn {
