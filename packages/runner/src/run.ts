@@ -33,7 +33,9 @@ export const executeRun = async (
     readonly brief: string;
     readonly onSessionCreated?: (sessionId: string) => Promise<void> | void;
     /** Project-specific checks beyond the contract, e.g. the pull request title format. */
-    readonly validate?: ((output: AgentOutput<RunnerRole>) => readonly string[]) | undefined;
+    readonly validate?:
+      | ((output: AgentOutput<RunnerRole>) => readonly string[] | Promise<readonly string[]>)
+      | undefined;
     readonly onEvent?: (event: SessionEvent) => Promise<void> | void;
   }
 ): Promise<RunReport> => {
@@ -68,7 +70,7 @@ export const executeRun = async (
         input.role,
         (event.input as { result?: unknown } | undefined)?.result
       );
-      const problems = parsed.ok ? (input.validate?.(parsed.output) ?? []) : parsed.errors;
+      const problems = parsed.ok ? ((await input.validate?.(parsed.output)) ?? []) : parsed.errors;
       if (parsed.ok && problems.length === 0) {
         result = parsed.output;
         await port.send(sessionId, [

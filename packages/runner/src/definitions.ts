@@ -17,7 +17,8 @@ export const RUNNER_ROLES = [
   'builder',
   'reviewer_spec',
   'reviewer_correctness',
-  'chooser'
+  'chooser',
+  'learner'
 ] as const;
 export type RunnerRole = (typeof RUNNER_ROLES)[number];
 
@@ -27,7 +28,8 @@ const CAN_WRITE: Record<RunnerRole, boolean> = {
   builder: true,
   reviewer_spec: false,
   reviewer_correctness: false,
-  chooser: false
+  chooser: false,
+  learner: false
 };
 
 const WRITE_TOOLS_OFF: AgentToolConfig[] = [

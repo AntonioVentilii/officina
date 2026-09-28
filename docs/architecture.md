@@ -165,9 +165,10 @@ A `workflow_dispatch` workflow in the consumer repository runs the Agent SDK wit
 
 ## 10. Auto-learn
 
-1. After each merged task the learner reviews the full history and proposes up to three learnings, each tied to evidence (review rounds, blocked questions, human overrides, stuck time).
-2. A weekly synthesis groups learnings across tasks, so one-off noise does not become policy.
-3. Accepted learnings become **pull requests**: to the consumer project's docs (conventions agents should follow) or to this repository's `agents/*.yaml` (role behaviour). People merge them like any other change; a merged role change produces a new agent version.
+1. **Once per merged task** (within 14 days of `done`) the scheduler runs the learner on a read-only token. Its brief is the whole history as data: request, final spec, every event with actor and time (review notes, change requests, questions and answers, guardrails, approval plans), agent runs with cost and duration, the thread, and the learnings already proposed or rejected so it does not repeat them. A failed attempt is recorded and never retried: learning is optional.
+2. It proposes **at most three learnings, often none**. Each has a lesson, its evidence, and an **exact edit**: a Markdown file in the project (never a protected path) or an Officina role prompt (`agents/<role>.md`), with the text to add after an excerpt found exactly once, or appended. The engine checks every edit applies before accepting the result, so what people see is what would land.
+3. Maintainers **accept or reject** each learning on the board. Accepting a project learning re-applies the edit to the current default branch, pushes `officina/learning-<id>` and opens a pull request titled `docs(learning): ...`; people merge it as usual, and the merge marks the learning applied. Officina never writes to its own repository, so accepted agent learnings stay listed for Officina's maintainers to apply; a merged prompt change becomes a new agent version on the next `setup-agents`.
+4. Later: a weekly synthesis groups learnings across tasks, so one-off noise does not become policy.
 
 ## 11. Project config
 

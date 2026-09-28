@@ -178,13 +178,13 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     }
   };
 
-  /** Commits a new version of one file to a branch; `sha` is the blob being replaced. */
+  /** Commits a new version of one file to a branch; `sha` is the blob being replaced, absent for a new file. */
   const updateFile = async (
     ref: RepoRef & {
       readonly path: string;
       readonly branch: string;
       readonly text: string;
-      readonly sha: string;
+      readonly sha?: string | undefined;
       readonly message: string;
     }
   ): Promise<void> => {
@@ -218,6 +218,22 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
       if (error instanceof GitHubError && error.status === 404) return null;
       throw error;
     }
+  };
+
+  /** Creates a branch pointing at the current head of another one. */
+  const createBranch = async (
+    ref: RepoRef & { readonly branch: string; readonly from: string }
+  ): Promise<void> => {
+    const token = await installationToken(ref, { contents: 'write' });
+    const head = await request<{ object: { sha: string } }>(
+      `/repos/${ref.repo}/git/ref/heads/${encodeURIComponent(ref.from)}`,
+      { token }
+    );
+    await request(`/repos/${ref.repo}/git/refs`, {
+      method: 'POST',
+      token,
+      body: { ref: `refs/heads/${ref.branch}`, sha: head.object.sha }
+    });
   };
 
   const openPullRequest = async (
@@ -258,6 +274,7 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     fileContent,
     readFile,
     updateFile,
+    createBranch,
     pushFacts,
     openPullRequest,
     commentOnIssue

@@ -3,6 +3,7 @@ import {
   applyCommand,
   findProjectsByRepo,
   findTasksByPullRequest,
+  markLearningsApplied,
   updateProjectConfig
 } from '@officina/db';
 import type { GitHubClient, WebhookAction } from '@officina/github';
@@ -76,6 +77,9 @@ export const handleWebhookAction = async (
         }));
 
   const outcomes: WebhookOutcome[] = [];
+  // A merged learning pull request is not a task; it marks its learning applied.
+  if (action.kind === 'pull_request_merged')
+    await markLearningsApplied(pool, action.repo, action.prNumber);
   for (const { prNumber, command } of targets) {
     for (const taskId of await findTasksByPullRequest(pool, action.repo, prNumber)) {
       const result = await applyCommand(pool, { taskId, command, actor: ENGINE });

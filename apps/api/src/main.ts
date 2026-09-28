@@ -58,6 +58,7 @@ const scheduler =
         ),
         intervalMs: env.SCHEDULER_INTERVAL_MS,
         publicUrl: env.OFFICINA_PUBLIC_URL,
+        promptsDir: join(import.meta.dir, '..', '..', '..', 'agents'),
         log
       })
     : undefined;
@@ -83,7 +84,8 @@ const server = createApp({
   board: {
     publicUrl: env.OFFICINA_PUBLIC_URL,
     consoleWorkspace: env.ANTHROPIC_WORKSPACE_ID,
-    realtime
+    realtime,
+    github
   },
   boardDir: join(import.meta.dir, '..', '..', 'board', 'build')
 }).listen({

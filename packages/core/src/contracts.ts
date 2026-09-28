@@ -96,8 +96,28 @@ export const chooserOutputSchema = z.strictObject({
     .default([])
 });
 
+/**
+ * A learning is a lesson from one finished task plus the exact edit that would make it stick: an
+ * addition to the project's docs, or to an Officina agent prompt. People accept or reject it.
+ */
 export const learnerOutputSchema = z.strictObject({
-  learnings: z.array(z.strictObject({ text, proposedChange: text, evidence: text })).max(3)
+  learnings: z
+    .array(
+      z.strictObject({
+        title: text.max(100),
+        lesson: text.max(1500),
+        /** What in this task's history shows it: rounds, questions, overrides, time, cost. */
+        evidence: text.max(2000),
+        target: z.enum(['project', 'agent']),
+        edit: z.strictObject({
+          file: text.max(300),
+          /** Exact text to replace, found once in the file; without it the text is appended. */
+          find: z.string().min(1).max(3000).optional(),
+          text: text.max(4000)
+        })
+      })
+    )
+    .max(3)
 });
 
 export const OUTPUT_SCHEMAS = {

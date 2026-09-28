@@ -25,7 +25,8 @@ describe.skipIf(!url)('migrations', () => {
       '0003_runs_and_agents.sql',
       '0004_project_environments.sql',
       '0005_board.sql',
-      '0006_approval_plans.sql'
+      '0006_approval_plans.sql',
+      '0007_learnings.sql'
     ]);
     expect(await migrate(client)).toEqual([]);
   });

@@ -13,6 +13,7 @@ import {
   createLoginLink,
   createTask,
   finishRun,
+  insertLearnings,
   migrate,
   saveSpecVersion,
   setProjectRole,
@@ -425,6 +426,39 @@ const seedDemo = async (pool: Pool) => {
   await done.choose();
   await done.approve([owner, giulia]);
   await apply(demo, done.id, { type: 'merged' }, engine);
+  const learnerRun = await run(demo, done.id, 'done', 'learner', { cost: 31, result: {} });
+  await insertLearnings(pool, {
+    projectId,
+    taskId: done.id,
+    runId: learnerRun,
+    learnings: [
+      {
+        title: 'Dates go through the shared formatter',
+        lesson:
+          'Anything that shows a date must use the shared locale formatter; hand-built strings keep the US format.',
+        evidence:
+          'The code reviewer sent the first build back: two components built dates by hand and kept the US format.',
+        target: 'project',
+        edit: {
+          file: 'AGENTS.md',
+          find: '## Conventions\n',
+          text: '## Conventions\n\n- Show dates with the shared locale formatter, never by hand.\n'
+        }
+      },
+      {
+        title: 'Builders run the locale check before pushing',
+        lesson:
+          'The builder should run the locale alignment check whenever it touches user-facing text.',
+        evidence:
+          'Round one failed CI on locale alignment; round two passed after the builder ran it.',
+        target: 'agent',
+        edit: {
+          file: 'agents/builder.md',
+          text: 'When you change user-facing text, run the project locale check before pushing.'
+        }
+      }
+    ]
+  });
 
   const merging = await seed(demo, {
     title: 'Dark mode for the rules page',

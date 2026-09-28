@@ -32,6 +32,7 @@ import {
 } from '@officina/runner';
 import type { Pool } from 'pg';
 import { buildBrief, type ChooserContext } from './brief';
+import { runLearnerStep } from './learner';
 import { postChecklist, syncSpecStatus, type SyncGitHubPort } from './github-sync';
 
 export type GitHubPort = Pick<GitHubClient, 'installationToken' | 'openPullRequest'> &
@@ -43,6 +44,8 @@ export interface EngineDependencies {
   readonly agents: ManagedAgentsPort;
   /** Where people open a task, e.g. `https://officina.example`; task links in pull requests use it. */
   readonly publicUrl: string;
+  /** Officina's own role prompts, so the learner's edits to them can be checked before people see them. */
+  readonly promptsDir?: string | undefined;
 }
 
 /**
@@ -123,6 +126,7 @@ export const runAgentStep = async (
   taskId: string,
   role: RunnerRole
 ): Promise<StepResult> => {
+  if (role === 'learner') return runLearnerStep(deps, taskId);
   const { pool } = deps;
   const context = await loadTaskContext(pool, taskId);
   if (!context) return { status: 'skipped', reason: 'not_found' };

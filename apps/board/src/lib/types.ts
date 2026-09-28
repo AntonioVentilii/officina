@@ -152,3 +152,24 @@ export type LogEntry = { readonly id: string; readonly at: string } & (
   | { readonly kind: 'status'; readonly status: string }
   | { readonly kind: 'officina'; readonly type: string; readonly payload: unknown }
 );
+
+export interface Learning {
+  readonly id: string;
+  readonly title: string;
+  readonly lesson: string;
+  readonly evidence: string;
+  readonly target: 'project' | 'agent';
+  readonly file: string;
+  readonly find: string | null;
+  readonly text: string;
+  readonly status: 'proposed' | 'accepted' | 'rejected' | 'applied';
+  readonly taskNumber: number | null;
+  readonly taskTitle: string | null;
+  readonly decidedBy: string | null;
+  readonly decidedAt: string | null;
+  readonly decisionNote: string | null;
+  readonly prNumber: number | null;
+  readonly prUrl: string | null;
+  readonly createdAt: string;
+  readonly canDecide: boolean;
+}

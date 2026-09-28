@@ -17,6 +17,7 @@ import {
   latestChooserResult,
   listApprovedSubjects,
   listBoardTasks,
+  listLearnings,
   listProjectMembers,
   listProjectRuns,
   listRunEvents,
@@ -540,4 +541,36 @@ export const logEntries = (events: readonly RunEventRow[]): LogEntry[] =>
 export const runLog = async (pool: Pool, runId: string, afterId: number) => {
   const events = await listRunEvents(pool, runId, afterId, 500);
   return { entries: logEntries(events), cursor: events.at(-1)?.id ?? String(afterId) };
+};
+
+/** Learnings of the project, newest first, with who decided them. */
+export const learningsView = async (pool: Pool, viewer: BoardViewer) => {
+  const [rows, names] = await Promise.all([
+    listLearnings(pool, viewer.projectId),
+    memberNames(pool, viewer.workspaceId)
+  ]);
+  const canDecide = hasRole(
+    { id: viewer.memberId, role: viewer.role, domains: viewer.domains },
+    'maintainer'
+  );
+  return rows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    lesson: row.lesson,
+    evidence: row.evidence,
+    target: row.target,
+    file: row.file,
+    find: row.find,
+    text: row.text,
+    status: row.status,
+    taskNumber: row.taskNumber,
+    taskTitle: row.taskTitle,
+    decidedBy: row.decidedBy ? (names.get(row.decidedBy) ?? 'a former member') : null,
+    decidedAt: row.decidedAt,
+    decisionNote: row.decisionNote,
+    prNumber: row.prNumber,
+    prUrl: row.prUrl,
+    createdAt: row.createdAt,
+    canDecide: canDecide && row.status === 'proposed'
+  }));
 };

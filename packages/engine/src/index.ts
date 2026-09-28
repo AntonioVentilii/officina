@@ -15,3 +15,4 @@ export {
   type StepResult
 } from './step';
 export { collectDueSteps, tick, type DueStep, type TickReport } from './tick';
+export { learnerBrief, learningProblems, runLearnerStep } from './learner';

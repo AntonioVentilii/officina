@@ -13,7 +13,8 @@ import {
 import { Elysia } from 'elysia';
 import type { Pool } from 'pg';
 import { z } from 'zod';
-import { boardView, runLog, runsView, taskView, type BoardViewer } from './board';
+import { boardView, learningsView, runLog, runsView, taskView, type BoardViewer } from './board';
+import { decide as decideLearning, type LearningGitHub } from './learnings';
 import type { BoardEvent, RealtimeHub } from './realtime';
 import { TaskCommandError, actOnTaskAs, createRequestAs, type TaskAction } from './tasks';
 
@@ -22,6 +23,8 @@ export interface BoardApiDependencies {
   readonly publicUrl: string;
   readonly consoleWorkspace?: string | undefined;
   readonly realtime?: RealtimeHub | undefined;
+  /** Opens the pull requests of accepted learnings. */
+  readonly github?: LearningGitHub | undefined;
 }
 
 const COOKIE = 'officina_session';
@@ -67,6 +70,11 @@ const requestSchema = z.strictObject({
 });
 
 const commentSchema = z.strictObject({ body: z.string().trim().min(1).max(20_000) });
+
+const learningDecisionSchema = z.strictObject({
+  decision: z.enum(['accept', 'reject']),
+  note: z.string().trim().max(2_000).optional()
+});
 
 class HttpError extends Error {
   constructor(
@@ -254,6 +262,29 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
         number: taskNumber(params.number),
         action
       });
+    })
+    .get('/api/projects/:projectId/learnings', async ({ request, params }) => {
+      const viewer = viewerFor(await signedIn(request), params.projectId);
+      return { learnings: await learningsView(pool, viewer) };
+    })
+    .post('/api/projects/:projectId/learnings/:learningId', async ({ request, params, body }) => {
+      mutation(request);
+      const viewer = viewerFor(await signedIn(request), params.projectId);
+      if (!z.uuid().safeParse(params.learningId).success)
+        throw new HttpError(404, 'learning not found');
+      const input = parse(learningDecisionSchema, body);
+      await decideLearning(
+        pool,
+        deps.github,
+        {
+          projectId: viewer.projectId,
+          memberId: viewer.memberId,
+          role: viewer.role,
+          publicUrl: deps.publicUrl
+        },
+        { id: params.learningId, ...input }
+      );
+      return { ok: true };
     })
     .post('/api/projects/:projectId/tasks/:number/comments', async ({ request, params, body }) => {
       mutation(request);
