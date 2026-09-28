@@ -1,5 +1,11 @@
 import { nextAgentRoles, parseProjectConfig, type Actor } from '@officina/core';
-import { applyCommand, countOpenAgentWork, listActiveTaskIds, loadTaskContext } from '@officina/db';
+import {
+  applyCommand,
+  countOpenAgentWork,
+  listActiveTaskIds,
+  listTasksAwaitingLearning,
+  loadTaskContext
+} from '@officina/db';
 import { RUNNER_ROLES, type RunnerRole } from '@officina/runner';
 import { runAgentStep, type EngineDependencies, type StepResult } from './step';
 
@@ -59,6 +65,9 @@ export const collectDueSteps = async (
     }
 
     dueFor(taskId, nextAgentRoles(task));
+  }
+  for (const taskId of await listTasksAwaitingLearning(deps.pool, projectId)) {
+    due.push({ taskId, role: 'learner' });
   }
   return { dispatched, due };
 };

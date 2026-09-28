@@ -81,7 +81,7 @@ export const listTaskEvents = async (db: Queryable, taskId: string): Promise<Tas
   (
     await db.query<TaskEventRow>(
       `select id::text, actor, type, payload, created_at as "createdAt"
-       from task_events where task_id = $1 order by id`,
+       from task_events e where e.task_id = $1 order by e.id`,
       [taskId]
     )
   ).rows;
@@ -196,7 +196,7 @@ export const listRunEvents = async (
   (
     await db.query<RunEventRow>(
       `select id::text, type, payload, created_at as "createdAt"
-       from run_events where run_id = $1 and id > $2 order by id limit $3`,
+       from run_events e where e.run_id = $1 and e.id > $2 order by e.id limit $3`,
       [runId, afterId, limit]
     )
   ).rows;

@@ -7,3 +7,4 @@ export * from './tasks';
 export type { StoredTaskContext } from './types';
 export * from './auth';
 export * from './board';
+export * from './learnings';

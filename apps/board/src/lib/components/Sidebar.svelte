@@ -1,5 +1,14 @@
 <script lang="ts">
-  import { Bot, Inbox, LogOut, Monitor, Moon, SquareKanban, Sun } from '@lucide/svelte';
+  import {
+    Bot,
+    GraduationCap,
+    Inbox,
+    LogOut,
+    Monitor,
+    Moon,
+    SquareKanban,
+    Sun
+  } from '@lucide/svelte';
   import { page } from '$app/state';
   import { board } from '$lib/state/board.svelte';
   import { live } from '$lib/state/live.svelte';
@@ -58,6 +67,14 @@
         <Bot size={16} />Agents
         {#if board.running.length}<span class="running num"
             ><span class="pulse"></span>{board.running.length}</span
+          >{/if}
+      </a>
+    </li>
+    <li>
+      <a href="/learnings" class:on={path === '/learnings'}>
+        <GraduationCap size={16} />Learnings
+        {#if board.proposedLearnings.length}<span class="badge quiet num"
+            >{board.proposedLearnings.length}</span
           >{/if}
       </a>
     </li>
@@ -177,6 +194,11 @@
     text-align: center;
     background: var(--accent);
     color: var(--accent-text);
+  }
+
+  .badge.quiet {
+    background: var(--panel-3);
+    color: var(--text-2);
   }
 
   .running {

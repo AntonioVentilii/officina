@@ -12,6 +12,7 @@
   import type { TaskDetail } from '$lib/types';
   import ActionPanel from './ActionPanel.svelte';
   import ApprovalPlan from './ApprovalPlan.svelte';
+  import LearningCard from './LearningCard.svelte';
   import Checklist from './Checklist.svelte';
   import LaneChip from './LaneChip.svelte';
   import Markdown from './Markdown.svelte';
@@ -74,6 +75,7 @@
     task?.specs.find((item) => item.version === specVersion) ?? task?.specs.at(-1) ?? null
   );
   const cost = $derived(task?.runs.reduce((sum, run) => sum + (run.costCents ?? 0), 0) ?? 0);
+  const learned = $derived(board.learnings.filter((item) => item.taskNumber === number));
   const canComment = $derived(task?.actions.includes('comment') ?? false);
 
   const watch = () => {
@@ -188,6 +190,17 @@
                 beforeAfter={task.checklist.beforeAfter ?? []}
                 storageKey="officina.check.{session.projectId}.{task.number}.{task.headSha}"
               />
+            </section>
+          {/if}
+
+          {#if learned.length}
+            <section>
+              <h3>What Officina learned from it</h3>
+              <div class="learned">
+                {#each learned as learning (learning.id)}
+                  <LearningCard {learning} compact />
+                {/each}
+              </div>
             </section>
           {/if}
 
@@ -476,6 +489,12 @@
     border-radius: var(--radius);
     border: 1px solid var(--border);
     background: var(--panel);
+  }
+
+  .learned {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
   }
 
   .runs {

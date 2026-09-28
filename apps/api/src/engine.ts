@@ -31,13 +31,15 @@ export const startEngine = async (input: {
   agents: ManagedAgentsPort;
   intervalMs: number;
   publicUrl: string;
+  promptsDir?: string;
   log: (message: string, details?: Record<string, unknown>) => void;
 }): Promise<Scheduler> => {
   const deps: EngineDependencies = {
     pool: input.pool,
     github: input.github,
     agents: input.agents,
-    publicUrl: input.publicUrl
+    publicUrl: input.publicUrl,
+    promptsDir: input.promptsDir
   };
 
   for (const run of await failOrphanedRuns(input.pool)) {
