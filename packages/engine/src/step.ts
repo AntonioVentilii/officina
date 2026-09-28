@@ -9,6 +9,7 @@ import {
   type Task
 } from '@officina/core';
 import {
+  addComment,
   appendRunEvent,
   applyCommand,
   feedbackSinceLastPush,
@@ -31,7 +32,7 @@ import {
   type RunOutcome
 } from '@officina/runner';
 import type { Pool } from 'pg';
-import { buildBrief, type ChooserContext } from './brief';
+import { MAX_INTERVIEW_QUESTIONS, buildBrief, type ChooserContext } from './brief';
 import { runLearnerStep } from './learner';
 import { postChecklist, syncSpecStatus, type SyncGitHubPort } from './github-sync';
 
@@ -53,6 +54,13 @@ export interface EngineDependencies {
  */
 export const taskLink = (publicUrl: string, taskNumber: number) =>
   `[Officina task ${taskNumber}](${publicUrl.replace(/\/$/, '')}/tasks/${taskNumber})`;
+
+const INTERVIEW_BUDGET_CENTS = 200;
+
+const interviewProblems = (asked: number) => (output: AgentOutput<RunnerRole>) =>
+  (output as AgentOutput<'interviewer'>).outcome === 'question' && asked >= MAX_INTERVIEW_QUESTIONS
+    ? [`you have asked ${asked} questions already: complete the request now`]
+    : [];
 
 const planProblems =
   (gate: 'spec_review' | 'verifying', memberIds: ReadonlySet<string>) =>
@@ -155,6 +163,18 @@ export const runAgentStep = async (
   const firstRound = context.task.headSha === null;
   const members =
     role === 'chooser' ? await listProjectMemberProfiles(pool, context.projectId) : [];
+  const questionsAsked =
+    role === 'interviewer'
+      ? Number(
+          (
+            await pool.query<{ count: string }>(
+              `select count(*) from task_events
+               where task_id = $1 and type = 'blocked' and actor->>'role' = 'interviewer'`,
+              [taskId]
+            )
+          ).rows[0]!.count
+        )
+      : 0;
 
   try {
     const token = await deps.github.installationToken(repoRef, {
@@ -191,11 +211,13 @@ export const runAgentStep = async (
       spec: context.latestSpec,
       verify: config.verify,
       protectedPaths: rawLanes?.red?.paths ?? [],
-      requestThread: role === 'spec' ? await listComments(pool, taskId) : [],
+      requestThread:
+        role === 'spec' || role === 'interviewer' ? await listComments(pool, taskId) : [],
       feedback: role === 'builder' ? await feedbackSinceLastPush(pool, taskId) : [],
       firstRound,
       prTitlePattern: config.pullRequest.titlePattern,
-      chooser
+      chooser,
+      questionsAsked
     });
 
     const report = await executeRun(deps.agents, {
@@ -213,14 +235,20 @@ export const runAgentStep = async (
           // Until the first push the task branch does not exist yet.
           branch: role === 'spec' || firstRound ? context.defaultBranch : taskBranch
         },
-        budgetCents: Math.round(config.lanes[lane].budgetUsd * 100)
+        // A conversation is cheap; a lane's build budget would be far too generous for it.
+        budgetCents:
+          role === 'interviewer'
+            ? INTERVIEW_BUDGET_CENTS
+            : Math.round(config.lanes[lane].budgetUsd * 100)
       },
       validate:
         role === 'builder'
           ? titleProblems(config.pullRequest.titlePattern)
           : role === 'chooser'
             ? planProblems(gate, new Set(members.map((member) => member.id)))
-            : undefined,
+            : role === 'interviewer'
+              ? interviewProblems(questionsAsked)
+              : undefined,
       onSessionCreated: (sessionId) => setRunExternalId(pool, runId, sessionId),
       onEvent: (event) => appendRunEvent(pool, runId, event.type, event)
     });
@@ -276,6 +304,24 @@ export const runAgentStep = async (
       actor,
       guard: sameWork(context.task),
       onApplied: async (client, task) => {
+        if (role === 'interviewer') {
+          const interview = output as AgentOutput<'interviewer'>;
+          // The thread keeps the whole conversation, so the spec writer and people read it as one.
+          const body =
+            interview.outcome === 'question'
+              ? interview.question
+              : [
+                  `**Summary.** ${interview.summary}`,
+                  `**Done when:**\n${interview.acceptance.map((item) => `- ${item}`).join('\n')}`
+                ].join('\n\n');
+          await addComment(client, taskId, actor, body);
+          if (interview.outcome === 'complete') {
+            await client.query('update tasks set title = $2 where id = $1', [
+              taskId,
+              interview.title
+            ]);
+          }
+        }
         if (role === 'spec' && (output as AgentOutput<'spec'>).outcome === 'specced') {
           await saveSpecVersion(client, {
             taskId,

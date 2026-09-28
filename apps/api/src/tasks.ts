@@ -79,38 +79,54 @@ export interface ProjectActor {
   readonly memberId: string;
 }
 
-/** Opens a request: creates the task, records the request text as the first comment, submits it. */
+interface RequestInput {
+  readonly title: string;
+  readonly request: string;
+  /** Skip the interviewer and go straight to triage; the project's config can also turn it off. */
+  readonly skipInterview?: boolean | undefined;
+}
+
+/**
+ * Opens a request: creates the task and records the request text as the first comment. The
+ * interviewer then asks follow-up questions before triage, unless it is skipped.
+ */
 export const createRequest = async (
   pool: Pool,
-  input: Target & { readonly title: string; readonly request: string }
+  input: Target & RequestInput
 ): Promise<{ number: number; stage: string }> =>
   createRequestAs(pool, {
     ...(await resolve(pool, input)),
     title: input.title,
-    request: input.request
+    request: input.request,
+    skipInterview: input.skipInterview
   });
 
 export const createRequestAs = async (
   pool: Pool,
-  input: ProjectActor & { readonly title: string; readonly request: string }
+  input: ProjectActor & RequestInput
 ): Promise<{ number: number; stage: string }> => {
   const { projectId, memberId } = input;
   const actor: Actor = { kind: 'member', memberId };
   const { task } = await createTask(pool, { projectId, title: input.title, requesterId: memberId });
   await addComment(pool, task.id, actor, input.request);
+  const { rows } = await pool.query<{ config: unknown; number: number }>(
+    'select p.config, t.number from tasks t join projects p on p.id = t.project_id where t.id = $1',
+    [task.id]
+  );
+  const config = parseProjectConfig(rows[0]!.config);
+  const interview = !input.skipInterview && (!config.ok || config.config.intake.interview);
+  if (interview) return { number: rows[0]!.number, stage: 'request' };
   const submitted = await applyCommand(pool, {
     taskId: task.id,
     command: { type: 'submit_request' },
     actor
   });
   if (!submitted.ok) throw new TaskCommandError(ERROR_TEXT[submitted.error]);
-  const number = (
-    await pool.query<{ number: number }>('select number from tasks where id = $1', [task.id])
-  ).rows[0]!.number;
-  return { number, stage: submitted.task.stage };
+  return { number: rows[0]!.number, stage: submitted.task.stage };
 };
 
 export type TaskAction =
+  | { readonly type: 'submit' }
   | { readonly type: 'accept' }
   | { readonly type: 'approve' }
   | { readonly type: 'changes'; readonly note: string }
@@ -120,6 +136,8 @@ export type TaskAction =
 
 const toCommand = (action: TaskAction): Command => {
   switch (action.type) {
+    case 'submit':
+      return { type: 'submit_request' };
     case 'accept':
     case 'approve':
       return { type: action.type };
@@ -175,6 +193,7 @@ const describeRequirement = (requirement: Requirement): string =>
       : 'the requester';
 
 const NEXT_STEP: Partial<Record<string, string>> = {
+  request: 'the interviewer is reading the request; to skip it: task submit --number {n}',
   triage: 'task accept --number {n}   (or: task decline --number {n} --reason "...")',
   speccing: 'an agent is writing the spec; check back with task show',
   spec_review:

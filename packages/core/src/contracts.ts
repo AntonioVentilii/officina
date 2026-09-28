@@ -18,12 +18,12 @@ const blockedSchema = z.strictObject({
 });
 
 export const interviewerOutputSchema = z.discriminatedUnion('outcome', [
-  z.strictObject({ outcome: z.literal('question'), question: text }),
+  z.strictObject({ outcome: z.literal('question'), question: text.max(1500) }),
   z.strictObject({
     outcome: z.literal('complete'),
-    title: text,
-    summary: text,
-    acceptance: z.array(text).min(1)
+    title: text.max(120),
+    summary: text.max(4000),
+    acceptance: z.array(text.max(500)).min(1).max(10)
   })
 ]);
 
@@ -171,6 +171,7 @@ const blockCommand = (
 };
 
 export type RoleOutput =
+  | { readonly role: 'interviewer'; readonly output: AgentOutput<'interviewer'> }
   | { readonly role: 'spec'; readonly output: AgentOutput<'spec'> }
   | {
       readonly role: 'builder';
@@ -190,6 +191,13 @@ export type CommandResult =
 /** Translates a validated agent output into the lifecycle command the engine applies for it. */
 export const commandForOutput = (task: Task, result: RoleOutput): CommandResult => {
   switch (result.role) {
+    case 'interviewer': {
+      const output = result.output;
+      if (output.outcome === 'question') {
+        return { ok: true, command: blockCommand(task, output.question, 'requester') };
+      }
+      return { ok: true, command: { type: 'submit_request' } };
+    }
     case 'spec': {
       const output = result.output;
       if (output.outcome === 'blocked') {

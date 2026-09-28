@@ -35,7 +35,11 @@ export interface BriefInput {
   readonly firstRound: boolean;
   readonly prTitlePattern: string | null;
   readonly chooser?: ChooserContext | undefined;
+  /** Follow-up questions the interviewer has already asked on this request. */
+  readonly questionsAsked?: number | undefined;
 }
+
+export const MAX_INTERVIEW_QUESTIONS = 4;
 
 const describe = (requirement: Requirement) =>
   'role' in requirement
@@ -92,7 +96,7 @@ export const buildBrief = (input: BriefInput): string => {
     `## Title\n\n${fence(input.title)}`
   ];
 
-  if (input.role === 'spec') {
+  if (input.role === 'spec' || input.role === 'interviewer') {
     sections.push(
       `## Request thread\n\n${input.requestThread.length ? input.requestThread.map(fence).join('\n\n') : 'No comments yet.'}`
     );
@@ -113,6 +117,13 @@ export const buildBrief = (input: BriefInput): string => {
     if (input.feedback.length) {
       sections.push(`## Notes to address\n\n${input.feedback.map(fence).join('\n\n')}`);
     }
+  }
+
+  if (input.role === 'interviewer') {
+    const asked = input.questionsAsked ?? 0;
+    sections.push(
+      `## Your decision\n\nQuestions asked so far: ${asked} of ${MAX_INTERVIEW_QUESTIONS}. ${asked >= MAX_INTERVIEW_QUESTIONS ? 'You have no questions left: complete the request with what you know, and list what is still open in the summary.' : 'Ask the single most useful question, or complete the request if a spec writer could work from it.'}`
+    );
   }
 
   if (input.role === 'chooser' && input.chooser) {

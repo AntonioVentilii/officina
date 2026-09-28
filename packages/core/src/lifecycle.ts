@@ -315,6 +315,7 @@ const backToBuilding = (task: Task, context: DecideContext, why: DomainEvent): D
 };
 
 const ALLOWED_WHILE_HELD: ReadonlySet<Command['type']> = new Set([
+  'submit_request',
   'answer',
   'resume',
   'cancel',
@@ -340,13 +341,20 @@ export const decide = (
     case 'submit_request': {
       if (task.stage !== 'request') return fail('wrong_stage');
       const member = memberFor(actor, context);
+      // The interviewer submits a request once it is specific enough; people can submit it as is.
       const allowed =
-        member !== undefined &&
-        hasRole(member, 'contributor') &&
-        (member.id === task.requesterId || hasRole(member, 'maintainer'));
+        (actor.kind === 'agent' && actor.role === 'interviewer') ||
+        (member !== undefined &&
+          hasRole(member, 'contributor') &&
+          (member.id === task.requesterId || hasRole(member, 'maintainer')));
       if (!allowed) return fail('not_allowed');
-      const [moved, event] = moveTo(task, 'triage');
-      return ok(moved, [event]);
+      if (task.paused) return fail('paused');
+      // Submitting as is closes an open interview question: triage decides with what is there.
+      const [moved, event] = moveTo(task, 'triage', { blocked: null });
+      const events: DomainEvent[] = task.blocked
+        ? [{ type: 'unblocked', answer: '(submitted as is)' }, event]
+        : [event];
+      return ok(moved, events);
     }
 
     case 'accept': {

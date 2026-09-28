@@ -20,7 +20,8 @@ const USAGE = `usage (on your machine, prefix with scripts/officina; on the serv
   Tasks
     task list
     task show     --number <n>
-    task create   --title "<title>" --request "<what you want, in plain words>"
+    task create   --title "<title>" --request "<what you want, in plain words>" [--skip-interview]
+    task submit   --number <n>                 send a request to triage without more questions
     task accept   --number <n>
     task approve  --number <n>
     task changes  --number <n> --note "<what to change>"
@@ -87,7 +88,8 @@ const main = async () => {
       email: { type: 'string' },
       name: { type: 'string' },
       role: { type: 'string' },
-      domains: { type: 'string' }
+      domains: { type: 'string' },
+      'skip-interview': { type: 'boolean' }
     }
   });
   const [command, subcommand] = positionals;
@@ -123,13 +125,17 @@ const main = async () => {
           const created = await createRequest(pool, {
             ...target,
             title: need(values.title, 'title'),
-            request: need(values.request, 'request')
+            request: need(values.request, 'request'),
+            skipInterview: values['skip-interview']
           });
           console.log(
-            `Created task #${created.number} (${created.stage}). Next: task accept --number ${created.number}`
+            created.stage === 'request'
+              ? `Created task #${created.number}. The interviewer asks follow-up questions first: answer with task answer --number ${created.number} --text "...", or skip with task submit --number ${created.number}.`
+              : `Created task #${created.number} (${created.stage}). Next: task accept --number ${created.number}`
           );
           return;
         }
+        case 'submit':
         case 'accept':
         case 'approve':
         case 'changes':

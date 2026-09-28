@@ -31,6 +31,12 @@ const projectConfigSchema = z.strictObject({
     pr_template: z.string().min(1).optional()
   }),
   setup: z.array(z.string().min(1)).optional(),
+  intake: z
+    .strictObject({
+      /** An agent asks the requester follow-up questions before triage. On unless turned off. */
+      interview: z.boolean().optional()
+    })
+    .optional(),
   verify: z.array(z.string().min(1)).optional(),
   pull_request: z
     .strictObject({
@@ -85,6 +91,7 @@ export interface ProjectConfig {
     readonly prTemplate: string | null;
   };
   readonly setup: readonly string[];
+  readonly intake: { readonly interview: boolean };
   readonly verify: readonly string[];
   readonly runtime: { readonly allowedHosts: readonly string[] };
   readonly pullRequest: { readonly titlePattern: string | null };
@@ -145,6 +152,7 @@ export const parseProjectConfig = (input: unknown): ConfigResult => {
         prTemplate: raw.docs.pr_template ?? null
       },
       setup: raw.setup ?? [],
+      intake: { interview: raw.intake?.interview ?? true },
       verify: raw.verify ?? [],
       runtime: { allowedHosts: raw.runtime?.allowed_hosts ?? [] },
       pullRequest: { titlePattern: raw.pull_request?.title_pattern ?? null },

@@ -27,7 +27,8 @@ describe.skipIf(!url)('task commands', () => {
 
   const request = {
     title: 'Replace "Wager"',
-    request: 'Battle screens say Wager; use prediction wording.'
+    request: 'Battle screens say Wager; use prediction wording.',
+    skipInterview: true
   };
 
   test('create opens a request in triage with the request text as its first comment', async () => {
@@ -111,5 +112,29 @@ describe.skipIf(!url)('task commands', () => {
     await expect(
       actOnTask(pool, { number: 1, asEmail: 'stranger@example.com', action: { type: 'accept' } })
     ).rejects.toBeInstanceOf(TaskCommandError);
+  });
+
+  test('without skipping, a request waits for the interviewer and can be submitted as is', async () => {
+    const { skipInterview: _skip, ...plain } = request;
+    expect(await createRequest(pool, plain)).toEqual({ number: 1, stage: 'request' });
+    expect(await describeTask(pool, { number: 1 })).toContain(
+      'the interviewer is reading the request'
+    );
+    const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
+    await applyOrThrow(
+      pool,
+      taskId,
+      {
+        type: 'block',
+        question: 'Which screens: battles only, or leagues too?',
+        askedOf: { memberId: seeded.ownerId }
+      },
+      { kind: 'agent', role: 'interviewer', version: 1 }
+    );
+    expect(await actOnTask(pool, { number: 1, action: { type: 'submit' } })).toEqual({
+      stage: 'triage'
+    });
+    const task = await pool.query('select blocked from tasks where id = $1', [taskId]);
+    expect(task.rows[0].blocked).toBeNull();
   });
 });

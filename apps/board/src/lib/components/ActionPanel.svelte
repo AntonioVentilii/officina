@@ -59,6 +59,8 @@
       );
   };
 
+  const submitAsIs = () => void act({ type: 'submit' }, 'Sent to triage as it is');
+
   const answer = (event: SubmitEvent) => {
     event.preventDefault();
     const value = text.trim();
@@ -89,6 +91,11 @@
           rows="3"
           placeholder="Your answer. The step runs again with it."></textarea>
         <div class="buttons">
+          {#if can('submit')}
+            <button type="button" class="btn ghost" disabled={busy} onclick={submitAsIs}
+              >Submit as is</button
+            >
+          {/if}
           <button class="btn primary" disabled={busy || !text.trim()}>Answer</button>
         </div>
       </form>
@@ -113,6 +120,9 @@
         <div class="kicker">Agents</div>
         <div class="label">{task.waitingOn.label}</div>
       </div>
+      {#if can('submit')}
+        <button class="btn ghost" disabled={busy} onclick={submitAsIs}>Submit as is</button>
+      {/if}
       {#if task.running.length}
         <button class="btn" onclick={onwatch}>Watch live</button>
       {/if}
