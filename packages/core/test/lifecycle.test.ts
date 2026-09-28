@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
-import { newTask, type Task } from '../src';
+import { effectivePolicy, newTask, nextAgentRoles, type Task } from '../src';
 import {
+  PLAN,
   asAgent,
   asMember,
   createDriver,
@@ -25,6 +26,7 @@ const toReady = (driver: Driver, paths: readonly string[], userVisible = false):
     { type: 'post_spec', predictedPaths: paths, userVisible },
     asAgent('spec')
   );
+  task = driver.step(task, { type: 'plan_approval', userVisible, plan: PLAN }, asAgent('chooser'));
   return driver.step(task, { type: 'approve' }, asMember(owner));
 };
 
@@ -64,7 +66,7 @@ describe('solo owner', () => {
     task = buildAndReview(driver, task, 'abc', COPY_PATHS);
     expect(task.stage).toBe('choosing');
 
-    task = driver.step(task, { type: 'choose', userVisible: true }, asAgent('chooser'));
+    task = driver.step(task, { type: 'choose', userVisible: true, plan: PLAN }, asAgent('chooser'));
     task = driver.step(task, { type: 'approve' }, asMember(owner));
     expect(task.stage).toBe('merging');
 
@@ -85,7 +87,7 @@ describe('collaboration', () => {
     const driver = createDriver([owner, productContributor]);
     let task = dispatchAgent(driver, toReady(driver, PAGE_PATHS));
     task = buildAndReview(driver, task, 'abc', PAGE_PATHS);
-    task = driver.step(task, { type: 'choose', userVisible: true }, asAgent('chooser'));
+    task = driver.step(task, { type: 'choose', userVisible: true, plan: PLAN }, asAgent('chooser'));
 
     task = driver.step(task, { type: 'approve' }, asMember(owner));
     expect(task.stage).toBe('verifying');
@@ -97,7 +99,7 @@ describe('collaboration', () => {
     const driver = createDriver([owner, productContributor]);
     let task = dispatchAgent(driver, toReady(driver, PAGE_PATHS, true));
     task = buildAndReview(driver, task, 'abc', PAGE_PATHS);
-    task = driver.step(task, { type: 'choose', userVisible: true }, asAgent('chooser'));
+    task = driver.step(task, { type: 'choose', userVisible: true, plan: PLAN }, asAgent('chooser'));
     task = driver.step(task, { type: 'approve' }, asMember(owner));
     task = driver.step(
       task,
@@ -107,7 +109,7 @@ describe('collaboration', () => {
     expect(task.stage).toBe('building');
 
     task = buildAndReview(driver, task, 'def', PAGE_PATHS);
-    task = driver.step(task, { type: 'choose', userVisible: true }, asAgent('chooser'));
+    task = driver.step(task, { type: 'choose', userVisible: true, plan: PLAN }, asAgent('chooser'));
     task = driver.step(task, { type: 'approve' }, asMember(productContributor));
     expect(task.stage).toBe('verifying');
     task = driver.step(task, { type: 'approve' }, asMember(owner));
@@ -120,11 +122,15 @@ describe('collaboration', () => {
     task = buildAndReview(driver, task, 'abc', PAGE_PATHS);
     const byAgent = driver.attempt(
       task,
-      { type: 'choose', userVisible: false },
+      { type: 'choose', userVisible: false, plan: PLAN },
       asAgent('chooser')
     );
     expect(byAgent.ok && byAgent.task.userVisible).toBe(true);
-    const byOwner = driver.attempt(task, { type: 'choose', userVisible: false }, asMember(owner));
+    const byOwner = driver.attempt(
+      task,
+      { type: 'choose', userVisible: false, plan: PLAN },
+      asMember(owner)
+    );
     expect(byOwner.ok && byOwner.task.userVisible).toBe(false);
   });
 
@@ -305,5 +311,137 @@ describe('permissions', () => {
       ok: false,
       error: 'terminal'
     });
+  });
+});
+
+describe('approval chooser', () => {
+  const toSpecReview = (driver: Driver, paths = PAGE_PATHS, userVisible = false): Task => {
+    let task = newTask('t1', owner.id);
+    task = driver.step(task, { type: 'submit_request' }, asMember(owner));
+    task = driver.step(task, { type: 'accept' }, asMember(owner));
+    return driver.step(
+      task,
+      { type: 'post_spec', predictedPaths: paths, userVisible },
+      asAgent('spec')
+    );
+  };
+
+  test('nobody approves a spec version before the chooser has planned it', () => {
+    const driver = createDriver([owner]);
+    let task = toSpecReview(driver);
+    expect(nextAgentRoles(task)).toEqual(['chooser']);
+    expect(driver.attempt(task, { type: 'approve' }, asMember(owner))).toEqual({
+      ok: false,
+      error: 'not_planned'
+    });
+    task = driver.step(
+      task,
+      { type: 'plan_approval', userVisible: false, plan: PLAN },
+      asAgent('chooser')
+    );
+    expect(nextAgentRoles(task)).toEqual([]);
+    expect(driver.step(task, { type: 'approve' }, asMember(owner)).stage).toBe('ready');
+  });
+
+  test('an added domain approval must be met by someone who holds it', () => {
+    const driver = createDriver([owner, productContributor]);
+    let task = toSpecReview(driver);
+    task = driver.step(
+      task,
+      {
+        type: 'plan_approval',
+        userVisible: false,
+        plan: {
+          ...PLAN,
+          extra: [{ requirement: { domain: 'product' }, reason: 'Changes pricing copy.' }]
+        }
+      },
+      asAgent('chooser')
+    );
+    task = driver.step(task, { type: 'approve' }, asMember(owner));
+    expect(task.stage).toBe('spec_review');
+    expect(driver.events()).toContainEqual(
+      expect.objectContaining({ type: 'approval_recorded', pending: [{ domain: 'product' }] })
+    );
+    expect(driver.step(task, { type: 'approve' }, asMember(productContributor)).stage).toBe(
+      'ready'
+    );
+  });
+
+  test('a domain nobody holds is waived, never a dead end', () => {
+    const driver = createDriver([owner]);
+    let task = toSpecReview(driver);
+    task = driver.step(
+      task,
+      {
+        type: 'plan_approval',
+        userVisible: false,
+        plan: { ...PLAN, extra: [{ requirement: { domain: 'legal' }, reason: 'Terms text.' }] }
+      },
+      asAgent('chooser')
+    );
+    task = driver.step(task, { type: 'approve' }, asMember(owner));
+    expect(task.stage).toBe('ready');
+    expect(driver.events()).toContainEqual(
+      expect.objectContaining({ type: 'approval_recorded', waived: [{ domain: 'legal' }] })
+    );
+  });
+
+  test('plans only ever add: a later plan cannot drop an earlier requirement', () => {
+    const driver = createDriver([owner, productContributor]);
+    let task = toSpecReview(driver);
+    const legal = { requirement: { domain: 'legal' }, reason: 'Terms text.' };
+    task = driver.step(
+      task,
+      { type: 'plan_approval', userVisible: false, plan: { ...PLAN, extra: [legal] } },
+      asAgent('chooser')
+    );
+    task = driver.step(task, { type: 'request_changes', note: 'shorter' }, asMember(owner));
+    task = driver.step(
+      task,
+      { type: 'post_spec', predictedPaths: PAGE_PATHS, userVisible: false },
+      asAgent('spec')
+    );
+    expect(nextAgentRoles(task)).toEqual(['chooser']);
+    task = driver.step(
+      task,
+      {
+        type: 'plan_approval',
+        userVisible: false,
+        plan: {
+          ...PLAN,
+          verifiers: [
+            { memberId: productContributor.id, reason: 'Owns pricing.' },
+            { memberId: 'stranger', reason: 'Not a member.' }
+          ]
+        }
+      },
+      asAgent('chooser')
+    );
+    expect(task.approvalPlans.spec_review).toMatchObject({
+      subject: 'spec:2',
+      extra: [legal],
+      verifiers: [{ memberId: productContributor.id, reason: 'Owns pricing.' }]
+    });
+    expect(effectivePolicy(driver.config, task, 'spec_review')).toContainEqual({ domain: 'legal' });
+  });
+
+  test('only the chooser or the engine plans approvals', () => {
+    const driver = createDriver([owner]);
+    const task = toSpecReview(driver);
+    expect(
+      driver.attempt(
+        task,
+        { type: 'plan_approval', userVisible: false, plan: PLAN },
+        asMember(owner)
+      )
+    ).toEqual({ ok: false, error: 'not_allowed' });
+    expect(
+      driver.attempt(
+        task,
+        { type: 'plan_approval', userVisible: false, plan: PLAN },
+        asAgent('spec')
+      )
+    ).toEqual({ ok: false, error: 'not_allowed' });
   });
 });

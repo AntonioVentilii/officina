@@ -6,14 +6,15 @@
   let status = $state<'working' | 'no-link' | 'failed'>('working');
   let message = $state('');
 
-  $effect(() => {
+  const redeem = () => {
     const token = location.hash.slice(1);
     // The link is spent on first use; drop it from the address bar and history straight away.
     history.replaceState(null, '', '/signin');
     if (!token) {
-      status = 'no-link';
+      if (status === 'working') status = 'no-link';
       return;
     }
+    status = 'working';
     post('/auth/redeem', { token })
       .then(async () => {
         await session.load();
@@ -23,6 +24,13 @@
         status = 'failed';
         message = error.message;
       });
+  };
+
+  // A link pasted while this page is open only changes the fragment, which is not a navigation.
+  $effect(() => {
+    redeem();
+    window.addEventListener('hashchange', redeem);
+    return () => window.removeEventListener('hashchange', redeem);
   });
 </script>
 

@@ -118,8 +118,18 @@ export interface TaskDetail extends Card {
   }[];
   readonly events: readonly TaskEvent[];
   readonly runs: readonly Run[];
+  readonly plan: {
+    readonly gate: 'spec_review' | 'verifying';
+    readonly current: boolean;
+    readonly depth: 'glance' | 'test' | 'device';
+    readonly depthLabel: string;
+    readonly rationale: string;
+    readonly extra: readonly { readonly label: string; readonly reason: string }[];
+    readonly verifiers: readonly { readonly name: string; readonly reason: string }[];
+  } | null;
   readonly approval: {
     readonly gate: 'spec_review' | 'verifying';
+    readonly planned: boolean;
     readonly pending: readonly string[];
     readonly waived: readonly string[];
     readonly approvedBy: readonly string[];

@@ -1,4 +1,10 @@
-import { REVIEWER_ROLES, TERMINAL_STAGES, type AgentRole, type Task } from './lifecycle';
+import {
+  REVIEWER_ROLES,
+  TERMINAL_STAGES,
+  gateSubject,
+  type AgentRole,
+  type Task
+} from './lifecycle';
 
 /** The agent roles whose work a task is waiting on right now. Held tasks wait on people, not agents. */
 export const nextAgentRoles = (task: Task): AgentRole[] => {
@@ -6,6 +12,11 @@ export const nextAgentRoles = (task: Task): AgentRole[] => {
   switch (task.stage) {
     case 'speccing':
       return ['spec'];
+    case 'spec_review':
+      // The approval chooser decides who must approve each spec version before anyone can.
+      return task.approvalPlans.spec_review?.subject === gateSubject(task, 'spec_review')
+        ? []
+        : ['chooser'];
     case 'building':
       return task.assignee?.kind === 'agent' ? ['builder'] : [];
     case 'reviewing':

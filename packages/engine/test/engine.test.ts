@@ -29,6 +29,7 @@ const RESULTS: Record<string, unknown> = {
   reviewer_correctness: { outcome: 'approve', summary: 'No issues.' },
   chooser: {
     userVisible: true,
+    approval: { depth: 'test', rationale: 'Copy people read on the settings page.' },
     checklist: ['Open settings and read the title.'],
     beforeAfter: [{ key: 'settings.title', locale: 'en', before: 'Settings', after: 'Preferences' }]
   }
@@ -121,6 +122,11 @@ describe.skipIf(!url)('engine', () => {
       { pool, github: github.port, agents, publicUrl: PUBLIC_URL },
       taskId,
       'spec'
+    );
+    await runAgentStep(
+      { pool, github: github.port, agents, publicUrl: PUBLIC_URL },
+      taskId,
+      'chooser'
     );
     await applyOrThrow(pool, taskId, { type: 'approve' }, seeded.owner);
     return taskId;
@@ -259,6 +265,66 @@ describe.skipIf(!url)('engine', () => {
       (github.calls.find((call) => call.method === 'openPullRequest')!.args[0] as { title: string })
         .title
     ).toBe('fix(settings): rename the settings title');
+  });
+
+  test('the approval chooser plans the spec gate on the default branch with the members in its brief', async () => {
+    const taskId = await taskInSpeccing();
+    const github = fakeGitHub();
+    const agents = createFakePort((request) =>
+      request.metadata.role === 'chooser'
+        ? [
+            toolUse({
+              ...(RESULTS.chooser as object),
+              approval: {
+                depth: 'device',
+                rationale: 'Touches the paywall.',
+                extraApprovals: [{ domain: 'product', reason: 'Pricing copy.' }],
+                verifiers: [{ memberId: '00000000-0000-4000-8000-000000000000', reason: 'x' }]
+              }
+            }),
+            idle('requires_action'),
+            toolUse({
+              ...(RESULTS.chooser as object),
+              approval: {
+                depth: 'device',
+                rationale: 'Touches the paywall.',
+                extraApprovals: [{ domain: 'product', reason: 'Pricing copy.' }],
+                verifiers: [{ memberId: seeded.ownerId, reason: 'Requested it.' }]
+              }
+            }),
+            idle('requires_action'),
+            idle('end_turn')
+          ]
+        : succeed(request)
+    );
+    const deps = { pool, github: github.port, agents, publicUrl: PUBLIC_URL };
+    await runAgentStep(deps, taskId, 'spec');
+    expect(
+      (await applyCommand(pool, { taskId, command: { type: 'approve' }, actor: seeded.owner })).ok
+    ).toBe(false);
+
+    expect(await runAgentStep(deps, taskId, 'chooser')).toEqual({ status: 'applied' });
+    const session = agents.sessions.find((item) => item.metadata.role === 'chooser')!;
+    expect(session.repository.branch).toBe('main');
+    const brief = (
+      agents.sent.find((sent) => JSON.stringify(sent.events).includes('Project members'))!
+        .events[0] as { text: string }
+    ).text;
+    expect(brief).toContain(`\`${seeded.ownerId}\` Antonio, owner`);
+    expect(brief).toContain('Spec awaiting approval (version 1)');
+    expect(JSON.stringify(agents.sent)).toContain('is not a member of this project');
+
+    const task = (await loadTask(pool, taskId))!.task;
+    expect(task.approvalPlans.spec_review).toMatchObject({
+      subject: 'spec:1',
+      depth: 'device',
+      extra: [{ requirement: { domain: 'product' }, reason: 'Pricing copy.' }],
+      verifiers: [{ memberId: seeded.ownerId, reason: 'Requested it.' }]
+    });
+    expect(await runAgentStep(deps, taskId, 'chooser')).toEqual({
+      status: 'skipped',
+      reason: 'not_due'
+    });
   });
 
   test('a push to any other branch blocks the task and opens no pull request', async () => {

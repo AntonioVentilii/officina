@@ -34,6 +34,7 @@ interface TaskRow {
   paused: boolean;
   fix_rounds: number;
   reviews: Task['reviews'];
+  approval_plans: Task['approvalPlans'];
   version: number;
 }
 
@@ -51,7 +52,8 @@ const toStored = (row: TaskRow): StoredTask => ({
     blocked: row.blocked,
     paused: row.paused,
     fixRounds: row.fix_rounds,
-    reviews: row.reviews
+    reviews: row.reviews,
+    approvalPlans: row.approval_plans
   }
 });
 
@@ -177,7 +179,7 @@ export const applyCommand = (pool: Pool, input: ApplyInput): Promise<ApplyResult
     const task = decision.task;
     const updated = await client.query<{ version: number }>(
       `update tasks set stage = $2, lane = $3, spec_version = $4, head_sha = $5, user_visible = $6,
-         assignee = $7, blocked = $8, paused = $9, fix_rounds = $10, reviews = $11,
+         assignee = $7, blocked = $8, paused = $9, fix_rounds = $10, reviews = $11, approval_plans = $12,
          version = version + 1, updated_at = now()
        where id = $1 returning version`,
       [
@@ -191,7 +193,8 @@ export const applyCommand = (pool: Pool, input: ApplyInput): Promise<ApplyResult
         json(task.blocked),
         task.paused,
         task.fixRounds,
-        json(task.reviews)
+        json(task.reviews),
+        json(task.approvalPlans)
       ]
     );
 

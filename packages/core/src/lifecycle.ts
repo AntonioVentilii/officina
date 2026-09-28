@@ -1,4 +1,4 @@
-import type { Gate, ProjectConfig, Requirement } from './config';
+import type { Gate, Policy, ProjectConfig, Requirement } from './config';
 import { computeLane, redPaths, stricterLane, type Lane } from './lanes';
 import { evaluatePolicy, type Approval } from './policies';
 import { hasRole, type Member, type Role } from './roles';
@@ -65,7 +65,28 @@ export interface Task {
   /** Times work went back to building since the last dispatch. */
   readonly fixRounds: number;
   readonly reviews: Readonly<Partial<Record<ReviewerRole, 'approve'>>>;
+  /** The approval chooser's decision for each human gate. */
+  readonly approvalPlans: Readonly<Partial<Record<Gate, ApprovalPlan>>>;
 }
+
+/** How closely people should check: a read, a hands-on test, or a test on a real device. */
+export type CheckDepth = 'glance' | 'test' | 'device';
+
+/** An approval the chooser adds to a gate on top of the lane policy. It can only add, never remove. */
+export type ExtraRequirement =
+  { readonly domain: string } | { readonly role: 'maintainer' | 'owner' };
+
+export interface ApprovalPlan {
+  /** What the plan was made for: `spec:<version>` or `sha:<head commit>`. */
+  readonly subject: string;
+  readonly depth: CheckDepth;
+  readonly rationale: string;
+  readonly extra: readonly { readonly requirement: ExtraRequirement; readonly reason: string }[];
+  /** People the chooser asks to verify; a request, not a requirement. */
+  readonly verifiers: readonly { readonly memberId: string; readonly reason: string }[];
+}
+
+export type PlanInput = Omit<ApprovalPlan, 'subject'>;
 
 export const newTask = (id: string, requesterId: string): Task => ({
   id,
@@ -79,7 +100,8 @@ export const newTask = (id: string, requesterId: string): Task => ({
   blocked: null,
   paused: false,
   fixRounds: 0,
-  reviews: {}
+  reviews: {},
+  approvalPlans: {}
 });
 
 export type Command =
@@ -103,7 +125,8 @@ export type Command =
       readonly diffLines: number;
     }
   | { readonly type: 'review'; readonly verdict: 'approve' | 'changes'; readonly notes: string }
-  | { readonly type: 'choose'; readonly userVisible: boolean }
+  | { readonly type: 'plan_approval'; readonly userVisible: boolean; readonly plan: PlanInput }
+  | { readonly type: 'choose'; readonly userVisible: boolean; readonly plan: PlanInput }
   | { readonly type: 'merged' }
   | { readonly type: 'ci_failed'; readonly details: string }
   | { readonly type: 'block'; readonly question: string; readonly askedOf: Blocked['askedOf'] }
@@ -148,7 +171,14 @@ export type DomainEvent =
   | { readonly type: 'unblocked'; readonly answer: string }
   | { readonly type: 'paused' }
   | { readonly type: 'resumed' }
-  | { readonly type: 'closed'; readonly stage: 'declined' | 'cancelled'; readonly reason: string };
+  | { readonly type: 'closed'; readonly stage: 'declined' | 'cancelled'; readonly reason: string }
+  | {
+      readonly type: 'approval_planned';
+      readonly gate: Gate;
+      readonly plan: ApprovalPlan;
+      /** Requirements this plan added to the gate beyond the lane policy and earlier plans. */
+      readonly added: readonly ExtraRequirement[];
+    };
 
 export type DecisionError =
   | 'terminal'
@@ -164,7 +194,8 @@ export type DecisionError =
   | 'no_lane'
   | 'no_head'
   | 'wip_limit'
-  | 'agents_cannot_build_lane';
+  | 'agents_cannot_build_lane'
+  | 'not_planned';
 
 export type Decision =
   | { readonly ok: true; readonly task: Task; readonly events: readonly DomainEvent[] }
@@ -196,8 +227,55 @@ const isMemberWith = (actor: Actor, context: DecideContext, role: Role): boolean
   return member !== undefined && hasRole(member, role);
 };
 
-const gateSubject = (task: Task, gate: Gate): string | null =>
+export const gateSubject = (
+  task: Pick<Task, 'specVersion' | 'headSha'>,
+  gate: Gate
+): string | null =>
   gate === 'spec_review' ? `spec:${task.specVersion}` : task.headSha && `sha:${task.headSha}`;
+
+/** The lane's policy for a gate plus whatever the approval chooser added to it. */
+export const effectivePolicy = (
+  config: ProjectConfig,
+  task: Pick<Task, 'lane' | 'approvalPlans'>,
+  gate: Gate
+): Policy => [
+  ...config.lanes[task.lane ?? 'standard'].approvals[gate],
+  ...(task.approvalPlans[gate]?.extra.map((item) => item.requirement) ?? [])
+];
+
+const sameRequirement = (a: ExtraRequirement, b: ExtraRequirement) =>
+  JSON.stringify(a) === JSON.stringify(b);
+
+/**
+ * Records the chooser's plan for a gate. Requirements only accumulate across plans for the same
+ * gate, so a later plan (after changes, or a manipulated one) can never lower the bar; people it
+ * names must be contributors of the project.
+ */
+const withPlan = (
+  task: Task,
+  gate: Gate,
+  subject: string,
+  input: PlanInput,
+  context: DecideContext
+): [Partial<Task>, DomainEvent] => {
+  const previous = task.approvalPlans[gate]?.extra ?? [];
+  const extra = [...previous];
+  const added: ExtraRequirement[] = [];
+  for (const item of input.extra) {
+    if (extra.some((existing) => sameRequirement(existing.requirement, item.requirement))) continue;
+    extra.push(item);
+    added.push(item.requirement);
+  }
+  const verifiers = input.verifiers.filter((verifier) => {
+    const member = context.members.find((candidate) => candidate.id === verifier.memberId);
+    return member !== undefined && hasRole(member, 'contributor');
+  });
+  const plan: ApprovalPlan = { ...input, subject, extra, verifiers };
+  return [
+    { approvalPlans: { ...task.approvalPlans, [gate]: plan } },
+    { type: 'approval_planned', gate, plan, added }
+  ];
+};
 
 /**
  * Sends work back to building. Once the lane's fix rounds are used up the task returns to `ready`
@@ -313,9 +391,11 @@ export const decide = (
       const gate: Gate = task.stage;
       const subject = gateSubject(task, gate);
       if (subject === null) return fail('no_head');
+      // Nobody can approve before the approval chooser has said who needs to.
+      if (task.approvalPlans[gate]?.subject !== subject) return fail('not_planned');
       const approval: Approval = { memberId: member.id, subject };
       const result = evaluatePolicy(
-        context.config.lanes[task.lane].approvals[gate],
+        effectivePolicy(context.config, task, gate),
         [...context.approvals, approval],
         {
           members: context.members,
@@ -499,10 +579,26 @@ export const decide = (
       const userVisible = isMaintainer
         ? command.userVisible
         : task.userVisible || command.userVisible;
-      const [moved, stageEvent] = moveTo(task, 'verifying', { userVisible });
+      const subject = gateSubject(task, 'verifying');
+      if (subject === null) return fail('no_head');
+      const [planned, planEvent] = withPlan(task, 'verifying', subject, command.plan, context);
+      const [moved, stageEvent] = moveTo(task, 'verifying', { userVisible, ...planned });
       const events: DomainEvent[] =
         userVisible !== task.userVisible ? [{ type: 'user_visible_changed', userVisible }] : [];
-      return ok(moved, [...events, stageEvent]);
+      return ok(moved, [...events, planEvent, stageEvent]);
+    }
+
+    case 'plan_approval': {
+      if (task.stage !== 'spec_review') return fail('wrong_stage');
+      const allowed =
+        (actor.kind === 'agent' && actor.role === 'chooser') || actor.kind === 'engine';
+      if (!allowed) return fail('not_allowed');
+      const subject = `spec:${task.specVersion}`;
+      const userVisible = task.userVisible || command.userVisible;
+      const [planned, planEvent] = withPlan(task, 'spec_review', subject, command.plan, context);
+      const events: DomainEvent[] =
+        userVisible !== task.userVisible ? [{ type: 'user_visible_changed', userVisible }] : [];
+      return ok({ ...task, ...planned, userVisible }, [...events, planEvent]);
     }
 
     case 'merged': {

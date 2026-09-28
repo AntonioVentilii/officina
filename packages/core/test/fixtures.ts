@@ -8,6 +8,7 @@ import {
   type Decision,
   type DomainEvent,
   type Member,
+  type PlanInput,
   type ProjectConfig,
   type Task
 } from '../src';
@@ -43,6 +44,14 @@ export const asMember = (member: Member): Actor => ({ kind: 'member', memberId: 
 export const asAgent = (role: AgentRole): Actor => ({ kind: 'agent', role, version: 1 });
 export const engine: Actor = { kind: 'engine' };
 
+/** A plain approval plan that adds nothing, for tests about other rules. */
+export const PLAN: PlanInput = {
+  depth: 'test',
+  rationale: 'Ordinary change.',
+  extra: [],
+  verifiers: []
+};
+
 /** Applies commands like the engine will: approvals recorded by earlier decisions feed later ones. */
 export const createDriver = (members: readonly Member[], config = loadConfig()) => {
   const approvals: Approval[] = [];
@@ -63,5 +72,5 @@ export const createDriver = (members: readonly Member[], config = loadConfig()) 
     return decision.task;
   };
 
-  return { attempt, step, events: () => lastEvents };
+  return { attempt, step, events: () => lastEvents, config };
 };

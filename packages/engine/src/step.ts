@@ -13,7 +13,9 @@ import {
   applyCommand,
   feedbackSinceLastPush,
   finishRun,
+  latestPushedPaths,
   linkPullRequest,
+  listProjectMemberProfiles,
   listComments,
   loadAgentVersions,
   loadTaskContext,
@@ -29,7 +31,7 @@ import {
   type RunOutcome
 } from '@officina/runner';
 import type { Pool } from 'pg';
-import { buildBrief } from './brief';
+import { buildBrief, type ChooserContext } from './brief';
 import { postChecklist, syncSpecStatus, type SyncGitHubPort } from './github-sync';
 
 export type GitHubPort = Pick<GitHubClient, 'installationToken' | 'openPullRequest'> &
@@ -48,6 +50,18 @@ export interface EngineDependencies {
  */
 export const taskLink = (publicUrl: string, taskNumber: number) =>
   `[Officina task ${taskNumber}](${publicUrl.replace(/\/$/, '')}/tasks/${taskNumber})`;
+
+const planProblems =
+  (gate: 'spec_review' | 'verifying', memberIds: ReadonlySet<string>) =>
+  (output: AgentOutput<RunnerRole>) => {
+    const chosen = output as AgentOutput<'chooser'>;
+    const problems = chosen.approval.verifiers
+      .filter((verifier) => !memberIds.has(verifier.memberId))
+      .map((verifier) => `verifier ${verifier.memberId} is not a member of this project`);
+    if (gate === 'verifying' && chosen.checklist.length === 0)
+      problems.push('checklist: at verification the checklist must have at least one step');
+    return problems;
+  };
 
 const titleProblems = (pattern: string | null) => (output: AgentOutput<RunnerRole>) => {
   const built = output as AgentOutput<'builder'>;
@@ -135,6 +149,8 @@ export const runAgentStep = async (
   const repoRef = { installationId: context.installationId, repo: context.repo };
   const taskBranch = branchForTask(context.number);
   const firstRound = context.task.headSha === null;
+  const members =
+    role === 'chooser' ? await listProjectMemberProfiles(pool, context.projectId) : [];
 
   try {
     const token = await deps.github.installationToken(repoRef, {
@@ -142,6 +158,22 @@ export const runAgentStep = async (
     });
     const lane = context.task.lane ?? 'standard';
     const rawLanes = (context.rawConfig as { lanes?: { red?: { paths?: string[] } } }).lanes;
+    const gate = context.task.stage === 'spec_review' ? 'spec_review' : 'verifying';
+    const chooser: ChooserContext | undefined =
+      role === 'chooser'
+        ? {
+            gate,
+            lane,
+            userVisible: context.task.userVisible,
+            lanePolicy: config.lanes[lane].approvals[gate],
+            previousPlan: context.task.approvalPlans[gate] ?? null,
+            members,
+            requesterName:
+              members.find((member) => member.id === context.task.requesterId)?.name ??
+              'a former member',
+            changedPaths: gate === 'verifying' ? await latestPushedPaths(pool, taskId) : []
+          }
+        : undefined;
     const brief = buildBrief({
       role,
       taskNumber: context.number,
@@ -158,7 +190,8 @@ export const runAgentStep = async (
       requestThread: role === 'spec' ? await listComments(pool, taskId) : [],
       feedback: role === 'builder' ? await feedbackSinceLastPush(pool, taskId) : [],
       firstRound,
-      prTitlePattern: config.pullRequest.titlePattern
+      prTitlePattern: config.pullRequest.titlePattern,
+      chooser
     });
 
     const report = await executeRun(deps.agents, {
@@ -173,14 +206,17 @@ export const runAgentStep = async (
         repository: {
           url: `https://github.com/${context.repo}`,
           token,
-          branch:
-            role === 'spec' || (role === 'builder' && firstRound)
-              ? context.defaultBranch
-              : taskBranch
+          // Until the first push the task branch does not exist yet.
+          branch: role === 'spec' || firstRound ? context.defaultBranch : taskBranch
         },
         budgetCents: Math.round(config.lanes[lane].budgetUsd * 100)
       },
-      validate: role === 'builder' ? titleProblems(config.pullRequest.titlePattern) : undefined,
+      validate:
+        role === 'builder'
+          ? titleProblems(config.pullRequest.titlePattern)
+          : role === 'chooser'
+            ? planProblems(gate, new Set(members.map((member) => member.id)))
+            : undefined,
       onSessionCreated: (sessionId) => setRunExternalId(pool, runId, sessionId),
       onEvent: (event) => appendRunEvent(pool, runId, event.type, event)
     });

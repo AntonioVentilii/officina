@@ -11,6 +11,7 @@
   import { toasts } from '$lib/state/toasts.svelte';
   import type { TaskDetail } from '$lib/types';
   import ActionPanel from './ActionPanel.svelte';
+  import ApprovalPlan from './ApprovalPlan.svelte';
   import Checklist from './Checklist.svelte';
   import LaneChip from './LaneChip.svelte';
   import Markdown from './Markdown.svelte';
@@ -169,6 +170,13 @@
                 </div>
                 <Markdown source={task.request.body} />
               </div>
+            </section>
+          {/if}
+
+          {#if task.plan}
+            <section>
+              <h3>Who approves, and how closely</h3>
+              <ApprovalPlan plan={task.plan} />
             </section>
           {/if}
 

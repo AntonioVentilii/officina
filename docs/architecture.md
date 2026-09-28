@@ -85,11 +85,11 @@ Stages are columns on the board. Flags (`blocked`, `paused`) overlay any stage.
 | `request`     | contributor + interviewer agent      | a member starts a request | the interviewer marks it specific enough, or a maintainer moves it on                       |
 | `triage`      | maintainers                          | request is complete       | prioritized -> `speccing`; merged as duplicate; declined with a reason                      |
 | `speccing`    | spec agent                           | triaged                   | spec version posted -> `spec_review`; missing fact or decision -> `blocked` with a question |
-| `spec_review` | people, per lane policy              | spec version posted       | policy satisfied -> `ready`; change requests -> `speccing` (new spec version)               |
+| `spec_review` | chooser agent, then people           | spec version posted       | chooser plans the approvals, then policy satisfied -> `ready`; changes -> `speccing`        |
 | `ready`       | engine                               | spec approved             | WIP slot free and assignee set -> `building`                                                |
 | `building`    | builder agent or a member            | dispatched or claimed     | branch pushed and checks pass -> `reviewing`; red lane requires a member                    |
 | `reviewing`   | reviewer agents (+ optional members) | branch ready              | all reviewers approve -> `choosing`; changes -> `building` fix round (bounded)              |
-| `choosing`    | engine + chooser agent               | reviews approved          | lane computed, verifiers and checklist assigned -> `verifying`                              |
+| `choosing`    | engine + chooser agent               | reviews approved          | approvals planned, verifiers and checklist assigned -> `verifying`                          |
 | `verifying`   | people, per lane policy              | checklist posted          | policy satisfied -> `merging`; change requests -> `building`                                |
 | `merging`     | code owner                           | verified                  | PR merged -> `done`; CI red -> `building`                                                   |
 | `done`        | learner agent (async)                | merged                    | learnings recorded; never blocks the task                                                   |
@@ -147,6 +147,7 @@ A `workflow_dispatch` workflow in the consumer repository runs the Agent SDK wit
 - A project config lists path globs per lane. The spec agent predicts a lane from the file scope; the engine recomputes it from the real diff after every build round. **The stricter lane wins**, and only an owner can lower it, with a reason recorded in the thread.
 - Each lane defines: whether agents may build, WIP limit, diff-size limit, per-step budget, and the approval policy for `spec_review`, `verifying` and merge.
 - The **chooser** does the judgement a glob cannot: is the change user-visible, which approval domains apply, which specific members are the best verifiers (requester, area owners, recent editors), how deep the check should be, and what exactly to look at. For text-only changes it produces before/after tables so verifiers never read a diff.
+- **Approval plans.** The chooser runs at both human gates: on each spec version before anyone may approve it (approving an unplanned version fails with `not_planned`), and on each pushed head before verification. Its plan holds a check depth (`glance`, `test`, `device`), a rationale people read, named verifiers (a request, not a requirement) and extra requirements: domain approvals or the owner role. The effective policy for a gate is the lane policy plus those extras. Plans only ever add: extras accumulate across every plan for the same gate, verifiers must be contributors, and only a maintainer may mark a change as not user-visible. A domain nobody holds is waived like any other requirement, so a plan can raise the bar but never deadlock a small team. Each plan is recorded as an `approval_planned` event with what it added.
 - **Calibration.** Every chooser verdict is compared with what people did: verified with no changes suggests over-gating, sent back suggests under-gating. The learner uses these outcomes.
 
 ## 9. Board surfaces

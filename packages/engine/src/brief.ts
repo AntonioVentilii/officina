@@ -1,4 +1,21 @@
+import type { ApprovalPlan, Gate, Requirement } from '@officina/core';
 import type { RunnerRole } from '@officina/runner';
+
+export interface ChooserContext {
+  readonly gate: Gate;
+  readonly lane: string;
+  readonly userVisible: boolean;
+  readonly lanePolicy: readonly Requirement[];
+  readonly previousPlan: ApprovalPlan | null;
+  readonly members: readonly {
+    readonly id: string;
+    readonly name: string;
+    readonly role: string;
+    readonly domains: readonly string[];
+  }[];
+  readonly requesterName: string;
+  readonly changedPaths: readonly string[];
+}
 
 export interface BriefInput {
   readonly role: RunnerRole;
@@ -17,7 +34,33 @@ export interface BriefInput {
   readonly feedback: readonly string[];
   readonly firstRound: boolean;
   readonly prTitlePattern: string | null;
+  readonly chooser?: ChooserContext | undefined;
 }
+
+const describe = (requirement: Requirement) =>
+  'role' in requirement
+    ? `a ${requirement.role}`
+    : 'domain' in requirement
+      ? `a \`${requirement.domain}\` approver${requirement.when ? ' (only if user-visible)' : ''}`
+      : 'the requester';
+
+const chooserSections = (context: ChooserContext): string[] => [
+  `## Your decision: the approval plan for ${context.gate === 'spec_review' ? 'the spec' : 'the result'}`,
+  [
+    context.gate === 'spec_review'
+      ? 'Nothing is built yet: judge the risk from the spec above and the code it will touch. Do not write a checklist.'
+      : 'Judge from the spec and the real diff on the task branch against the default branch. Write the checklist for the people who verify.',
+    `Lane: \`${context.lane}\`. User-visible so far: ${context.userVisible ? 'yes' : 'no'}. Requester: ${context.requesterName}.`,
+    `The lane already requires: ${context.lanePolicy.map(describe).join(', ') || 'a maintainer'}, and every gate needs at least one maintainer or owner.`,
+    context.previousPlan
+      ? `An earlier plan for this gate already added: ${context.previousPlan.extra.map((item) => describe(item.requirement)).join(', ') || 'nothing'}. Those stay whatever you decide.`
+      : null,
+    context.changedPaths.length ? `Files the change touches:\n${list(context.changedPaths)}` : null
+  ]
+    .filter(Boolean)
+    .join('\n\n'),
+  `## Project members\n\n${context.members.map((member) => `- \`${member.id}\` ${member.name}, ${member.role}${member.domains.length ? `, domains: ${member.domains.join(', ')}` : ''}`).join('\n')}`
+];
 
 const fence = (text: string): string => {
   // A fence longer than any backtick run inside the text, so quoted content cannot close it.
@@ -54,7 +97,10 @@ export const buildBrief = (input: BriefInput): string => {
       `## Request thread\n\n${input.requestThread.length ? input.requestThread.map(fence).join('\n\n') : 'No comments yet.'}`
     );
   } else {
-    sections.push(`## Approved spec (version ${input.specVersion})\n\n${fence(input.spec ?? '')}`);
+    const approved = input.chooser?.gate !== 'spec_review';
+    sections.push(
+      `## ${approved ? 'Approved spec' : 'Spec awaiting approval'} (version ${input.specVersion})\n\n${fence(input.spec ?? '')}`
+    );
   }
 
   if (input.role === 'builder') {
@@ -67,6 +113,10 @@ export const buildBrief = (input: BriefInput): string => {
     if (input.feedback.length) {
       sections.push(`## Notes to address\n\n${input.feedback.map(fence).join('\n\n')}`);
     }
+  }
+
+  if (input.role === 'chooser' && input.chooser) {
+    sections.push(...chooserSections(input.chooser));
   }
 
   sections.push(`When you are done, call \`submit_result\` once.`);

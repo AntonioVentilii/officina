@@ -94,16 +94,58 @@ describe('agent output contracts', () => {
     });
   });
 
-  test('chooser defaults optional lists', () => {
+  test('chooser defaults optional lists and maps to a plan for the gate the task is at', () => {
     const chosen = parseAgentOutput('chooser', {
       userVisible: false,
-      checklist: ['Read the diff']
+      approval: { depth: 'glance', rationale: 'Copy only.' }
     });
-    expect(chosen.ok && chosen.output).toEqual({
+    if (!chosen.ok) throw new Error(chosen.errors.join());
+    expect(chosen.output).toEqual({
       userVisible: false,
-      checklist: ['Read the diff'],
-      suggestedDomains: [],
+      approval: { depth: 'glance', rationale: 'Copy only.', extraApprovals: [], verifiers: [] },
+      checklist: [],
       beforeAfter: []
     });
+    const withLegal = parseAgentOutput('chooser', {
+      userVisible: true,
+      approval: {
+        depth: 'test',
+        rationale: 'Changes terms.',
+        extraApprovals: [{ domain: 'legal', reason: 'Terms text.' }]
+      }
+    });
+    if (!withLegal.ok) throw new Error(withLegal.errors.join());
+    expect(
+      commandForOutput(
+        { ...task, stage: 'spec_review' },
+        { role: 'chooser', output: withLegal.output }
+      )
+    ).toEqual({
+      ok: true,
+      command: {
+        type: 'plan_approval',
+        userVisible: true,
+        plan: {
+          depth: 'test',
+          rationale: 'Changes terms.',
+          extra: [{ requirement: { domain: 'legal' }, reason: 'Terms text.' }],
+          verifiers: []
+        }
+      }
+    });
+  });
+
+  test('the chooser cannot invent requirements outside additions', () => {
+    for (const extra of [
+      { requester: true, reason: 'x' },
+      { role: 'watcher', reason: 'x' }
+    ]) {
+      expect(
+        parseAgentOutput('chooser', {
+          userVisible: false,
+          approval: { depth: 'glance', rationale: 'x', extraApprovals: [extra] }
+        }).ok
+      ).toBe(false);
+    }
   });
 });

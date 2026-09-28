@@ -214,10 +214,35 @@ const seed = async (
     input.request
   ]);
   await apply(demo, task.id, { type: 'submit_request' }, input.by);
+  const giuliaId = demo.giulia.kind === 'member' ? demo.giulia.memberId : '';
+  const planFor = (paths: readonly string[]) =>
+    paths.some((path) => path.includes('auth'))
+      ? {
+          depth: 'test' as const,
+          rationale:
+            'Session keys protect every account; a mistake signs people out or lets old sessions live on.',
+          extra: [
+            { requirement: { role: 'owner' as const }, reason: 'Security-sensitive change.' }
+          ],
+          verifiers: []
+        }
+      : paths.some((path) => path.includes('i18n'))
+        ? {
+            depth: 'glance' as const,
+            rationale: 'Copy only: the before and after table is enough to judge it.',
+            extra: [],
+            verifiers: [{ memberId: giuliaId, reason: 'Owns the product wording.' }]
+          }
+        : {
+            depth: 'device' as const,
+            rationale: 'A visible change on a screen people use daily; check it on a phone.',
+            extra: [{ requirement: { domain: 'product' }, reason: 'Changes what people see.' }],
+            verifiers: [{ memberId: giuliaId, reason: 'Product approver.' }]
+          };
   const steps = {
     id: task.id,
     accept: () => apply(demo, task.id, { type: 'accept' }, demo.owner),
-    spec: async (running = false) => {
+    spec: async (running = false, plan = true) => {
       if (running) return run(demo, task.id, 'speccing', 'spec', { events: 6, running: true });
       await run(demo, task.id, 'speccing', 'spec', { cost: 84, result: { outcome: 'specced' } });
       const next = await apply(
@@ -232,9 +257,24 @@ const seed = async (
         body: spec(input.title, input.request),
         createdBy: agent('spec')
       });
+      if (!plan) return run(demo, task.id, 'spec_review', 'chooser', { events: 5, running: true });
+      await run(demo, task.id, 'spec_review', 'chooser', {
+        cost: 22,
+        result: { outcome: 'planned' }
+      });
+      await apply(
+        demo,
+        task.id,
+        { type: 'plan_approval', userVisible: true, plan: planFor(input.paths) },
+        agent('chooser')
+      );
     },
+    // Approves as each listed person in turn until the gate opens, whatever the plan required.
     approve: async (actors: Actor[]) => {
-      for (const actor of actors) await apply(demo, task.id, { type: 'approve' }, actor);
+      for (const actor of [...actors, demo.owner, demo.giulia]) {
+        const before = await apply(demo, task.id, { type: 'approve' }, actor);
+        if (before.stage !== 'spec_review' && before.stage !== 'verifying') return;
+      }
     },
     build: async (running = false) => {
       await apply(
@@ -322,7 +362,12 @@ const seed = async (
         ]
       };
       await run(demo, task.id, 'choosing', 'chooser', { cost: 41, result });
-      await apply(demo, task.id, { type: 'choose', userVisible: true }, agent('chooser'));
+      await apply(
+        demo,
+        task.id,
+        { type: 'choose', userVisible: true, plan: planFor(input.paths) },
+        agent('chooser')
+      );
     }
   };
   return steps;
@@ -476,7 +521,7 @@ const seedDemo = async (pool: Pool) => {
     paths: [UI]
   });
   await specReview.accept();
-  await specReview.spec();
+  await specReview.spec(false, false);
 
   const red = await seed(demo, {
     title: 'Rotate the session signing key',
