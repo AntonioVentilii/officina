@@ -1,0 +1,107 @@
+import { createHash } from 'node:crypto';
+import type { Pool, PoolClient } from 'pg';
+
+type Queryable = Pool | PoolClient;
+
+const hash = (value: string) => createHash('sha256').update(value).digest('hex');
+
+export const createOAuthState = async (
+  db: Queryable,
+  state: string,
+  memberId: string | null,
+  ttlMs: number
+) => {
+  await db.query(
+    `insert into oauth_states (state_hash, member_id, expires_at)
+     values ($1, $2, now() + make_interval(secs => $3))`,
+    [hash(state), memberId, ttlMs / 1000]
+  );
+};
+
+/** Spends a state: it works once, before it expires. */
+export const consumeOAuthState = async (
+  db: Queryable,
+  state: string
+): Promise<{ memberId: string | null } | null> => {
+  const { rows } = await db.query<{ member_id: string | null }>(
+    'delete from oauth_states where state_hash = $1 and expires_at > now() returning member_id',
+    [hash(state)]
+  );
+  return rows[0] ? { memberId: rows[0].member_id } : null;
+};
+
+export interface GitHubAccountRow {
+  readonly memberId: string;
+  readonly githubUserId: number;
+  readonly login: string;
+  readonly accessTokenEnc: string;
+  readonly accessExpiresAt: Date | null;
+  readonly refreshTokenEnc: string | null;
+  readonly refreshExpiresAt: Date | null;
+}
+
+const COLUMNS = `member_id as "memberId", github_user_id::float8 as "githubUserId", login,
+  access_token_enc as "accessTokenEnc", access_expires_at as "accessExpiresAt",
+  refresh_token_enc as "refreshTokenEnc", refresh_expires_at as "refreshExpiresAt"`;
+
+export const saveGitHubAccount = async (db: Queryable, account: GitHubAccountRow) => {
+  // A GitHub account belongs to one member: linking it elsewhere moves it.
+  await db.query('delete from github_accounts where github_user_id = $1 and member_id <> $2', [
+    account.githubUserId,
+    account.memberId
+  ]);
+  await db.query(
+    `insert into github_accounts (member_id, github_user_id, login, access_token_enc, access_expires_at,
+       refresh_token_enc, refresh_expires_at, updated_at)
+     values ($1, $2, $3, $4, $5, $6, $7, now())
+     on conflict (member_id) do update set github_user_id = excluded.github_user_id,
+       login = excluded.login, access_token_enc = excluded.access_token_enc,
+       access_expires_at = excluded.access_expires_at, refresh_token_enc = excluded.refresh_token_enc,
+       refresh_expires_at = excluded.refresh_expires_at, updated_at = now()`,
+    [
+      account.memberId,
+      account.githubUserId,
+      account.login,
+      account.accessTokenEnc,
+      account.accessExpiresAt,
+      account.refreshTokenEnc,
+      account.refreshExpiresAt
+    ]
+  );
+  await db.query(
+    `insert into identities (provider, subject, member_id) values ('github', $1, $2)
+     on conflict (provider, subject) do update set member_id = excluded.member_id`,
+    [String(account.githubUserId), account.memberId]
+  );
+};
+
+export const loadGitHubAccount = async (
+  db: Queryable,
+  memberId: string
+): Promise<GitHubAccountRow | null> =>
+  (
+    await db.query<GitHubAccountRow>(
+      `select ${COLUMNS} from github_accounts where member_id = $1`,
+      [memberId]
+    )
+  ).rows[0] ?? null;
+
+export const memberForGitHubUser = async (db: Queryable, githubUserId: number) =>
+  (
+    await db.query<{ member_id: string }>(
+      "select member_id from identities where provider = 'github' and subject = $1",
+      [String(githubUserId)]
+    )
+  ).rows[0]?.member_id ?? null;
+
+export const unlinkGitHubAccount = async (db: Queryable, memberId: string) => {
+  await db.query('delete from github_accounts where member_id = $1', [memberId]);
+  await db.query("delete from identities where provider = 'github' and member_id = $1", [memberId]);
+};
+
+export const githubLoginOf = async (db: Queryable, memberId: string) =>
+  (
+    await db.query<{ login: string }>('select login from github_accounts where member_id = $1', [
+      memberId
+    ])
+  ).rows[0]?.login ?? null;

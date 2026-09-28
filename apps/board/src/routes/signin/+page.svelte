@@ -5,13 +5,27 @@
 
   let status = $state<'working' | 'no-link' | 'failed'>('working');
   let message = $state('');
+  let github = $state(false);
+
+  $effect(() => {
+    fetch('/auth/options')
+      .then((response) => response.json() as Promise<{ github: boolean }>)
+      .then((options) => (github = options.github))
+      .catch(() => {});
+    const error = new URLSearchParams(location.search).get('error');
+    if (error) {
+      status = 'failed';
+      message = error;
+    }
+  });
 
   const redeem = () => {
     const token = location.hash.slice(1);
     // The link is spent on first use; drop it from the address bar and history straight away.
-    history.replaceState(null, '', '/signin');
+    history.replaceState(null, '', `/signin${location.search}`);
     if (!token) {
-      if (status === 'working') status = 'no-link';
+      if (status === 'working' && !new URLSearchParams(location.search).get('error'))
+        status = 'no-link';
       return;
     }
     status = 'working';
@@ -46,8 +60,19 @@
     {:else if status === 'failed'}
       <p class="error">{message}</p>
       <p class="muted">Ask an owner for a new link.</p>
+      {#if github}
+        <a class="btn github" href="/auth/github/start?mode=signin" data-sveltekit-reload>
+          Sign in with GitHub
+        </a>
+      {/if}
     {:else}
       <p class="muted">Sign in with the link an owner sent you.</p>
+      {#if github}
+        <a class="btn github" href="/auth/github/start?mode=signin" data-sveltekit-reload>
+          Sign in with GitHub
+        </a>
+        <p class="faint small">Works once you have connected GitHub from the board.</p>
+      {/if}
       <p class="faint small">
         Owners get one with <code>scripts/officina login-link</code>, and add people with
         <code>scripts/officina invite</code>.
@@ -87,6 +112,10 @@
 
   p {
     margin: 4px 0;
+  }
+
+  .github {
+    margin-top: 10px;
   }
 
   .error {

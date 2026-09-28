@@ -1,6 +1,7 @@
 <script lang="ts">
   import {
     Bot,
+    GitMerge,
     GraduationCap,
     Inbox,
     LogOut,
@@ -84,6 +85,17 @@
     <div class="live {live.status}" title="Realtime updates">
       <span class="dot"></span>{LIVE_LABELS[live.status]}
     </div>
+    {#if session.me?.githubAvailable}
+      {#if session.me.github}
+        <div class="github faint" title="Approvals you give here also approve on GitHub as you">
+          <GitMerge size={13} />@{session.me.github.login}
+        </div>
+      {:else}
+        <a class="github connect" href="/auth/github/start?mode=link" data-sveltekit-reload>
+          <GitMerge size={13} />Connect GitHub
+        </a>
+      {/if}
+    {/if}
     {#if session.me}
       <div class="me">
         <MemberAvatar name={session.me.member.name} size={26} />
@@ -255,6 +267,26 @@
     background: var(--danger);
   }
 
+  .github {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 0 8px;
+    font-size: 11.5px;
+  }
+
+  .github.connect {
+    height: 30px;
+    border-radius: var(--radius-sm);
+    border: 1px dashed var(--border-strong);
+    color: var(--text-2);
+  }
+
+  .github.connect:hover {
+    color: var(--text);
+    border-color: var(--accent);
+  }
+
   .me {
     display: flex;
     align-items: center;
@@ -297,6 +329,7 @@
     }
 
     .brand,
+    .github,
     .project,
     .project-name,
     .live,

@@ -8,6 +8,7 @@
   import { board } from '$lib/state/board.svelte';
   import { live } from '$lib/state/live.svelte';
   import { session } from '$lib/state/session.svelte';
+  import { toasts } from '$lib/state/toasts.svelte';
 
   interface Props {
     children: Snippet;
@@ -49,6 +50,14 @@
 
   $effect(() => {
     if (session.status === 'signed-out' && !onSignIn) void goto('/signin');
+  });
+
+  // Back from GitHub after connecting an account.
+  $effect(() => {
+    if (session.status !== 'ready' || page.url.searchParams.get('github') !== 'linked') return;
+    const login = session.me?.github?.login;
+    if (login) toasts.show('ok', `GitHub connected as @${login}`);
+    void goto(page.url.pathname, { replaceState: true, noScroll: true });
   });
 
   $effect(() => {

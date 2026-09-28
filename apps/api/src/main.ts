@@ -1,12 +1,14 @@
 import { migrate } from '@officina/db';
-import { createGitHubClient } from '@officina/github';
+import { createGitHubAsUser, createGitHubClient, createGitHubUserAuth } from '@officina/github';
 import { anthropicAuthFrom } from '@officina/runner';
 import { join } from 'node:path';
 import { Pool } from 'pg';
 import { z } from 'zod';
 import { createApp } from './app';
 import { createAgentsPort, startEngine } from './engine';
+import { createGitHubAccounts } from './github-accounts';
 import { startRealtime } from './realtime';
+import { createTokenBox } from './token-box';
 
 const env = z
   .object({
@@ -22,7 +24,12 @@ const env = z
     ANTHROPIC_WORKSPACE_ID: z.string().min(1).optional(),
     ANTHROPIC_API_KEY: z.string().min(1).optional(),
     SCHEDULER_INTERVAL_MS: z.coerce.number().int().positive().default(15_000),
-    OFFICINA_PUBLIC_URL: z.url().default('http://localhost:8080')
+    OFFICINA_PUBLIC_URL: z.url().default('http://localhost:8080'),
+    // GitHub user authorization: members link their account, and a verification can approve and
+    // merge as them. Off unless both the client secret and the token encryption key are set.
+    GITHUB_APP_CLIENT_ID: z.string().min(1).optional(),
+    GITHUB_APP_CLIENT_SECRET: z.string().min(1).optional(),
+    OFFICINA_TOKEN_KEY: z.string().min(1).optional()
   })
   .parse(process.env);
 
@@ -46,6 +53,25 @@ const github =
 
 const anthropicAuth = anthropicAuthFrom(process.env);
 
+const githubUserAuth =
+  env.GITHUB_APP_CLIENT_ID && env.GITHUB_APP_CLIENT_SECRET && env.OFFICINA_TOKEN_KEY
+    ? createGitHubUserAuth({
+        clientId: env.GITHUB_APP_CLIENT_ID,
+        clientSecret: env.GITHUB_APP_CLIENT_SECRET,
+        redirectUri: `${env.OFFICINA_PUBLIC_URL.replace(/\/$/, '')}/auth/github/callback`
+      })
+    : undefined;
+const asUser = createGitHubAsUser();
+const githubAccounts =
+  githubUserAuth && env.OFFICINA_TOKEN_KEY
+    ? createGitHubAccounts({
+        pool,
+        box: createTokenBox(env.OFFICINA_TOKEN_KEY),
+        auth: githubUserAuth,
+        asUser
+      })
+    : undefined;
+
 const scheduler =
   github && anthropicAuth
     ? await startEngine({
@@ -59,6 +85,9 @@ const scheduler =
         intervalMs: env.SCHEDULER_INTERVAL_MS,
         publicUrl: env.OFFICINA_PUBLIC_URL,
         promptsDir: join(import.meta.dir, '..', '..', '..', 'agents'),
+        onBehalf: githubAccounts
+          ? { publicUrl: env.OFFICINA_PUBLIC_URL, tokenFor: githubAccounts.tokenFor, asUser }
+          : undefined,
         log
       })
     : undefined;
@@ -85,7 +114,11 @@ const server = createApp({
     publicUrl: env.OFFICINA_PUBLIC_URL,
     consoleWorkspace: env.ANTHROPIC_WORKSPACE_ID,
     realtime,
-    github
+    github,
+    githubLogin:
+      githubAccounts && githubUserAuth
+        ? { accounts: githubAccounts, authorizeUrl: githubUserAuth.authorizeUrl }
+        : undefined
   },
   boardDir: join(import.meta.dir, '..', '..', 'board', 'build')
 }).listen({

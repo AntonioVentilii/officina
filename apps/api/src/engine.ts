@@ -1,6 +1,7 @@
 import {
   collectDueSteps,
   finishVerifiedSpecs,
+  type OnBehalf,
   runAgentStep,
   type EngineDependencies
 } from '@officina/engine';
@@ -32,6 +33,7 @@ export const startEngine = async (input: {
   intervalMs: number;
   publicUrl: string;
   promptsDir?: string;
+  onBehalf?: OnBehalf | undefined;
   log: (message: string, details?: Record<string, unknown>) => void;
 }): Promise<Scheduler> => {
   const deps: EngineDependencies = {
@@ -59,7 +61,8 @@ export const startEngine = async (input: {
         await finishVerifiedSpecs(
           input.pool,
           input.github,
-          await listActiveTaskIds(input.pool, projectId)
+          await listActiveTaskIds(input.pool, projectId),
+          input.onBehalf
         ).catch((error: unknown) =>
           input.log('spec status update failed', { projectId, error: (error as Error).message })
         );

@@ -1,10 +1,12 @@
 export { buildBrief, type BriefInput } from './brief';
 export {
+  approveOnGitHub,
   checklistMarkdown,
   finishVerifiedSpecs,
   postChecklist,
   specPathIn,
   syncSpecStatus,
+  type OnBehalf,
   type SyncGitHubPort
 } from './github-sync';
 export {

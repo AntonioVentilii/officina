@@ -1,5 +1,11 @@
+import { randomBytes } from 'node:crypto';
 import {
   addComment,
+  consumeOAuthState,
+  createOAuthState,
+  createSession,
+  githubLoginOf,
+  unlinkGitHubAccount,
   endSession,
   findTaskIdByNumber,
   listMemberProjects,
@@ -14,6 +20,7 @@ import { Elysia } from 'elysia';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import { boardView, learningsView, runLog, runsView, taskView, type BoardViewer } from './board';
+import type { GitHubAccounts } from './github-accounts';
 import { decide as decideLearning, type LearningGitHub } from './learnings';
 import type { BoardEvent, RealtimeHub } from './realtime';
 import { TaskCommandError, actOnTaskAs, createRequestAs, type TaskAction } from './tasks';
@@ -25,9 +32,15 @@ export interface BoardApiDependencies {
   readonly realtime?: RealtimeHub | undefined;
   /** Opens the pull requests of accepted learnings. */
   readonly github?: LearningGitHub | undefined;
+  /** Linking members' GitHub accounts and signing in with GitHub; off when the app has no client secret. */
+  readonly githubLogin?:
+    | { readonly accounts: GitHubAccounts; readonly authorizeUrl: (state: string) => string }
+    | undefined;
 }
 
 const COOKIE = 'officina_session';
+const OAUTH_COOKIE = 'officina_oauth';
+const OAUTH_TTL_MS = 10 * 60 * 1000;
 /**
  * State-changing requests must carry this header. Browsers only send custom headers cross-origin
  * after a CORS preflight, which this API never grants, so another site cannot forge a request.
@@ -35,12 +48,18 @@ const COOKIE = 'officina_session';
 const REQUEST_HEADER = 'x-officina-request';
 const HEARTBEAT_MS = 25_000;
 
-const readCookie = (request: Request): string | null => {
+const readCookie = (request: Request, cookie = COOKIE): string | null => {
   for (const part of (request.headers.get('cookie') ?? '').split(';')) {
     const [name, ...value] = part.trim().split('=');
-    if (name === COOKIE) return value.join('=') || null;
+    if (name === cookie) return value.join('=') || null;
   }
   return null;
+};
+
+const redirect = (location: string, cookies: readonly string[] = []) => {
+  const headers = new Headers({ location, 'cache-control': 'no-store' });
+  for (const cookie of cookies) headers.append('set-cookie', cookie);
+  return new Response(null, { status: 302, headers });
 };
 
 const sessionCookie = (value: string, maxAgeMs: number, secure: boolean) =>
@@ -181,122 +200,179 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
     });
   };
 
-  return new Elysia()
-    .error({ HttpError, TaskCommandError })
-    .onError(({ code, error, set }) => {
-      if (code === 'HttpError') {
-        set.status = error.status;
-        return { error: error.message };
-      }
-      if (code === 'TaskCommandError') {
-        set.status = 409;
-        return { error: error.message };
-      }
-    })
-    .post('/auth/redeem', async ({ body, request, set }) => {
-      mutation(request);
-      const { token } = parse(z.strictObject({ token: z.string().min(20).max(200) }), body);
-      const redeemed = await redeemLoginLink(pool, token);
-      if (!redeemed) throw new HttpError(410, 'this sign-in link was already used or has expired');
-      set.headers['set-cookie'] = sessionCookie(redeemed.sessionToken, SESSION_TTL_MS, secure);
-      return { ok: true };
-    })
-    .post('/auth/sign-out', async ({ request, set }) => {
-      mutation(request);
-      const token = readCookie(request);
-      if (token) await endSession(pool, token);
-      set.headers['set-cookie'] = sessionCookie('', 0, secure);
-      return { ok: true };
-    })
-    .get('/api/me', async ({ request }) => {
-      const signed = await signedIn(request);
-      return {
-        member: {
-          id: signed.member.id,
-          name: signed.member.displayName,
-          email: signed.member.email
-        },
-        projects: signed.projects
-      };
-    })
-    .get('/api/stream', async ({ request }) => stream(await signedIn(request), request))
-    .get('/api/projects/:projectId/board', async ({ request, params }) => {
-      const viewer = viewerFor(await signedIn(request), params.projectId);
-      return { tasks: await boardView(pool, viewer) };
-    })
-    .get('/api/projects/:projectId/runs', async ({ request, params }) => {
-      const viewer = viewerFor(await signedIn(request), params.projectId);
-      return { runs: await runsView(pool, viewer, deps.consoleWorkspace) };
-    })
-    .get('/api/projects/:projectId/tasks/:number', async ({ request, params }) => {
-      const viewer = viewerFor(await signedIn(request), params.projectId);
-      const task = await taskView(pool, viewer, taskNumber(params.number), deps.consoleWorkspace);
-      if (!task) throw new HttpError(404, 'task not found');
-      return task;
-    })
-    .get('/api/runs/:runId/log', async ({ request, params, query }) => {
-      const signed = await signedIn(request);
-      const run = z.uuid().safeParse(params.runId).success
-        ? await loadRun(pool, params.runId)
-        : null;
-      if (!run || !signed.projects.some((project) => project.id === run.projectId))
-        throw new HttpError(404, 'run not found');
-      const after = Number(query.after ?? 0);
-      return runLog(pool, run.id, Number.isInteger(after) && after > 0 ? after : 0);
-    })
-    .post('/api/projects/:projectId/tasks', async ({ request, params, body }) => {
-      mutation(request);
-      const viewer = viewerFor(await signedIn(request), params.projectId);
-      const { interview, ...input } = parse(requestSchema, body);
-      return createRequestAs(pool, {
-        projectId: viewer.projectId,
-        memberId: viewer.memberId,
-        ...input,
-        skipInterview: interview === false
-      });
-    })
-    .post('/api/projects/:projectId/tasks/:number/actions', async ({ request, params, body }) => {
-      mutation(request);
-      const viewer = viewerFor(await signedIn(request), params.projectId);
-      const action = parse(actionSchema, body) as TaskAction;
-      return actOnTaskAs(pool, {
-        projectId: viewer.projectId,
-        memberId: viewer.memberId,
-        number: taskNumber(params.number),
-        action
-      });
-    })
-    .get('/api/projects/:projectId/learnings', async ({ request, params }) => {
-      const viewer = viewerFor(await signedIn(request), params.projectId);
-      return { learnings: await learningsView(pool, viewer) };
-    })
-    .post('/api/projects/:projectId/learnings/:learningId', async ({ request, params, body }) => {
-      mutation(request);
-      const viewer = viewerFor(await signedIn(request), params.projectId);
-      if (!z.uuid().safeParse(params.learningId).success)
-        throw new HttpError(404, 'learning not found');
-      const input = parse(learningDecisionSchema, body);
-      await decideLearning(
-        pool,
-        deps.github,
-        {
+  return (
+    new Elysia()
+      .error({ HttpError, TaskCommandError })
+      .onError(({ code, error, set }) => {
+        if (code === 'HttpError') {
+          set.status = error.status;
+          return { error: error.message };
+        }
+        if (code === 'TaskCommandError') {
+          set.status = 409;
+          return { error: error.message };
+        }
+      })
+      .post('/auth/redeem', async ({ body, request, set }) => {
+        mutation(request);
+        const { token } = parse(z.strictObject({ token: z.string().min(20).max(200) }), body);
+        const redeemed = await redeemLoginLink(pool, token);
+        if (!redeemed)
+          throw new HttpError(410, 'this sign-in link was already used or has expired');
+        set.headers['set-cookie'] = sessionCookie(redeemed.sessionToken, SESSION_TTL_MS, secure);
+        return { ok: true };
+      })
+      .post('/auth/sign-out', async ({ request, set }) => {
+        mutation(request);
+        const token = readCookie(request);
+        if (token) await endSession(pool, token);
+        set.headers['set-cookie'] = sessionCookie('', 0, secure);
+        return { ok: true };
+      })
+      .get('/auth/options', () => ({ github: Boolean(deps.githubLogin) }))
+      // GitHub authorization: `link` connects the signed-in member's account, `signin` signs in with
+      // an account linked before. The state is single-use and bound to this browser by a cookie.
+      .get('/auth/github/start', async ({ request, query }) => {
+        if (!deps.githubLogin) throw new HttpError(404, 'GitHub sign-in is not configured');
+        const linking = query.mode === 'link';
+        const memberId = linking ? (await signedIn(request)).member.id : null;
+        const state = randomBytes(24).toString('base64url');
+        await createOAuthState(pool, state, memberId, OAUTH_TTL_MS);
+        const cookie = [
+          `${OAUTH_COOKIE}=${state}`,
+          'Path=/auth/github',
+          'HttpOnly',
+          'SameSite=Lax',
+          `Max-Age=${OAUTH_TTL_MS / 1000}`,
+          secure ? 'Secure' : null
+        ]
+          .filter(Boolean)
+          .join('; ');
+        return redirect(deps.githubLogin.authorizeUrl(state), [cookie]);
+      })
+      .get('/auth/github/callback', async ({ request, query }) => {
+        if (!deps.githubLogin) throw new HttpError(404, 'GitHub sign-in is not configured');
+        const clear = `${OAUTH_COOKIE}=; Path=/auth/github; HttpOnly; SameSite=Lax; Max-Age=0`;
+        const fail = (why: string) => redirect(`/signin?error=${encodeURIComponent(why)}`, [clear]);
+        const code = typeof query.code === 'string' ? query.code : null;
+        const state = typeof query.state === 'string' ? query.state : null;
+        if (!code || !state || readCookie(request, OAUTH_COOKIE) !== state)
+          return fail('The GitHub sign-in did not match this browser; try again.');
+        const consumed = await consumeOAuthState(pool, state);
+        if (!consumed) return fail('The GitHub sign-in expired; try again.');
+        const result = await deps.githubLogin.accounts.complete(code, consumed.memberId);
+        if (!result.ok) return fail(result.why);
+        if (consumed.memberId) return redirect('/?github=linked', [clear]);
+        const session = await createSession(pool, result.memberId);
+        return redirect('/', [clear, sessionCookie(session, SESSION_TTL_MS, secure)]);
+      })
+      .post('/auth/github/unlink', async ({ request }) => {
+        mutation(request);
+        const signed = await signedIn(request);
+        await unlinkGitHubAccount(pool, signed.member.id);
+        return { ok: true };
+      })
+      .get('/api/me', async ({ request }) => {
+        const signed = await signedIn(request);
+        const login = await githubLoginOf(pool, signed.member.id);
+        return {
+          member: {
+            id: signed.member.id,
+            name: signed.member.displayName,
+            email: signed.member.email
+          },
+          projects: signed.projects,
+          github: login ? { login } : null,
+          githubAvailable: Boolean(deps.githubLogin)
+        };
+      })
+      .get('/api/stream', async ({ request }) => stream(await signedIn(request), request))
+      .get('/api/projects/:projectId/board', async ({ request, params }) => {
+        const viewer = viewerFor(await signedIn(request), params.projectId);
+        return { tasks: await boardView(pool, viewer) };
+      })
+      .get('/api/projects/:projectId/runs', async ({ request, params }) => {
+        const viewer = viewerFor(await signedIn(request), params.projectId);
+        return { runs: await runsView(pool, viewer, deps.consoleWorkspace) };
+      })
+      .get('/api/projects/:projectId/tasks/:number', async ({ request, params }) => {
+        const viewer = viewerFor(await signedIn(request), params.projectId);
+        const task = await taskView(pool, viewer, taskNumber(params.number), deps.consoleWorkspace);
+        if (!task) throw new HttpError(404, 'task not found');
+        return task;
+      })
+      .get('/api/runs/:runId/log', async ({ request, params, query }) => {
+        const signed = await signedIn(request);
+        const run = z.uuid().safeParse(params.runId).success
+          ? await loadRun(pool, params.runId)
+          : null;
+        if (!run || !signed.projects.some((project) => project.id === run.projectId))
+          throw new HttpError(404, 'run not found');
+        const after = Number(query.after ?? 0);
+        return runLog(pool, run.id, Number.isInteger(after) && after > 0 ? after : 0);
+      })
+      .post('/api/projects/:projectId/tasks', async ({ request, params, body }) => {
+        mutation(request);
+        const viewer = viewerFor(await signedIn(request), params.projectId);
+        const { interview, ...input } = parse(requestSchema, body);
+        return createRequestAs(pool, {
           projectId: viewer.projectId,
           memberId: viewer.memberId,
-          role: viewer.role,
-          publicUrl: deps.publicUrl
-        },
-        { id: params.learningId, ...input }
-      );
-      return { ok: true };
-    })
-    .post('/api/projects/:projectId/tasks/:number/comments', async ({ request, params, body }) => {
-      mutation(request);
-      const viewer = viewerFor(await signedIn(request), params.projectId);
-      if (viewer.role === 'watcher') throw new HttpError(403, 'watchers can read but not comment');
-      const { body: text } = parse(commentSchema, body);
-      const taskId = await findTaskIdByNumber(pool, viewer.projectId, taskNumber(params.number));
-      if (!taskId) throw new HttpError(404, 'task not found');
-      await addComment(pool, taskId, { kind: 'member', memberId: viewer.memberId }, text);
-      return { ok: true };
-    });
+          ...input,
+          skipInterview: interview === false
+        });
+      })
+      .post('/api/projects/:projectId/tasks/:number/actions', async ({ request, params, body }) => {
+        mutation(request);
+        const viewer = viewerFor(await signedIn(request), params.projectId);
+        const action = parse(actionSchema, body) as TaskAction;
+        return actOnTaskAs(pool, {
+          projectId: viewer.projectId,
+          memberId: viewer.memberId,
+          number: taskNumber(params.number),
+          action
+        });
+      })
+      .get('/api/projects/:projectId/learnings', async ({ request, params }) => {
+        const viewer = viewerFor(await signedIn(request), params.projectId);
+        return { learnings: await learningsView(pool, viewer) };
+      })
+      .post('/api/projects/:projectId/learnings/:learningId', async ({ request, params, body }) => {
+        mutation(request);
+        const viewer = viewerFor(await signedIn(request), params.projectId);
+        if (!z.uuid().safeParse(params.learningId).success)
+          throw new HttpError(404, 'learning not found');
+        const input = parse(learningDecisionSchema, body);
+        await decideLearning(
+          pool,
+          deps.github,
+          {
+            projectId: viewer.projectId,
+            memberId: viewer.memberId,
+            role: viewer.role,
+            publicUrl: deps.publicUrl
+          },
+          { id: params.learningId, ...input }
+        );
+        return { ok: true };
+      })
+      .post(
+        '/api/projects/:projectId/tasks/:number/comments',
+        async ({ request, params, body }) => {
+          mutation(request);
+          const viewer = viewerFor(await signedIn(request), params.projectId);
+          if (viewer.role === 'watcher')
+            throw new HttpError(403, 'watchers can read but not comment');
+          const { body: text } = parse(commentSchema, body);
+          const taskId = await findTaskIdByNumber(
+            pool,
+            viewer.projectId,
+            taskNumber(params.number)
+          );
+          if (!taskId) throw new HttpError(404, 'task not found');
+          await addComment(pool, taskId, { kind: 'member', memberId: viewer.memberId }, text);
+          return { ok: true };
+        }
+      )
+  );
 };

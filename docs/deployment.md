@@ -15,13 +15,15 @@ Infrastructure for the Vici instance of Officina. Identifiers here are not secre
 
 Stage them without deploying: `fly secrets set --app vici-officina --stage NAME=value`.
 
-| Secret                   | Status     | Where it comes from                                                                                                               |
-| ------------------------ | ---------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `GITHUB_APP_ID`          | staged     | `4965437`                                                                                                                         |
-| `GITHUB_APP_PRIVATE_KEY` | staged     | Generated on the GitHub App settings page and piped from the downloaded file without being read; the file was moved to the Trash. |
-| `GITHUB_WEBHOOK_SECRET`  | to do      | Generate with `openssl rand -hex 32`, stage it, and set the same value on the GitHub App webhook.                                 |
-| `ANTHROPIC_API_KEY`      | not needed | Production authenticates by workload identity federation (below). An API key is only for local development on a non-Fly host.     |
-| `DATABASE_URL`           | to do      | Set when Postgres is attached.                                                                                                    |
+| Secret                     | Status     | Where it comes from                                                                                                                                                                                                                                   |
+| -------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GITHUB_APP_ID`            | staged     | `4965437`                                                                                                                                                                                                                                             |
+| `GITHUB_APP_PRIVATE_KEY`   | staged     | Generated on the GitHub App settings page and piped from the downloaded file without being read; the file was moved to the Trash.                                                                                                                     |
+| `GITHUB_APP_CLIENT_SECRET` | set        | Generated on the GitHub App settings page and copied into Fly from the clipboard without being read. With `OFFICINA_TOKEN_KEY` it turns on GitHub sign-in and approving and merging as the verifier. The client ID is public and lives in `fly.toml`. |
+| `OFFICINA_TOKEN_KEY`       | set        | `openssl rand -base64 32`, piped straight into Fly. Encrypts members' GitHub tokens at rest; rotating it only means members connect GitHub again.                                                                                                     |
+| `GITHUB_WEBHOOK_SECRET`    | to do      | Generate with `openssl rand -hex 32`, stage it, and set the same value on the GitHub App webhook.                                                                                                                                                     |
+| `ANTHROPIC_API_KEY`        | not needed | Production authenticates by workload identity federation (below). An API key is only for local development on a non-Fly host.                                                                                                                         |
+| `DATABASE_URL`             | to do      | Set when Postgres is attached.                                                                                                                                                                                                                        |
 
 Without the GitHub App credentials or any Anthropic credentials the API still runs and logs `engine disabled` with the missing names.
 

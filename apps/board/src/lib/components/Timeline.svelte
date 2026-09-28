@@ -60,6 +60,12 @@
         return `${p.stage === 'declined' ? 'declined' : 'cancelled'} it: ${p.reason}`;
       case 'spec_status_set':
         return `set the spec status to ${p.status}`;
+      case 'github_approved':
+        return p.merge === 'merged'
+          ? `approved and merged the pull request on GitHub as @${p.login}`
+          : `approved the pull request on GitHub as @${p.login} and turned on auto-merge`;
+      case 'github_approval_failed':
+        return `could not approve on GitHub as @${p.login}: ${p.error}`;
       case 'checklist_posted':
         return `posted the checklist on pull request #${p.pullRequest}`;
       default:
