@@ -124,7 +124,11 @@ describe.skipIf(!url)('board api', () => {
 
   test('the board shows what waits on the viewer and applies their decisions', async () => {
     const cookie = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
-    await createRequest(pool, { title: 'Rename settings', request: 'Call it Preferences.' });
+    await createRequest(pool, {
+      title: 'Rename settings',
+      request: 'Call it Preferences.',
+      skipInterview: true
+    });
 
     const board = await json(await call(cookie, `/api/projects/${seeded.projectId}/board`));
     expect(board.tasks).toEqual([
@@ -166,7 +170,11 @@ describe.skipIf(!url)('board api', () => {
   });
 
   test('watchers read but cannot act, and other projects stay invisible', async () => {
-    await createRequest(pool, { title: 'Rename settings', request: 'Call it Preferences.' });
+    await createRequest(pool, {
+      title: 'Rename settings',
+      request: 'Call it Preferences.',
+      skipInterview: true
+    });
     const watcher = await signIn(
       await invite(pool, {
         publicUrl: PUBLIC_URL,
@@ -194,7 +202,11 @@ describe.skipIf(!url)('board api', () => {
 
   test('run logs are readable only by members of the run project', async () => {
     const cookie = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
-    await createRequest(pool, { title: 'Rename settings', request: 'Call it Preferences.' });
+    await createRequest(pool, {
+      title: 'Rename settings',
+      request: 'Call it Preferences.',
+      skipInterview: true
+    });
     const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
     const run = await startRun(pool, {
       taskId,
@@ -219,7 +231,11 @@ describe.skipIf(!url)('board api', () => {
     const received: BoardEvent[] = [];
     const unsubscribe = hub.subscribe((event) => received.push(event));
     try {
-      await createRequest(pool, { title: 'Rename settings', request: 'Call it Preferences.' });
+      await createRequest(pool, {
+        title: 'Rename settings',
+        request: 'Call it Preferences.',
+        skipInterview: true
+      });
       for (let attempt = 0; attempt < 50 && received.length === 0; attempt++) await Bun.sleep(20);
       expect(received[0]).toEqual({ kind: 'task', projectId: seeded.projectId, number: 1 });
     } finally {

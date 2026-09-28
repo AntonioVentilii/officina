@@ -13,6 +13,7 @@ type AgentToolConfig = NonNullable<
 export const RESULT_TOOL = 'submit_result';
 
 export const RUNNER_ROLES = [
+  'interviewer',
   'spec',
   'builder',
   'reviewer_spec',
@@ -24,6 +25,7 @@ export type RunnerRole = (typeof RUNNER_ROLES)[number];
 
 /** Only the builder changes files. The others also get read-only repository tokens. */
 const CAN_WRITE: Record<RunnerRole, boolean> = {
+  interviewer: false,
   spec: false,
   builder: true,
   reviewer_spec: false,

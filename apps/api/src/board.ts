@@ -43,7 +43,7 @@ export interface WaitingOn {
 }
 
 export type BoardAction =
-  'accept' | 'decline' | 'approve' | 'changes' | 'answer' | 'cancel' | 'comment';
+  'submit' | 'accept' | 'decline' | 'approve' | 'changes' | 'answer' | 'cancel' | 'comment';
 
 export interface BoardViewer {
   readonly memberId: string;
@@ -177,7 +177,11 @@ const waitingOn = (
   const running = row.runningRoles.map(roleLabel);
   switch (row.stage) {
     case 'request':
-      return { kind: 'people', label: 'Draft request', me: row.requesterId === viewer.memberId };
+      return {
+        kind: 'agent',
+        label: running.length ? 'Interviewer is reading the request' : 'Interviewer up next',
+        me: false
+      };
     case 'triage':
       return { kind: 'people', label: 'Triage by a maintainer', me: hasRole(member, 'maintainer') };
     case 'speccing':
@@ -237,6 +241,12 @@ const actionsFor = (row: BoardTaskRow, viewer: BoardViewer): BoardAction[] => {
   const member = viewerMember(viewer);
   if (TERMINAL_STAGES.has(row.stage)) return hasRole(member, 'contributor') ? ['comment'] : [];
   const actions: BoardAction[] = [];
+  if (
+    row.stage === 'request' &&
+    hasRole(member, 'contributor') &&
+    (row.requesterId === viewer.memberId || hasRole(member, 'maintainer'))
+  )
+    actions.push('submit');
   if (row.blocked) {
     if (canAnswer(row, viewer)) actions.push('answer');
   } else if (!row.paused) {

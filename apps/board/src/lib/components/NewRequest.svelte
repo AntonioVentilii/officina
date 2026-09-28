@@ -15,6 +15,7 @@
   let title = $state('');
   let request = $state('');
   let busy = $state(false);
+  let interview = $state(true);
 
   const ready = $derived(title.trim().length >= 3 && request.trim().length > 0);
 
@@ -25,7 +26,8 @@
     try {
       const created = await post<{ number: number }>(`/api/projects/${session.projectId}/tasks`, {
         title: title.trim(),
-        request: request.trim()
+        request: request.trim(),
+        interview
       });
       toasts.show('ok', `Request #${created.number} opened`);
       await board.refresh();
@@ -60,8 +62,15 @@
         placeholder="What people should see or be able to do afterwards, where, and anything that must not change. Plain words are fine: an agent turns this into a spec for review."
         required></textarea>
     </label>
+    <label class="check">
+      <input type="checkbox" bind:checked={interview} />
+      <span>
+        Let the interviewer ask follow-up questions first
+        <span class="faint">(recommended: a few answers save rounds of changes later)</span>
+      </span>
+    </label>
     <p class="hint faint">
-      A maintainer triages it, then the spec agent writes a spec you can review.
+      Then a maintainer triages it and the spec agent writes a spec you can review.
     </p>
   </form>
   {#snippet footer()}
@@ -89,6 +98,24 @@
     font-size: 12.5px;
     font-weight: 600;
     color: var(--text-2);
+  }
+
+  .check {
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 8px;
+    cursor: pointer;
+  }
+
+  .check input {
+    margin-top: 3px;
+    accent-color: var(--accent);
+  }
+
+  .check > span {
+    font-size: 13px;
+    font-weight: 450;
+    color: var(--text);
   }
 
   .hint {

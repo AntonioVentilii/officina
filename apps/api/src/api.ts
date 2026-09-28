@@ -56,6 +56,7 @@ const sessionCookie = (value: string, maxAgeMs: number, secure: boolean) =>
     .join('; ');
 
 const actionSchema = z.discriminatedUnion('type', [
+  z.strictObject({ type: z.literal('submit') }),
   z.strictObject({ type: z.literal('accept') }),
   z.strictObject({ type: z.literal('approve') }),
   z.strictObject({ type: z.literal('changes'), note: z.string().trim().min(1).max(10_000) }),
@@ -66,7 +67,8 @@ const actionSchema = z.discriminatedUnion('type', [
 
 const requestSchema = z.strictObject({
   title: z.string().trim().min(3).max(200),
-  request: z.string().trim().min(1).max(20_000)
+  request: z.string().trim().min(1).max(20_000),
+  interview: z.boolean().optional()
 });
 
 const commentSchema = z.strictObject({ body: z.string().trim().min(1).max(20_000) });
@@ -245,11 +247,12 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
     .post('/api/projects/:projectId/tasks', async ({ request, params, body }) => {
       mutation(request);
       const viewer = viewerFor(await signedIn(request), params.projectId);
-      const input = parse(requestSchema, body);
+      const { interview, ...input } = parse(requestSchema, body);
       return createRequestAs(pool, {
         projectId: viewer.projectId,
         memberId: viewer.memberId,
-        ...input
+        ...input,
+        skipInterview: interview === false
       });
     })
     .post('/api/projects/:projectId/tasks/:number/actions', async ({ request, params, body }) => {

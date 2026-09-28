@@ -290,12 +290,37 @@ describe('permissions', () => {
     expect(
       driver.attempt(task, { type: 'answer', text: 'it' }, asMember(productContributor))
     ).toEqual({ ok: false, error: 'not_allowed' });
-    expect(driver.attempt(task, { type: 'submit_request' }, asMember(owner))).toEqual({
+    expect(driver.attempt(task, { type: 'approve' }, asMember(owner))).toEqual({
       ok: false,
       error: 'blocked'
     });
     task = driver.step(task, { type: 'answer', text: 'it' }, asMember(owner));
     expect(task.blocked).toBeNull();
+  });
+
+  test('submitting a request as is closes an open interview question', () => {
+    const driver = createDriver([owner]);
+    let task = newTask('t1', owner.id);
+    task = driver.step(
+      task,
+      { type: 'block', question: 'Which screens?', askedOf: { memberId: owner.id } },
+      asAgent('interviewer')
+    );
+    task = driver.step(task, { type: 'submit_request' }, asMember(owner));
+    expect(task).toMatchObject({ stage: 'triage', blocked: null });
+    expect(driver.events()).toContainEqual({ type: 'unblocked', answer: '(submitted as is)' });
+  });
+
+  test('the interviewer may submit a request, other agents may not', () => {
+    const driver = createDriver([owner]);
+    const task = newTask('t1', owner.id);
+    expect(driver.step(task, { type: 'submit_request' }, asAgent('interviewer')).stage).toBe(
+      'triage'
+    );
+    expect(driver.attempt(task, { type: 'submit_request' }, asAgent('spec'))).toEqual({
+      ok: false,
+      error: 'not_allowed'
+    });
   });
 
   test('the requester can cancel their own request and closed tasks accept nothing', () => {

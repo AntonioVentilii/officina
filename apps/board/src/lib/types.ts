@@ -16,7 +16,7 @@ export type Stage =
 export type Lane = 'green' | 'standard' | 'red';
 export type Role = 'watcher' | 'contributor' | 'maintainer' | 'owner';
 export type BoardAction =
-  'accept' | 'decline' | 'approve' | 'changes' | 'answer' | 'cancel' | 'comment';
+  'submit' | 'accept' | 'decline' | 'approve' | 'changes' | 'answer' | 'cancel' | 'comment';
 
 export interface Project {
   readonly id: string;

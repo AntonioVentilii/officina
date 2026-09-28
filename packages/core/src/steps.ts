@@ -10,6 +10,8 @@ import {
 export const nextAgentRoles = (task: Task): AgentRole[] => {
   if (TERMINAL_STAGES.has(task.stage) || task.blocked || task.paused) return [];
   switch (task.stage) {
+    case 'request':
+      return ['interviewer'];
     case 'speccing':
       return ['spec'];
     case 'spec_review':
