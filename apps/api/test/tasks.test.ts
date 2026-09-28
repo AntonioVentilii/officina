@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { findTaskIdByNumber } from '@officina/db';
 import { Pool } from 'pg';
-import { applyOrThrow, resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
+import { PLAN, applyOrThrow, resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
 import {
   TaskCommandError,
   actOnTask,
@@ -51,7 +51,17 @@ describe.skipIf(!url)('task commands', () => {
       { type: 'post_spec', predictedPaths: [COPY], userVisible: true },
       { kind: 'agent', role: 'spec', version: 1 }
     );
+    expect(await describeTask(pool, { number: 1 })).toContain(
+      'Waiting for the approval chooser to decide who approves.'
+    );
+    await applyOrThrow(
+      pool,
+      taskId,
+      { type: 'plan_approval', userVisible: true, plan: PLAN },
+      { kind: 'agent', role: 'chooser', version: 1 }
+    );
     const described = await describeTask(pool, { number: 1, consoleWorkspace: 'wrkspc_1' });
+    expect(described).toContain('Approval plan: check depth test. Ordinary change.');
     expect(described).toContain('Stage: spec_review   Lane: green');
     expect(described).toContain('Approval needed from: the requester, a maintainer');
     expect(described).toContain('Waived (nobody holds the role yet): a product approver');
@@ -77,6 +87,12 @@ describe.skipIf(!url)('task commands', () => {
         role: 'spec',
         version: 1
       }
+    );
+    await applyOrThrow(
+      pool,
+      taskId,
+      { type: 'plan_approval', userVisible: true, plan: PLAN },
+      { kind: 'agent', role: 'chooser', version: 1 }
     );
     expect(await actOnTask(pool, { number: 1, action: { type: 'approve' } })).toEqual({
       stage: 'ready',

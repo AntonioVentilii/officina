@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { Pool } from 'pg';
 import type { Actor, Command } from '@officina/core';
 import { applyCommand, createTask, failOrphanedRuns, loadTask, startRun } from '../src';
-import { resetAndSeed } from './seed';
+import { PLAN, resetAndSeed } from './seed';
 
 const url = process.env.TEST_DATABASE_URL;
 
@@ -54,6 +54,7 @@ describe.skipIf(!url)('task store', () => {
       { type: 'post_spec', predictedPaths: copyPaths, userVisible: true },
       agent('spec')
     );
+    await apply(id, { type: 'plan_approval', userVisible: true, plan: PLAN }, agent('chooser'));
     await apply(id, { type: 'approve' }, antonio);
     await apply(
       id,
@@ -71,12 +72,12 @@ describe.skipIf(!url)('task store', () => {
       { type: 'review', verdict: 'approve', notes: 'ok' },
       agent('reviewer_correctness')
     );
-    await apply(id, { type: 'choose', userVisible: true }, agent('chooser'));
+    await apply(id, { type: 'choose', userVisible: true, plan: PLAN }, agent('chooser'));
     await apply(id, { type: 'approve' }, antonio);
     const last = await apply(id, { type: 'merged' }, engine);
 
     expect(last.task.stage).toBe('done');
-    expect(last.version).toBe(11);
+    expect(last.version).toBe(12);
     expect((await loadTask(pool, id))?.task).toEqual(last.task);
 
     const stages = await pool.query<{ to: string }>(

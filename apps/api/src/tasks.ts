@@ -1,4 +1,5 @@
 import {
+  effectivePolicy,
   evaluatePolicy,
   parseProjectConfig,
   type Actor,
@@ -13,6 +14,7 @@ import {
   findTaskIdByNumber,
   latestChooserResult,
   listApprovedSubjects,
+  listProjectMemberProfiles,
   listProjectMembers,
   listRuns,
   listTaskSummaries,
@@ -41,6 +43,7 @@ const ERROR_TEXT: Record<StoreError, string> = {
   no_head: 'nothing has been built yet',
   wip_limit: 'the lane is at its limit of concurrent work',
   agents_cannot_build_lane: 'agents may not build in this lane',
+  not_planned: 'the approval chooser has not yet decided who approves this; try again shortly',
   not_found: 'task not found',
   conflict: 'the task changed meanwhile; look at it again and retry',
   invalid_config: "the project's config is invalid"
@@ -214,8 +217,27 @@ export const describeTask = async (
     if (config.ok) {
       const gate: Gate = task.stage;
       const subject = gate === 'spec_review' ? `spec:${task.specVersion}` : `sha:${task.headSha}`;
+      const plan = task.approvalPlans[gate];
+      const names = new Map(
+        (await listProjectMemberProfiles(pool, projectId)).map((member) => [member.id, member.name])
+      );
+      if (plan?.subject !== subject) {
+        lines.push('', 'Waiting for the approval chooser to decide who approves.');
+      } else {
+        lines.push(
+          '',
+          `Approval plan: check depth ${plan.depth}. ${plan.rationale}`,
+          ...plan.extra.map(
+            (item) => `  also needs ${describeRequirement(item.requirement)}: ${item.reason}`
+          ),
+          ...plan.verifiers.map(
+            (verifier) =>
+              `  asks ${names.get(verifier.memberId) ?? 'a former member'} to verify: ${verifier.reason}`
+          )
+        );
+      }
       const result = evaluatePolicy(
-        config.config.lanes[task.lane].approvals[gate],
+        effectivePolicy(config.config, task, gate),
         await listApprovedSubjects(pool, taskId),
         {
           members: await listProjectMembers(pool, projectId),

@@ -18,6 +18,7 @@ export interface BoardTaskRow {
   readonly specVersion: number;
   readonly headSha: string | null;
   readonly fixRounds: number;
+  readonly approvalPlans: Task['approvalPlans'];
   readonly pullRequest: number | null;
   readonly costCents: number;
   readonly runningRoles: readonly string[];
@@ -30,7 +31,7 @@ const BOARD_COLUMNS = `
   t.id, t.number, t.title, t.stage, t.lane, t.blocked, t.paused,
   t.user_visible as "userVisible", t.assignee, t.requester_id as "requesterId",
   m.display_name as "requesterName", t.spec_version as "specVersion", t.head_sha as "headSha",
-  t.fix_rounds as "fixRounds", t.github_pr as "pullRequest",
+  t.fix_rounds as "fixRounds", t.approval_plans as "approvalPlans", t.github_pr as "pullRequest",
   coalesce((select sum(r.list_cost_cents) from runs r where r.task_id = t.id), 0)::int as "costCents",
   coalesce(
     (select array_agg(distinct r.agent_role) from runs r
@@ -236,3 +237,24 @@ export const locateRun = async (
       [runId]
     )
   ).rows[0] ?? null;
+
+/** Members of a project with their names, for agents that must name people. */
+export const listProjectMemberProfiles = async (db: Queryable, projectId: string) =>
+  (
+    await db.query<{ id: string; name: string; role: string; domains: string[] }>(
+      `select m.id, m.display_name as name, r.role, r.domains
+       from project_roles r join members m on m.id = r.member_id
+       where r.project_id = $1 order by m.display_name`,
+      [projectId]
+    )
+  ).rows;
+
+/** The changed paths of the task's latest push, as the engine read them from GitHub. */
+export const latestPushedPaths = async (db: Queryable, taskId: string): Promise<string[]> =>
+  (
+    await db.query<{ paths: string[] }>(
+      `select payload->'changedPaths' as paths from task_events
+       where task_id = $1 and type = 'pushed' order by id desc limit 1`,
+      [taskId]
+    )
+  ).rows[0]?.paths ?? [];

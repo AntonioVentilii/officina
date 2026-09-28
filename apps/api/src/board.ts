@@ -1,7 +1,9 @@
 import {
   REVIEWER_ROLES,
   TERMINAL_STAGES,
+  effectivePolicy,
   evaluatePolicy,
+  gateSubject,
   hasRole,
   isEligible,
   parseProjectConfig,
@@ -56,7 +58,7 @@ const ROLE_LABELS: Record<string, string> = {
   builder: 'Builder',
   reviewer_spec: 'Spec reviewer',
   reviewer_correctness: 'Code reviewer',
-  chooser: 'Verification guide',
+  chooser: 'Approval chooser',
   learner: 'Learner'
 };
 
@@ -100,6 +102,7 @@ const viewerMember = (viewer: BoardViewer): Member => ({
 
 interface ApprovalState {
   readonly gate: Gate;
+  readonly planned: boolean;
   readonly pending: readonly Requirement[];
   readonly waived: readonly Requirement[];
   readonly approvedBy: readonly string[];
@@ -120,9 +123,13 @@ const approvalState = async (
   const config = parseProjectConfig(facts.rawConfig);
   if (!config.ok) return null;
   const gate: Gate = row.stage;
-  const subject = gate === 'spec_review' ? `spec:${row.specVersion}` : `sha:${row.headSha}`;
+  const subject = gateSubject(row, gate) ?? '';
+  const plan = row.approvalPlans[gate];
+  // Until the approval chooser has planned this subject, nobody can approve it yet.
+  if (plan?.subject !== subject)
+    return { gate, planned: false, pending: [], waived: [], approvedBy: [] };
   const approvals = await listApprovedSubjects(pool, row.id);
-  const result = evaluatePolicy(config.config.lanes[row.lane].approvals[gate], approvals, {
+  const result = evaluatePolicy(effectivePolicy(config.config, row, gate), approvals, {
     members: facts.members,
     requesterId: row.requesterId,
     userVisible: row.userVisible,
@@ -130,6 +137,7 @@ const approvalState = async (
   });
   return {
     gate,
+    planned: true,
     pending: result.pending,
     waived: result.waived,
     approvedBy: approvals
@@ -179,14 +187,20 @@ const waitingOn = (
       };
     case 'spec_review':
     case 'verifying': {
+      if (approval && !approval.planned)
+        return { kind: 'agent', label: 'Approval chooser is deciding who approves', me: false };
       const pending = approval?.pending ?? [];
+      const plan = row.approvalPlans[row.stage];
+      const asked = plan?.verifiers.some((verifier) => verifier.memberId === viewer.memberId);
       const noun = row.stage === 'spec_review' ? 'Spec approval' : 'Verification';
       return {
         kind: 'people',
         label: pending.length
           ? `${noun} by ${readable(pending).map(describeRequirement).join(' and ')}`
           : noun,
-        me: pending.some((requirement) => isEligible(member, requirement, row.requesterId))
+        me:
+          pending.some((requirement) => isEligible(member, requirement, row.requesterId)) ||
+          (Boolean(asked) && pending.length > 0 && hasRole(member, 'contributor'))
       };
     }
     case 'ready':
@@ -228,7 +242,8 @@ const actionsFor = (row: BoardTaskRow, viewer: BoardViewer): BoardAction[] => {
     if (row.stage === 'triage' && hasRole(member, 'maintainer')) actions.push('accept', 'decline');
     if (
       (row.stage === 'spec_review' || row.stage === 'verifying') &&
-      hasRole(member, 'contributor')
+      hasRole(member, 'contributor') &&
+      row.approvalPlans[row.stage]?.subject === gateSubject(row, row.stage)
     )
       actions.push('approve', 'changes');
   }
@@ -269,6 +284,35 @@ const cardView = (row: BoardTaskRow, viewer: BoardViewer, approval: ApprovalStat
   stageSince: row.stageSince,
   waitingOn: waitingOn(row, viewer, approval)
 });
+
+const DEPTH_LABELS = {
+  glance: 'A careful read is enough',
+  test: 'Try it by hand',
+  device: 'Test it on a real device'
+} as const;
+
+/** The approval chooser's plan for the gate the task is at (or the latest one), for people. */
+const planView = (row: BoardTaskRow, facts: ProjectFacts) => {
+  const gate: Gate | null =
+    row.stage === 'spec_review' ? 'spec_review' : row.approvalPlans.verifying ? 'verifying' : null;
+  const plan = gate ? row.approvalPlans[gate] : undefined;
+  if (!gate || !plan) return null;
+  return {
+    gate,
+    current: plan.subject === gateSubject(row, gate),
+    depth: plan.depth,
+    depthLabel: DEPTH_LABELS[plan.depth],
+    rationale: plan.rationale,
+    extra: plan.extra.map((item) => ({
+      label: describeRequirement(item.requirement),
+      reason: item.reason
+    })),
+    verifiers: plan.verifiers.map((verifier) => ({
+      name: facts.names.get(verifier.memberId) ?? 'a former member',
+      reason: verifier.reason
+    }))
+  };
+};
 
 export type CardView = ReturnType<typeof cardView>;
 
@@ -368,8 +412,10 @@ export const taskView = async (
       at: event.createdAt
     })),
     runs: runs.map((run) => runView(run, consoleWorkspace)),
+    plan: planView(row, facts),
     approval: approval && {
       gate: approval.gate,
+      planned: approval.planned,
       pending: readable(approval.pending).map(describeRequirement),
       waived: approval.waived.map(describeRequirement),
       approvedBy: approval.approvedBy

@@ -66,10 +66,31 @@ export const reviewerOutputSchema = z.discriminatedUnion('outcome', [
   })
 ]);
 
+const extraApprovalSchema = z.union([
+  z.strictObject({
+    domain: text.regex(/^[a-z][a-z0-9-]*$/, 'a lowercase domain name'),
+    reason: text
+  }),
+  z.strictObject({ role: z.enum(['maintainer', 'owner']), reason: text })
+]);
+
+/**
+ * The approval chooser runs at each human gate. At spec review it plans who approves the spec; at
+ * verification it also writes the checklist. It can add approvals and name verifiers, never remove.
+ */
 export const chooserOutputSchema = z.strictObject({
   userVisible: z.boolean(),
-  checklist: z.array(text).min(1),
-  suggestedDomains: z.array(text).default([]),
+  approval: z.strictObject({
+    depth: z.enum(['glance', 'test', 'device']),
+    rationale: text.max(600),
+    extraApprovals: z.array(extraApprovalSchema).max(4).default([]),
+    verifiers: z
+      .array(z.strictObject({ memberId: z.uuid(), reason: text.max(300) }))
+      .max(3)
+      .default([])
+  }),
+  /** Required at verification, where the engine checks it is not empty. */
+  checklist: z.array(text).default([]),
   beforeAfter: z
     .array(z.strictObject({ key: text, locale: text, before: z.string(), after: z.string() }))
     .default([])
@@ -191,7 +212,25 @@ export const commandForOutput = (task: Task, result: RoleOutput): CommandResult 
         .join('\n');
       return { ok: true, command: { type: 'review', verdict: 'changes', notes } };
     }
-    case 'chooser':
-      return { ok: true, command: { type: 'choose', userVisible: result.output.userVisible } };
+    case 'chooser': {
+      const { approval, userVisible } = result.output;
+      const plan = {
+        depth: approval.depth,
+        rationale: approval.rationale,
+        extra: approval.extraApprovals.map(({ reason, ...requirement }) => ({
+          requirement,
+          reason
+        })),
+        verifiers: approval.verifiers
+      };
+      return {
+        ok: true,
+        command: {
+          type: task.stage === 'spec_review' ? 'plan_approval' : 'choose',
+          userVisible,
+          plan
+        }
+      };
+    }
   }
 };

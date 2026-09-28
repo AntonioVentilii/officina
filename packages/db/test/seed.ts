@@ -33,6 +33,14 @@ export const resetAndSeed = async (pool: Pool): Promise<Seeded> => {
   return { projectId: rows[0]!.project_id, ownerId, owner: { kind: 'member', memberId: ownerId } };
 };
 
+/** A plain approval plan that adds nothing. */
+export const PLAN = {
+  depth: 'test' as const,
+  rationale: 'Ordinary change.',
+  extra: [],
+  verifiers: []
+};
+
 export const applyOrThrow = async (pool: Pool, taskId: string, command: Command, actor: Actor) => {
   const result = await applyCommand(pool, { taskId, command, actor });
   if (!result.ok) throw new Error(`${command.type}: ${result.error}`);
@@ -65,6 +73,12 @@ export const createTaskInMerging = async (pool: Pool, seeded: Seeded): Promise<s
     { type: 'post_spec', predictedPaths: paths, userVisible: true },
     agent('spec')
   );
+  await applyOrThrow(
+    pool,
+    id,
+    { type: 'plan_approval', userVisible: true, plan: PLAN },
+    agent('chooser')
+  );
   await applyOrThrow(pool, id, { type: 'approve' }, seeded.owner);
   await applyOrThrow(
     pool,
@@ -90,7 +104,7 @@ export const createTaskInMerging = async (pool: Pool, seeded: Seeded): Promise<s
     { type: 'review', verdict: 'approve', notes: 'ok' },
     agent('reviewer_correctness')
   );
-  await applyOrThrow(pool, id, { type: 'choose', userVisible: true }, agent('chooser'));
+  await applyOrThrow(pool, id, { type: 'choose', userVisible: true, plan: PLAN }, agent('chooser'));
   await applyOrThrow(pool, id, { type: 'approve' }, seeded.owner);
   return id;
 };

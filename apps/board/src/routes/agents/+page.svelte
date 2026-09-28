@@ -21,7 +21,11 @@
       label: 'Code reviewer',
       does: 'Checks correctness and project conventions'
     },
-    { role: 'chooser', label: 'Verification guide', does: 'Writes what people must check, and who' }
+    {
+      role: 'chooser',
+      label: 'Approval chooser',
+      does: 'Decides who approves and how closely; can only raise the bar'
+    }
   ];
 
   let open = $state<Record<string, boolean>>({});
