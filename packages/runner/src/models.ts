@@ -39,6 +39,12 @@ export const newestModel = (models: readonly ListedModel[], prefix: string): str
   return newest?.id ?? null;
 };
 
+const withTimeout = <T>(promise: Promise<T>, ms: number): Promise<T> =>
+  new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`no answer within ${ms} ms`)), ms);
+    promise.then(resolve, reject).finally(() => clearTimeout(timer));
+  });
+
 /**
  * Resolves each tier once and keeps the answer for the life of the process, so every agent synced
  * by this process runs the same model even if a release lands while it is up.
@@ -47,15 +53,21 @@ export const createModelResolver = (deps: {
   listModels: () => Promise<readonly ListedModel[]>;
   env?: Readonly<Partial<Record<string, string>>>;
   log?: (message: string, details?: Record<string, unknown>) => void;
+  /** Kept short so an unreachable API costs seconds, not the client's full timeout and retries. */
+  timeoutMs?: number;
 }): ModelResolver => {
   const log = deps.log ?? (() => {});
+  const timeoutMs = deps.timeoutMs ?? 10_000;
   const cache = new Map<ModelTier, Promise<ResolvedModel>>();
 
   const lookup = async (tier: ModelTier): Promise<ResolvedModel> => {
     const override = deps.env?.[MODEL_OVERRIDE_ENV[tier]];
     if (override) return { id: override, source: 'env' };
     try {
-      const newest = newestModel(await deps.listModels(), TIER_PREFIX[tier]);
+      const newest = newestModel(
+        await withTimeout(deps.listModels(), timeoutMs),
+        TIER_PREFIX[tier]
+      );
       if (newest) return { id: newest, source: 'models_api' };
       log('models api listed no model for the tier, using the pinned one', { tier });
     } catch (error) {

@@ -45,7 +45,7 @@ The rule only accepts tokens whose subject starts with `vici:vici-officina:` and
 
 ## Runtime
 
-The API is built from the root `Dockerfile` (which includes `agents/`) and configured by `fly.toml` (region `ams`, health check on `/health`, one machine always on because the scheduler runs inside it). On boot it validates its environment, applies pending migrations, fails runs orphaned by a previous process and interrupts their sessions, resolves the Opus model (log line `model in use`) and syncs the role agents to it (`agents synced`), then starts the scheduler every `SCHEDULER_INTERVAL_MS` (default 15 seconds). Run exactly one machine: orphaned-run recovery assumes a single scheduler.
+The API is built from the root `Dockerfile` (which includes `agents/`) and configured by `fly.toml` (region `ams`, health check on `/health`, one machine always on because the scheduler runs inside it). On boot it validates its environment, applies pending migrations and starts listening; then the engine fails runs orphaned by a previous process and interrupts their sessions, resolves the Opus model (log line `model in use`) and syncs the role agents to it (`agents synced`), then starts the scheduler every `SCHEDULER_INTERVAL_MS` (default 15 seconds). Run exactly one machine: orphaned-run recovery assumes a single scheduler.
 
 ## Project: vici-app
 

@@ -69,6 +69,14 @@ describe('createModelResolver', () => {
     ]);
   });
 
+  test('falls back to the pinned opus when the Models API does not answer in time', async () => {
+    const resolver = createModelResolver({
+      listModels: () => new Promise(() => {}),
+      timeoutMs: 5
+    });
+    expect(await resolver.resolve('opus')).toEqual({ id: PINNED_MODELS.opus, source: 'pinned' });
+  });
+
   test('falls back to the pinned opus when no opus is listed', async () => {
     const resolver = createModelResolver({
       listModels: async () => [{ id: 'claude-sonnet-5-5', createdAt: '2026-08-15T00:00:00Z' }]

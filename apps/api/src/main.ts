@@ -8,6 +8,7 @@ import { createApp } from './app';
 import { createAgentsPort, startEngine } from './engine';
 import { createGitHubAccounts } from './github-accounts';
 import { startRealtime } from './realtime';
+import type { Scheduler } from './scheduler';
 import { createTokenBox } from './token-box';
 
 const env = z
@@ -82,7 +83,45 @@ const agents = anthropicAuth
     )
   : undefined;
 
-const scheduler =
+const realtime = await startRealtime({ connectionString: env.DATABASE_URL, pool, log });
+
+const server = createApp({
+  pool,
+  webhookSecret: env.GITHUB_WEBHOOK_SECRET,
+  ...(github ? { github } : {}),
+  board: {
+    publicUrl: env.OFFICINA_PUBLIC_URL,
+    consoleWorkspace: env.ANTHROPIC_WORKSPACE_ID,
+    realtime,
+    github,
+    githubLogin:
+      githubAccounts && githubUserAuth
+        ? { accounts: githubAccounts, authorizeUrl: githubUserAuth.authorizeUrl }
+        : undefined
+  },
+  boardDir: join(import.meta.dir, '..', '..', 'board', 'build')
+}).listen({
+  port: env.PORT,
+  hostname: '0.0.0.0'
+});
+log('api listening', { port: env.PORT, engine: Boolean(github && agents) });
+
+let scheduler: Scheduler | undefined;
+
+const shutdown = async (signal: string) => {
+  log('shutting down', { signal });
+  await scheduler?.stop();
+  await server.stop();
+  await realtime.close();
+  await pool.end();
+  process.exit(0);
+};
+process.on('SIGTERM', () => void shutdown('SIGTERM'));
+process.on('SIGINT', () => void shutdown('SIGINT'));
+
+// Started after the server listens: the boot sync talks to Anthropic, and an outage there must
+// not take the health check and the board down with it.
+scheduler =
   github && agents
     ? await startEngine({
         pool,
@@ -114,37 +153,3 @@ if (scheduler) {
   ].filter(Boolean);
   log('engine disabled', { missing });
 }
-
-const realtime = await startRealtime({ connectionString: env.DATABASE_URL, pool, log });
-
-const server = createApp({
-  pool,
-  webhookSecret: env.GITHUB_WEBHOOK_SECRET,
-  ...(github ? { github } : {}),
-  board: {
-    publicUrl: env.OFFICINA_PUBLIC_URL,
-    consoleWorkspace: env.ANTHROPIC_WORKSPACE_ID,
-    realtime,
-    github,
-    githubLogin:
-      githubAccounts && githubUserAuth
-        ? { accounts: githubAccounts, authorizeUrl: githubUserAuth.authorizeUrl }
-        : undefined
-  },
-  boardDir: join(import.meta.dir, '..', '..', 'board', 'build')
-}).listen({
-  port: env.PORT,
-  hostname: '0.0.0.0'
-});
-log('api listening', { port: env.PORT, engine: Boolean(scheduler) });
-
-const shutdown = async (signal: string) => {
-  log('shutting down', { signal });
-  await scheduler?.stop();
-  await server.stop();
-  await realtime.close();
-  await pool.end();
-  process.exit(0);
-};
-process.on('SIGTERM', () => void shutdown('SIGTERM'));
-process.on('SIGINT', () => void shutdown('SIGINT'));
