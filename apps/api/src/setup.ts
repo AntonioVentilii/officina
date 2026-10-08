@@ -23,13 +23,17 @@ export type SetupGitHub = Pick<
   'repoInstallationId' | 'defaultBranch' | 'fileContent'
 >;
 
-/** Syncs every role agent from its checked-in prompt and records the versions the engine will use. */
+/**
+ * Syncs every role agent from its checked-in prompt on the given model and records the versions the
+ * engine will use. Unchanged definitions are left alone, so running it on every boot is cheap.
+ */
 export const setupAgents = async (
   pool: Pool,
   agents: ManagedAgentsPort,
-  promptsDir: string
+  promptsDir: string,
+  modelId: string
 ): Promise<{ changed: string[] }> => {
-  const definitions = await loadDefinitions(promptsDir);
+  const definitions = await loadDefinitions(promptsDir, modelId);
   const { agents: synced, changed } = await syncAgents(
     agents,
     definitions,

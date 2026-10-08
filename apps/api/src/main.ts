@@ -1,6 +1,6 @@
 import { migrate } from '@officina/db';
 import { createGitHubAsUser, createGitHubClient, createGitHubUserAuth } from '@officina/github';
-import { anthropicAuthFrom } from '@officina/runner';
+import { anthropicAuthFrom, createModelResolver } from '@officina/runner';
 import { join } from 'node:path';
 import { Pool } from 'pg';
 import { z } from 'zod';
@@ -23,6 +23,8 @@ const env = z
     ANTHROPIC_SERVICE_ACCOUNT_ID: z.string().min(1).optional(),
     ANTHROPIC_WORKSPACE_ID: z.string().min(1).optional(),
     ANTHROPIC_API_KEY: z.string().min(1).optional(),
+    // Pins the agents' model; unset, they run the newest Opus the Models API lists.
+    ANTHROPIC_MODEL: z.string().min(1).optional(),
     SCHEDULER_INTERVAL_MS: z.coerce.number().int().positive().default(15_000),
     OFFICINA_PUBLIC_URL: z.url().default('http://localhost:8080'),
     // GitHub user authorization: members link their account, and a verification can approve and
@@ -72,16 +74,25 @@ const githubAccounts =
       })
     : undefined;
 
+const agents = anthropicAuth
+  ? createAgentsPort(anthropicAuth, (error) =>
+      log('anthropic credentials refresh failed, keeping cached token', {
+        error: (error as Error).message
+      })
+    )
+  : undefined;
+
 const scheduler =
-  github && anthropicAuth
+  github && agents
     ? await startEngine({
         pool,
         github,
-        agents: createAgentsPort(anthropicAuth, (error) =>
-          log('anthropic credentials refresh failed, keeping cached token', {
-            error: (error as Error).message
-          })
-        ),
+        agents,
+        models: createModelResolver({
+          listModels: () => agents.listModels(),
+          env: { ANTHROPIC_MODEL: env.ANTHROPIC_MODEL },
+          log
+        }),
         intervalMs: env.SCHEDULER_INTERVAL_MS,
         publicUrl: env.OFFICINA_PUBLIC_URL,
         promptsDir: join(import.meta.dir, '..', '..', '..', 'agents'),

@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { createGitHubClient } from '@officina/github';
-import { anthropicAuthFrom } from '@officina/runner';
+import { anthropicAuthFrom, createModelResolver } from '@officina/runner';
 import { Pool } from 'pg';
 import { createAgentsPort } from './engine';
 import { invite, loginLink } from './people';
@@ -194,7 +194,13 @@ const main = async () => {
     }
 
     if (command === 'setup-agents') {
-      const { changed } = await setupAgents(pool, agentsPort(), PROMPTS_DIR);
+      const port = agentsPort();
+      const model = await createModelResolver({
+        listModels: () => port.listModels(),
+        env: process.env,
+        log: (message, details) => console.log(message, JSON.stringify(details ?? {}))
+      }).resolve('opus');
+      const { changed } = await setupAgents(pool, port, PROMPTS_DIR, model.id);
       console.log(
         changed.length ? `agents created or updated: ${changed.join(', ')}` : 'agents up to date'
       );

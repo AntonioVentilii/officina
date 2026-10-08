@@ -3,6 +3,7 @@ import type { AgentCreateParams } from '@anthropic-ai/sdk/resources/beta/agents/
 import type { EventSendParams } from '@anthropic-ai/sdk/resources/beta/sessions/events';
 import type { SessionCreateParams } from '@anthropic-ai/sdk/resources/beta/sessions/sessions';
 import type { EnvironmentCreateParams } from '@anthropic-ai/sdk/resources/beta/environments/environments';
+import type { ListedModel } from './models';
 import type {
   AgentWrite,
   EnvironmentWrite,
@@ -29,7 +30,7 @@ const toSdkEvent = (event: OutboundEvent): EventSendParams['events'][number] => 
 
 const agentParams = (agent: AgentWrite): AgentCreateParams => ({
   name: agent.name,
-  model: agent.model,
+  model: { id: agent.model.id, effort: agent.model.effort },
   system: agent.system,
   tools: agent.tools
 });
@@ -108,5 +109,12 @@ export const createSdkPort = (client: Anthropic): ManagedAgentsPort => ({
     // No expected version: this sync loop owns the agents it manages.
     const updated = await client.beta.agents.update(agentId, agentParams(agent));
     return { id: updated.id, version: updated.version };
+  },
+  async listModels() {
+    const models: ListedModel[] = [];
+    for await (const model of client.models.list()) {
+      models.push({ id: model.id, createdAt: model.created_at });
+    }
+    return models;
   }
 });

@@ -23,6 +23,7 @@ Stage them without deploying: `fly secrets set --app vici-officina --stage NAME=
 | `OFFICINA_TOKEN_KEY`       | set        | `openssl rand -base64 32`, piped straight into Fly. Encrypts members' GitHub tokens at rest; rotating it only means members connect GitHub again.                                                                                                     |
 | `GITHUB_WEBHOOK_SECRET`    | to do      | Generate with `openssl rand -hex 32`, stage it, and set the same value on the GitHub App webhook.                                                                                                                                                     |
 | `ANTHROPIC_API_KEY`        | not needed | Production authenticates by workload identity federation (below). An API key is only for local development on a non-Fly host.                                                                                                                         |
+| `ANTHROPIC_MODEL`          | not needed | Unset, the agents run the newest Opus the Models API lists. Set it only to hold the agents on a specific model id.                                                                                                                                    |
 | `DATABASE_URL`             | to do      | Set when Postgres is attached.                                                                                                                                                                                                                        |
 
 Without the GitHub App credentials or any Anthropic credentials the API still runs and logs `engine disabled` with the missing names.
@@ -44,7 +45,7 @@ The rule only accepts tokens whose subject starts with `vici:vici-officina:` and
 
 ## Runtime
 
-The API is built from the root `Dockerfile` (which includes `agents/`) and configured by `fly.toml` (region `ams`, health check on `/health`, one machine always on because the scheduler runs inside it). On boot it validates its environment, applies pending migrations, fails runs orphaned by a previous process and interrupts their sessions, then starts the scheduler every `SCHEDULER_INTERVAL_MS` (default 15 seconds). Run exactly one machine: orphaned-run recovery assumes a single scheduler.
+The API is built from the root `Dockerfile` (which includes `agents/`) and configured by `fly.toml` (region `ams`, health check on `/health`, one machine always on because the scheduler runs inside it). On boot it validates its environment, applies pending migrations, fails runs orphaned by a previous process and interrupts their sessions, resolves the Opus model (log line `model in use`) and syncs the role agents to it (`agents synced`), then starts the scheduler every `SCHEDULER_INTERVAL_MS` (default 15 seconds). Run exactly one machine: orphaned-run recovery assumes a single scheduler.
 
 ## Project: vici-app
 
@@ -56,7 +57,7 @@ Kept as the runbook for a second instance.
 
 1. Create and attach Postgres to `vici-officina`.
 2. Stage `GITHUB_WEBHOOK_SECRET`, then `fly deploy`; confirm `https://vici-officina.fly.dev/health`, a log line `api listening` with `engine: true`, and `anthropic credentials` with `mode: federation`.
-3. Sync the agents: `fly ssh console --app vici-officina -C "bun apps/api/src/cli.ts setup-agents"`.
+3. Sync the agents: `fly ssh console --app vici-officina -C "bun apps/api/src/cli.ts setup-agents"`. Since agents sync on every boot this is now only a manual override.
 4. Install the GitHub App on `ViciApp/vici-app` only (selected repositories).
 5. Register the project: `fly ssh console --app vici-officina -C "bun apps/api/src/cli.ts add-project --workspace vici --repo ViciApp/vici-app --owner-email <email> --owner-name Antonio"`. Until `.github/officina.yml` is merged in vici-app, pass it with `--config-file`.
 6. Activate the GitHub App webhook with the same `GITHUB_WEBHOOK_SECRET`.

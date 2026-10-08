@@ -95,6 +95,9 @@ export const createFakePort = (
     async updateAgent(agentId, agent) {
       agentWrites.push({ id: agentId, agent });
       return { id: agentId, version: ++agentVersion };
+    },
+    async listModels() {
+      return [];
     }
   };
 };
