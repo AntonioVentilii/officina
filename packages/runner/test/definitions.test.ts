@@ -43,6 +43,12 @@ describe('agent definitions', () => {
     expect(buildDefinition('spec', 'a').hash).toBe(buildDefinition('spec', 'a').hash);
   });
 
+  test('the model carries an explicit effort, and a new model id means a new version', () => {
+    const definition = buildDefinition('builder', 'prompt', 'claude-opus-6');
+    expect(definition.model).toEqual({ id: 'claude-opus-6', effort: 'high' });
+    expect(definition.hash).not.toBe(buildDefinition('builder', 'prompt', 'claude-opus-5-5').hash);
+  });
+
   test('every runner role has a checked-in prompt', async () => {
     const definitions = await loadDefinitions(join(import.meta.dir, '..', '..', '..', 'agents'));
     expect(definitions.map((definition) => definition.role)).toEqual([...RUNNER_ROLES]);

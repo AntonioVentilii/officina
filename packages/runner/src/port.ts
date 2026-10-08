@@ -1,5 +1,6 @@
 /*
- * The narrow slice of the Managed Agents API the runner uses. The engine and the tests depend on
+ * The narrow slice of the Managed Agents API (and the model list that picks the agents' model) the
+ * runner uses. The engine and the tests depend on
  * this port; only `sdk.ts` knows the SDK.
  */
 
@@ -33,11 +34,12 @@ export interface SessionRequest {
   readonly budgetCents: number;
 }
 
-import type { AgentTools } from './definitions';
+import type { AgentModel, AgentTools } from './definitions';
+import type { ListedModel } from './models';
 
 export interface AgentWrite {
   readonly name: string;
-  readonly model: string;
+  readonly model: AgentModel;
   readonly system: string;
   readonly tools: AgentTools;
 }
@@ -57,4 +59,5 @@ export interface ManagedAgentsPort {
   sessionCostCents(sessionId: string): Promise<number | null>;
   createAgent(agent: AgentWrite): Promise<{ id: string; version: number }>;
   updateAgent(agentId: string, agent: AgentWrite): Promise<{ id: string; version: number }>;
+  listModels(): Promise<ListedModel[]>;
 }

@@ -12,10 +12,12 @@ import {
   createSdkPort,
   type AnthropicAuth,
   type ManagedAgentsPort,
+  type ModelResolver,
   type RunnerRole
 } from '@officina/runner';
 import type { Pool } from 'pg';
 import { startScheduler, type Scheduler } from './scheduler';
+import { setupAgents } from './setup';
 
 export const createAgentsPort = (
   auth: AnthropicAuth,
@@ -24,12 +26,15 @@ export const createAgentsPort = (
 
 /**
  * Starts the engine inside this process. Runs orphaned by a previous process are failed first, and
- * their sessions interrupted best-effort, so their steps can run again.
+ * their sessions interrupted best-effort, so their steps can run again. With a prompts directory,
+ * the role agents are synced first, so a new Opus release or a merged prompt change takes effect on
+ * the next boot.
  */
 export const startEngine = async (input: {
   pool: Pool;
   github: GitHubClient;
   agents: ManagedAgentsPort;
+  models: ModelResolver;
   intervalMs: number;
   publicUrl: string;
   promptsDir?: string;
@@ -48,6 +53,19 @@ export const startEngine = async (input: {
     input.log('orphaned run failed', run);
     if (run.externalId) {
       await input.agents.send(run.externalId, [{ type: 'user.interrupt' }]).catch(() => {});
+    }
+  }
+
+  if (input.promptsDir) {
+    // A failed sync must not keep the board down: the versions recorded last time still run.
+    try {
+      const model = await input.models.resolve('opus');
+      const { changed } = await setupAgents(input.pool, input.agents, input.promptsDir, model.id);
+      input.log('agents synced', { model: model.id, changed });
+    } catch (error) {
+      input.log('agent sync failed, keeping the recorded versions', {
+        error: (error as Error).message
+      });
     }
   }
 

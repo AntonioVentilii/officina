@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { OUTPUT_SCHEMAS } from '@officina/core';
 import type { AgentCreateParams } from '@anthropic-ai/sdk/resources/beta/agents/agents';
 import { z } from 'zod';
+import { PINNED_MODELS } from './models';
 
 export type AgentTools = NonNullable<AgentCreateParams['tools']>;
 type AgentToolConfig = NonNullable<
@@ -39,12 +40,23 @@ const WRITE_TOOLS_OFF: AgentToolConfig[] = [
   { name: 'edit', type: 'edit', enabled: false }
 ];
 
-export const DEFAULT_MODEL = 'claude-opus-5';
+export type AgentEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+export interface AgentModel {
+  readonly id: string;
+  readonly effort: AgentEffort;
+}
+
+/**
+ * Set explicitly because the default moves between releases (Opus 5.5 dropped it to medium), and
+ * every role's output feeds a decision people rely on.
+ */
+export const AGENT_EFFORT: AgentEffort = 'high';
 
 export interface AgentDefinition {
   readonly role: RunnerRole;
   readonly name: string;
-  readonly model: string;
+  readonly model: AgentModel;
   readonly system: string;
   readonly tools: AgentTools;
   /** Changes whenever anything that shapes the agent changes; a new hash means a new agent version. */
@@ -64,7 +76,7 @@ export const resultToolInputSchema = (role: RunnerRole) => {
 export const buildDefinition = (
   role: RunnerRole,
   system: string,
-  model: string = DEFAULT_MODEL
+  modelId: string = PINNED_MODELS.opus
 ): AgentDefinition => {
   const disabled: AgentToolConfig[] = [
     // Web access is off for every role: task text is untrusted, and nothing here needs the web.
@@ -87,6 +99,7 @@ export const buildDefinition = (
     }
   ];
   const name = `officina-${role.replaceAll('_', '-')}`;
+  const model: AgentModel = { id: modelId, effort: AGENT_EFFORT };
   const hash = createHash('sha256')
     .update(JSON.stringify({ name, model, system, tools }))
     .digest('hex');
@@ -96,10 +109,10 @@ export const buildDefinition = (
 /** Reads `agents/<role>.md` prompts from a directory and builds every runner role's definition. */
 export const loadDefinitions = async (
   promptsDir: string,
-  model: string = DEFAULT_MODEL
+  modelId: string = PINNED_MODELS.opus
 ): Promise<AgentDefinition[]> =>
   Promise.all(
     RUNNER_ROLES.map(async (role) =>
-      buildDefinition(role, await Bun.file(join(promptsDir, `${role}.md`)).text(), model)
+      buildDefinition(role, await Bun.file(join(promptsDir, `${role}.md`)).text(), modelId)
     )
   );

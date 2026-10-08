@@ -1,6 +1,6 @@
 import { migrate } from '@officina/db';
 import { createGitHubAsUser, createGitHubClient, createGitHubUserAuth } from '@officina/github';
-import { anthropicAuthFrom } from '@officina/runner';
+import { anthropicAuthFrom, createModelResolver } from '@officina/runner';
 import { join } from 'node:path';
 import { Pool } from 'pg';
 import { z } from 'zod';
@@ -8,6 +8,7 @@ import { createApp } from './app';
 import { createAgentsPort, startEngine } from './engine';
 import { createGitHubAccounts } from './github-accounts';
 import { startRealtime } from './realtime';
+import type { Scheduler } from './scheduler';
 import { createTokenBox } from './token-box';
 
 const env = z
@@ -23,6 +24,8 @@ const env = z
     ANTHROPIC_SERVICE_ACCOUNT_ID: z.string().min(1).optional(),
     ANTHROPIC_WORKSPACE_ID: z.string().min(1).optional(),
     ANTHROPIC_API_KEY: z.string().min(1).optional(),
+    // Pins the agents' model; unset, they run the newest Opus the Models API lists.
+    ANTHROPIC_MODEL: z.string().min(1).optional(),
     SCHEDULER_INTERVAL_MS: z.coerce.number().int().positive().default(15_000),
     OFFICINA_PUBLIC_URL: z.url().default('http://localhost:8080'),
     // GitHub user authorization: members link their account, and a verification can approve and
@@ -72,37 +75,13 @@ const githubAccounts =
       })
     : undefined;
 
-const scheduler =
-  github && anthropicAuth
-    ? await startEngine({
-        pool,
-        github,
-        agents: createAgentsPort(anthropicAuth, (error) =>
-          log('anthropic credentials refresh failed, keeping cached token', {
-            error: (error as Error).message
-          })
-        ),
-        intervalMs: env.SCHEDULER_INTERVAL_MS,
-        publicUrl: env.OFFICINA_PUBLIC_URL,
-        promptsDir: join(import.meta.dir, '..', '..', '..', 'agents'),
-        onBehalf: githubAccounts
-          ? { publicUrl: env.OFFICINA_PUBLIC_URL, tokenFor: githubAccounts.tokenFor, asUser }
-          : undefined,
-        log
+const agents = anthropicAuth
+  ? createAgentsPort(anthropicAuth, (error) =>
+      log('anthropic credentials refresh failed, keeping cached token', {
+        error: (error as Error).message
       })
-    : undefined;
-
-if (scheduler) {
-  log('anthropic credentials', { mode: anthropicAuth?.kind });
-} else {
-  const missing = [
-    !env.GITHUB_APP_ID && 'GITHUB_APP_ID',
-    !env.GITHUB_APP_PRIVATE_KEY && 'GITHUB_APP_PRIVATE_KEY',
-    !anthropicAuth &&
-      'ANTHROPIC_FEDERATION_RULE_ID (with organization and service account) or ANTHROPIC_API_KEY'
-  ].filter(Boolean);
-  log('engine disabled', { missing });
-}
+    )
+  : undefined;
 
 const realtime = await startRealtime({ connectionString: env.DATABASE_URL, pool, log });
 
@@ -125,7 +104,9 @@ const server = createApp({
   port: env.PORT,
   hostname: '0.0.0.0'
 });
-log('api listening', { port: env.PORT, engine: Boolean(scheduler) });
+log('api listening', { port: env.PORT, engine: Boolean(github && agents) });
+
+let scheduler: Scheduler | undefined;
 
 const shutdown = async (signal: string) => {
   log('shutting down', { signal });
@@ -137,3 +118,38 @@ const shutdown = async (signal: string) => {
 };
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
 process.on('SIGINT', () => void shutdown('SIGINT'));
+
+// Started after the server listens: the boot sync talks to Anthropic, and an outage there must
+// not take the health check and the board down with it.
+scheduler =
+  github && agents
+    ? await startEngine({
+        pool,
+        github,
+        agents,
+        models: createModelResolver({
+          listModels: () => agents.listModels(),
+          env: { ANTHROPIC_MODEL: env.ANTHROPIC_MODEL },
+          log
+        }),
+        intervalMs: env.SCHEDULER_INTERVAL_MS,
+        publicUrl: env.OFFICINA_PUBLIC_URL,
+        promptsDir: join(import.meta.dir, '..', '..', '..', 'agents'),
+        onBehalf: githubAccounts
+          ? { publicUrl: env.OFFICINA_PUBLIC_URL, tokenFor: githubAccounts.tokenFor, asUser }
+          : undefined,
+        log
+      })
+    : undefined;
+
+if (scheduler) {
+  log('anthropic credentials', { mode: anthropicAuth?.kind });
+} else {
+  const missing = [
+    !env.GITHUB_APP_ID && 'GITHUB_APP_ID',
+    !env.GITHUB_APP_PRIVATE_KEY && 'GITHUB_APP_PRIVATE_KEY',
+    !anthropicAuth &&
+      'ANTHROPIC_FEDERATION_RULE_ID (with organization and service account) or ANTHROPIC_API_KEY'
+  ].filter(Boolean);
+  log('engine disabled', { missing });
+}

@@ -96,8 +96,10 @@ describe.skipIf(!url)('setup', () => {
   test('agent setup syncs every role once and then reports no changes', async () => {
     const agents = createFakePort(() => []);
     const promptsDir = join(import.meta.dir, '..', '..', '..', 'agents');
-    expect((await setupAgents(pool, agents, promptsDir)).changed).toHaveLength(7);
+    expect((await setupAgents(pool, agents, promptsDir, 'claude-opus-5-5')).changed).toHaveLength(
+      7
+    );
     expect(await loadAgentVersions(pool)).toHaveLength(7);
-    expect((await setupAgents(pool, agents, promptsDir)).changed).toEqual([]);
+    expect((await setupAgents(pool, agents, promptsDir, 'claude-opus-5-5')).changed).toEqual([]);
   });
 });
