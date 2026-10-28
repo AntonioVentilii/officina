@@ -43,7 +43,7 @@ const projectConfigSchema = z
     verify: z.array(z.string().min(1)).optional(),
     release: z
       .strictObject({
-        /** What merging into the default branch deploys. Unknown is treated as production. */
+        /** What merging into the default branch deploys. Left out, it is taken to be production. */
         on_merge: z.enum(['production', 'staging', 'nothing']).optional()
       })
       .optional(),

@@ -187,9 +187,9 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
       readonly sha?: string | undefined;
       readonly message: string;
     }
-  ): Promise<void> => {
+  ): Promise<{ commitSha: string | null }> => {
     const token = await installationToken(ref, { contents: 'write' });
-    await request(contentsPath(ref.repo, ref.path), {
+    const written = await request<{ commit?: { sha?: string } }>(contentsPath(ref.repo, ref.path), {
       method: 'PUT',
       token,
       body: {
@@ -199,6 +199,7 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
         branch: ref.branch
       }
     });
+    return { commitSha: written.commit?.sha ?? null };
   };
 
   /** A file's text at a branch, or `null` when it does not exist there. */
@@ -272,11 +273,21 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     ref: RepoRef & { readonly pullRequest: number; readonly reviewId: number }
   ): Promise<{ path: string; line: number | null; body: string }[]> => {
     const token = await installationToken(ref, { pull_requests: 'read' });
-    const comments = await request<
-      { path: string; line: number | null; original_line: number | null; body: string }[]
-    >(`/repos/${ref.repo}/pulls/${ref.pullRequest}/reviews/${ref.reviewId}/comments?per_page=100`, {
-      token
-    });
+    const comments: {
+      path: string;
+      line: number | null;
+      original_line: number | null;
+      body: string;
+    }[] = [];
+    // Every page: a fix round that misses some of the comments would only be sent back again.
+    for (let page = 1; ; page++) {
+      const batch = await request<typeof comments>(
+        `/repos/${ref.repo}/pulls/${ref.pullRequest}/reviews/${ref.reviewId}/comments?per_page=100&page=${page}`,
+        { token }
+      );
+      comments.push(...batch);
+      if (batch.length < 100) break;
+    }
     return comments.map((comment) => ({
       path: comment.path,
       line: comment.line ?? comment.original_line,
@@ -333,11 +344,16 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
   /** Turns auto-merge off, so work sent back to building cannot land before it is checked again. */
   const cancelAutoMerge = async (ref: RepoRef & { readonly pullRequest: number }) => {
     const pr = await pullRequestNode(ref);
-    await graphql(
+    const response = await graphql(
       ref,
       'mutation($id: ID!) { disablePullRequestAutoMerge(input: { pullRequestId: $id }) { clientMutationId } }',
       { id: pr.node_id }
     );
+    const message = response.errors?.map((error) => error.message).join('; ') ?? '';
+    // Auto-merge already off is the outcome wanted; anything else must be retried.
+    if (message && !/not in auto.?merge|auto.?merge is not enabled|is not enabled/i.test(message)) {
+      throw new GitHubError(422, '/graphql disablePullRequestAutoMerge', message);
+    }
   };
 
   /**
@@ -375,11 +391,14 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
       return !thread.isResolved && reviewId !== undefined && ref.reviewIds.includes(reviewId);
     });
     for (const thread of open) {
-      await graphql(
+      const resolved = await graphql(
         ref,
         'mutation($id: ID!) { resolveReviewThread(input: { threadId: $id }) { clientMutationId } }',
         { id: thread.id }
       );
+      if (resolved.errors?.length) {
+        throw new GitHubError(422, '/graphql resolveReviewThread', resolved.errors[0]!.message);
+      }
     }
     return open.length;
   };

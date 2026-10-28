@@ -1,5 +1,5 @@
 import { branchForTask, parseProjectConfig, type Actor } from '@officina/core';
-import { appendTaskEvent, hasTaskEvent, loadTaskContext } from '@officina/db';
+import { appendTaskEvent, hasTaskEvent, loadTask, loadTaskContext } from '@officina/db';
 import type { GitHubAsUser, GitHubClient, RepoRef } from '@officina/github';
 import type { Pool } from 'pg';
 
@@ -85,6 +85,7 @@ export type SyncGitHubPort = Pick<
   | 'pushFacts'
   | 'commentOnIssue'
   | 'mergeWhenReady'
+  | 'cancelAutoMerge'
   | 'resolveReviewThreads'
 >;
 
@@ -166,6 +167,53 @@ const autoMergeOnGitHub = async (
   }
 };
 
+/**
+ * Turns auto-merge off on every task of a project that left merging (sent back to building, or
+ * cancelled) after auto-merge was turned on, until GitHub confirms it. The webhook that moved the
+ * task already tried once; this is what makes it stick when that call failed, or when auto-merge
+ * was turned on in the moment between a review arriving and the task moving.
+ */
+export const cancelStaleAutoMerges = async (
+  pool: Pool,
+  github: Pick<SyncGitHubPort, 'cancelAutoMerge'>,
+  projectId: string
+) => {
+  const stale = (
+    await pool.query<{ id: string; repo: string; installation_id: string; pr: number }>(
+      `select t.id, p.github_repo as repo, p.github_installation_id::text as installation_id,
+         t.github_pr as pr
+       from tasks t join projects p on p.id = t.project_id
+       where t.project_id = $1 and t.stage not in ('merging', 'done') and t.github_pr is not null
+         and p.github_installation_id is not null
+         and coalesce((select max(e.id) from task_events e where e.task_id = t.id
+               and (e.type = 'github_auto_merge'
+                    or (e.type = 'github_approved' and e.payload->>'merge' = 'auto_merge'))), 0)
+           > coalesce((select max(e.id) from task_events e where e.task_id = t.id
+               and e.type = 'github_auto_merge_cancelled'), 0)`,
+      [projectId]
+    )
+  ).rows;
+  const failures: string[] = [];
+  for (const task of stale) {
+    try {
+      await github.cancelAutoMerge({
+        installationId: Number(task.installation_id),
+        repo: task.repo,
+        pullRequest: task.pr
+      });
+      await appendTaskEvent(pool, {
+        taskId: task.id,
+        actor: ENGINE,
+        type: 'github_auto_merge_cancelled',
+        payload: { pullRequest: task.pr }
+      });
+    } catch (error) {
+      failures.push(`${task.repo}#${task.pr}: ${(error as Error).message}`);
+    }
+  }
+  if (failures.length) throw new Error(`auto-merge still on: ${failures.join('; ')}`);
+};
+
 /** Whether the task's latest way into merging skipped people's verification. */
 const autoVerified = async (pool: Pool, taskId: string): Promise<boolean> =>
   Boolean(
@@ -218,8 +266,9 @@ export const syncSpecStatus = async (
   const file = await github.readFile({ ...input.ref, path, branch: input.branch });
   if (!file) return 'no_spec';
   const text = file.text.replace(/^Status: .*$/m, `Status: ${input.status}`);
+  let commitSha: string | null = null;
   if (text !== file.text) {
-    await github.updateFile({
+    const written = await github.updateFile({
       ...input.ref,
       path,
       branch: input.branch,
@@ -227,12 +276,15 @@ export const syncSpecStatus = async (
       sha: file.sha,
       message: `docs(spec): mark ${path.split('/').pop()!.replace(/\.md$/, '')} ${input.status}`
     });
+    commitSha = written?.commitSha ?? null;
   }
+  // The commit is recorded so a review of it counts as a review of the task's head: it only
+  // changes the spec's status line on top of the work that was reviewed.
   await appendTaskEvent(pool, {
     taskId: input.taskId,
     actor: ENGINE,
     type: 'spec_status_set',
-    payload: { status: input.status, path }
+    payload: { status: input.status, path, commitSha }
   });
   return text === file.text ? 'unchanged' : 'updated';
 };
@@ -321,6 +373,11 @@ export const finishVerifiedSpecs = async (
       ref,
       pullRequest: context.pullRequest
     }).catch(() => undefined);
+    // A review may have sent the task back while the GitHub calls above ran; acting on the
+    // context loaded before them would approve or auto-merge a head that is no longer accepted.
+    const current = await loadTask(pool, taskId);
+    if (current?.task.stage !== 'merging' || current.task.headSha !== context.task.headSha)
+      continue;
     // After the status commit, so the approval covers the final head.
     if (await autoVerified(pool, taskId)) {
       await autoMergeOnGitHub(pool, github, { taskId, ref, pullRequest: context.pullRequest });

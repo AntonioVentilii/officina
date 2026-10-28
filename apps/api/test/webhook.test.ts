@@ -156,12 +156,23 @@ describe.skipIf(!url)('api', () => {
       status: 'applied',
       outcomes: [{ taskId, ok: false, error: 'stale_head' }]
     });
-    expect(await (await review('r-3', 'abc')).json()).toEqual({
+    // Officina's own status commit sits on top of the reviewed head, so a review of it counts.
+    await pool.query(
+      `insert into task_events (task_id, actor, type, payload)
+       values ($1, '{"kind":"engine"}', 'spec_status_set', '{"status":"In progress","commitSha":"status1"}')`,
+      [taskId]
+    );
+    expect(await (await review('r-3', 'status1')).json()).toEqual({
       status: 'applied',
       outcomes: [{ taskId, ok: true }]
     });
     expect((await loadTask(pool, taskId))?.task).toMatchObject({ stage: 'building', fixRounds: 1 });
     expect(calls).toEqual(['cancelAutoMerge']);
+    const cancelled = await pool.query(
+      `select 1 from task_events where task_id = $1 and type = 'github_auto_merge_cancelled'`,
+      [taskId]
+    );
+    expect(cancelled.rowCount).toBe(1);
     const notes = await pool.query<{ notes: string }>(
       `select payload->>'notes' as notes from task_events
        where task_id = $1 and type = 'review_recorded' and payload->>'reviewer' = 'github'`,

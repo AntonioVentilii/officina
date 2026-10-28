@@ -1,5 +1,6 @@
 import { parseProjectConfigYaml, type Actor, type Command } from '@officina/core';
 import {
+  appendTaskEvent,
   applyCommand,
   findProjectsByRepo,
   findTasksByPullRequest,
@@ -90,6 +91,26 @@ const reviewNotes = async (
     .join('\n\n');
 };
 
+/**
+ * The head a review is about, in the task's terms. Officina's own commits that only set the spec's
+ * status line sit on top of the reviewed work, so a review of one of them is a review of the task's
+ * head; any other commit is passed through and judged by the lifecycle.
+ */
+const reviewedHead = async (pool: Pool, taskId: string, commitId: string): Promise<string> => {
+  const row = (
+    await pool.query<{ head_sha: string | null }>(
+      `select t.head_sha from tasks t
+       where t.id = $1 and exists (
+         select 1 from task_events e where e.task_id = t.id and e.type = 'spec_status_set'
+           and e.payload->>'commitSha' = $2
+           and e.id > coalesce((select max(p.id) from task_events p
+             where p.task_id = t.id and p.type = 'pushed'), 0))`,
+      [taskId, commitId]
+    )
+  ).rows[0];
+  return row?.head_sha ?? commitId;
+};
+
 const handleReview = async (
   pool: Pool,
   github: ConfigReader | undefined,
@@ -110,7 +131,7 @@ const handleReview = async (
       taskId,
       command: {
         type: 'github_review',
-        headSha: action.commitId,
+        headSha: await reviewedHead(pool, taskId, action.commitId),
         by: action.by,
         reviewId: action.reviewId,
         notes
@@ -121,15 +142,24 @@ const handleReview = async (
     const leftMerging =
       result.ok &&
       result.events.some((event) => event.type === 'stage_changed' && event.from === 'merging');
-    // Auto-merge may already be on; the fix must be reviewed again before anything lands.
+    // Auto-merge may already be on; the fix must be reviewed again before anything lands. A
+    // failure here is retried by the scheduler until GitHub confirms it is off.
     if (leftMerging && github.cancelAutoMerge) {
-      await github
-        .cancelAutoMerge({
+      try {
+        await github.cancelAutoMerge({
           installationId: project.installationId,
           repo: action.repo,
           pullRequest: action.prNumber
-        })
-        .catch(() => undefined);
+        });
+        await appendTaskEvent(pool, {
+          taskId,
+          actor: ENGINE,
+          type: 'github_auto_merge_cancelled',
+          payload: { pullRequest: action.prNumber }
+        });
+      } catch {
+        // Left to `cancelStaleAutoMerges`.
+      }
     }
   }
   return outcomes;

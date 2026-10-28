@@ -13,7 +13,13 @@ import { Pool } from 'pg';
 import { CONFIG_YAML } from '../../core/test/fixtures';
 import { PLAN, applyOrThrow, resetAndSeed, type Seeded } from '../../db/test/seed';
 import { createFakePort, idle, toolUse, type ScriptItem } from '../../runner/test/fake-port';
-import { finishVerifiedSpecs, runAgentStep, tick, type GitHubPort } from '../src';
+import {
+  cancelStaleAutoMerges,
+  finishVerifiedSpecs,
+  runAgentStep,
+  tick,
+  type GitHubPort
+} from '../src';
 
 const url = process.env.TEST_DATABASE_URL;
 const COPY = 'src/lib/constants/messages/en.ts';
@@ -82,6 +88,9 @@ const fakeGitHub = () => {
     mergeWhenReady: async (...args: unknown[]) => {
       calls.push({ method: 'mergeWhenReady', args });
       return 'auto_merge';
+    },
+    cancelAutoMerge: async (...args: unknown[]) => {
+      calls.push({ method: 'cancelAutoMerge', args });
     }
   } as unknown as GitHubPort;
   return { port, calls };
@@ -336,6 +345,19 @@ describe.skipIf(!url)('engine', () => {
     expect(resolved).toHaveLength(1);
     expect(resolved[0]!.args[0]).toMatchObject({ pullRequest: 42, reviewIds: [5] });
     expect(github.calls.filter((call) => call.method === 'mergeWhenReady')).toHaveLength(1);
+
+    // A later review sends it back: auto-merge is turned off until GitHub confirms, once.
+    await applyOrThrow(
+      pool,
+      id,
+      { type: 'github_review', headSha: 'def', by: 'copilot', reviewId: 6, notes: 'Again.' },
+      engine
+    );
+    await cancelStaleAutoMerges(pool, github.port, seeded.projectId);
+    await cancelStaleAutoMerges(pool, github.port, seeded.projectId);
+    const cancels = github.calls.filter((call) => call.method === 'cancelAutoMerge');
+    expect(cancels).toHaveLength(1);
+    expect(cancels[0]!.args[0]).toMatchObject({ installationId: 99, pullRequest: 42 });
   });
 
   test('a pull request title outside the repository format is sent back to the builder', async () => {
