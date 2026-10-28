@@ -13,6 +13,32 @@ describe('project config', () => {
     expect(result.config.runtime.allowedHosts).toEqual([]);
   });
 
+  test('assumes a merge deploys to production, and nothing verifies itself, unless told', () => {
+    const result = parseProjectConfig({ version: 1, docs: { entry: 'AGENTS.md' } });
+    expect(result.ok && result.config.release.onMerge).toBe('production');
+    expect(result.ok && result.config.lanes.green.autoVerify).toBe(false);
+  });
+
+  test('auto_verify is a green-lane setting only', () => {
+    const green = parseProjectConfig({
+      version: 1,
+      docs: { entry: 'AGENTS.md' },
+      release: { on_merge: 'staging' },
+      lanes: { green: { paths: ['copy/**'], auto_verify: true } }
+    });
+    expect(green.ok && green.config.lanes.green.autoVerify).toBe(true);
+    expect(green.ok && green.config.release.onMerge).toBe('staging');
+    const standard = parseProjectConfig({
+      version: 1,
+      docs: { entry: 'AGENTS.md' },
+      lanes: { standard: { auto_verify: true } }
+    });
+    expect(standard).toEqual({
+      ok: false,
+      errors: ['lanes: auto_verify is only allowed in the green lane']
+    });
+  });
+
   test('red lane never lets agents build, even when config asks for it', () => {
     const result = parseProjectConfig({
       version: 1,

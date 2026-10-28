@@ -111,6 +111,65 @@ describe.skipIf(!url)('api', () => {
     expect(stored?.task).toMatchObject({ stage: 'building', fixRounds: 1 });
   });
 
+  test('a Copilot review with comments sends the work back to the builder and stops auto-merge', async () => {
+    const calls: string[] = [];
+    const reviewing = createApp({
+      pool,
+      webhookSecret: SECRET,
+      github: {
+        fileContent: async () => null,
+        reviewComments: async () => [{ path: 'src/a.ts', line: 3, body: 'Typo in the key.' }],
+        cancelAutoMerge: async () => {
+          calls.push('cancelAutoMerge');
+        }
+      }
+    });
+    await pool.query('update projects set github_installation_id = 99 where id = $1', [
+      seeded.projectId
+    ]);
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    const review = (delivery: string, commitId: string, type = 'Bot', state = 'commented') =>
+      deliver(reviewing, {
+        event: 'pull_request_review',
+        delivery,
+        payload: {
+          action: 'submitted',
+          review: {
+            id: 5,
+            state,
+            body: '',
+            commit_id: commitId,
+            user: { login: 'copilot-pull-request-reviewer[bot]', type }
+          },
+          pull_request: { number: 42 },
+          repository
+        }
+      });
+
+    // A person's plain comment asks for nothing.
+    expect(await (await review('r-1', 'abc', 'User')).json()).toEqual({
+      status: 'applied',
+      outcomes: []
+    });
+    expect(await (await review('r-2', 'old')).json()).toEqual({
+      status: 'applied',
+      outcomes: [{ taskId, ok: false, error: 'stale_head' }]
+    });
+    expect(await (await review('r-3', 'abc')).json()).toEqual({
+      status: 'applied',
+      outcomes: [{ taskId, ok: true }]
+    });
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({ stage: 'building', fixRounds: 1 });
+    expect(calls).toEqual(['cancelAutoMerge']);
+    const notes = await pool.query<{ notes: string }>(
+      `select payload->>'notes' as notes from task_events
+       where task_id = $1 and type = 'review_recorded' and payload->>'reviewer' = 'github'`,
+      [taskId]
+    );
+    expect(notes.rows[0]?.notes).toContain('`src/a.ts:3`: Typo in the key.');
+  });
+
   test('unrelated events and unlinked pull requests are acknowledged without effect', async () => {
     const ignored = await deliver(app, { event: 'push', payload: { repository }, delivery: 'd-3' });
     expect(await ignored.json()).toEqual({ status: 'ignored', outcomes: [] });

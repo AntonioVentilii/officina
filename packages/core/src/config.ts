@@ -17,62 +17,76 @@ const laneSchema = z.strictObject({
   diff_lines: z.number().int().positive().optional(),
   budget_usd: z.number().positive().optional(),
   fix_rounds: z.number().int().nonnegative().optional(),
+  /** Green only: a result merges without a person's check when nothing about it calls for one. */
+  auto_verify: z.boolean().optional(),
   approvals: z
     .strictObject({ spec_review: policySchema.optional(), verifying: policySchema.optional() })
     .optional()
 });
 
-const projectConfigSchema = z.strictObject({
-  version: z.literal(1),
-  docs: z.strictObject({
-    entry: z.string().min(1),
-    spec_template: z.string().min(1).optional(),
-    spec_dir: z.string().min(1).optional(),
-    pr_template: z.string().min(1).optional()
-  }),
-  setup: z.array(z.string().min(1)).optional(),
-  intake: z
-    .strictObject({
-      /** An agent asks the requester follow-up questions before triage. On unless turned off. */
-      interview: z.boolean().optional()
-    })
-    .optional(),
-  verify: z.array(z.string().min(1)).optional(),
-  pull_request: z
-    .strictObject({
-      /** Regular expression every pull request title must match, e.g. the repo's commit convention. */
-      title_pattern: z
-        .string()
-        .min(1)
-        .refine((pattern) => {
-          try {
-            new RegExp(pattern);
-            return true;
-          } catch {
-            return false;
-          }
-        }, 'must be a valid regular expression')
-        .optional()
-    })
-    .optional(),
-  runtime: z
-    .strictObject({
-      /** Extra hosts agent sandboxes may reach beyond package registries, e.g. a private registry. */
-      allowed_hosts: z.array(z.string().min(1)).optional()
-    })
-    .optional(),
-  lanes: z
-    .strictObject({
-      red: laneSchema.optional(),
-      standard: laneSchema.optional(),
-      green: laneSchema.optional()
-    })
-    .optional()
-});
+const projectConfigSchema = z
+  .strictObject({
+    version: z.literal(1),
+    docs: z.strictObject({
+      entry: z.string().min(1),
+      spec_template: z.string().min(1).optional(),
+      spec_dir: z.string().min(1).optional(),
+      pr_template: z.string().min(1).optional()
+    }),
+    setup: z.array(z.string().min(1)).optional(),
+    intake: z
+      .strictObject({
+        /** An agent asks the requester follow-up questions before triage. On unless turned off. */
+        interview: z.boolean().optional()
+      })
+      .optional(),
+    verify: z.array(z.string().min(1)).optional(),
+    release: z
+      .strictObject({
+        /** What merging into the default branch deploys. Unknown is treated as production. */
+        on_merge: z.enum(['production', 'staging', 'nothing']).optional()
+      })
+      .optional(),
+    pull_request: z
+      .strictObject({
+        /** Regular expression every pull request title must match, e.g. the repo's commit convention. */
+        title_pattern: z
+          .string()
+          .min(1)
+          .refine((pattern) => {
+            try {
+              new RegExp(pattern);
+              return true;
+            } catch {
+              return false;
+            }
+          }, 'must be a valid regular expression')
+          .optional()
+      })
+      .optional(),
+    runtime: z
+      .strictObject({
+        /** Extra hosts agent sandboxes may reach beyond package registries, e.g. a private registry. */
+        allowed_hosts: z.array(z.string().min(1)).optional()
+      })
+      .optional(),
+    lanes: z
+      .strictObject({
+        red: laneSchema.optional(),
+        standard: laneSchema.optional(),
+        green: laneSchema.optional()
+      })
+      .optional()
+  })
+  .refine((raw) => !raw.lanes?.red?.auto_verify && !raw.lanes?.standard?.auto_verify, {
+    message: 'auto_verify is only allowed in the green lane',
+    path: ['lanes']
+  });
 
 export type Requirement = z.infer<typeof requirementSchema>;
 export type Policy = readonly Requirement[];
 export type Gate = 'spec_review' | 'verifying';
+export type ReleaseOnMerge = 'production' | 'staging' | 'nothing';
 
 export interface LaneSettings {
   readonly agentsBuild: boolean;
@@ -80,6 +94,7 @@ export interface LaneSettings {
   readonly diffLines: number;
   readonly budgetUsd: number;
   readonly fixRounds: number;
+  readonly autoVerify: boolean;
   readonly approvals: Readonly<Record<Gate, Policy>>;
 }
 
@@ -93,6 +108,7 @@ export interface ProjectConfig {
   readonly setup: readonly string[];
   readonly intake: { readonly interview: boolean };
   readonly verify: readonly string[];
+  readonly release: { readonly onMerge: ReleaseOnMerge };
   readonly runtime: { readonly allowedHosts: readonly string[] };
   readonly pullRequest: { readonly titlePattern: string | null };
   readonly lanes: Readonly<Record<Lane, LaneSettings>>;
@@ -102,9 +118,30 @@ export interface ProjectConfig {
 const DEFAULT_POLICY: Policy = [{ role: 'maintainer' }];
 
 const LANE_DEFAULTS: Record<Lane, Omit<LaneSettings, 'approvals'>> = {
-  green: { agentsBuild: true, wip: 5, diffLines: 600, budgetUsd: 5, fixRounds: 2 },
-  standard: { agentsBuild: true, wip: 3, diffLines: 800, budgetUsd: 25, fixRounds: 2 },
-  red: { agentsBuild: false, wip: 1, diffLines: 800, budgetUsd: 25, fixRounds: 2 }
+  green: {
+    agentsBuild: true,
+    wip: 5,
+    diffLines: 600,
+    budgetUsd: 5,
+    fixRounds: 2,
+    autoVerify: false
+  },
+  standard: {
+    agentsBuild: true,
+    wip: 3,
+    diffLines: 800,
+    budgetUsd: 25,
+    fixRounds: 2,
+    autoVerify: false
+  },
+  red: {
+    agentsBuild: false,
+    wip: 1,
+    diffLines: 800,
+    budgetUsd: 25,
+    fixRounds: 2,
+    autoVerify: false
+  }
 };
 
 type RawLane = z.infer<typeof laneSchema>;
@@ -118,6 +155,7 @@ const normalizeLane = (lane: Lane, raw: RawLane | undefined): LaneSettings => {
     diffLines: raw?.diff_lines ?? defaults.diffLines,
     budgetUsd: raw?.budget_usd ?? defaults.budgetUsd,
     fixRounds: raw?.fix_rounds ?? defaults.fixRounds,
+    autoVerify: lane === 'green' && (raw?.auto_verify ?? defaults.autoVerify),
     approvals: {
       spec_review: raw?.approvals?.spec_review ?? DEFAULT_POLICY,
       verifying: raw?.approvals?.verifying ?? DEFAULT_POLICY
@@ -154,6 +192,7 @@ export const parseProjectConfig = (input: unknown): ConfigResult => {
       setup: raw.setup ?? [],
       intake: { interview: raw.intake?.interview ?? true },
       verify: raw.verify ?? [],
+      release: { onMerge: raw.release?.on_merge ?? 'production' },
       runtime: { allowedHosts: raw.runtime?.allowed_hosts ?? [] },
       pullRequest: { titlePattern: raw.pull_request?.title_pattern ?? null },
       lanes: {

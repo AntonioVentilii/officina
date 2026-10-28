@@ -24,6 +24,18 @@ export type WebhookAction =
     }
   | { readonly kind: 'pull_request_merged'; readonly repo: string; readonly prNumber: number }
   | {
+      /** A review on a pull request that asks for changes, from a bot such as Copilot or a person. */
+      readonly kind: 'pull_request_reviewed';
+      readonly repo: string;
+      readonly prNumber: number;
+      readonly reviewId: number;
+      readonly commitId: string;
+      readonly by: string;
+      readonly bot: boolean;
+      readonly state: 'commented' | 'changes_requested';
+      readonly body: string;
+    }
+  | {
       readonly kind: 'checks_failed';
       readonly repo: string;
       readonly prNumbers: readonly number[];
@@ -76,6 +88,38 @@ export const parseWebhookEvent = (event: string | null, payload: unknown): Webho
       )
     ];
     return { kind: 'push', repo, branch: body.ref.slice('refs/heads/'.length), changedPaths };
+  }
+
+  if (event === 'pull_request_review') {
+    const body = payload as {
+      action?: string;
+      review?: {
+        id?: number;
+        state?: string;
+        body?: string | null;
+        commit_id?: string;
+        user?: { login?: string; type?: string };
+      };
+      pull_request?: { number?: number };
+    };
+    const review = body.review;
+    // Approvals and dismissals ask for nothing; only a review that may want changes is acted on.
+    if (body.action !== 'submitted' || !review?.id || !review.commit_id || !review.user?.login)
+      return null;
+    const state = review.state?.toLowerCase();
+    if (state !== 'commented' && state !== 'changes_requested') return null;
+    if (!body.pull_request?.number) return null;
+    return {
+      kind: 'pull_request_reviewed',
+      repo,
+      prNumber: body.pull_request.number,
+      reviewId: review.id,
+      commitId: review.commit_id,
+      by: review.user.login,
+      bot: review.user.type === 'Bot',
+      state,
+      body: review.body ?? ''
+    };
   }
 
   if (event === 'check_suite') {

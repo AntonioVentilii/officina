@@ -28,7 +28,7 @@ scripts/officina invite --email gio@example.com --name "Gio" --role contributor 
 | (wait)                             | The spec agent writes a spec, or stops with a question.                                                                             |
 | `task approve` (or `task changes`) | Approval sends it to build; changes send it back to the spec agent.                                                                 |
 | (wait)                             | The builder pushes `officina/task-<n>`, Officina opens the pull request, two reviewers check it, the chooser writes a checklist.    |
-| `task approve` (or `task changes`) | Your verification of the result.                                                                                                    |
+| `task approve` (or `task changes`) | Your verification of the result. Low-risk changes in a project that allows it skip this step (below).                               |
 | Approve and merge on GitHub        | As with any pull request. The task closes itself.                                                                                   |
 
 At any point, `task show` says where the task is and what it waits for, and ends with the exact next
@@ -87,6 +87,16 @@ command.
 8. **Merge on GitHub.** Approve and merge the pull request as usual; the webhook closes the task.
 
 To stop a task at any time: `scripts/officina task cancel --number 1 --reason "Why"`.
+
+## Reviews on GitHub and low-risk changes
+
+- **Copilot and people on GitHub.** When Copilot leaves inline comments on the pull request, or a person
+  requests changes there, the task goes back to the builder with those comments, and comes back
+  through review. Officina resolves those threads once the fix is verified.
+- **Low-risk changes.** In a green lane with `auto_verify: true`, a result that the chooser only asks
+  to glance at goes straight to merge, unless merging deploys to production
+  (`release.on_merge: production`, the default). GitHub's auto-merge then lands it when the branch
+  rules pass. The spec is always approved by a person.
 
 ## When something goes wrong
 

@@ -267,6 +267,123 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     });
   };
 
+  /** Inline comments of one review, as `path:line` and text, so the builder can find each one. */
+  const reviewComments = async (
+    ref: RepoRef & { readonly pullRequest: number; readonly reviewId: number }
+  ): Promise<{ path: string; line: number | null; body: string }[]> => {
+    const token = await installationToken(ref, { pull_requests: 'read' });
+    const comments = await request<
+      { path: string; line: number | null; original_line: number | null; body: string }[]
+    >(`/repos/${ref.repo}/pulls/${ref.pullRequest}/reviews/${ref.reviewId}/comments?per_page=100`, {
+      token
+    });
+    return comments.map((comment) => ({
+      path: comment.path,
+      line: comment.line ?? comment.original_line,
+      body: comment.body
+    }));
+  };
+
+  const graphql = async <T>(ref: RepoRef, query: string, variables: Record<string, unknown>) => {
+    const token = await installationToken(ref);
+    const response = await request<{ data?: T; errors?: { message: string }[] }>('/graphql', {
+      method: 'POST',
+      token,
+      body: { query, variables }
+    });
+    return response;
+  };
+
+  const pullRequestNode = (ref: RepoRef & { readonly pullRequest: number }) =>
+    installationToken(ref).then((token) =>
+      request<{ node_id: string; head: { sha: string } }>(
+        `/repos/${ref.repo}/pulls/${ref.pullRequest}`,
+        { token }
+      )
+    );
+
+  /**
+   * Turns on auto-merge as the app, for a result that needed no person's check, so the branch
+   * rules (checks, resolved threads, any required review) still decide when it lands. A pull request
+   * that already meets them cannot take auto-merge and is merged straight away.
+   */
+  const mergeWhenReady = async (
+    ref: RepoRef & { readonly pullRequest: number }
+  ): Promise<'auto_merge' | 'merged'> => {
+    const pr = await pullRequestNode(ref);
+    const response = await graphql(
+      ref,
+      'mutation($id: ID!) { enablePullRequestAutoMerge(input: { pullRequestId: $id, mergeMethod: SQUASH }) { clientMutationId } }',
+      { id: pr.node_id }
+    );
+    if (!response.errors?.length) return 'auto_merge';
+    const message = response.errors.map((error) => error.message).join('; ');
+    if (!/clean status|is in clean/i.test(message)) {
+      throw new GitHubError(422, '/graphql enablePullRequestAutoMerge', message);
+    }
+    const token = await installationToken(ref);
+    await request(`/repos/${ref.repo}/pulls/${ref.pullRequest}/merge`, {
+      method: 'PUT',
+      token,
+      body: { merge_method: 'squash', sha: pr.head.sha }
+    });
+    return 'merged';
+  };
+
+  /** Turns auto-merge off, so work sent back to building cannot land before it is checked again. */
+  const cancelAutoMerge = async (ref: RepoRef & { readonly pullRequest: number }) => {
+    const pr = await pullRequestNode(ref);
+    await graphql(
+      ref,
+      'mutation($id: ID!) { disablePullRequestAutoMerge(input: { pullRequestId: $id }) { clientMutationId } }',
+      { id: pr.node_id }
+    );
+  };
+
+  /**
+   * Resolves the open threads started by the given reviews. Officina calls it once the fixes for
+   * those reviews were reviewed again and verified, since the repository only merges with every
+   * thread resolved.
+   */
+  const resolveReviewThreads = async (
+    ref: RepoRef & { readonly pullRequest: number; readonly reviewIds: readonly number[] }
+  ): Promise<number> => {
+    const [owner, name] = ref.repo.split('/');
+    const response = await graphql<{
+      repository: {
+        pullRequest: {
+          reviewThreads: {
+            nodes: {
+              id: string;
+              isResolved: boolean;
+              comments: { nodes: { pullRequestReview: { databaseId: number } | null }[] };
+            }[];
+          };
+        };
+      };
+    }>(
+      ref,
+      'query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { reviewThreads(first: 100) { nodes { id isResolved comments(first: 1) { nodes { pullRequestReview { databaseId } } } } } } } }',
+      { owner, name, number: ref.pullRequest }
+    );
+    if (response.errors?.length) {
+      throw new GitHubError(422, '/graphql reviewThreads', response.errors[0]!.message);
+    }
+    const threads = response.data?.repository.pullRequest.reviewThreads.nodes ?? [];
+    const open = threads.filter((thread) => {
+      const reviewId = thread.comments.nodes[0]?.pullRequestReview?.databaseId;
+      return !thread.isResolved && reviewId !== undefined && ref.reviewIds.includes(reviewId);
+    });
+    for (const thread of open) {
+      await graphql(
+        ref,
+        'mutation($id: ID!) { resolveReviewThread(input: { threadId: $id }) { clientMutationId } }',
+        { id: thread.id }
+      );
+    }
+    return open.length;
+  };
+
   return {
     installationToken,
     repoInstallationId,
@@ -277,7 +394,11 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     createBranch,
     pushFacts,
     openPullRequest,
-    commentOnIssue
+    commentOnIssue,
+    reviewComments,
+    mergeWhenReady,
+    cancelAutoMerge,
+    resolveReviewThreads
   };
 };
 

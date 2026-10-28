@@ -129,6 +129,13 @@ export type Command =
   | { readonly type: 'choose'; readonly userVisible: boolean; readonly plan: PlanInput }
   | { readonly type: 'merged' }
   | { readonly type: 'ci_failed'; readonly details: string }
+  | {
+      readonly type: 'github_review';
+      readonly headSha: string;
+      readonly by: string;
+      readonly reviewId: number;
+      readonly notes: string;
+    }
   | { readonly type: 'block'; readonly question: string; readonly askedOf: Blocked['askedOf'] }
   | { readonly type: 'answer'; readonly text: string }
   | { readonly type: 'pause' }
@@ -161,9 +168,12 @@ export type DomainEvent =
     }
   | {
       readonly type: 'review_recorded';
-      readonly reviewer: ReviewerRole | 'member';
+      /** `github` is a review left on the pull request, such as Copilot's, sent back to the builder. */
+      readonly reviewer: ReviewerRole | 'member' | 'github';
       readonly verdict: 'approve' | 'changes';
       readonly notes: string;
+      readonly by?: string;
+      readonly githubReviewId?: number;
     }
   | { readonly type: 'guardrail_tripped'; readonly guardrail: Guardrail; readonly details: string }
   | { readonly type: 'ci_failed'; readonly details: string }
@@ -172,6 +182,8 @@ export type DomainEvent =
   | { readonly type: 'paused' }
   | { readonly type: 'resumed' }
   | { readonly type: 'closed'; readonly stage: 'declined' | 'cancelled'; readonly reason: string }
+  /** The result went to merge without a person's check; `subject` is the head it covers. */
+  | { readonly type: 'auto_verified'; readonly subject: string }
   | {
       readonly type: 'approval_planned';
       readonly gate: Gate;
@@ -195,7 +207,8 @@ export type DecisionError =
   | 'no_head'
   | 'wip_limit'
   | 'agents_cannot_build_lane'
-  | 'not_planned';
+  | 'not_planned'
+  | 'stale_head';
 
 export type Decision =
   | { readonly ok: true; readonly task: Task; readonly events: readonly DomainEvent[] }
@@ -242,6 +255,26 @@ export const effectivePolicy = (
   ...config.lanes[task.lane ?? 'standard'].approvals[gate],
   ...(task.approvalPlans[gate]?.extra.map((item) => item.requirement) ?? [])
 ];
+
+/**
+ * Whether a result may skip people's verification: only in a green lane that opts in, only when a
+ * merge does not deploy to production, and only when the chooser saw no reason for anyone to look.
+ * The chooser adding any approval, or asking for more than a glance, keeps the human gate.
+ */
+export const canAutoVerify = (
+  config: ProjectConfig,
+  task: Pick<Task, 'lane' | 'approvalPlans'>
+): boolean => {
+  const plan = task.approvalPlans.verifying;
+  return (
+    task.lane === 'green' &&
+    config.lanes.green.autoVerify &&
+    config.release.onMerge !== 'production' &&
+    plan !== undefined &&
+    plan.extra.length === 0 &&
+    plan.depth === 'glance'
+  );
+};
 
 const sameRequirement = (a: ExtraRequirement, b: ExtraRequirement) =>
   JSON.stringify(a) === JSON.stringify(b);
@@ -313,6 +346,14 @@ const backToBuilding = (task: Task, context: DecideContext, why: DomainEvent): D
   });
   return ok(moved, [why, stageEvent]);
 };
+
+/** Stages where the pull request exists and a review left on it can still change the outcome. */
+const GITHUB_REVIEWABLE: ReadonlySet<Stage> = new Set([
+  'reviewing',
+  'choosing',
+  'verifying',
+  'merging'
+]);
 
 const ALLOWED_WHILE_HELD: ReadonlySet<Command['type']> = new Set([
   'submit_request',
@@ -590,9 +631,13 @@ export const decide = (
       const subject = gateSubject(task, 'verifying');
       if (subject === null) return fail('no_head');
       const [planned, planEvent] = withPlan(task, 'verifying', subject, command.plan, context);
-      const [moved, stageEvent] = moveTo(task, 'verifying', { userVisible, ...planned });
       const events: DomainEvent[] =
         userVisible !== task.userVisible ? [{ type: 'user_visible_changed', userVisible }] : [];
+      if (canAutoVerify(context.config, { ...task, ...planned })) {
+        const [moved, stageEvent] = moveTo(task, 'merging', { userVisible, ...planned });
+        return ok(moved, [...events, planEvent, { type: 'auto_verified', subject }, stageEvent]);
+      }
+      const [moved, stageEvent] = moveTo(task, 'verifying', { userVisible, ...planned });
       return ok(moved, [...events, planEvent, stageEvent]);
     }
 
@@ -620,6 +665,21 @@ export const decide = (
       if (task.stage !== 'merging') return fail('wrong_stage');
       if (actor.kind !== 'engine') return fail('not_allowed');
       return backToBuilding(task, context, { type: 'ci_failed', details: command.details });
+    }
+
+    case 'github_review': {
+      if (!GITHUB_REVIEWABLE.has(task.stage)) return fail('wrong_stage');
+      if (actor.kind !== 'engine') return fail('not_allowed');
+      // A review of an earlier head was about code that is no longer there.
+      if (command.headSha !== task.headSha) return fail('stale_head');
+      return backToBuilding(task, context, {
+        type: 'review_recorded',
+        reviewer: 'github',
+        verdict: 'changes',
+        notes: command.notes,
+        by: command.by,
+        githubReviewId: command.reviewId
+      });
     }
 
     case 'block': {
