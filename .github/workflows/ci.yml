@@ -52,12 +52,13 @@ jobs:
     runs-on: ubuntu-latest
     permissions: {}
     steps:
+      # Anything but success fails, so a skipped job cannot slip through.
       - name: Fail if any required check did not succeed
         env:
           NEEDS: ${{ toJson(needs) }}
         run: |
           echo "$NEEDS"
-          if echo "$NEEDS" | grep -qE '"result": *"(failure|cancelled)"'; then
+          if ! echo "$NEEDS" | jq -e 'all(.[]; .result == "success")' > /dev/null; then
             echo "::error::A required check failed."
             exit 1
           fi
