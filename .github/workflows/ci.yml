@@ -43,3 +43,21 @@ jobs:
           bun-version: 1.3.14
       - run: bun install --frozen-lockfile
       - run: bun test packages/db packages/engine apps/api
+
+  # Single required status for the main ruleset: gate on this one job instead
+  # of enumerating every check.
+  checks-pass:
+    if: always()
+    needs: [check, db]
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Fail if any required check did not succeed
+        env:
+          NEEDS: ${{ toJson(needs) }}
+        run: |
+          echo "$NEEDS"
+          if echo "$NEEDS" | grep -qE '"result": *"(failure|cancelled)"'; then
+            echo "::error::A required check failed."
+            exit 1
+          fi
