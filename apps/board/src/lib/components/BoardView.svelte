@@ -72,17 +72,19 @@
             >{/if}
         </button>
       </div>
-      <div class="lanes" role="group" aria-label="Lanes">
-        {#each ['green', 'standard', 'red'] as const as lane (lane)}
-          <button
-            class="lane {lane}"
-            class:on={lanes.includes(lane)}
-            onclick={() => toggleLane(lane)}
-          >
-            <span class="dot"></span>{lane}
-          </button>
-        {/each}
-      </div>
+      {#if session.technical}
+        <div class="lanes" role="group" aria-label="Risk">
+          {#each [['green', 'Low risk'], ['standard', 'Standard'], ['red', 'Sensitive']] as const as [lane, label] (lane)}
+            <button
+              class="lane {lane}"
+              class:on={lanes.includes(lane)}
+              onclick={() => toggleLane(lane)}
+            >
+              <span class="dot"></span>{label}
+            </button>
+          {/each}
+        </div>
+      {/if}
       {#if closedCount}
         <button class="btn ghost sm" onclick={() => (showClosed = !showClosed)}>
           {showClosed ? 'Hide' : 'Show'} closed ({closedCount})

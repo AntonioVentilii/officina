@@ -136,7 +136,7 @@ describe.skipIf(!url)('board api', () => {
         number: 1,
         stage: 'triage',
         requester: 'Antonio',
-        waitingOn: { kind: 'people', label: 'Triage by a maintainer', me: true }
+        waitingOn: { kind: 'people', label: 'A maintainer accepts or declines it', me: true }
       })
     ]);
 

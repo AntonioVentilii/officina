@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { CircleHelp, Eye, GitPullRequest, Pause, RotateCcw, UserRound } from '@lucide/svelte';
+  import { CircleHelp, GitPullRequest, Pause, UserRound } from '@lucide/svelte';
   import { money, since } from '$lib/format';
   import { STAGE_LABELS } from '$lib/stages';
+  import { session } from '$lib/state/session.svelte';
   import type { Card } from '$lib/types';
   import AgentAvatar from './AgentAvatar.svelte';
   import LaneChip from './LaneChip.svelte';
@@ -35,14 +36,6 @@
     <span class="number mono">#{card.number}</span>
     <LaneChip lane={card.lane} />
     <span class="stage">{STAGE_LABELS[card.stage]}</span>
-    <span class="flags">
-      {#if card.userVisible}<span title="User-visible change"><Eye size={13} /></span>{/if}
-      {#if card.fixRounds > 0}
-        <span class="round" title="Fix rounds after review"
-          ><RotateCcw size={12} />{card.fixRounds}</span
-        >
-      {/if}
-    </span>
   </div>
 
   <h3 class="title">{card.title}</h3>
@@ -75,11 +68,11 @@
   <div class="meta">
     <MemberAvatar name={card.requester} size={18} />
     <span class="faint num" title="Time in this stage">{since(card.stageSince, now)}</span>
-    {#if card.costCents > 0}<span class="faint num" title="Agent cost so far"
+    {#if session.technical && card.costCents > 0}<span class="faint num" title="Agent cost so far"
         >{money(card.costCents)}</span
       >{/if}
     <span class="spacer"></span>
-    {#if card.pullRequest && repo}
+    {#if session.technical && card.pullRequest && repo}
       <span class="pr num" title="Pull request on GitHub"
         ><GitPullRequest size={12} />{card.pullRequest}</span
       >
@@ -172,22 +165,6 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-  }
-
-  .flags {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    margin-left: auto;
-    color: var(--text-3);
-  }
-
-  .round {
-    display: inline-flex;
-    align-items: center;
-    gap: 2px;
-    font-size: 11px;
-    color: var(--warn);
   }
 
   .title {

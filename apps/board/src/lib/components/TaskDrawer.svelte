@@ -78,6 +78,21 @@
   const learned = $derived(board.learnings.filter((item) => item.taskNumber === number));
   const canComment = $derived(task?.actions.includes('comment') ?? false);
 
+  type TabEntry = readonly [Tab, string, string | number | null];
+  // Agent runs are for whoever looks after the work; anyone gets there through Watch live.
+  const tabs = $derived<readonly TabEntry[]>(
+    task
+      ? [
+          ['overview', 'Summary', null],
+          ['spec', 'Plan', task.specs.length > 1 ? `v${task.specs.at(-1)?.version}` : null],
+          ['activity', 'Activity', task.comments.length || null],
+          ...(session.technical || tab === 'agents'
+            ? ([['agents', 'Agent runs', task.runs.length || null]] as const)
+            : [])
+        ]
+      : []
+  );
+
   const watch = () => {
     tab = 'agents';
     for (const run of task?.runs ?? []) if (run.status === 'running') openRuns[run.id] = true;
@@ -125,11 +140,10 @@
     <header>
       <div class="bar">
         <span class="number mono">#{task.number}</span>
-        <LaneChip lane={task.lane} />
         <span class="pill">{STAGE_LABELS[task.stage]}</span>
-        {#if task.userVisible}<span class="pill info">User-visible</span>{/if}
+        <LaneChip lane={task.lane} />
         <span class="spacer"></span>
-        {#if task.pullRequestUrl}
+        {#if session.technical && task.pullRequestUrl}
           <a class="btn sm" href={task.pullRequestUrl} target="_blank" rel="noopener noreferrer">
             <GitPullRequest size={13} />#{task.pullRequest}<ExternalLink size={11} />
           </a>
@@ -146,7 +160,7 @@
       </div>
 
       <nav class="tabs" aria-label="Task sections">
-        {#each [['overview', 'Overview', null], ['spec', 'Spec', task.specs.length ? `v${task.specs.at(-1)?.version}` : null], ['agents', 'Agents', task.runs.length || null], ['activity', 'Activity', task.comments.length || null]] as const as [id, label, badge] (id)}
+        {#each tabs as [id, label, badge] (id)}
           <button
             class:on={tab === id}
             onclick={() => (tab = id)}
@@ -175,16 +189,9 @@
             </section>
           {/if}
 
-          {#if task.plan}
+          {#if task.checklist?.checklist?.length && (task.stage === 'verifying' || session.technical)}
             <section>
-              <h3>Who approves, and how closely</h3>
-              <ApprovalPlan plan={task.plan} />
-            </section>
-          {/if}
-
-          {#if task.checklist}
-            <section>
-              <h3>What to verify</h3>
+              <h3>What to check</h3>
               <Checklist
                 items={task.checklist.checklist}
                 beforeAfter={task.checklist.beforeAfter ?? []}
@@ -193,7 +200,14 @@
             </section>
           {/if}
 
-          {#if learned.length}
+          {#if task.plan}
+            <details class="more">
+              <summary>Who approves, and why</summary>
+              <ApprovalPlan plan={task.plan} />
+            </details>
+          {/if}
+
+          {#if session.technical && learned.length}
             <section>
               <h3>What Officina learned from it</h3>
               <div class="learned">
@@ -204,8 +218,8 @@
             </section>
           {/if}
 
-          <section>
-            <h3>Details</h3>
+          <details class="more">
+            <summary>Details</summary>
             <dl class="facts">
               <dt>Requester</dt>
               <dd><MemberAvatar name={task.requester} size={18} />{task.requester}</dd>
@@ -213,6 +227,21 @@
               <dd title={dateTime(task.createdAt)}>{ago(task.createdAt, clock.now)}</dd>
               <dt>In this stage</dt>
               <dd>since {ago(task.stageSince, clock.now)}</dd>
+              <dt>Risk</dt>
+              <dd><LaneChip lane={task.lane} showStandard /></dd>
+              <dt>Changes what people see</dt>
+              <dd>{task.userVisible ? 'Yes' : 'No'}</dd>
+              {#if task.pullRequestUrl}
+                <dt>Pull request</dt>
+                <dd>
+                  <a
+                    class="link"
+                    href={task.pullRequestUrl}
+                    target="_blank"
+                    rel="noopener noreferrer">#{task.pullRequest} on GitHub</a
+                  >
+                </dd>
+              {/if}
               <dt>Agent cost</dt>
               <dd class="num">{money(cost) || '$0.00'}</dd>
               {#if task.fixRounds}
@@ -233,7 +262,7 @@
                 </dd>
               {/if}
             </dl>
-          </section>
+          </details>
         {:else if tab === 'spec'}
           {#if spec}
             <div class="spec-head">
@@ -255,7 +284,7 @@
             </div>
             <article class="spec"><Markdown source={spec.body} /></article>
           {:else}
-            <p class="empty">No spec yet. The spec agent writes one after triage.</p>
+            <p class="empty">No plan yet. An agent writes one once the request is accepted.</p>
           {/if}
         {:else if tab === 'agents'}
           {#if task.runs.length}
@@ -278,13 +307,13 @@
                 class="field"
                 bind:value={comment}
                 rows="3"
-                placeholder="Add context for people and agents. Agents read comments as information, never as instructions."
+                placeholder="Add a comment or context."
                 onkeydown={(event) => {
                   if (event.key === 'Enter' && (event.metaKey || event.ctrlKey))
                     event.currentTarget.form?.requestSubmit();
                 }}></textarea>
               <div class="composer-bar">
-                <span class="faint">Markdown works. ⌘ Enter to send.</span>
+                <span class="faint">⌘ Enter to send</span>
                 <button class="btn primary" disabled={sending || !comment.trim()}>Comment</button>
               </div>
             </form>
@@ -403,8 +432,23 @@
     padding: 18px 22px 40px;
   }
 
-  section + section {
+  section + section,
+  section + .more,
+  .more + .more {
     margin-top: 26px;
+  }
+
+  .more > summary {
+    cursor: pointer;
+    font-size: 11.5px;
+    font-weight: 650;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-3);
+  }
+
+  .more[open] > summary {
+    margin-bottom: 10px;
   }
 
   h3 {
@@ -433,7 +477,7 @@
 
   .facts {
     display: grid;
-    grid-template-columns: 140px 1fr;
+    grid-template-columns: 170px 1fr;
     gap: 9px 12px;
     margin: 0;
     font-size: 13px;

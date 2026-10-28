@@ -3,19 +3,26 @@
 
   interface Props {
     lane: Lane | null;
+    /** Standard is the usual case, so it is only named where people look for it. */
+    showStandard?: boolean;
   }
 
-  let { lane }: Props = $props();
+  let { lane, showStandard = false }: Props = $props();
 
+  const LABELS: Record<Lane, string> = {
+    green: 'Low risk',
+    standard: 'Standard',
+    red: 'Sensitive'
+  };
   const TITLES: Record<Lane, string> = {
-    green: 'Green lane: copy and low-risk changes',
-    standard: 'Standard lane',
-    red: 'Red lane: protected paths, a person builds it'
+    green: 'Copy and other low-risk changes (green lane)',
+    standard: 'An ordinary change (standard lane)',
+    red: 'Touches protected code: a person builds it (red lane)'
   };
 </script>
 
-{#if lane}
-  <span class="lane {lane}" title={TITLES[lane]}><span class="dot"></span>{lane}</span>
+{#if lane && (lane !== 'standard' || showStandard)}
+  <span class="lane {lane}" title={TITLES[lane]}><span class="dot"></span>{LABELS[lane]}</span>
 {/if}
 
 <style>
@@ -28,7 +35,6 @@
     border-radius: 999px;
     font-size: 11px;
     font-weight: 600;
-    text-transform: lowercase;
     color: var(--c);
     background: color-mix(in srgb, var(--c) 12%, transparent);
   }

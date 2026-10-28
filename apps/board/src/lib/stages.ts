@@ -1,16 +1,17 @@
 import type { Card, Stage } from './types';
 
+/** Plain words for every stage, for people who never read a pull request. */
 export const STAGE_LABELS: Record<Stage, string> = {
   request: 'Draft',
-  triage: 'Triage',
-  speccing: 'Writing spec',
-  spec_review: 'Spec review',
-  ready: 'Ready to build',
-  building: 'Building',
-  reviewing: 'In review',
-  choosing: 'Preparing checklist',
-  verifying: 'Verifying',
-  merging: 'Ready to merge',
+  triage: 'New request',
+  speccing: 'Writing the plan',
+  spec_review: 'Plan to approve',
+  ready: 'Queued',
+  building: 'Being built',
+  reviewing: 'Being reviewed',
+  choosing: 'Being reviewed',
+  verifying: 'Ready to check',
+  merging: 'Shipping',
   done: 'Done',
   declined: 'Declined',
   cancelled: 'Cancelled'
@@ -24,33 +25,21 @@ export interface Column {
 }
 
 export const COLUMNS: readonly Column[] = [
+  { id: 'intake', title: 'Requests', hint: 'New ideas', stages: ['request', 'triage'] },
   {
-    id: 'intake',
-    title: 'Requests',
-    hint: 'New ideas waiting for triage',
-    stages: ['request', 'triage']
-  },
-  {
-    id: 'spec',
-    title: 'Spec',
-    hint: 'Written by an agent, approved by people',
+    id: 'plan',
+    title: 'Plan',
+    hint: 'An agent writes it, people approve it',
     stages: ['speccing', 'spec_review']
   },
   {
     id: 'build',
-    title: 'Build',
-    hint: 'Implemented on a task branch',
-    stages: ['ready', 'building']
+    title: 'Building',
+    hint: 'Agents build and review it',
+    stages: ['ready', 'building', 'reviewing', 'choosing']
   },
-  {
-    id: 'review',
-    title: 'Review',
-    hint: 'Two independent agent reviews',
-    stages: ['reviewing', 'choosing']
-  },
-  { id: 'verify', title: 'Verify', hint: 'People check the result', stages: ['verifying'] },
-  { id: 'merge', title: 'Merge', hint: 'Approve and merge on GitHub', stages: ['merging'] },
-  { id: 'done', title: 'Done', hint: 'Merged', stages: ['done'] }
+  { id: 'check', title: 'Check', hint: 'People try the result', stages: ['verifying', 'merging'] },
+  { id: 'done', title: 'Done', hint: 'Shipped', stages: ['done'] }
 ];
 
 export const CLOSED: readonly Stage[] = ['declined', 'cancelled'];
@@ -58,12 +47,10 @@ export const CLOSED: readonly Stage[] = ['declined', 'cancelled'];
 /** The path every task walks; the task page draws it as a track. */
 export const TRACK: readonly { readonly label: string; readonly stages: readonly Stage[] }[] = [
   { label: 'Request', stages: ['request', 'triage'] },
-  { label: 'Spec', stages: ['speccing'] },
-  { label: 'Approve', stages: ['spec_review'] },
-  { label: 'Build', stages: ['ready', 'building'] },
-  { label: 'Review', stages: ['reviewing', 'choosing'] },
-  { label: 'Verify', stages: ['verifying'] },
-  { label: 'Merge', stages: ['merging'] },
+  { label: 'Plan', stages: ['speccing', 'spec_review'] },
+  { label: 'Build', stages: ['ready', 'building', 'reviewing', 'choosing'] },
+  { label: 'Check', stages: ['verifying'] },
+  { label: 'Ship', stages: ['merging'] },
   { label: 'Done', stages: ['done'] }
 ];
 

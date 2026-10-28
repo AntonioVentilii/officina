@@ -44,7 +44,7 @@
 <Modal title="New request" {onclose}>
   <form id="new-request" onsubmit={submit}>
     <label>
-      <span>What should change?</span>
+      <span>What do you need?</span>
       <input
         class="field"
         bind:value={title}
@@ -54,24 +54,18 @@
       />
     </label>
     <label>
-      <span>Describe the outcome</span>
+      <span>Details</span>
       <textarea
         class="field"
         bind:value={request}
-        rows="7"
-        placeholder="What people should see or be able to do afterwards, where, and anything that must not change. Plain words are fine: an agent turns this into a spec for review."
+        rows="5"
+        placeholder="What should people see or be able to do afterwards? Plain words are fine."
         required></textarea>
     </label>
     <label class="check">
       <input type="checkbox" bind:checked={interview} />
-      <span>
-        Let the interviewer ask follow-up questions first
-        <span class="faint">(recommended: a few answers save rounds of changes later)</span>
-      </span>
+      <span>Let an agent ask me a few questions first</span>
     </label>
-    <p class="hint faint">
-      Then a maintainer triages it and the spec agent writes a spec you can review.
-    </p>
   </form>
   {#snippet footer()}
     <button class="btn ghost" type="button" onclick={onclose}>Cancel</button>
@@ -116,10 +110,5 @@
     font-size: 13px;
     font-weight: 450;
     color: var(--text);
-  }
-
-  .hint {
-    margin: 0;
-    font-size: 12px;
   }
 </style>

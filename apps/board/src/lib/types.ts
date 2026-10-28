@@ -61,6 +61,8 @@ export interface Card {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly stageSince: string;
+  /** The result skipped people's check (a low-risk change); GitHub's rules merge it. */
+  readonly autoVerified: boolean;
   readonly waitingOn: WaitingOn;
 }
 

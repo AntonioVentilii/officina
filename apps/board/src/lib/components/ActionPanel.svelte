@@ -79,7 +79,7 @@
   };
 
   const PLACEHOLDERS: Record<Exclude<Mode, null>, string> = {
-    changes: 'What should change? Be specific: the agent works from exactly this.',
+    changes: 'What should change? The agent works from exactly this.',
     decline: 'Why is this declined? The requester sees it.',
     cancel: 'Why is this cancelled?'
   };
@@ -90,17 +90,13 @@
     <div class="head">
       <CircleHelp size={18} />
       <div>
-        <div class="kicker">Question for {task.blocked.askedOf}</div>
+        <div class="kicker">A question for {task.blocked.askedOf}</div>
         <div class="question"><Markdown source={task.blocked.question} /></div>
       </div>
     </div>
     {#if can('answer')}
       <form onsubmit={answer}>
-        <textarea
-          class="field"
-          bind:value={text}
-          rows="3"
-          placeholder="Your answer. The step runs again with it."></textarea>
+        <textarea class="field" bind:value={text} rows="3" placeholder="Your answer"></textarea>
         <div class="buttons">
           {#if can('submit')}
             <button type="button" class="btn ghost" disabled={busy} onclick={submitAsIs}
@@ -144,8 +140,13 @@
     <div class="head">
       <GitMerge size={18} />
       <div class="grow">
-        <div class="kicker">Verified</div>
-        {#if githubApproved}
+        <div class="kicker">{task.autoVerified ? 'Low-risk change' : 'Checked'}</div>
+        {#if task.autoVerified}
+          <div class="label">
+            Agents and GitHub's checks reviewed it; no person needs to check a change like this.
+            GitHub merges it once its rules are met.
+          </div>
+        {:else if githubApproved}
           <div class="label">
             Approved on GitHub as @{githubApproved.login}.
             {githubApproved.merge === 'merged'
@@ -162,9 +163,7 @@
             Approving on GitHub as @{session.me.github.login} once the spec is marked Implemented…
           </div>
         {:else}
-          <div class="label">
-            Approve and merge the pull request on GitHub; the task closes itself.
-          </div>
+          <div class="label">Merge the pull request on GitHub; the task closes itself.</div>
           {#if session.me?.githubAvailable}
             <div class="approval faint">
               <a class="inline" href="/auth/github/start?mode=link" data-sveltekit-reload
@@ -227,14 +226,14 @@
           <button
             class="btn primary"
             disabled={busy}
-            onclick={() => act({ type: 'accept' }, 'Accepted; the spec agent starts shortly')}
+            onclick={() => act({ type: 'accept' }, 'Accepted; an agent writes the plan next')}
           >
             Accept
           </button>
         {/if}
         {#if can('approve') && gate}
           <button class="btn" disabled={busy} onclick={() => (mode = 'changes')}
-            >Request changes</button
+            >Ask for changes</button
           >
           <button
             class="btn primary"
@@ -242,14 +241,14 @@
             onclick={() =>
               act(
                 { type: 'approve' },
-                gate === 'spec' ? 'Spec approved; it goes to build' : 'Verified'
+                gate === 'spec' ? 'Plan approved; it goes to build' : 'Checked'
               )}
           >
             <CircleCheck size={15} />{gate === 'spec'
-              ? 'Approve spec'
+              ? 'Approve plan'
               : mergesToo
-                ? 'Approve and merge'
-                : 'Approve result'}
+                ? 'Looks good, merge it'
+                : 'Looks good'}
           </button>
         {/if}
       </div>
