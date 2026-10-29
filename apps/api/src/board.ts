@@ -101,6 +101,14 @@ const viewerMember = (viewer: BoardViewer): Member => ({
   domains: viewer.domains
 });
 
+/**
+ * Who sees how the work is done: agent runs and their logs (which quote the code), costs and
+ * learnings. Maintainers and owners look after the work; contributors and watchers may not have
+ * access to the repository at all, so they get the decisions and the trail, not the code or money.
+ */
+export const seesTechnical = (viewer: BoardViewer): boolean =>
+  hasRole(viewerMember(viewer), 'maintainer');
+
 interface ApprovalState {
   readonly gate: Gate;
   readonly planned: boolean;
@@ -292,7 +300,7 @@ const cardView = (row: BoardTaskRow, viewer: BoardViewer, approval: ApprovalStat
   userVisible: row.userVisible,
   requester: row.requesterName,
   pullRequest: row.pullRequest,
-  costCents: row.costCents,
+  costCents: seesTechnical(viewer) ? row.costCents : null,
   running: row.runningRoles.map((role) => ({ role, label: roleLabel(role) })),
   fixRounds: row.fixRounds,
   specVersion: row.specVersion,
@@ -429,7 +437,7 @@ export const taskView = async (
       payload: event.payload,
       at: event.createdAt
     })),
-    runs: runs.map((run) => runView(run, consoleWorkspace)),
+    runs: seesTechnical(viewer) ? runs.map((run) => runView(run, consoleWorkspace)) : [],
     plan: planView(row, facts),
     approval: approval && {
       gate: approval.gate,

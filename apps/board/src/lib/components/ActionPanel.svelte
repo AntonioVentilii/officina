@@ -130,7 +130,7 @@
       {#if can('submit')}
         <button class="btn ghost" disabled={busy} onclick={submitAsIs}>Submit as is</button>
       {/if}
-      {#if task.running.length}
+      {#if session.technical && task.running.length}
         <button class="btn" onclick={onwatch}>Watch live</button>
       {/if}
     </div>

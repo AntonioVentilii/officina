@@ -79,14 +79,14 @@
   const canComment = $derived(task?.actions.includes('comment') ?? false);
 
   type TabEntry = readonly [Tab, string, string | number | null];
-  // Agent runs are for whoever looks after the work; anyone gets there through Watch live.
+  // Agent runs quote the code, so they are for maintainers and owners; the API sends none otherwise.
   const tabs = $derived<readonly TabEntry[]>(
     task
       ? [
           ['overview', 'Summary', null],
           ['spec', 'Plan', task.specs.length > 1 ? `v${task.specs.at(-1)?.version}` : null],
           ['activity', 'Activity', task.comments.length || null],
-          ...(session.technical || tab === 'agents'
+          ...(session.technical
             ? ([['agents', 'Agent runs', task.runs.length || null]] as const)
             : [])
         ]
@@ -242,8 +242,10 @@
                   >
                 </dd>
               {/if}
-              <dt>Agent cost</dt>
-              <dd class="num">{money(cost) || '$0.00'}</dd>
+              {#if session.technical}
+                <dt>Agent cost</dt>
+                <dd class="num">{money(cost) || '$0.00'}</dd>
+              {/if}
               {#if task.fixRounds}
                 <dt>Fix rounds</dt>
                 <dd>{task.fixRounds}</dd>

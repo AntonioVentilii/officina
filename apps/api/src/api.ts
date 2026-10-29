@@ -19,7 +19,15 @@ import {
 import { Elysia } from 'elysia';
 import type { Pool } from 'pg';
 import { z } from 'zod';
-import { boardView, learningsView, runLog, runsView, taskView, type BoardViewer } from './board';
+import {
+  boardView,
+  learningsView,
+  runLog,
+  runsView,
+  seesTechnical,
+  taskView,
+  type BoardViewer
+} from './board';
 import type { GitHubAccounts } from './github-accounts';
 import { decide as decideLearning, type LearningGitHub } from './learnings';
 import type { BoardEvent, RealtimeHub } from './realtime';
@@ -120,6 +128,11 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
     const member = token ? await memberForSession(pool, token) : null;
     if (!member) throw new HttpError(401, 'sign in first');
     return { member, projects: await listMemberProjects(pool, member.id) };
+  };
+
+  const technicalViewer = (viewer: BoardViewer): BoardViewer => {
+    if (!seesTechnical(viewer)) throw new HttpError(403, 'only maintainers and owners see this');
+    return viewer;
   };
 
   const viewerFor = (signed: Signed, projectId: string): BoardViewer => {
@@ -292,7 +305,7 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
         return { tasks: await boardView(pool, viewer) };
       })
       .get('/api/projects/:projectId/runs', async ({ request, params }) => {
-        const viewer = viewerFor(await signedIn(request), params.projectId);
+        const viewer = technicalViewer(viewerFor(await signedIn(request), params.projectId));
         return { runs: await runsView(pool, viewer, deps.consoleWorkspace) };
       })
       .get('/api/projects/:projectId/tasks/:number', async ({ request, params }) => {
@@ -308,6 +321,7 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
           : null;
         if (!run || !signed.projects.some((project) => project.id === run.projectId))
           throw new HttpError(404, 'run not found');
+        technicalViewer(viewerFor(signed, run.projectId));
         const after = Number(query.after ?? 0);
         return runLog(pool, run.id, Number.isInteger(after) && after > 0 ? after : 0);
       })
@@ -334,7 +348,7 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
         });
       })
       .get('/api/projects/:projectId/learnings', async ({ request, params }) => {
-        const viewer = viewerFor(await signedIn(request), params.projectId);
+        const viewer = technicalViewer(viewerFor(await signedIn(request), params.projectId));
         return { learnings: await learningsView(pool, viewer) };
       })
       .post('/api/projects/:projectId/learnings/:learningId', async ({ request, params, body }) => {

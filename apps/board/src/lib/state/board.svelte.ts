@@ -36,10 +36,14 @@ class Board {
   async refresh() {
     const projectId = this.#projectId;
     if (!projectId) return;
+    // Runs and learnings are for maintainers and owners; the API refuses them to anyone else.
+    const technical = session.technical;
     const [board, runs, learnings] = await Promise.all([
       get<{ tasks: Card[] }>(`/api/projects/${projectId}/board`),
-      get<{ runs: Run[] }>(`/api/projects/${projectId}/runs`),
-      get<{ learnings: Learning[] }>(`/api/projects/${projectId}/learnings`)
+      technical ? get<{ runs: Run[] }>(`/api/projects/${projectId}/runs`) : { runs: [] },
+      technical
+        ? get<{ learnings: Learning[] }>(`/api/projects/${projectId}/learnings`)
+        : { learnings: [] }
     ]);
     if (projectId !== this.#projectId) return;
     this.tasks = board.tasks;

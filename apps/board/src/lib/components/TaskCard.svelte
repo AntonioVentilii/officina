@@ -68,7 +68,7 @@
   <div class="meta">
     <MemberAvatar name={card.requester} size={18} />
     <span class="faint num" title="Time in this stage">{since(card.stageSince, now)}</span>
-    {#if session.technical && card.costCents > 0}<span class="faint num" title="Agent cost so far"
+    {#if card.costCents}<span class="faint num" title="Agent cost so far"
         >{money(card.costCents)}</span
       >{/if}
     <span class="spacer"></span>

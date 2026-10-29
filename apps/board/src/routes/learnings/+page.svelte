@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { goto } from '$app/navigation';
+  import { session } from '$lib/state/session.svelte';
   import { GraduationCap } from '@lucide/svelte';
   import LearningCard from '$lib/components/LearningCard.svelte';
   import { board } from '$lib/state/board.svelte';
@@ -16,6 +18,11 @@
   const shown = $derived(board.learnings.filter((item) => item.status === filter));
   const count = (status: Learning['status']) =>
     board.learnings.filter((item) => item.status === status).length;
+
+  // Maintainers' page: the API refuses its data to anyone else.
+  $effect(() => {
+    if (session.project && !session.technical) void goto('/', { replaceState: true });
+  });
 </script>
 
 <div class="page">
