@@ -25,6 +25,8 @@ export interface BoardTaskRow {
   readonly createdAt: Date;
   readonly updatedAt: Date;
   readonly stageSince: Date;
+  /** The latest way into merging skipped people's verification. */
+  readonly autoVerified: boolean;
 }
 
 const BOARD_COLUMNS = `
@@ -42,7 +44,12 @@ const BOARD_COLUMNS = `
   coalesce(
     (select max(e.created_at) from task_events e where e.task_id = t.id and e.type = 'stage_changed'),
     t.created_at
-  ) as "stageSince"`;
+  ) as "stageSince",
+  exists (
+    select 1 from task_events e where e.task_id = t.id and e.type = 'auto_verified'
+      and e.id > coalesce((select max(c.id) from task_events c where c.task_id = t.id
+        and c.type = 'stage_changed' and c.payload->>'to' = 'choosing'), 0)
+  ) as "autoVerified"`;
 
 export const listBoardTasks = async (db: Queryable, projectId: string): Promise<BoardTaskRow[]> =>
   (

@@ -29,6 +29,9 @@ class Session {
     this.me?.projects.find((project) => project.id === this.projectId) ?? null
   );
 
+  /** Maintainers and owners see costs, commits and agent runs; everyone else sees the essentials. */
+  technical = $derived(this.project?.role === 'owner' || this.project?.role === 'maintainer');
+
   async load() {
     try {
       const me = await get<Me>('/api/me');

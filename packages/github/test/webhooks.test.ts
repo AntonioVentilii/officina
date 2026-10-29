@@ -81,6 +81,39 @@ describe('webhook events', () => {
     });
   });
 
+  test('a submitted review that may want changes, with who left it', () => {
+    const review = (state: string, type = 'Bot') => ({
+      action: 'submitted',
+      review: {
+        id: 11,
+        state,
+        body: 'Pull request overview',
+        commit_id: 'abc',
+        user: { login: 'copilot-pull-request-reviewer[bot]', type }
+      },
+      pull_request: { number: 7 },
+      repository
+    });
+    expect(parseWebhookEvent('pull_request_review', review('commented'))).toEqual({
+      kind: 'pull_request_reviewed',
+      repo: 'ViciApp/vici-app',
+      prNumber: 7,
+      reviewId: 11,
+      commitId: 'abc',
+      by: 'copilot-pull-request-reviewer[bot]',
+      bot: true,
+      state: 'commented',
+      body: 'Pull request overview'
+    });
+    expect(
+      parseWebhookEvent('pull_request_review', review('changes_requested', 'User'))
+    ).toMatchObject({ bot: false, state: 'changes_requested' });
+    expect(parseWebhookEvent('pull_request_review', review('approved'))).toBeNull();
+    expect(
+      parseWebhookEvent('pull_request_review', { ...review('commented'), action: 'dismissed' })
+    ).toBeNull();
+  });
+
   test('successful, neutral or PR-less check suites and unknown events are ignored', () => {
     const suite = (conclusion: string, pull_requests = [{ number: 7 }]) => ({
       action: 'completed',

@@ -1,11 +1,13 @@
 import { describe, expect, test } from 'bun:test';
-import { effectivePolicy, newTask, nextAgentRoles, type Task } from '../src';
+import { effectivePolicy, newTask, nextAgentRoles, type PlanInput, type Task } from '../src';
 import {
+  CONFIG_YAML,
   PLAN,
   asAgent,
   asMember,
   createDriver,
   engine,
+  loadConfig,
   owner,
   productContributor,
   watcher
@@ -468,5 +470,119 @@ describe('approval chooser', () => {
         asAgent('spec')
       )
     ).toEqual({ ok: false, error: 'not_allowed' });
+  });
+});
+
+describe('auto-verify', () => {
+  const autoConfig = (onMerge: string) =>
+    loadConfig(
+      CONFIG_YAML.replace('version: 1', `version: 1\nrelease: { on_merge: ${onMerge} }`).replace(
+        '  green:\n',
+        '  green:\n    auto_verify: true\n'
+      )
+    );
+  const GLANCE: PlanInput = { ...PLAN, depth: 'glance' };
+
+  const toChoosing = (driver: Driver, paths = COPY_PATHS) =>
+    buildAndReview(driver, dispatchAgent(driver, toReady(driver, paths, true)), 'abc', paths);
+
+  test('a green result goes straight to merge when a merge only reaches staging', () => {
+    const driver = createDriver([owner], autoConfig('staging'));
+    let task = toChoosing(driver);
+    task = driver.step(
+      task,
+      { type: 'choose', userVisible: true, plan: GLANCE },
+      asAgent('chooser')
+    );
+    expect(task.stage).toBe('merging');
+    expect(driver.events()).toContainEqual({ type: 'auto_verified', subject: 'sha:abc' });
+  });
+
+  test('people still verify when a merge deploys to production', () => {
+    const driver = createDriver([owner], autoConfig('production'));
+    let task = toChoosing(driver);
+    task = driver.step(
+      task,
+      { type: 'choose', userVisible: true, plan: GLANCE },
+      asAgent('chooser')
+    );
+    expect(task.stage).toBe('verifying');
+  });
+
+  test('the chooser keeps the human check by asking for more than a glance or an approval', () => {
+    const driver = createDriver([owner], autoConfig('nothing'));
+    const deeper = driver.step(
+      toChoosing(driver),
+      { type: 'choose', userVisible: true, plan: PLAN },
+      asAgent('chooser')
+    );
+    expect(deeper.stage).toBe('verifying');
+
+    const other = createDriver([owner], autoConfig('nothing'));
+    const added = other.step(
+      toChoosing(other),
+      {
+        type: 'choose',
+        userVisible: true,
+        plan: { ...GLANCE, extra: [{ requirement: { role: 'owner' }, reason: 'Pricing copy.' }] }
+      },
+      asAgent('chooser')
+    );
+    expect(added.stage).toBe('verifying');
+  });
+
+  test('a standard change is always verified by people', () => {
+    const driver = createDriver([owner], autoConfig('nothing'));
+    const task = driver.step(
+      toChoosing(driver, PAGE_PATHS),
+      { type: 'choose', userVisible: true, plan: GLANCE },
+      asAgent('chooser')
+    );
+    expect(task.stage).toBe('verifying');
+  });
+});
+
+describe('reviews on GitHub', () => {
+  const review = (headSha: string) =>
+    ({
+      type: 'github_review',
+      headSha,
+      by: 'copilot-pull-request-reviewer[bot]',
+      reviewId: 7,
+      notes: 'Rename the key.'
+    }) as const;
+
+  test('a review of the current head sends the work back to the builder', () => {
+    const driver = createDriver([owner]);
+    let task = buildAndReview(
+      driver,
+      dispatchAgent(driver, toReady(driver, PAGE_PATHS)),
+      'abc',
+      PAGE_PATHS
+    );
+    task = driver.step(task, { type: 'choose', userVisible: true, plan: PLAN }, asAgent('chooser'));
+    task = driver.step(task, review('abc'), engine);
+    expect(task).toMatchObject({ stage: 'building', fixRounds: 1 });
+    expect(driver.events()[0]).toMatchObject({
+      type: 'review_recorded',
+      reviewer: 'github',
+      verdict: 'changes',
+      githubReviewId: 7
+    });
+  });
+
+  test('a review of an earlier head, or from anyone but the engine, changes nothing', () => {
+    const driver = createDriver([owner]);
+    const task = buildAndReview(
+      driver,
+      dispatchAgent(driver, toReady(driver, PAGE_PATHS)),
+      'abc',
+      PAGE_PATHS
+    );
+    expect(driver.attempt(task, review('old'), engine)).toEqual({ ok: false, error: 'stale_head' });
+    expect(driver.attempt(task, review('abc'), asMember(owner))).toEqual({
+      ok: false,
+      error: 'not_allowed'
+    });
   });
 });

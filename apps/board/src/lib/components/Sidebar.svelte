@@ -63,22 +63,24 @@
         {#if board.waitingOnMe.length}<span class="badge num">{board.waitingOnMe.length}</span>{/if}
       </a>
     </li>
-    <li>
-      <a href="/agents" class:on={path === '/agents'}>
-        <Bot size={16} />Agents
-        {#if board.running.length}<span class="running num"
-            ><span class="pulse"></span>{board.running.length}</span
-          >{/if}
-      </a>
-    </li>
-    <li>
-      <a href="/learnings" class:on={path === '/learnings'}>
-        <GraduationCap size={16} />Learnings
-        {#if board.proposedLearnings.length}<span class="badge quiet num"
-            >{board.proposedLearnings.length}</span
-          >{/if}
-      </a>
-    </li>
+    {#if session.technical}
+      <li>
+        <a href="/agents" class:on={path === '/agents'}>
+          <Bot size={16} />Agents
+          {#if board.running.length}<span class="running num"
+              ><span class="pulse"></span>{board.running.length}</span
+            >{/if}
+        </a>
+      </li>
+      <li>
+        <a href="/learnings" class:on={path === '/learnings'}>
+          <GraduationCap size={16} />Learnings
+          {#if board.proposedLearnings.length}<span class="badge quiet num"
+              >{board.proposedLearnings.length}</span
+            >{/if}
+        </a>
+      </li>
+    {/if}
   </ul>
 
   <div class="bottom">

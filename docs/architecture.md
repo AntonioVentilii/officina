@@ -8,7 +8,7 @@ This document is the source of truth for how Officina works. Anything that contr
 
 1. **Collaborative first.** Every surface is multi-user: shared board, task threads, mentions, approvals by policy, notifications, presence. A single-user flow is a special case of a team flow, never the other way round.
 2. **Review is the bottleneck, not typing.** Officina optimizes human minutes per merged change. Agent throughput only matters when people can keep up with it.
-3. **People decide, agents do.** Specs, verification and merges are human decisions. Agents never merge, and they never approve their own work.
+3. **People decide, agents do.** What gets built (the spec) is always a human decision, and so is checking the result, except for low-risk changes a project explicitly lets through (section 8). Agents never merge, and they never approve their own work.
 4. **The engine is deterministic.** State transitions, scheduling, claims, retries, limits and stuck-work detection are plain code. Models run only inside stage agents, and their output is a typed contract the engine validates.
 5. **Risk is mechanical.** Which lane a change belongs to is decided by path rules on the actual diff, not by a model's opinion. Lanes decide which approvals are needed.
 6. **Humans and agents are interchangeable workers.** Any build or review step can be assigned to an agent or claimed by a person, and handed back and forth.
@@ -80,24 +80,25 @@ Stack: Bun, Elysia, Postgres (raw `pg`), SvelteKit with Svelte 5 for the board, 
 
 Stages are columns on the board. Flags (`blocked`, `paused`) overlay any stage.
 
-| Stage         | Worker                               | Enters when               | Leaves when                                                                                 |
-| ------------- | ------------------------------------ | ------------------------- | ------------------------------------------------------------------------------------------- |
-| `request`     | contributor + interviewer agent      | a member starts a request | the interviewer marks it specific enough, or a maintainer moves it on                       |
-| `triage`      | maintainers                          | request is complete       | prioritized -> `speccing`; merged as duplicate; declined with a reason                      |
-| `speccing`    | spec agent                           | triaged                   | spec version posted -> `spec_review`; missing fact or decision -> `blocked` with a question |
-| `spec_review` | chooser agent, then people           | spec version posted       | chooser plans the approvals, then policy satisfied -> `ready`; changes -> `speccing`        |
-| `ready`       | engine                               | spec approved             | WIP slot free and assignee set -> `building`                                                |
-| `building`    | builder agent or a member            | dispatched or claimed     | branch pushed and checks pass -> `reviewing`; red lane requires a member                    |
-| `reviewing`   | reviewer agents (+ optional members) | branch ready              | all reviewers approve -> `choosing`; changes -> `building` fix round (bounded)              |
-| `choosing`    | engine + chooser agent               | reviews approved          | approvals planned, verifiers and checklist assigned -> `verifying`                          |
-| `verifying`   | people, per lane policy              | checklist posted          | policy satisfied -> `merging`; change requests -> `building`                                |
-| `merging`     | code owner                           | verified                  | PR merged -> `done`; CI red -> `building`                                                   |
-| `done`        | learner agent (async)                | merged                    | learnings recorded; never blocks the task                                                   |
+| Stage         | Worker                               | Enters when               | Leaves when                                                                                    |
+| ------------- | ------------------------------------ | ------------------------- | ---------------------------------------------------------------------------------------------- |
+| `request`     | contributor + interviewer agent      | a member starts a request | the interviewer marks it specific enough, or a maintainer moves it on                          |
+| `triage`      | maintainers                          | request is complete       | prioritized -> `speccing`; merged as duplicate; declined with a reason                         |
+| `speccing`    | spec agent                           | triaged                   | spec version posted -> `spec_review`; missing fact or decision -> `blocked` with a question    |
+| `spec_review` | chooser agent, then people           | spec version posted       | chooser plans the approvals, then policy satisfied -> `ready`; changes -> `speccing`           |
+| `ready`       | engine                               | spec approved             | WIP slot free and assignee set -> `building`                                                   |
+| `building`    | builder agent or a member            | dispatched or claimed     | branch pushed and checks pass -> `reviewing`; red lane requires a member                       |
+| `reviewing`   | reviewer agents (+ optional members) | branch ready              | all reviewers approve -> `choosing`; changes -> `building` fix round (bounded)                 |
+| `choosing`    | engine + chooser agent               | reviews approved          | approvals planned, verifiers and checklist assigned -> `verifying`; auto-verified -> `merging` |
+| `verifying`   | people, per lane policy              | checklist posted          | policy satisfied -> `merging`; change requests -> `building`                                   |
+| `merging`     | code owner                           | verified                  | PR merged -> `done`; CI red -> `building`                                                      |
+| `done`        | learner agent (async)                | merged                    | learnings recorded; never blocks the task                                                      |
 
 - **`blocked`** always names a person or a role and a precise question. The first answer in the thread clears it and resumes the stage that blocked.
 - **Claims and leases.** A worker (agent run or member) holds a lease on a step. Leases expire; the healer releases stale ones and re-dispatches or notifies.
+- **Reviews on GitHub count.** A review left on the pull request for the current head (Copilot's inline comments, or a person asking for changes) sends the task back to building with those comments as notes, from `reviewing` up to `merging`; a review of an earlier head is ignored, except of Officina's own commit that only sets the spec's status line, which counts as the task's head. Auto-merge is turned off when work leaves `merging`: the webhook tries at once and the scheduler retries every pass until GitHub confirms it (`github_auto_merge_cancelled`), and the engine re-reads the task before it approves or turns auto-merge on. Once the fix is reviewed again and verified, the engine resolves the threads of the reviews it forwarded, since branch rules usually require resolved threads.
 - **Fix rounds are bounded** (default 2 per stage). Past the bound the task is blocked for a maintainer, never looped forever.
-- **Nothing skips a human gate.** Transitions out of `spec_review`, `verifying` and `merging` are only accepted from members who satisfy the lane's policy.
+- **Nothing skips a human gate it was not configured to skip.** Transitions out of `spec_review` and `verifying` are only accepted from members who satisfy the lane's policy; the only way past `verifying` without one is auto-verify (section 8).
 
 ## 6. Agent roles
 
@@ -150,20 +151,21 @@ A `workflow_dispatch` workflow in the consumer repository runs the Agent SDK wit
 - Each lane defines: whether agents may build, WIP limit, diff-size limit, per-step budget, and the approval policy for `spec_review`, `verifying` and merge.
 - The **chooser** does the judgement a glob cannot: is the change user-visible, which approval domains apply, which specific members are the best verifiers (requester, area owners, recent editors), how deep the check should be, and what exactly to look at. For text-only changes it produces before/after tables so verifiers never read a diff.
 - **Approval plans.** The chooser runs at both human gates: on each spec version before anyone may approve it (approving an unplanned version fails with `not_planned`), and on each pushed head before verification. Its plan holds a check depth (`glance`, `test`, `device`), a rationale people read, named verifiers (a request, not a requirement) and extra requirements: domain approvals or the owner role. The effective policy for a gate is the lane policy plus those extras. Plans only ever add: extras accumulate across every plan for the same gate, verifiers must be contributors, and only a maintainer may mark a change as not user-visible. A domain nobody holds is waived like any other requirement, so a plan can raise the bar but never deadlock a small team. Each plan is recorded as an `approval_planned` event with what it added.
+- **Auto-verify.** A green lane with `auto_verify: true` lets a result go from `choosing` straight to `merging`, recorded as `auto_verified`, only when the project's `release.on_merge` is not `production` and the chooser's plan for the result adds no requirement and asks for no more than a glance. Anything that touches a stricter path is not green, a merge that deploys to production always gets a person's check, and the chooser keeps the human gate by raising the depth or adding an approval. The spec is still approved by people. The engine then turns on auto-merge as the GitHub App, so the repository's branch rules (checks, resolved threads, any required review) still decide when it lands; it is tried once per time the task reaches `merging`.
 - **Calibration.** Every chooser verdict is compared with what people did: verified with no changes suggests over-gating, sent back suggests under-gating. The learner uses these outcomes.
 
 ## 9. Board surfaces
 
-| Surface       | For                                                                                                                                           |
-| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Board**     | Columns per stage; cards show lane, assignee (member or agent), elapsed time, cost, blocked and unread badges; filters per project and member |
-| **Inbox**     | Everything waiting on me: approvals, questions, mentions, tool confirmations; one-tap actions                                                 |
-| **Request**   | Conversation with the interviewer, with other members able to join                                                                            |
-| **Task**      | Thread, spec versions with inline comments, live agent log, diff, reviews, chooser checklist, preview link, cost, timeline                    |
-| **Agents**    | Roles, versions, running sessions, success and rework rates per role                                                                          |
-| **Learnings** | Proposed and accepted learnings with their evidence                                                                                           |
-| **Metrics**   | Human minutes per merged change, lead time, rework rate, cost per change, requests by non-developers                                          |
-| **Settings**  | Members and roles, lanes, approval policies, notification channels, runner and budgets                                                        |
+| Surface       | For                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Board**     | Five columns (requests, plan, building, check, done) in plain words; cards show what each task waits for, whose turn it is, and the lane only when it is not standard. Owners and maintainers also see cost, pull requests and agent runs; everyone else sees only what they need to decide. The API enforces it: agent runs and their logs (which quote the code), costs, and the Agents and Learnings data are served only to owners and maintainers, since contributors and watchers may have no access to the repository. Everyone sees the request, the spec, what to check, the thread and every decision with who made it |
+| **Inbox**     | Everything waiting on me: approvals, questions, mentions, tool confirmations; one-tap actions                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| **Request**   | Conversation with the interviewer, with other members able to join                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| **Task**      | Thread, spec versions with inline comments, live agent log, diff, reviews, chooser checklist, preview link, cost, timeline                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| **Agents**    | Roles, versions, running sessions, success and rework rates per role                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| **Learnings** | Proposed and accepted learnings with their evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| **Metrics**   | Human minutes per merged change, lead time, rework rate, cost per change, requests by non-developers                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| **Settings**  | Members and roles, lanes, approval policies, notification channels, runner and budgets                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 
 ## 10. Auto-learn
 
@@ -185,6 +187,8 @@ docs:
 pull_request:
   title_pattern: '^(feat|fix|docs|chore)\([a-z-]+\): .+$' # the builder's PR title must match
 verify: ['npm ci', 'npm run lint', 'npm run check'] # run by the builder before pushing
+release:
+  on_merge: staging # what merging into the default branch deploys: production (the default), staging or nothing
 lanes:
   red:
     paths: ['.github/**', 'src/payments/**']
@@ -201,6 +205,7 @@ lanes:
       verifying: [{ domain: product, when: user_visible }, { role: maintainer }]
   green:
     paths: ['src/i18n/**']
+    auto_verify: true # green only: results merge without a person's check when nothing calls for one (section 8)
     wip: 5
     budget_usd: 5
     approvals:
@@ -247,7 +252,7 @@ lanes:
 - **Deterministic engine over an LLM orchestrator.** A looping model session is the least reliable place for scheduling and recovery.
 - **Managed Agents as the primary runner** for sandboxing with credentials outside the container, versioned roles, event streaming and hard budgets; behind an interface because it is in beta.
 - **Roles in Officina, not repository permissions**, so non-developers can collaborate without write access to code.
-- **Humans always merge**, and merge approvals are submitted as the member's own GitHub review.
+- **Humans decide what merges.** A verified result is approved on GitHub as the member who verified it. An auto-verified one is handed to GitHub's auto-merge, so the repository's own rules, never Officina, are the last word.
 
 ## 16. Open questions
 

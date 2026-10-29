@@ -2,6 +2,7 @@ export { buildBrief, type BriefInput } from './brief';
 export {
   approveOnGitHub,
   checklistMarkdown,
+  cancelStaleAutoMerges,
   finishVerifiedSpecs,
   postChecklist,
   specPathIn,

@@ -44,6 +44,7 @@ const ERROR_TEXT: Record<StoreError, string> = {
   wip_limit: 'the lane is at its limit of concurrent work',
   agents_cannot_build_lane: 'agents may not build in this lane',
   not_planned: 'the approval chooser has not yet decided who approves this; try again shortly',
+  stale_head: 'that review is about an earlier version of the change',
   not_found: 'task not found',
   conflict: 'the task changed meanwhile; look at it again and retry',
   invalid_config: "the project's config is invalid"

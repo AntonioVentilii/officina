@@ -136,7 +136,7 @@ describe.skipIf(!url)('board api', () => {
         number: 1,
         stage: 'triage',
         requester: 'Antonio',
-        waitingOn: { kind: 'people', label: 'Triage by a maintainer', me: true }
+        waitingOn: { kind: 'people', label: 'A maintainer accepts or declines it', me: true }
       })
     ]);
 
@@ -224,6 +224,47 @@ describe.skipIf(!url)('board api', () => {
     const later = await json(await call(cookie, `/api/runs/${run.runId}/log?after=${log.cursor}`));
     expect(later.entries).toEqual([]);
     expect((await call(null, `/api/runs/${run.runId}/log`)).status).toBe(401);
+  });
+
+  test('contributors get the decisions and the trail, not agent runs, costs or learnings', async () => {
+    const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    await createRequest(pool, {
+      title: 'Rename settings',
+      request: 'Call it Preferences.',
+      skipInterview: true
+    });
+    const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
+    const run = await startRun(pool, {
+      taskId,
+      stage: 'speccing',
+      role: 'spec',
+      agentVersion: 1,
+      runner: 'managed_agents'
+    });
+    if (!run.ok) throw new Error('run not started');
+    const contributor = await signIn(
+      await invite(pool, {
+        publicUrl: PUBLIC_URL,
+        email: 'stakeholder@example.com',
+        name: 'Stakeholder',
+        role: 'contributor',
+        domains: ['product']
+      })
+    );
+    const project = `/api/projects/${seeded.projectId}`;
+
+    const seen = await json(await call(contributor, `${project}/tasks/1`));
+    expect(seen).toMatchObject({ title: 'Rename settings', costCents: null, runs: [] });
+    expect(seen.events.length).toBeGreaterThan(0);
+    const board = await json(await call(contributor, `${project}/board`));
+    expect(board.tasks[0].costCents).toBeNull();
+    for (const path of [`${project}/runs`, `${project}/learnings`, `/api/runs/${run.runId}/log`])
+      expect((await call(contributor, path)).status).toBe(403);
+
+    const full = await json(await call(owner, `${project}/tasks/1`));
+    expect(full.costCents).toBe(0);
+    expect(full.runs).toHaveLength(1);
+    expect((await call(owner, `${project}/runs`)).status).toBe(200);
   });
 
   test('database changes reach open boards as events', async () => {

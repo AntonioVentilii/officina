@@ -19,10 +19,7 @@
     <AgentAvatar role="chooser" label="Approval chooser" size={24} />
     <div class="grow">
       <div class="who">
-        Approval chooser
-        <span class="faint"
-          >· {plan.gate === 'spec_review' ? 'for the spec' : 'for the result'}</span
-        >
+        {plan.gate === 'spec_review' ? 'For the plan' : 'For the result'}
         {#if !plan.current}<span class="pill warn">earlier version</span>{/if}
       </div>
       <p class="rationale">{plan.rationale}</p>
@@ -46,7 +43,7 @@
         <li>
           <MemberAvatar name={verifier.name} size={20} />
           <span>
-            <strong>Asks {verifier.name} to check</strong>
+            <strong>{verifier.name} is asked to check</strong>
             <span class="muted">{verifier.reason}</span>
           </span>
           <span class="icon faint" title="A request, not a requirement"
@@ -56,10 +53,6 @@
       {/each}
     </ul>
   {/if}
-  <p class="note faint">
-    The chooser can add approvals and ask people to check; it can never remove what the lane
-    requires.
-  </p>
 </div>
 
 <style>
@@ -156,18 +149,12 @@
     color: var(--accent);
   }
 
-  .note {
-    margin: 10px 0 0 34px;
-    font-size: 11.5px;
-  }
-
   @media (max-width: 640px) {
     .head {
       flex-wrap: wrap;
     }
 
-    ul,
-    .note {
+    ul {
       padding-left: 0;
       margin-left: 0;
     }

@@ -1,5 +1,6 @@
 import { parseProjectConfigYaml, type Actor, type Command } from '@officina/core';
 import {
+  appendTaskEvent,
   applyCommand,
   findProjectsByRepo,
   findTasksByPullRequest,
@@ -19,7 +20,9 @@ export type WebhookOutcome =
       readonly errors?: readonly string[];
     };
 
-export type ConfigReader = Pick<GitHubClient, 'fileContent'>;
+/** What webhooks need from GitHub: configs on push, and review comments and auto-merge on reviews. */
+export type ConfigReader = Pick<GitHubClient, 'fileContent'> &
+  Partial<Pick<GitHubClient, 'reviewComments' | 'cancelAutoMerge'>>;
 
 const ENGINE: Actor = { kind: 'engine' };
 
@@ -58,6 +61,111 @@ const refreshConfigs = async (
 };
 
 /**
+ * A review left on the pull request becomes notes for the builder. A bot (Copilot) counts when it
+ * left inline comments, since a summary alone asks for nothing; a person counts when they asked for
+ * changes, because a plain comment may only be a question.
+ */
+const reviewNotes = async (
+  github: ConfigReader,
+  installationId: number,
+  action: Extract<WebhookAction, { kind: 'pull_request_reviewed' }>
+): Promise<string | null> => {
+  if (!action.bot && action.state !== 'changes_requested') return null;
+  const comments = github.reviewComments
+    ? await github.reviewComments({
+        installationId,
+        repo: action.repo,
+        pullRequest: action.prNumber,
+        reviewId: action.reviewId
+      })
+    : [];
+  if (action.bot && comments.length === 0) return null;
+  return [
+    `Review by @${action.by} on the pull request. Address each point, or explain in the code why it does not apply.`,
+    action.body.trim(),
+    ...comments.map(
+      (comment) => `- \`${comment.path}${comment.line ? `:${comment.line}` : ''}\`: ${comment.body}`
+    )
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+};
+
+/**
+ * The head a review is about, in the task's terms. Officina's own commits that only set the spec's
+ * status line sit on top of the reviewed work, so a review of one of them is a review of the task's
+ * head; any other commit is passed through and judged by the lifecycle.
+ */
+const reviewedHead = async (pool: Pool, taskId: string, commitId: string): Promise<string> => {
+  const row = (
+    await pool.query<{ head_sha: string | null }>(
+      `select t.head_sha from tasks t
+       where t.id = $1 and exists (
+         select 1 from task_events e where e.task_id = t.id and e.type = 'spec_status_set'
+           and e.payload->>'commitSha' = $2
+           and e.id > coalesce((select max(p.id) from task_events p
+             where p.task_id = t.id and p.type = 'pushed'), 0))`,
+      [taskId, commitId]
+    )
+  ).rows[0];
+  return row?.head_sha ?? commitId;
+};
+
+const handleReview = async (
+  pool: Pool,
+  github: ConfigReader | undefined,
+  action: Extract<WebhookAction, { kind: 'pull_request_reviewed' }>
+): Promise<WebhookOutcome[]> => {
+  if (!github) return [];
+  const taskIds = await findTasksByPullRequest(pool, action.repo, action.prNumber);
+  if (taskIds.length === 0) return [];
+  const project = (await findProjectsByRepo(pool, action.repo)).find(
+    (candidate) => candidate.installationId !== null
+  );
+  if (!project?.installationId) return [];
+  const notes = await reviewNotes(github, project.installationId, action);
+  if (!notes) return [];
+  const outcomes: WebhookOutcome[] = [];
+  for (const taskId of taskIds) {
+    const result = await applyCommand(pool, {
+      taskId,
+      command: {
+        type: 'github_review',
+        headSha: await reviewedHead(pool, taskId, action.commitId),
+        by: action.by,
+        reviewId: action.reviewId,
+        notes
+      },
+      actor: ENGINE
+    });
+    outcomes.push(result.ok ? { taskId, ok: true } : { taskId, ok: false, error: result.error });
+    const leftMerging =
+      result.ok &&
+      result.events.some((event) => event.type === 'stage_changed' && event.from === 'merging');
+    // Auto-merge may already be on; the fix must be reviewed again before anything lands. A
+    // failure here is retried by the scheduler until GitHub confirms it is off.
+    if (leftMerging && github.cancelAutoMerge) {
+      try {
+        await github.cancelAutoMerge({
+          installationId: project.installationId,
+          repo: action.repo,
+          pullRequest: action.prNumber
+        });
+        await appendTaskEvent(pool, {
+          taskId,
+          actor: ENGINE,
+          type: 'github_auto_merge_cancelled',
+          payload: { pullRequest: action.prNumber }
+        });
+      } catch {
+        // Left to `cancelStaleAutoMerges`.
+      }
+    }
+  }
+  return outcomes;
+};
+
+/**
  * Applies a GitHub fact. Pull request outcomes go to every linked task; a rejection such as
  * `wrong_stage` (CI failing while a task is still in review) is reported rather than raised.
  */
@@ -67,6 +175,7 @@ export const handleWebhookAction = async (
   github?: ConfigReader
 ): Promise<WebhookOutcome[]> => {
   if (action.kind === 'push') return refreshConfigs(pool, github, action);
+  if (action.kind === 'pull_request_reviewed') return handleReview(pool, github, action);
 
   const targets: { prNumber: number; command: Command }[] =
     action.kind === 'pull_request_merged'

@@ -54,13 +54,16 @@ export interface Card {
   readonly userVisible: boolean;
   readonly requester: string;
   readonly pullRequest: number | null;
-  readonly costCents: number;
+  /** Only for maintainers and owners; `null` for everyone else. */
+  readonly costCents: number | null;
   readonly running: readonly RunningAgent[];
   readonly fixRounds: number;
   readonly specVersion: number;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly stageSince: string;
+  /** The result skipped people's check (a low-risk change); GitHub's rules merge it. */
+  readonly autoVerified: boolean;
   readonly waitingOn: WaitingOn;
 }
 

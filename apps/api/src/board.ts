@@ -101,6 +101,14 @@ const viewerMember = (viewer: BoardViewer): Member => ({
   domains: viewer.domains
 });
 
+/**
+ * Who sees how the work is done: agent runs and their logs (which quote the code), costs and
+ * learnings. Maintainers and owners look after the work; contributors and watchers may not have
+ * access to the repository at all, so they get the decisions and the trail, not the code or money.
+ */
+export const seesTechnical = (viewer: BoardViewer): boolean =>
+  hasRole(viewerMember(viewer), 'maintainer');
+
 interface ApprovalState {
   readonly gate: Gate;
   readonly planned: boolean;
@@ -169,7 +177,7 @@ const waitingOn = (
     const askedOf = row.blocked.askedOf;
     return {
       kind: 'people',
-      label: `Question for ${'memberId' in askedOf ? 'a member' : article(askedOf.role)}`,
+      label: `A question for ${'memberId' in askedOf ? 'a member' : article(askedOf.role)}`,
       me: canAnswer(row, viewer)
     };
   }
@@ -179,29 +187,33 @@ const waitingOn = (
     case 'request':
       return {
         kind: 'agent',
-        label: running.length ? 'Interviewer is reading the request' : 'Interviewer up next',
+        label: running.length ? 'An agent is reading the request' : 'An agent reads it next',
         me: false
       };
     case 'triage':
-      return { kind: 'people', label: 'Triage by a maintainer', me: hasRole(member, 'maintainer') };
+      return {
+        kind: 'people',
+        label: 'A maintainer accepts or declines it',
+        me: hasRole(member, 'maintainer')
+      };
     case 'speccing':
       return {
         kind: 'agent',
-        label: running.length ? 'Spec writer at work' : 'Spec writer up next',
+        label: running.length ? 'An agent is writing the plan' : 'An agent writes the plan next',
         me: false
       };
     case 'spec_review':
     case 'verifying': {
       if (approval && !approval.planned)
-        return { kind: 'agent', label: 'Approval chooser is deciding who approves', me: false };
+        return { kind: 'agent', label: 'Deciding who approves', me: false };
       const pending = approval?.pending ?? [];
       const plan = row.approvalPlans[row.stage];
       const asked = plan?.verifiers.some((verifier) => verifier.memberId === viewer.memberId);
-      const noun = row.stage === 'spec_review' ? 'Spec approval' : 'Verification';
+      const noun = row.stage === 'spec_review' ? 'Plan approval' : 'A check of the result';
       return {
         kind: 'people',
         label: pending.length
-          ? `${noun} by ${readable(pending).map(describeRequirement).join(' and ')}`
+          ? `${noun} by ${[...new Set(readable(pending).map(describeRequirement))].join(' and ')}`
           : noun,
         me:
           pending.some((requirement) => isEligible(member, requirement, row.requesterId)) ||
@@ -219,19 +231,21 @@ const waitingOn = (
           }
         : {
             kind: 'agent',
-            label: running.length ? 'Builder at work' : 'Builder up next',
+            label: running.length ? 'An agent is building it' : 'An agent builds it next',
             me: false
           };
     case 'reviewing':
       return {
         kind: 'agent',
-        label: running.length ? `${running.join(' and ')} at work` : 'Reviews up next',
+        label: running.length ? 'Agents are reviewing it' : 'Agents review it next',
         me: false
       };
     case 'choosing':
-      return { kind: 'agent', label: 'Preparing the verification checklist', me: false };
+      return { kind: 'agent', label: 'Preparing what to check', me: false };
     case 'merging':
-      return { kind: 'github', label: 'Merge on GitHub', me: hasRole(member, 'maintainer') };
+      return row.autoVerified
+        ? { kind: 'github', label: 'Merging once GitHub checks pass', me: false }
+        : { kind: 'github', label: 'Merge on GitHub', me: hasRole(member, 'maintainer') };
     default:
       return { kind: 'nobody', label: row.stage, me: false };
   }
@@ -286,13 +300,14 @@ const cardView = (row: BoardTaskRow, viewer: BoardViewer, approval: ApprovalStat
   userVisible: row.userVisible,
   requester: row.requesterName,
   pullRequest: row.pullRequest,
-  costCents: row.costCents,
+  costCents: seesTechnical(viewer) ? row.costCents : null,
   running: row.runningRoles.map((role) => ({ role, label: roleLabel(role) })),
   fixRounds: row.fixRounds,
   specVersion: row.specVersion,
   createdAt: row.createdAt,
   updatedAt: row.updatedAt,
   stageSince: row.stageSince,
+  autoVerified: row.autoVerified,
   waitingOn: waitingOn(row, viewer, approval)
 });
 
@@ -422,12 +437,12 @@ export const taskView = async (
       payload: event.payload,
       at: event.createdAt
     })),
-    runs: runs.map((run) => runView(run, consoleWorkspace)),
+    runs: seesTechnical(viewer) ? runs.map((run) => runView(run, consoleWorkspace)) : [],
     plan: planView(row, facts),
     approval: approval && {
       gate: approval.gate,
       planned: approval.planned,
-      pending: readable(approval.pending).map(describeRequirement),
+      pending: [...new Set(readable(approval.pending).map(describeRequirement))],
       waived: approval.waived.map(describeRequirement),
       approvedBy: approval.approvedBy
     },

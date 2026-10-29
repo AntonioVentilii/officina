@@ -1,10 +1,25 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
-import { applyCommand, createTask, loadTask, saveAgentVersion, startRun } from '@officina/db';
+import type { AgentRole } from '@officina/core';
+import {
+  applyCommand,
+  createTask,
+  linkPullRequest,
+  loadTask,
+  saveAgentVersion,
+  startRun
+} from '@officina/db';
 import { RUNNER_ROLES, type SessionRequest } from '@officina/runner';
 import { Pool } from 'pg';
-import { applyOrThrow, resetAndSeed, type Seeded } from '../../db/test/seed';
+import { CONFIG_YAML } from '../../core/test/fixtures';
+import { PLAN, applyOrThrow, resetAndSeed, type Seeded } from '../../db/test/seed';
 import { createFakePort, idle, toolUse, type ScriptItem } from '../../runner/test/fake-port';
-import { finishVerifiedSpecs, runAgentStep, tick, type GitHubPort } from '../src';
+import {
+  cancelStaleAutoMerges,
+  finishVerifiedSpecs,
+  runAgentStep,
+  tick,
+  type GitHubPort
+} from '../src';
 
 const url = process.env.TEST_DATABASE_URL;
 const COPY = 'src/lib/constants/messages/en.ts';
@@ -65,6 +80,17 @@ const fakeGitHub = () => {
     openPullRequest: async (...args: unknown[]) => {
       calls.push({ method: 'openPullRequest', args });
       return { number: 42, url: 'https://github.com/ViciApp/vici-app/pull/42' };
+    },
+    resolveReviewThreads: async (...args: unknown[]) => {
+      calls.push({ method: 'resolveReviewThreads', args });
+      return 1;
+    },
+    mergeWhenReady: async (...args: unknown[]) => {
+      calls.push({ method: 'mergeWhenReady', args });
+      return 'auto_merge';
+    },
+    cancelAutoMerge: async (...args: unknown[]) => {
+      calls.push({ method: 'cancelAutoMerge', args });
     }
   } as unknown as GitHubPort;
   return { port, calls };
@@ -238,6 +264,100 @@ describe.skipIf(!url)('engine', () => {
     const updates = github.calls.filter((call) => call.method === 'updateFile');
     expect(updates).toHaveLength(2);
     expect((updates[1]!.args[0] as { text: string }).text).toContain('Status: Implemented (#42)');
+  });
+
+  test('an auto-verified result resolves the forwarded review threads and auto-merges as the app, once', async () => {
+    const config = Bun.YAML.parse(
+      CONFIG_YAML.replace('version: 1', 'version: 1\nrelease: { on_merge: staging }').replace(
+        '  green:\n',
+        '  green:\n    auto_verify: true\n'
+      )
+    );
+    await pool.query('update projects set config = $2 where id = $1', [
+      seeded.projectId,
+      JSON.stringify(config)
+    ]);
+    const { task } = await createTask(pool, {
+      projectId: seeded.projectId,
+      title: 'Fix copy',
+      requesterId: seeded.ownerId
+    });
+    const id = task.id;
+    const engine = { kind: 'engine' } as const;
+    const agent = (role: AgentRole) => ({ kind: 'agent', role, version: 1 }) as const;
+    const pushAndReview = async (headSha: string) => {
+      await applyOrThrow(
+        pool,
+        id,
+        { type: 'push', headSha, changedPaths: [COPY], diffLines: 4 },
+        agent('builder')
+      );
+      for (const role of ['reviewer_spec', 'reviewer_correctness'] as const)
+        await applyOrThrow(
+          pool,
+          id,
+          { type: 'review', verdict: 'approve', notes: '' },
+          agent(role)
+        );
+    };
+    await applyOrThrow(pool, id, { type: 'submit_request' }, seeded.owner);
+    await applyOrThrow(pool, id, { type: 'accept' }, seeded.owner);
+    await applyOrThrow(
+      pool,
+      id,
+      { type: 'post_spec', predictedPaths: [COPY], userVisible: true },
+      agent('spec')
+    );
+    await applyOrThrow(
+      pool,
+      id,
+      { type: 'plan_approval', userVisible: true, plan: PLAN },
+      agent('chooser')
+    );
+    await applyOrThrow(pool, id, { type: 'approve' }, seeded.owner);
+    await applyOrThrow(
+      pool,
+      id,
+      { type: 'dispatch', assignee: { kind: 'agent', role: 'builder' }, openInLane: 0 },
+      engine
+    );
+    await pushAndReview('abc');
+    await linkPullRequest(pool, id, 42);
+    await applyOrThrow(
+      pool,
+      id,
+      { type: 'github_review', headSha: 'abc', by: 'copilot', reviewId: 5, notes: 'Typo.' },
+      engine
+    );
+    await pushAndReview('def');
+    await applyOrThrow(
+      pool,
+      id,
+      { type: 'choose', userVisible: true, plan: { ...PLAN, depth: 'glance' } },
+      agent('chooser')
+    );
+    expect((await loadTask(pool, id))?.task.stage).toBe('merging');
+
+    const github = fakeGitHub();
+    await finishVerifiedSpecs(pool, github.port, [id]);
+    await finishVerifiedSpecs(pool, github.port, [id]);
+    const resolved = github.calls.filter((call) => call.method === 'resolveReviewThreads');
+    expect(resolved).toHaveLength(1);
+    expect(resolved[0]!.args[0]).toMatchObject({ pullRequest: 42, reviewIds: [5] });
+    expect(github.calls.filter((call) => call.method === 'mergeWhenReady')).toHaveLength(1);
+
+    // A later review sends it back: auto-merge is turned off until GitHub confirms, once.
+    await applyOrThrow(
+      pool,
+      id,
+      { type: 'github_review', headSha: 'def', by: 'copilot', reviewId: 6, notes: 'Again.' },
+      engine
+    );
+    await cancelStaleAutoMerges(pool, github.port, seeded.projectId);
+    await cancelStaleAutoMerges(pool, github.port, seeded.projectId);
+    const cancels = github.calls.filter((call) => call.method === 'cancelAutoMerge');
+    expect(cancels).toHaveLength(1);
+    expect(cancels[0]!.args[0]).toMatchObject({ installationId: 99, pullRequest: 42 });
   });
 
   test('a pull request title outside the repository format is sent back to the builder', async () => {
