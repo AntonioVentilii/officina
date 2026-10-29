@@ -4,11 +4,40 @@ on:
   push:
     branches: [main]
   pull_request:
+    # `edited` reruns CI after a rename, so a PR cannot keep a green pr-title it no longer earns.
+    types: [opened, synchronize, reopened, edited]
 
 permissions:
   contents: read
 
 jobs:
+  # Squash-merge titles become the commits on main, so PR titles must be
+  # Conventional Commits with a scope.
+  pr-title:
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Skip outside pull requests
+        if: github.event_name != 'pull_request'
+        run: echo "PR title check only runs for pull_request events."
+
+      - name: Validate Conventional Commit PR title (scope required)
+        if: github.event_name == 'pull_request'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          pattern='^(feat|fix|perf|deps|revert|docs|style|chore|refactor|test|build|ci)\([-a-zA-Z0-9,._/]+\)!?: .+$'
+
+          if [[ "$PR_TITLE" =~ $pattern ]]; then
+            echo "PR title OK."
+            exit 0
+          fi
+
+          # Keep the title off the start of a line so it can't inject a ::workflow:: command.
+          echo "::error::PR title must be a Conventional Commit with a scope: 'type(scope): description' (or 'type(scope)!: ...' for a breaking change), e.g. 'feat(engine): ...'."
+          echo "Got title: $PR_TITLE"
+          exit 1
+
   check:
     runs-on: ubuntu-latest
     steps:
@@ -48,7 +77,7 @@ jobs:
   # of enumerating every check.
   checks-pass:
     if: always()
-    needs: [check, db]
+    needs: [pr-title, check, db]
     runs-on: ubuntu-latest
     permissions: {}
     steps:
