@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+    # `edited` reruns CI after a rename, so a PR cannot keep a green pr-title it no longer earns.
+    types: [opened, synchronize, reopened, edited]
 
 permissions:
   contents: read
