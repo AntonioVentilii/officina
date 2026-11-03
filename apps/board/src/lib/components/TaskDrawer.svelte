@@ -141,7 +141,7 @@
       <div class="bar">
         <span class="number caps num">#{task.number}</span>
         <span class="pill">{STAGE_LABELS[task.stage]}</span>
-        <LaneChip lane={task.lane} named />
+        <LaneChip lane={task.lane} showStandard named />
         <span class="spacer"></span>
         {#if session.technical && task.pullRequestUrl}
           <a class="btn sm" href={task.pullRequestUrl} target="_blank" rel="noopener noreferrer">
