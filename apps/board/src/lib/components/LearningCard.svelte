@@ -87,7 +87,7 @@
     <AgentAvatar role="learner" label="Learner" size={26} />
     <div class="grow">
       <h3>{learning.title}</h3>
-      <div class="meta faint">
+      <div class="meta">
         {#if learning.taskNumber && !compact}
           from <a href="/tasks/{learning.taskNumber}">task {learning.taskNumber}</a> ·
         {/if}
@@ -100,7 +100,7 @@
   <p class="lesson">{learning.lesson}</p>
 
   <details class="evidence">
-    <summary>Evidence</summary>
+    <summary class="caps">Evidence</summary>
     <p>{learning.evidence}</p>
   </details>
 
@@ -108,7 +108,7 @@
     <div class="file">
       {#if learning.target === 'project'}<FileText size={13} />{:else}<Bot size={13} />{/if}
       <span class="mono">{learning.file}</span>
-      <span class="faint">
+      <span class="caps faint">
         {learning.target === 'project' ? 'project docs' : 'Officina agent prompt'} ·
         {learning.find ? 'replace' : 'append at the end'}
       </span>
@@ -161,25 +161,19 @@
   .learning {
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    padding: 14px 16px;
-    border-radius: var(--radius);
-    border: 1px solid var(--border);
-    background: var(--panel);
-  }
-
-  .learning.proposed {
-    box-shadow: inset 3px 0 0 var(--role-learner);
+    gap: 12px;
+    padding: 20px 0;
+    border-bottom: 1px solid var(--rule);
   }
 
   .learning.rejected {
-    opacity: 0.65;
+    opacity: 0.6;
   }
 
   header {
     display: flex;
     align-items: flex-start;
-    gap: 10px;
+    gap: 12px;
   }
 
   .grow {
@@ -189,51 +183,59 @@
 
   h3 {
     margin: 0;
-    font-size: 14px;
-    font-weight: 620;
+    font-size: 19px;
+    font-weight: 700;
+    font-stretch: 85%;
+    line-height: 1.2;
   }
 
   .meta {
+    margin-top: 2px;
     font-size: 12px;
+    font-stretch: 85%;
+    letter-spacing: 0.04em;
+    color: var(--text-2);
   }
 
   .meta a {
-    color: var(--info);
+    color: var(--text);
+    text-decoration: underline;
+    text-underline-offset: 3px;
   }
 
   .lesson {
     margin: 0;
-    font-size: 13.5px;
+    font-size: 14.5px;
     line-height: 1.55;
   }
 
   .evidence summary {
     cursor: pointer;
-    font-size: 12px;
-    color: var(--text-3);
+    font-weight: 700;
+    color: var(--text-2);
   }
 
   .evidence p {
     margin: 6px 0 0;
-    font-size: 12.5px;
+    font-size: 13px;
     color: var(--text-2);
     line-height: 1.55;
   }
 
   .change {
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--border);
-    overflow: hidden;
+    border-top: 1px solid var(--rule);
   }
 
   .file {
     display: flex;
     align-items: center;
-    gap: 7px;
-    padding: 6px 10px;
+    gap: 8px;
+    padding: 7px 0;
     font-size: 12px;
-    background: var(--panel-2);
-    border-bottom: 1px solid var(--border);
+  }
+
+  .file .caps {
+    font-size: 11px;
   }
 
   .diff {
@@ -250,13 +252,17 @@
   .diff span {
     display: block;
     padding: 0 10px;
+    border-left: 3px solid transparent;
     white-space: pre-wrap;
     word-break: break-word;
   }
 
+  /* Ink for what lands, grey for what goes: a diff that still reads in greyscale. */
   .diff .added {
-    color: var(--ok);
-    background: color-mix(in srgb, var(--ok) 8%, transparent);
+    color: var(--text);
+    font-weight: 600;
+    border-left-color: var(--rule);
+    background: var(--tint);
   }
 
   .diff .context {
@@ -264,8 +270,29 @@
   }
 
   .diff .removed {
-    color: var(--danger);
-    background: color-mix(in srgb, var(--danger) 7%, transparent);
+    color: var(--text-3);
+    text-decoration: line-through;
+    border-left-color: var(--border);
+  }
+
+  /* Tecnica: each learning is a ruled sheet with its title set in Plex Sans. */
+  :global([data-look='tecnica']) .learning {
+    margin-top: 12px;
+    padding: 16px 18px;
+    border: 1.5px solid var(--rule);
+    background: var(--panel);
+  }
+
+  :global([data-look='tecnica']) h3 {
+    font-size: 16px;
+    font-weight: 600;
+    font-stretch: normal;
+  }
+
+  :global([data-look='tecnica']) .meta {
+    font-family: var(--font-num);
+    font-stretch: normal;
+    letter-spacing: 0;
   }
 
   .actions,
@@ -277,7 +304,7 @@
 
   .reject .field {
     flex: 1;
-    height: 32px;
+    height: 34px;
     padding: 0 10px;
   }
 
@@ -286,7 +313,7 @@
     flex-wrap: wrap;
     align-items: center;
     gap: 4px;
-    font-size: 12px;
+    font-size: 12.5px;
   }
 
   .pr {
@@ -294,6 +321,8 @@
     align-items: center;
     gap: 3px;
     margin-left: 4px;
-    color: var(--info);
+    color: var(--text);
+    text-decoration: underline;
+    text-underline-offset: 3px;
   }
 </style>

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { CircleCheck, CircleHelp, GitMerge, Radio, UserRound } from '@lucide/svelte';
   import { post } from '$lib/api';
+  import { look } from '$lib/state/look.svelte';
   import { session } from '$lib/state/session.svelte';
   import { toasts } from '$lib/state/toasts.svelte';
   import type { TaskDetail } from '$lib/types';
@@ -86,11 +87,12 @@
 </script>
 
 {#if task.blocked}
-  <section class="next blocked">
+  <section class="next blocked" class:mine={task.waitingOn.me}>
     <div class="head">
-      <CircleHelp size={18} />
+      {#if task.waitingOn.me && look.current === 'tecnica'}<strong class="you-word">Question</strong
+        >{:else}<CircleHelp size={18} />{/if}
       <div>
-        <div class="kicker">A question for {task.blocked.askedOf}</div>
+        <div class="kicker caps">A question for {task.blocked.askedOf}</div>
         <div class="question"><Markdown source={task.blocked.question} /></div>
       </div>
     </div>
@@ -124,7 +126,7 @@
         <span class="idle"><Radio size={18} /></span>
       {/if}
       <div class="grow">
-        <div class="kicker">Agents</div>
+        <div class="kicker caps">Agents</div>
         <div class="label">{task.waitingOn.label}</div>
       </div>
       {#if can('submit')}
@@ -140,7 +142,7 @@
     <div class="head">
       <GitMerge size={18} />
       <div class="grow">
-        <div class="kicker">{task.autoVerified ? 'Low-risk change' : 'Checked'}</div>
+        <div class="kicker caps">{task.autoVerified ? 'Low-risk change' : 'Checked'}</div>
         {#if task.autoVerified}
           <div class="label">
             Agents and GitHub's checks reviewed it; no person needs to check a change like this.
@@ -190,7 +192,9 @@
 {:else if task.waitingOn.kind === 'people'}
   <section class="next people" class:mine={task.waitingOn.me}>
     <div class="head">
-      {#if task.waitingOn.me}<span class="you">Your turn</span>{:else}<UserRound size={18} />{/if}
+      {#if task.waitingOn.me}<strong class="you-word"
+          >{look.current === 'tecnica' ? 'Your turn' : 'You'}</strong
+        >{:else}<UserRound size={18} />{/if}
       <div class="grow">
         <div class="label">{task.waitingOn.label}</div>
         {#if task.approval}
@@ -277,35 +281,142 @@
   .next {
     display: flex;
     flex-direction: column;
-    gap: 12px;
-    padding: 14px 16px;
-    border-radius: var(--radius);
-    border: 1px solid var(--border);
-    background: var(--panel-2);
+    gap: 14px;
+    padding: 16px 0;
+    border-top: 1px solid var(--rule);
+    border-bottom: 1px solid var(--rule);
   }
 
+  /* Waiting on you: the whole block turns yellow, so it cannot be missed or mistaken. */
   .next.mine {
-    border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
-    background: linear-gradient(135deg, var(--accent-soft), transparent 65%), var(--panel-2);
+    padding: 16px 18px;
+    border: 0;
+    background: var(--accent);
+    color: var(--accent-text);
   }
 
-  .next.blocked {
-    border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
-    background: linear-gradient(135deg, var(--danger-soft), transparent 65%), var(--panel-2);
+  /* A question for you is yellow too, so its text takes the yellow's ink in both themes. */
+  .mine .kicker,
+  .mine :global(.md) {
+    color: var(--accent-text);
   }
 
-  .blocked .head > :global(svg) {
-    color: var(--danger);
+  .mine .approval {
+    color: var(--accent-text);
+    opacity: 0.75;
   }
 
-  .github .head > :global(svg) {
-    color: var(--ok);
+  .mine .btn {
+    border-color: var(--accent-text);
+    color: var(--accent-text);
+  }
+
+  .mine .btn.primary {
+    background: var(--accent-text);
+    color: var(--accent);
+  }
+
+  .mine .btn:hover:not(:disabled) {
+    background: rgba(17, 17, 17, 0.1);
+    border-color: var(--accent-text);
+  }
+
+  .mine .btn.primary:hover:not(:disabled) {
+    background: var(--accent-text);
+    text-decoration: underline;
+  }
+
+  .mine .btn.ghost {
+    border-color: transparent;
+  }
+
+  .mine :global(.field) {
+    background: rgba(255, 255, 255, 0.55);
+    border-bottom-color: var(--accent-text);
+    color: var(--accent-text);
+  }
+
+  .you-word {
+    flex: none;
+    font-size: 22px;
+    font-weight: 800;
+    font-stretch: 75%;
+    line-height: 1;
+  }
+
+  /* Tecnica: every panel is a ruled box, and waiting on you is a yellow tag, not a yellow field. */
+  :global([data-look='tecnica']) .next {
+    padding: 14px 16px;
+    border: 1.5px solid var(--rule);
+    background: var(--panel);
+    color: var(--text);
+  }
+
+  :global([data-look='tecnica']) .mine .kicker,
+  :global([data-look='tecnica']) .mine :global(.md) {
+    color: var(--text);
+  }
+
+  :global([data-look='tecnica']) .mine .approval {
+    color: var(--text-3);
+    opacity: 1;
+  }
+
+  :global([data-look='tecnica']) .mine .btn {
+    border-color: var(--rule);
+    color: var(--text);
+  }
+
+  :global([data-look='tecnica']) .mine .btn.primary {
+    background: var(--rule);
+    color: var(--on-ink);
+  }
+
+  :global([data-look='tecnica']) .mine .btn:hover:not(:disabled) {
+    background: var(--hover);
+    text-decoration: none;
+  }
+
+  :global([data-look='tecnica']) .mine .btn.primary:hover:not(:disabled) {
+    background: var(--text-2);
+  }
+
+  :global([data-look='tecnica']) .mine .btn.ghost {
+    border-color: transparent;
+  }
+
+  :global([data-look='tecnica']) .mine .field {
+    background: var(--panel);
+    border-color: var(--rule);
+    color: var(--text);
+  }
+
+  :global([data-look='tecnica']) .you-word {
+    padding: 2px 7px;
+    background: var(--accent);
+    color: var(--accent-text);
+    font-family: var(--font-display);
+    font-size: 13px;
+    font-weight: 700;
+    font-stretch: normal;
+    letter-spacing: 0.04em;
+    line-height: 1.4;
+    text-transform: uppercase;
+  }
+
+  :global([data-look='tecnica']) .label {
+    font-size: 14px;
+    font-weight: 500;
   }
 
   .head {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 14px;
+  }
+
+  .head > :global(svg) {
+    flex: none;
   }
 
   .blocked .head {
@@ -318,49 +429,37 @@
   }
 
   .kicker {
-    font-size: 11px;
-    font-weight: 650;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--text-3);
+    font-weight: 700;
+    color: var(--text-2);
   }
 
   .label {
-    font-weight: 560;
+    font-size: 15px;
+    font-weight: 600;
   }
 
   .question :global(.md) {
-    font-size: 13.5px;
+    font-size: 14px;
   }
 
   .agents {
     display: inline-flex;
-    gap: 6px;
+    gap: 4px;
   }
 
   .idle {
     color: var(--text-3);
   }
 
-  .you {
-    flex: none;
-    padding: 3px 9px;
-    border-radius: 999px;
-    font-size: 11.5px;
-    font-weight: 700;
-    color: var(--accent-text);
-    background: var(--accent);
-  }
-
   .approval {
-    font-size: 12px;
+    font-size: 12.5px;
     margin-top: 2px;
   }
 
   form {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 10px;
   }
 
   .buttons {
@@ -371,25 +470,25 @@
   }
 
   .cancel {
-    margin-top: 10px;
+    margin-top: 12px;
   }
 
   .cancel-row {
     display: flex;
     justify-content: flex-end;
-    margin-top: 6px;
+    margin-top: 8px;
   }
 
   .inline {
-    color: var(--info);
     text-decoration: underline;
+    text-underline-offset: 3px;
   }
 
   .link {
     border: 0;
     background: none;
     padding: 2px 0;
-    font-size: 12px;
+    font-size: 12.5px;
     color: var(--text-3);
   }
 

@@ -7,6 +7,7 @@
   import Toasts from '$lib/components/Toasts.svelte';
   import { board } from '$lib/state/board.svelte';
   import { live } from '$lib/state/live.svelte';
+  import { look } from '$lib/state/look.svelte';
   import { session } from '$lib/state/session.svelte';
   import { toasts } from '$lib/state/toasts.svelte';
 
@@ -37,6 +38,10 @@
     } catch {
       // The theme then lasts for this visit only.
     }
+  });
+
+  $effect(() => {
+    document.documentElement.dataset.look = look.current;
   });
 
   const cycleTheme = () =>
@@ -107,7 +112,6 @@
     min-width: 0;
     height: 100dvh;
     overflow: hidden;
-    background: radial-gradient(1200px 380px at 30% -120px, var(--bg-glow), transparent 70%);
   }
 
   .state {
@@ -121,16 +125,16 @@
 
   .state h1 {
     margin: 0;
-    font-size: 18px;
+    font-size: 32px;
+    font-weight: 800;
+    font-stretch: 75%;
   }
 
   .loader {
-    width: 22px;
-    height: 22px;
-    border-radius: 50%;
-    border: 2px solid var(--border-strong);
-    border-top-color: var(--accent);
-    animation: spin 0.8s linear infinite;
+    width: 14px;
+    height: 14px;
+    background: var(--text);
+    animation: signal 1s ease-in-out infinite;
   }
 
   @media (max-width: 720px) {

@@ -89,9 +89,19 @@
   }
 
   label span {
-    font-size: 12.5px;
-    font-weight: 600;
+    font-size: 11.5px;
+    font-stretch: 85%;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
     color: var(--text-2);
+  }
+
+  :global([data-look='tecnica']) label span {
+    font-family: var(--font-display);
+    font-size: 12.5px;
+    font-stretch: normal;
+    font-weight: 600;
   }
 
   .check {
@@ -103,12 +113,15 @@
 
   .check input {
     margin-top: 3px;
-    accent-color: var(--accent);
+    accent-color: var(--text);
   }
 
   .check > span {
-    font-size: 13px;
-    font-weight: 450;
+    font-size: 14px;
+    font-weight: 400;
+    font-stretch: 100%;
+    letter-spacing: 0;
+    text-transform: none;
     color: var(--text);
   }
 </style>

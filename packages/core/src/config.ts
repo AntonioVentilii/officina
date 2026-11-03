@@ -1,6 +1,10 @@
 import { z } from 'zod';
 import { compileLaneMatcher, type Lane, type LaneMatcher } from './lanes';
 
+/** The board's two looks. A member's own pick wins over the project's default. */
+export const BOARD_LOOKS = ['modernista', 'tecnica'] as const;
+export type BoardLook = (typeof BOARD_LOOKS)[number];
+
 const requirementSchema = z.union([
   z.strictObject({ role: z.enum(['maintainer', 'owner']) }),
   z.strictObject({ domain: z.string().min(1), when: z.literal('user_visible').optional() }),
@@ -70,6 +74,12 @@ const projectConfigSchema = z
         allowed_hosts: z.array(z.string().min(1)).optional()
       })
       .optional(),
+    board: z
+      .strictObject({
+        /** The look members see until they pick their own. Left out, it is modernista. */
+        look: z.enum(BOARD_LOOKS).optional()
+      })
+      .optional(),
     lanes: z
       .strictObject({
         red: laneSchema.optional(),
@@ -111,6 +121,7 @@ export interface ProjectConfig {
   readonly release: { readonly onMerge: ReleaseOnMerge };
   readonly runtime: { readonly allowedHosts: readonly string[] };
   readonly pullRequest: { readonly titlePattern: string | null };
+  readonly board: { readonly look: BoardLook };
   readonly lanes: Readonly<Record<Lane, LaneSettings>>;
   readonly laneMatcher: LaneMatcher;
 }
@@ -195,6 +206,7 @@ export const parseProjectConfig = (input: unknown): ConfigResult => {
       release: { onMerge: raw.release?.on_merge ?? 'production' },
       runtime: { allowedHosts: raw.runtime?.allowed_hosts ?? [] },
       pullRequest: { titlePattern: raw.pull_request?.title_pattern ?? null },
+      board: { look: raw.board?.look ?? 'modernista' },
       lanes: {
         green: normalizeLane('green', raw.lanes?.green),
         standard: normalizeLane('standard', raw.lanes?.standard),

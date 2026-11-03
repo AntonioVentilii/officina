@@ -24,7 +24,7 @@
       </div>
       <p class="rationale">{plan.rationale}</p>
     </div>
-    <span class="depth {plan.depth}" title="How closely to check">
+    <span class="depth caps" title="How closely to check">
       <DepthIcon size={13} />{plan.depthLabel}
     </span>
   </div>
@@ -57,14 +57,11 @@
 
 <style>
   .plan {
-    padding: 14px 16px;
-    border-radius: var(--radius);
-    border: 1px solid var(--border);
-    background: var(--panel);
+    padding: 4px 0 0;
   }
 
   .stale {
-    opacity: 0.7;
+    opacity: 0.6;
   }
 
   .head {
@@ -81,59 +78,41 @@
   .who {
     display: flex;
     align-items: center;
-    gap: 6px;
-    font-size: 12.5px;
-    font-weight: 600;
+    gap: 10px;
+    font-size: 13.5px;
+    font-weight: 700;
   }
 
   .rationale {
-    margin: 3px 0 0;
-    font-size: 13px;
+    margin: 4px 0 0;
+    font-size: 13.5px;
     line-height: 1.5;
   }
 
   .depth {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
+    gap: 6px;
     flex: none;
-    padding: 3px 8px;
-    border-radius: 999px;
-    font-size: 11.5px;
-    font-weight: 600;
+    font-weight: 700;
     white-space: nowrap;
-  }
-
-  .depth.glance {
-    color: var(--ok);
-    background: var(--ok-soft);
-  }
-
-  .depth.test {
-    color: var(--info);
-    background: var(--info-soft);
-  }
-
-  .depth.device {
-    color: var(--warn);
-    background: var(--warn-soft);
   }
 
   ul {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    margin: 12px 0 0;
-    padding: 12px 0 0 34px;
+    margin: 14px 0 0;
+    padding: 0 0 0 34px;
     list-style: none;
-    border-top: 1px solid var(--border);
   }
 
   li {
     display: flex;
     align-items: flex-start;
-    gap: 8px;
-    font-size: 12.5px;
+    gap: 10px;
+    padding: 9px 0;
+    border-top: 1px solid var(--border);
+    font-size: 13px;
     line-height: 1.5;
   }
 
@@ -145,10 +124,6 @@
     flex: none;
   }
 
-  .icon.added {
-    color: var(--accent);
-  }
-
   @media (max-width: 640px) {
     .head {
       flex-wrap: wrap;
@@ -156,7 +131,6 @@
 
     ul {
       padding-left: 0;
-      margin-left: 0;
     }
   }
 </style>

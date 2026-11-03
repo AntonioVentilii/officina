@@ -1,6 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { post } from '$lib/api';
+  import Logo from '$lib/components/Logo.svelte';
   import { session } from '$lib/state/session.svelte';
 
   let status = $state<'working' | 'no-link' | 'failed'>('working');
@@ -50,11 +51,8 @@
 
 <div class="page">
   <div class="card">
-    <svg viewBox="0 0 32 32" width="40" height="40" aria-hidden="true">
-      <rect width="32" height="32" rx="8" fill="var(--panel-3)" />
-      <path d="M8 13h13l3-3h2v4l-3 2H19v3l3 5H10l3-5v-3H8z" fill="var(--accent)" />
-    </svg>
-    <h1>Officina</h1>
+    <Logo size={48} />
+    <h1 class="page-title">Officina</h1>
     {#if status === 'working'}
       <p class="muted">Signing you in…</p>
     {:else if status === 'failed'}
@@ -82,48 +80,48 @@
 </div>
 
 <style>
+  :global([data-look='tecnica']) .card {
+    padding: 24px;
+    border: 1.5px solid var(--rule);
+    background: var(--panel);
+  }
+
   .page {
     display: grid;
     place-items: center;
     min-height: 100dvh;
     padding: 24px;
-    background: radial-gradient(900px 420px at 50% -80px, var(--bg-glow), transparent 70%);
   }
 
   .card {
     display: flex;
     flex-direction: column;
-    align-items: center;
-    gap: 4px;
-    width: min(380px, 100%);
-    padding: 32px 28px;
-    border-radius: var(--radius-lg);
-    background: var(--panel);
-    border: 1px solid var(--border);
-    box-shadow: var(--shadow-lg);
-    text-align: center;
+    align-items: flex-start;
+    gap: 6px;
+    width: min(420px, 100%);
+    padding: 28px 0 0;
+    border-top: 6px solid var(--rule);
   }
 
   h1 {
-    margin: 10px 0 2px;
-    font-size: 20px;
-    letter-spacing: -0.02em;
+    margin: 18px 0 14px;
   }
 
   p {
-    margin: 4px 0;
+    margin: 2px 0;
   }
 
   .github {
-    margin-top: 10px;
+    margin: 12px 0 4px;
   }
 
   .error {
     color: var(--danger);
+    font-weight: 600;
   }
 
   .small {
-    font-size: 12px;
+    font-size: 12.5px;
     line-height: 1.6;
   }
 
@@ -131,7 +129,6 @@
     font-family: var(--font-mono);
     font-size: 11.5px;
     padding: 1px 4px;
-    border-radius: 4px;
-    background: var(--panel-3);
+    background: var(--tint);
   }
 </style>

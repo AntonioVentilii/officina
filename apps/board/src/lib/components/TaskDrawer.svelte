@@ -139,9 +139,9 @@
   {:else}
     <header>
       <div class="bar">
-        <span class="number mono">#{task.number}</span>
+        <span class="number caps num">#{task.number}</span>
         <span class="pill">{STAGE_LABELS[task.stage]}</span>
-        <LaneChip lane={task.lane} />
+        <LaneChip lane={task.lane} showStandard named />
         <span class="spacer"></span>
         {#if session.technical && task.pullRequestUrl}
           <a class="btn sm" href={task.pullRequestUrl} target="_blank" rel="noopener noreferrer">
@@ -175,7 +175,7 @@
         {#if tab === 'overview'}
           {#if task.request}
             <section>
-              <h3>Request</h3>
+              <h3 class="caps">Request</h3>
               <div class="request">
                 <div class="who">
                   <MemberAvatar name={task.request.author} size={22} />
@@ -191,7 +191,7 @@
 
           {#if task.checklist?.checklist?.length && (task.stage === 'verifying' || session.technical)}
             <section>
-              <h3>What to check</h3>
+              <h3 class="caps">What to check</h3>
               <Checklist
                 items={task.checklist.checklist}
                 beforeAfter={task.checklist.beforeAfter ?? []}
@@ -202,14 +202,14 @@
 
           {#if task.plan}
             <details class="more">
-              <summary>Who approves, and why</summary>
+              <summary class="caps">Who approves, and why</summary>
               <ApprovalPlan plan={task.plan} />
             </details>
           {/if}
 
           {#if session.technical && learned.length}
             <section>
-              <h3>What Officina learned from it</h3>
+              <h3 class="caps">What Officina learned from it</h3>
               <div class="learned">
                 {#each learned as learning (learning.id)}
                   <LearningCard {learning} compact />
@@ -219,7 +219,7 @@
           {/if}
 
           <details class="more">
-            <summary>Details</summary>
+            <summary class="caps">Details</summary>
             <dl class="facts">
               <dt>Requester</dt>
               <dd><MemberAvatar name={task.requester} size={18} />{task.requester}</dd>
@@ -228,7 +228,7 @@
               <dt>In this stage</dt>
               <dd>since {ago(task.stageSince, clock.now)}</dd>
               <dt>Risk</dt>
-              <dd><LaneChip lane={task.lane} showStandard /></dd>
+              <dd><LaneChip lane={task.lane} showStandard named /></dd>
               <dt>Changes what people see</dt>
               <dd>{task.userVisible ? 'Yes' : 'No'}</dd>
               {#if task.pullRequestUrl}
@@ -332,7 +332,6 @@
     inset: 0;
     z-index: 20;
     background: var(--backdrop);
-    backdrop-filter: blur(2px);
     animation: fade 0.2s var(--ease);
   }
 
@@ -344,27 +343,29 @@
     z-index: 21;
     display: flex;
     flex-direction: column;
-    width: min(760px, 100vw);
+    width: min(780px, 100vw);
     background: var(--bg);
-    border-left: 1px solid var(--border-strong);
-    box-shadow: var(--shadow-lg);
+    border-left: 1px solid var(--rule);
     animation: enter 0.28s var(--ease);
   }
 
   header {
-    padding: 14px 22px 16px;
-    border-bottom: 1px solid var(--border);
-    background: var(--panel);
+    padding: 18px 28px 22px;
+    border-bottom: 3px solid var(--rule);
   }
 
   .bar {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 14px;
   }
 
   .number {
-    color: var(--text-3);
+    font-size: 12px;
+    font-weight: 800;
+  }
+
+  .bar > :global(.lane) {
     font-size: 13px;
   }
 
@@ -373,11 +374,12 @@
   }
 
   h1 {
-    margin: 10px 0 18px;
-    font-size: 20px;
-    font-weight: 650;
-    line-height: 1.3;
-    letter-spacing: -0.015em;
+    margin: 14px 0 22px;
+    font-size: 36px;
+    font-weight: 800;
+    font-stretch: 75%;
+    line-height: 1.02;
+    letter-spacing: -0.01em;
   }
 
   .scroll {
@@ -386,7 +388,7 @@
   }
 
   .next {
-    padding: 18px 22px 4px;
+    padding: 22px 28px 6px;
   }
 
   .tabs {
@@ -394,23 +396,24 @@
     top: 0;
     z-index: 2;
     display: flex;
-    gap: 2px;
-    padding: 10px 22px 0;
+    gap: 22px;
+    padding: 14px 28px 0;
     background: var(--bg);
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--rule);
   }
 
   .tabs button {
     display: inline-flex;
-    align-items: center;
+    align-items: baseline;
     gap: 6px;
-    padding: 8px 10px 10px;
+    padding: 6px 0 8px;
     border: 0;
-    border-bottom: 2px solid transparent;
+    border-bottom: 3px solid transparent;
+    margin-bottom: -1px;
     background: none;
     color: var(--text-2);
-    font-weight: 550;
-    font-size: 13px;
+    font-weight: 600;
+    font-size: 14px;
   }
 
   .tabs button:hover {
@@ -419,74 +422,73 @@
 
   .tabs button.on {
     color: var(--text);
-    border-bottom-color: var(--accent);
+    border-bottom-color: var(--rule);
   }
 
   .count {
-    padding: 0 6px;
-    border-radius: 999px;
-    font-size: 11px;
-    background: var(--panel-3);
-    color: var(--text-2);
+    font-weight: 300;
+    font-stretch: 75%;
+    font-size: 15px;
   }
 
   .content {
-    padding: 18px 22px 40px;
+    padding: 22px 28px 48px;
   }
 
   section + section,
   section + .more,
   .more + .more {
-    margin-top: 26px;
+    margin-top: 30px;
   }
 
   .more > summary {
     cursor: pointer;
-    font-size: 11.5px;
-    font-weight: 650;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--text-3);
+    font-weight: 700;
+    color: var(--text-2);
+  }
+
+  .more > summary:hover {
+    color: var(--text);
   }
 
   .more[open] > summary {
-    margin-bottom: 10px;
+    margin-bottom: 12px;
   }
 
   h3 {
-    margin: 0 0 10px;
-    font-size: 11.5px;
-    font-weight: 650;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--text-3);
-  }
-
-  .request {
-    padding: 12px 16px;
-    border-radius: var(--radius);
-    border: 1px solid var(--border);
-    background: var(--panel);
+    margin: 0 0 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--rule);
+    font-weight: 700;
   }
 
   .who {
     display: flex;
     align-items: center;
     gap: 8px;
-    margin-bottom: 4px;
-    font-size: 12.5px;
+    margin-bottom: 6px;
+    font-size: 13px;
   }
 
   .facts {
     display: grid;
-    grid-template-columns: 170px 1fr;
-    gap: 9px 12px;
+    grid-template-columns: 180px 1fr;
     margin: 0;
-    font-size: 13px;
+    font-size: 13.5px;
+  }
+
+  dt,
+  dd {
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
   }
 
   dt {
-    color: var(--text-3);
+    font-size: 11.5px;
+    font-stretch: 85%;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-2);
   }
 
   dd {
@@ -497,71 +499,60 @@
   }
 
   .link {
-    color: var(--info);
+    text-decoration: underline;
+    text-underline-offset: 3px;
   }
 
   .spec-head {
     display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 12px;
-    font-size: 12.5px;
+    align-items: baseline;
+    gap: 18px;
+    margin-bottom: 14px;
+    font-size: 13px;
   }
 
   .versions {
     display: inline-flex;
-    padding: 2px;
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--border);
+    gap: 12px;
   }
 
   .versions button {
-    height: 24px;
-    padding: 0 9px;
+    padding: 2px 0 4px;
     border: 0;
-    border-radius: 5px;
+    border-bottom: 3px solid transparent;
     background: none;
     color: var(--text-2);
-    font-size: 12px;
+    font-weight: 600;
+    font-size: 13px;
   }
 
   .versions button.on {
-    background: var(--panel-3);
     color: var(--text);
+    border-bottom-color: var(--rule);
   }
 
   .spec {
-    padding: 20px 24px;
-    border-radius: var(--radius);
-    border: 1px solid var(--border);
-    background: var(--panel);
+    padding-top: 6px;
   }
 
-  .learned {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
+  .learned,
   .runs {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    border-top: 1px solid var(--rule);
   }
 
   .empty {
-    padding: 28px;
-    border: 1px dashed var(--border);
-    border-radius: var(--radius);
-    text-align: center;
+    margin: 0;
+    padding: 24px 0;
     color: var(--text-3);
   }
 
   .composer {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    margin-top: 16px;
+    gap: 10px;
+    margin-top: 18px;
     padding-left: 36px;
   }
 
@@ -576,20 +567,18 @@
   .missing {
     display: flex;
     flex-direction: column;
-    gap: 12px;
-    padding: 24px;
+    gap: 14px;
+    padding: 28px;
   }
 
   .sk {
     height: 14px;
-    border-radius: 5px;
-    background: linear-gradient(90deg, var(--panel-2), var(--panel-3), var(--panel-2));
-    background-size: 200% 100%;
-    animation: shimmer 1.4s linear infinite;
+    background: var(--tint);
+    animation: signal 1.4s ease-in-out infinite;
   }
 
   .sk.tall {
-    height: 24px;
+    height: 32px;
   }
 
   .w30 {
@@ -603,6 +592,66 @@
   .w100 {
     width: 100%;
     height: 120px;
+  }
+
+  /* Tecnica: the task is a drawing sheet, a ruled header over the paper. */
+  :global([data-look='tecnica']) .drawer {
+    border-left-width: 1.5px;
+  }
+
+  :global([data-look='tecnica']) header {
+    padding: 16px 28px 20px;
+    background: var(--panel);
+    border-bottom-width: 1.5px;
+  }
+
+  :global([data-look='tecnica']) .number {
+    font-weight: 400;
+  }
+
+  :global([data-look='tecnica']) h1 {
+    margin: 12px 0 20px;
+    font-size: 24px;
+    font-weight: 600;
+    font-stretch: normal;
+    line-height: 1.25;
+    letter-spacing: 0;
+  }
+
+  :global([data-look='tecnica']) .tabs {
+    background: var(--bg);
+    border-bottom-width: 1.5px;
+  }
+
+  :global([data-look='tecnica']) .tabs button {
+    font-family: var(--font-display);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    font-size: 13px;
+  }
+
+  :global([data-look='tecnica']) .count {
+    font-family: var(--font-num);
+    font-weight: 400;
+    font-size: 12px;
+  }
+
+  :global([data-look='tecnica']) h3 {
+    border-bottom-width: 1.5px;
+  }
+
+  :global([data-look='tecnica']) dt {
+    font-size: 11px;
+    font-stretch: normal;
+    letter-spacing: 0.02em;
+    font-family: var(--font-num);
+  }
+
+  :global([data-look='tecnica']) .spec {
+    padding: 20px 24px;
+    border: 1.5px solid var(--rule);
+    background: var(--panel);
   }
 
   @keyframes enter {
@@ -626,17 +675,17 @@
       padding-right: 16px;
     }
 
+    h1 {
+      font-size: 28px;
+    }
+
     .tabs {
-      padding: 8px 16px 0;
+      padding: 10px 16px 0;
       overflow-x: auto;
     }
 
     .facts {
-      grid-template-columns: 110px 1fr;
-    }
-
-    .spec {
-      padding: 14px 16px;
+      grid-template-columns: 120px 1fr;
     }
 
     .composer {

@@ -1,13 +1,16 @@
 <script lang="ts">
+  import { look } from '$lib/state/look.svelte';
   import type { Lane } from '$lib/types';
 
   interface Props {
     lane: Lane | null;
     /** Standard is the usual case, so it is only named where people look for it. */
     showStandard?: boolean;
+    /** Writes the lane's name next to the marker, where there is room for it. */
+    named?: boolean;
   }
 
-  let { lane, showStandard = false }: Props = $props();
+  let { lane, showStandard = false, named = false }: Props = $props();
 
   const LABELS: Record<Lane, string> = {
     green: 'Low risk',
@@ -22,39 +25,66 @@
 </script>
 
 {#if lane && (lane !== 'standard' || showStandard)}
-  <span class="lane {lane}" title={TITLES[lane]}><span class="dot"></span>{LABELS[lane]}</span>
+  <span class="lane" class:tecnica={look.current === 'tecnica'} title={TITLES[lane]}>
+    {#if named}
+      <span class="mark {lane}" aria-hidden="true"></span><span>{LABELS[lane]}</span>
+    {:else}
+      <span class="mark {lane}" role="img" aria-label={LABELS[lane]}></span>
+    {/if}
+  </span>
 {/if}
 
 <style>
   .lane {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
-    height: 18px;
-    padding: 0 6px;
-    border-radius: 999px;
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--c);
-    background: color-mix(in srgb, var(--c) 12%, transparent);
+    gap: 7px;
   }
 
-  .dot {
-    width: 6px;
-    height: 6px;
+  /* Risk reads as a fill level: an empty ring, half full, full. */
+  .mark {
+    position: relative;
+    flex: none;
+    width: 11px;
+    height: 11px;
     border-radius: 50%;
-    background: var(--c);
+    border: 2px solid currentColor;
+    overflow: hidden;
   }
 
-  .green {
-    --c: var(--lane-green);
-  }
-
-  .standard {
-    --c: var(--lane-standard);
+  .standard::after {
+    content: '';
+    position: absolute;
+    inset: 0 50% 0 0;
+    background: currentColor;
   }
 
   .red {
-    --c: var(--lane-red);
+    background: currentColor;
+  }
+
+  /* Tecnica marks risk by hatching: an open box, vertical ruling, red cross-hatching. */
+  .tecnica .mark {
+    width: 22px;
+    height: 11px;
+    border-radius: 0;
+    border-width: 1.5px;
+  }
+
+  .tecnica .standard {
+    background: repeating-linear-gradient(90deg, currentColor 0 1.5px, transparent 1.5px 5px);
+  }
+
+  .tecnica .standard::after {
+    content: none;
+  }
+
+  .tecnica .red {
+    color: var(--danger);
+    background: repeating-linear-gradient(45deg, currentColor 0 1.5px, transparent 1.5px 4px);
+  }
+
+  .tecnica:has(.red) {
+    color: var(--danger);
   }
 </style>

@@ -24,7 +24,10 @@ export interface Project {
   readonly repo: string;
   readonly role: Role;
   readonly domains: readonly string[];
+  readonly look: Look;
 }
+
+export type Look = 'modernista' | 'tecnica';
 
 export interface Me {
   readonly member: { readonly id: string; readonly name: string; readonly email: string };
