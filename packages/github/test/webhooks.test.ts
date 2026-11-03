@@ -82,13 +82,14 @@ describe('webhook events', () => {
   });
 
   test('a submitted review that may want changes, with who left it', () => {
-    const review = (state: string, type = 'Bot') => ({
+    const review = (state: string, type = 'Bot', association = 'NONE') => ({
       action: 'submitted',
       review: {
         id: 11,
         state,
         body: 'Pull request overview',
         commit_id: 'abc',
+        author_association: association,
         user: { login: 'copilot-pull-request-reviewer[bot]', type }
       },
       pull_request: { number: 7 },
@@ -106,8 +107,13 @@ describe('webhook events', () => {
       body: 'Pull request overview'
     });
     expect(
-      parseWebhookEvent('pull_request_review', review('changes_requested', 'User'))
+      parseWebhookEvent('pull_request_review', review('changes_requested', 'User', 'COLLABORATOR'))
     ).toMatchObject({ bot: false, state: 'changes_requested' });
+    // A stranger's review on a public repository must not become the builder's brief.
+    for (const association of ['NONE', 'CONTRIBUTOR', 'FIRST_TIME_CONTRIBUTOR', undefined])
+      expect(
+        parseWebhookEvent('pull_request_review', review('changes_requested', 'User', association))
+      ).toBeNull();
     expect(parseWebhookEvent('pull_request_review', review('approved'))).toBeNull();
     expect(
       parseWebhookEvent('pull_request_review', { ...review('commented'), action: 'dismissed' })

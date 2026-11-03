@@ -43,6 +43,7 @@ export type WebhookAction =
     };
 
 const FAILED_CONCLUSIONS = new Set(['failure', 'timed_out', 'action_required', 'startup_failure']);
+const TRUSTED_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
 
 interface RepoPayload {
   repository?: { full_name?: string };
@@ -98,6 +99,7 @@ export const parseWebhookEvent = (event: string | null, payload: unknown): Webho
         state?: string;
         body?: string | null;
         commit_id?: string;
+        author_association?: string;
         user?: { login?: string; type?: string };
       };
       pull_request?: { number?: number };
@@ -109,6 +111,11 @@ export const parseWebhookEvent = (event: string | null, payload: unknown): Webho
     const state = review.state?.toLowerCase();
     if (state !== 'commented' && state !== 'changes_requested') return null;
     if (!body.pull_request?.number) return null;
+    const bot = review.user.type === 'Bot';
+    // Anyone on GitHub can review a pull request on a public repository, and a review becomes the
+    // builder's next brief. Only people who already hold standing on the repository may steer it; a
+    // bot can only review where an admin installed it.
+    if (!bot && !TRUSTED_ASSOCIATIONS.has(review.author_association ?? '')) return null;
     return {
       kind: 'pull_request_reviewed',
       repo,
@@ -116,7 +123,7 @@ export const parseWebhookEvent = (event: string | null, payload: unknown): Webho
       reviewId: review.id,
       commitId: review.commit_id,
       by: review.user.login,
-      bot: review.user.type === 'Bot',
+      bot,
       state,
       body: review.body ?? ''
     };
