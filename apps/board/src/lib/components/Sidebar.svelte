@@ -104,7 +104,7 @@
           aria-pressed={look.current === item.id}
           onclick={() => look.choose(item.id)}
         >
-          <Logo look={item.id} size={14} tile />{item.label}
+          <Logo look={item.id} size={14} />{item.label}
         </button>
       {/each}
     </div>

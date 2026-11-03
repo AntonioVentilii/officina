@@ -51,7 +51,7 @@
 
 <div class="page">
   <div class="card">
-    <Logo size={48} tile />
+    <Logo size={48} />
     <h1 class="page-title">Officina</h1>
     {#if status === 'working'}
       <p class="muted">Signing you in…</p>
