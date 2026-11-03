@@ -102,7 +102,11 @@
         <button
           class:on={look.current === item.id}
           aria-pressed={look.current === item.id}
-          onclick={() => look.choose(item.id)}
+          disabled={look.switching}
+          onclick={(event) => {
+            const box = event.currentTarget.getBoundingClientRect();
+            look.choose(item.id, { x: box.left + box.width / 2, y: box.top + box.height / 2 });
+          }}
         >
           <Logo look={item.id} size={14} />{item.label}
         </button>
@@ -328,6 +332,11 @@
 
   .looks button:hover {
     color: var(--nav-text);
+  }
+
+  /* Locked only while the looks swap: dimming it would show up in the animation itself. */
+  .looks button:disabled {
+    cursor: progress;
   }
 
   .looks button.on {

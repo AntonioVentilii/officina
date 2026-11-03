@@ -512,6 +512,14 @@ textarea.field {
   }
 }
 
+/* Switching looks: the new look is revealed over the old one by an animation the look state runs,
+   so neither snapshot gets the default cross-fade. */
+:root[data-look-switching]::view-transition-old(root),
+:root[data-look-switching]::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
