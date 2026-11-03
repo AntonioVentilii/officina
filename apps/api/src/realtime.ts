@@ -18,6 +18,9 @@ export interface RealtimeHub {
 type Notification = { kind: 'task'; taskId: string } | { kind: 'run'; runId: string };
 
 const RECONNECT_MS = 2_000;
+// Something between the API and Fly Postgres drops a connection idle for 30 minutes, and a client
+// that only listens looks idle. A trivial query every few minutes keeps it open.
+const KEEPALIVE_MS = 5 * 60_000;
 
 /**
  * Listens to the database's change channel and fans each change out to open boards. A task or run
@@ -27,6 +30,7 @@ export const startRealtime = async (input: {
   connectionString: string;
   pool: Pool;
   log: (message: string, details?: Record<string, unknown>) => void;
+  keepaliveMs?: number;
 }): Promise<RealtimeHub> => {
   const listeners = new Set<(event: BoardEvent) => void>();
   const taskPlaces = new Map<string, { projectId: string; number: number } | null>();
@@ -59,7 +63,10 @@ export const startRealtime = async (input: {
 
   const connect = async (): Promise<void> => {
     if (closed) return;
-    const next = new Client({ connectionString: input.connectionString });
+    const next = new Client({
+      connectionString: input.connectionString,
+      application_name: 'officina-realtime'
+    });
     next.on('notification', (message) => {
       emit(message.payload).catch((error: unknown) =>
         input.log('realtime event dropped', { error: (error as Error).message })
@@ -83,6 +90,11 @@ export const startRealtime = async (input: {
   };
 
   await connect();
+  // A failed ping needs no handling here: a dead connection also emits 'error', which reconnects.
+  const keepalive = setInterval(
+    () => void client?.query('select 1').catch(() => {}),
+    input.keepaliveMs ?? KEEPALIVE_MS
+  );
 
   return {
     subscribe: (listener) => {
@@ -91,6 +103,7 @@ export const startRealtime = async (input: {
     },
     close: async () => {
       closed = true;
+      clearInterval(keepalive);
       await client?.end().catch(() => {});
     }
   };

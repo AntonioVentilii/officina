@@ -379,4 +379,26 @@ describe.skipIf(!url)('board api', () => {
       await hub.close();
     }
   });
+
+  test('the listening connection is pinged so it never looks idle', async () => {
+    const hub = await startRealtime({
+      connectionString: url!,
+      pool,
+      log: () => {},
+      keepaliveMs: 20
+    });
+    try {
+      let last: string | undefined;
+      for (let attempt = 0; attempt < 50 && last !== 'select 1'; attempt++) {
+        await Bun.sleep(20);
+        const { rows } = await pool.query<{ query: string }>(
+          "select query from pg_stat_activity where application_name = 'officina-realtime'"
+        );
+        last = rows[0]?.query;
+      }
+      expect(last).toBe('select 1');
+    } finally {
+      await hub.close();
+    }
+  });
 });
