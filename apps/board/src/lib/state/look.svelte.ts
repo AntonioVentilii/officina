@@ -1,3 +1,4 @@
+import { flushSync } from 'svelte';
 import type { Look } from '$lib/types';
 import { session } from './session.svelte';
 
@@ -28,13 +29,54 @@ class LookState {
     this.chosen ?? (isLook(session.project?.look) ? session.project.look : 'modernista')
   );
 
-  choose(look: Look) {
-    this.chosen = look;
-    try {
-      localStorage.setItem(LOOK_KEY, look);
-    } catch {
-      // The look then lasts for this visit only.
+  /** True while the page animates from one look to the other; picks wait until it is done. */
+  switching = $state(false);
+
+  /** `from` is where the pick happened: the new look grows out of it in a circle. */
+  choose(look: Look, from?: { x: number; y: number }) {
+    if (this.switching || look === this.current) return;
+    const apply = () => {
+      // The view transition snapshots the page right after this returns, so every component and
+      // the layout's data-look effect must already show the new look.
+      flushSync(() => (this.chosen = look));
+      try {
+        localStorage.setItem(LOOK_KEY, look);
+      } catch {
+        // The look then lasts for this visit only.
+      }
+    };
+    const root = document.documentElement;
+    if (
+      typeof document.startViewTransition !== 'function' ||
+      matchMedia('(prefers-reduced-motion: reduce)').matches
+    ) {
+      apply();
+      return;
     }
+    this.switching = true;
+    root.dataset.lookSwitching = '';
+    const x = from?.x ?? innerWidth / 2;
+    const y = from?.y ?? innerHeight / 2;
+    const radius = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y));
+    const transition = document.startViewTransition(apply);
+    transition.ready
+      .then(() =>
+        root.animate(
+          { clipPath: [`circle(0 at ${x}px ${y}px)`, `circle(${radius}px at ${x}px ${y}px)`] },
+          {
+            duration: 700,
+            easing: 'cubic-bezier(0.65, 0, 0.35, 1)',
+            pseudoElement: '::view-transition-new(root)'
+          }
+        )
+      )
+      .catch(() => {});
+    transition.finished
+      .finally(() => {
+        delete root.dataset.lookSwitching;
+        this.switching = false;
+      })
+      .catch(() => {});
   }
 }
 
