@@ -24,7 +24,7 @@ import {
   setRunExternalId,
   startRun
 } from '@officina/db';
-import type { GitHubClient } from '@officina/github';
+import type { GitHubClient, RefSnapshot, RepoRef } from '@officina/github';
 import {
   executeRun,
   type ManagedAgentsPort,
@@ -38,7 +38,10 @@ import { postChecklist, syncSpecStatus, taskLink, type SyncGitHubPort } from './
 
 export { taskLink };
 
-export type GitHubPort = Pick<GitHubClient, 'installationToken' | 'openPullRequest'> &
+export type GitHubPort = Pick<
+  GitHubClient,
+  'installationToken' | 'openPullRequest' | 'refSnapshot' | 'isPullRequestMerge'
+> &
   SyncGitHubPort;
 
 export interface EngineDependencies {
@@ -120,6 +123,41 @@ const sameWork = (seen: Task) => (current: Task) =>
   !current.blocked &&
   !current.paused;
 
+/**
+ * What changed outside the task's own branch while a builder held a token that can write any ref.
+ * The default branch may move forward by a pull request merged meanwhile, which went through the
+ * branch rules; any other move, and any tag created, moved or deleted, is reported.
+ */
+const refChanges = async (
+  github: GitHubPort,
+  ref: RepoRef & { readonly defaultBranch: string },
+  before: RefSnapshot,
+  after: RefSnapshot
+): Promise<string[]> => {
+  const changes: string[] = [];
+  if (
+    before.defaultHead !== after.defaultHead &&
+    !(await github.isPullRequestMerge({
+      ...ref,
+      sha: after.defaultHead,
+      base: ref.defaultBranch,
+      since: before.defaultHead
+    }))
+  ) {
+    changes.push(
+      `${ref.defaultBranch} moved from ${before.defaultHead.slice(0, 7)} to ${after.defaultHead.slice(0, 7)}`
+    );
+  }
+  for (const [tag, sha] of Object.entries(after.tags)) {
+    if (!(tag in before.tags)) changes.push(`tag ${tag} was created`);
+    else if (before.tags[tag] !== sha) changes.push(`tag ${tag} was moved`);
+  }
+  for (const tag of Object.keys(before.tags)) {
+    if (!(tag in after.tags)) changes.push(`tag ${tag} was deleted`);
+  }
+  return changes;
+};
+
 const blockTask = async (pool: Pool, taskId: string, question: string) => {
   await applyCommand(pool, {
     taskId,
@@ -180,6 +218,9 @@ export const runAgentStep = async (
     const token = await deps.github.installationToken(repoRef, {
       contents: role === 'builder' ? 'write' : 'read'
     });
+    const guardedRefs = { ...repoRef, defaultBranch: context.defaultBranch };
+    // Taken before the session starts, so nothing the builder does can land before it.
+    const refsBefore = role === 'builder' ? await deps.github.refSnapshot(guardedRefs) : null;
     const lane = context.task.lane ?? 'standard';
     const rawLanes = (context.rawConfig as { lanes?: { red?: { paths?: string[] } } }).lanes;
     const gate = context.task.stage === 'spec_review' ? 'spec_review' : 'verifying';
@@ -252,6 +293,30 @@ export const runAgentStep = async (
       onSessionCreated: (sessionId) => setRunExternalId(pool, runId, sessionId),
       onEvent: (event) => appendRunEvent(pool, runId, event.type, event)
     });
+
+    if (refsBefore) {
+      // Checked whatever the run reported: a failed run may still have pushed somewhere.
+      const changes = await refChanges(
+        deps.github,
+        guardedRefs,
+        refsBefore,
+        await deps.github.refSnapshot(guardedRefs)
+      );
+      if (changes.length) {
+        const reason = `refs outside ${taskBranch} changed during the build: ${changes.join('; ')}`;
+        await finishRun(pool, runId, {
+          status: 'failed',
+          costCents: report.costCents,
+          result: { refsChanged: changes, outcome: report.outcome }
+        });
+        await blockTask(
+          pool,
+          taskId,
+          `While the builder ran, ${changes.join('; ')}. The builder may only push ${taskBranch}. Check those refs on GitHub and restore them if the builder changed them; if a person made the change, answer to run the build again.`
+        );
+        return { status: 'blocked', reason };
+      }
+    }
 
     const outcome = report.outcome;
     if (outcome.kind !== 'result') {

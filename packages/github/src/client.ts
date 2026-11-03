@@ -49,6 +49,12 @@ export interface RepoRef {
   readonly repo: string;
 }
 
+export interface RefSnapshot {
+  readonly defaultHead: string;
+  /** Tag name to the sha it points at. */
+  readonly tags: Readonly<Record<string, string>>;
+}
+
 interface CachedToken {
   readonly token: string;
   readonly expiresAtMs: number;
@@ -138,6 +144,59 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     return { headSha, changedPaths, diffLines };
   };
 
+  /**
+   * The refs a builder's token could rewrite outside its own branch: the default branch head and
+   * every tag. Taken before and after a build run, so a push anywhere else is caught.
+   */
+  const refSnapshot = async (
+    ref: RepoRef & { readonly defaultBranch: string }
+  ): Promise<RefSnapshot> => {
+    const token = await installationToken(ref, { contents: 'read' });
+    const head = await request<{ object: { sha: string } }>(
+      `/repos/${ref.repo}/git/ref/heads/${encodeURIComponent(ref.defaultBranch)}`,
+      { token }
+    );
+    const tags: { ref: string; object: { sha: string } }[] = [];
+    // Every page: a tag on a page left unread could be rewritten unseen.
+    for (let page = 1; ; page++) {
+      const batch = await request<typeof tags>(
+        `/repos/${ref.repo}/git/matching-refs/tags?per_page=100&page=${page}`,
+        { token }
+      );
+      tags.push(...batch);
+      if (batch.length < 100) break;
+    }
+    return {
+      defaultHead: head.object.sha,
+      tags: Object.fromEntries(
+        tags.map((tag) => [tag.ref.replace(/^refs\/tags\//, ''), tag.object.sha])
+      )
+    };
+  };
+
+  /**
+   * Whether `base` moving from `since` to `sha` is a pull request merged on top of it. Such a move
+   * went through the branch rules, unlike a push made with a builder's token. The new head must
+   * descend from the old one: an older merge commit would be a rewrite back in history.
+   */
+  const isPullRequestMerge = async (
+    ref: RepoRef & { readonly sha: string; readonly base: string; readonly since: string }
+  ): Promise<boolean> => {
+    const token = await installationToken(ref, { contents: 'read', pull_requests: 'read' });
+    const comparison = await request<{ status: string }>(
+      `/repos/${ref.repo}/compare/${ref.since}...${ref.sha}`,
+      { token }
+    );
+    if (comparison.status !== 'ahead') return false;
+    const pulls = await request<
+      { merged_at: string | null; merge_commit_sha: string | null; base: { ref: string } }[]
+    >(`/repos/${ref.repo}/commits/${ref.sha}/pulls`, { token });
+    return pulls.some(
+      (pull) =>
+        pull.merged_at !== null && pull.merge_commit_sha === ref.sha && pull.base.ref === ref.base
+    );
+  };
+
   /** The installation of this app on a repository, authenticated as the app itself. */
   const repoInstallationId = async (repo: string): Promise<number> => {
     const jwt = createAppJwt(options.appId, options.privateKeyPem, Math.floor(now() / 1000));
@@ -187,9 +246,11 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
       readonly sha?: string | undefined;
       readonly message: string;
     }
-  ): Promise<{ commitSha: string | null }> => {
+  ): Promise<{ commitSha: string | null; parentSha: string | null }> => {
     const token = await installationToken(ref, { contents: 'write' });
-    const written = await request<{ commit?: { sha?: string } }>(contentsPath(ref.repo, ref.path), {
+    const written = await request<{
+      commit?: { sha?: string; parents?: { sha: string }[] };
+    }>(contentsPath(ref.repo, ref.path), {
       method: 'PUT',
       token,
       body: {
@@ -199,7 +260,10 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
         branch: ref.branch
       }
     });
-    return { commitSha: written.commit?.sha ?? null };
+    return {
+      commitSha: written.commit?.sha ?? null,
+      parentSha: written.commit?.parents?.[0]?.sha ?? null
+    };
   };
 
   /** A file's text at a branch, or `null` when it does not exist there. */
@@ -316,16 +380,17 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
   /**
    * Turns on auto-merge as the app, for a result that needed no person's check, so the branch
    * rules (checks, resolved threads, any required review) still decide when it lands. A pull request
-   * that already meets them cannot take auto-merge and is merged straight away.
+   * that already meets them cannot take auto-merge and is merged straight away. Both are pinned to
+   * `expectedHead`, so a commit pushed after the result was accepted is never merged with it.
    */
   const mergeWhenReady = async (
-    ref: RepoRef & { readonly pullRequest: number }
+    ref: RepoRef & { readonly pullRequest: number; readonly expectedHead: string }
   ): Promise<'auto_merge' | 'merged'> => {
     const pr = await pullRequestNode(ref);
     const response = await graphql(
       ref,
-      'mutation($id: ID!) { enablePullRequestAutoMerge(input: { pullRequestId: $id, mergeMethod: SQUASH }) { clientMutationId } }',
-      { id: pr.node_id }
+      'mutation($id: ID!, $head: GitObjectID!) { enablePullRequestAutoMerge(input: { pullRequestId: $id, mergeMethod: SQUASH, expectedHeadOid: $head }) { clientMutationId } }',
+      { id: pr.node_id, head: ref.expectedHead }
     );
     if (!response.errors?.length) return 'auto_merge';
     const message = response.errors.map((error) => error.message).join('; ');
@@ -336,7 +401,7 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     await request(`/repos/${ref.repo}/pulls/${ref.pullRequest}/merge`, {
       method: 'PUT',
       token,
-      body: { merge_method: 'squash', sha: pr.head.sha }
+      body: { merge_method: 'squash', sha: ref.expectedHead }
     });
     return 'merged';
   };
@@ -412,6 +477,8 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     updateFile,
     createBranch,
     pushFacts,
+    refSnapshot,
+    isPullRequestMerge,
     openPullRequest,
     commentOnIssue,
     reviewComments,

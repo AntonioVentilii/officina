@@ -29,4 +29,8 @@ describe('board static server', async () => {
     expect(await (await serve('/../../etc/passwd')).text()).toBe('<html>shell</html>');
     expect(await (await serve('/%2e%2e/%2e%2e/etc/passwd')).text()).toBe('<html>shell</html>');
   });
+
+  test('a malformed escape is a bad request, not a server error', async () => {
+    expect((await serve('/%E0%A4%A')).status).toBe(400);
+  });
 });

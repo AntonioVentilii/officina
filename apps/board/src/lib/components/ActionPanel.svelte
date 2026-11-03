@@ -28,7 +28,7 @@
     lastEvent('github_approved')?.payload as { login: string; merge: string } | undefined
   );
   const githubFailed = $derived(
-    lastEvent('github_approval_failed')?.payload as { login: string; error: string } | undefined
+    lastEvent('github_approval_failed')?.payload as { login: string; error?: string } | undefined
   );
   const gate = $derived(
     task.stage === 'spec_review' ? 'spec' : task.stage === 'verifying' ? 'result' : null
@@ -159,7 +159,9 @@
           <div class="label">
             Approving on GitHub as @{githubFailed.login} failed: approve and merge there.
           </div>
-          <div class="approval faint">{githubFailed.error}</div>
+          {#if githubFailed.error}
+            <div class="approval faint">{githubFailed.error}</div>
+          {/if}
         {:else if session.me?.github}
           <div class="label">
             Approving on GitHub as @{session.me.github.login} once the spec is marked Implemented…

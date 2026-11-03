@@ -8,15 +8,23 @@ import {
   saveAgentVersion,
   startRun
 } from '@officina/db';
+import type { RefSnapshot } from '@officina/github';
 import { RUNNER_ROLES, type SessionRequest } from '@officina/runner';
 import { Pool } from 'pg';
 import { CONFIG_YAML } from '../../core/test/fixtures';
-import { PLAN, applyOrThrow, resetAndSeed, type Seeded } from '../../db/test/seed';
+import {
+  PLAN,
+  applyOrThrow,
+  createTaskInMerging,
+  resetAndSeed,
+  type Seeded
+} from '../../db/test/seed';
 import { createFakePort, idle, toolUse, type ScriptItem } from '../../runner/test/fake-port';
 import {
   cancelStaleAutoMerges,
   finishVerifiedSpecs,
   runAgentStep,
+  syncSpecStatus,
   tick,
   type GitHubPort
 } from '../src';
@@ -56,16 +64,35 @@ const succeed = (request: SessionRequest): ScriptItem[] => [
   idle('end_turn')
 ];
 
-const fakeGitHub = () => {
+const REFS: RefSnapshot = { defaultHead: 'main1', tags: { 'v1.0.0': 'tag1' } };
+
+/** `refs` are the snapshots returned in turn, the last one repeating; `merges` are the shas of merged pull requests. */
+const fakeGitHub = (
+  options: {
+    refs?: RefSnapshot[];
+    merges?: string[];
+    branchHead?: string;
+    written?: { commitSha: string; parentSha: string };
+  } = {}
+) => {
   const calls: { method: string; args: unknown[] }[] = [];
+  const refs = [...(options.refs ?? [REFS])];
   const port = {
+    refSnapshot: async (...args: unknown[]) => {
+      calls.push({ method: 'refSnapshot', args });
+      return refs.length > 1 ? refs.shift()! : refs[0]!;
+    },
+    isPullRequestMerge: async (...args: unknown[]) => {
+      calls.push({ method: 'isPullRequestMerge', args });
+      return (options.merges ?? []).includes((args[0] as { sha: string }).sha);
+    },
     installationToken: async (...args: unknown[]) => {
       calls.push({ method: 'installationToken', args });
       return `token-${(args[1] as { contents: string }).contents}`;
     },
     pushFacts: async (...args: unknown[]) => {
       calls.push({ method: 'pushFacts', args });
-      return { headSha: 'sha1', changedPaths: [COPY, SPEC], diffLines: 3 };
+      return { headSha: options.branchHead ?? 'sha1', changedPaths: [COPY, SPEC], diffLines: 3 };
     },
     readFile: async (...args: unknown[]) => {
       calls.push({ method: 'readFile', args });
@@ -73,6 +100,7 @@ const fakeGitHub = () => {
     },
     updateFile: async (...args: unknown[]) => {
       calls.push({ method: 'updateFile', args });
+      return options.written;
     },
     commentOnIssue: async (...args: unknown[]) => {
       calls.push({ method: 'commentOnIssue', args });
@@ -344,7 +372,9 @@ describe.skipIf(!url)('engine', () => {
     const resolved = github.calls.filter((call) => call.method === 'resolveReviewThreads');
     expect(resolved).toHaveLength(1);
     expect(resolved[0]!.args[0]).toMatchObject({ pullRequest: 42, reviewIds: [5] });
-    expect(github.calls.filter((call) => call.method === 'mergeWhenReady')).toHaveLength(1);
+    const merges = github.calls.filter((call) => call.method === 'mergeWhenReady');
+    expect(merges).toHaveLength(1);
+    expect(merges[0]!.args[0]).toMatchObject({ pullRequest: 42, expectedHead: 'def' });
 
     // A later review sends it back: auto-merge is turned off until GitHub confirms, once.
     await applyOrThrow(
@@ -464,6 +494,87 @@ describe.skipIf(!url)('engine', () => {
     expect(stored?.task.blocked?.question).toContain('officina/elsewhere');
     expect(github.calls.some((call) => call.method === 'openPullRequest')).toBe(false);
     expect((await runStatuses(taskId)).at(-1)).toEqual({ agent_role: 'builder', status: 'failed' });
+  });
+
+  test('a builder that moves the default branch or a tag is blocked before its result counts', async () => {
+    const github = fakeGitHub({
+      refs: [REFS, { defaultHead: 'evil', tags: { 'v1.0.0': 'tag1', 'v9.9.9': 'evil' } }]
+    });
+    const agents = createFakePort(succeed);
+    const taskId = await taskInReady(github, agents);
+    await tick({ pool, github: github.port, agents, publicUrl: PUBLIC_URL }, seeded.projectId);
+
+    const stored = await loadTask(pool, taskId);
+    expect(stored?.task.stage).toBe('building');
+    expect(stored?.task.headSha).toBeNull();
+    expect(stored?.task.blocked).toMatchObject({ askedOf: { role: 'maintainer' } });
+    expect(stored?.task.blocked?.question).toContain('main moved from main1 to evil');
+    expect(stored?.task.blocked?.question).toContain('tag v9.9.9 was created');
+    expect(github.calls.filter((call) => call.method === 'refSnapshot')).toHaveLength(2);
+    expect(github.calls.some((call) => call.method === 'openPullRequest')).toBe(false);
+    expect((await runStatuses(taskId)).at(-1)).toEqual({ agent_role: 'builder', status: 'failed' });
+  });
+
+  test('a pull request merged into the default branch during a build is not a builder push', async () => {
+    const github = fakeGitHub({
+      refs: [REFS, { defaultHead: 'merged1', tags: REFS.tags }],
+      merges: ['merged1']
+    });
+    const agents = createFakePort(succeed);
+    const taskId = await taskInReady(github, agents);
+    await tick({ pool, github: github.port, agents, publicUrl: PUBLIC_URL }, seeded.projectId);
+
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({
+      stage: 'reviewing',
+      blocked: null
+    });
+    expect(
+      github.calls.find((call) => call.method === 'isPullRequestMerge')!.args[0]
+    ).toMatchObject({ sha: 'merged1', base: 'main', since: 'main1' });
+  });
+
+  test('a spec status commit stands for the verified head only when it sits right on it', async () => {
+    const taskId = await createTaskInMerging(pool, seeded);
+    const ref = { installationId: 99, repo: 'ViciApp/vici-app' };
+    const sync = (github: ReturnType<typeof fakeGitHub>, status: string) =>
+      syncSpecStatus(pool, github.port, {
+        taskId,
+        ref,
+        branch: 'officina/task-1',
+        base: 'main',
+        specDir: 'docs/specs',
+        status
+      });
+    const statusEvents = async () =>
+      (
+        await pool.query<{ payload: Record<string, unknown> }>(
+          "select payload from task_events where task_id = $1 and type = 'spec_status_set' order by id",
+          [taskId]
+        )
+      ).rows.map((row) => row.payload);
+
+    // Someone pushed on top of the verified head 'abc': no status commit is written.
+    const moved = fakeGitHub({ branchHead: 'foreign' });
+    expect(await sync(moved, 'In progress (#42)')).toBe('moved');
+    expect(moved.calls.some((call) => call.method === 'updateFile')).toBe(false);
+
+    // A push between reading and writing: the commit is not taken for the task's head.
+    const raced = fakeGitHub({
+      branchHead: 'abc',
+      written: { commitSha: 'status1', parentSha: 'foreign' }
+    });
+    expect(await sync(raced, 'Implemented (#42)')).toBe('updated');
+
+    const clean = fakeGitHub({
+      branchHead: 'abc',
+      written: { commitSha: 'status2', parentSha: 'abc' }
+    });
+    expect(await sync(clean, 'Verified (#42)')).toBe('updated');
+    expect(await statusEvents()).toEqual([
+      expect.objectContaining({ commitSha: null, branchMoved: 'foreign' }),
+      expect.objectContaining({ commitSha: null, unverified: 'status1' }),
+      expect.objectContaining({ commitSha: 'status2' })
+    ]);
   });
 
   test('repeated invalid results fail the run and ask a maintainer', async () => {

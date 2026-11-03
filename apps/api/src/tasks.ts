@@ -1,7 +1,9 @@
 import {
   effectivePolicy,
   evaluatePolicy,
+  hasRole,
   parseProjectConfig,
+  type Role,
   type Actor,
   type Command,
   type Gate,
@@ -108,6 +110,15 @@ export const createRequestAs = async (
 ): Promise<{ number: number; stage: string }> => {
   const { projectId, memberId } = input;
   const actor: Actor = { kind: 'member', memberId };
+  // A request starts paid agent runs, so reading the board is not enough to open one.
+  const role = (
+    await pool.query<{ role: Role; domains: string[] }>(
+      'select role, domains from project_roles where project_id = $1 and member_id = $2',
+      [projectId, memberId]
+    )
+  ).rows[0];
+  if (!role || !hasRole({ id: memberId, ...role }, 'contributor'))
+    throw new TaskCommandError('watchers can read but not open requests');
   const { task } = await createTask(pool, { projectId, title: input.title, requesterId: memberId });
   await addComment(pool, task.id, actor, input.request);
   const { rows } = await pool.query<{ config: unknown; number: number }>(
@@ -171,8 +182,16 @@ export const actOnTaskAs = async (
   const actor: Actor = { kind: 'member', memberId: input.memberId };
   const taskId = await findTaskIdByNumber(pool, projectId, input.number);
   if (!taskId) throw new TaskCommandError(`task #${input.number} not found`);
-  if (input.action.type === 'answer') await addComment(pool, taskId, actor, input.action.text);
-  const result = await applyCommand(pool, { taskId, command: toCommand(input.action), actor });
+  const { action } = input;
+  const result = await applyCommand(pool, {
+    taskId,
+    command: toCommand(action),
+    actor,
+    // In the same transaction as the decision: someone not allowed to answer leaves no comment.
+    onApplied: async (client) => {
+      if (action.type === 'answer') await addComment(client, taskId, actor, action.text);
+    }
+  });
   if (!result.ok) throw new TaskCommandError(ERROR_TEXT[result.error]);
   const recorded = result.events.find((event) => event.type === 'approval_recorded');
   return {

@@ -50,23 +50,41 @@ export const approveOnGitHub = async (
   try {
     const pr = await onBehalf.asUser.pullRequest(account.token, input.repo, input.pullRequest);
     if (pr.merged || pr.state !== 'open') return;
+    const expected = await expectedHead(pool, input.taskId);
+    // Someone pushed after the verification: approving now would put the member's name on a
+    // commit they never checked.
+    if (pr.head.sha !== expected) {
+      await appendTaskEvent(pool, {
+        taskId: input.taskId,
+        actor,
+        type: 'github_approval_failed',
+        payload: {
+          login: account.login,
+          error: `the pull request head ${pr.head.sha.slice(0, 7)} is not the verified ${expected?.slice(0, 7) ?? 'head'}`,
+          expectedHead: expected,
+          actualHead: pr.head.sha
+        }
+      });
+      return;
+    }
     await onBehalf.asUser.approve(
       account.token,
       input.repo,
       input.pullRequest,
-      pr.head.sha,
+      expected,
       `Verified in ${taskLink(onBehalf.publicUrl, input.taskNumber)}.`
     );
     const merge = await onBehalf.asUser.mergeWhenReady(
       account.token,
       input.repo,
-      input.pullRequest
+      input.pullRequest,
+      expected
     );
     await appendTaskEvent(pool, {
       taskId: input.taskId,
       actor,
       type: 'github_approved',
-      payload: { login: account.login, headSha: pr.head.sha, merge }
+      payload: { login: account.login, headSha: expected, merge }
     });
   } catch (error) {
     await appendTaskEvent(pool, {
@@ -88,6 +106,27 @@ export type SyncGitHubPort = Pick<
   | 'cancelAutoMerge'
   | 'resolveReviewThreads'
 >;
+
+/**
+ * The commit the pull request should have as its head: the task's verified head, or Officina's own
+ * latest commit that only set the spec's status line on top of it. Anything else was pushed after
+ * the result was accepted.
+ */
+const expectedHead = async (pool: Pool, taskId: string): Promise<string | null> =>
+  (
+    await pool.query<{ sha: string | null }>(
+      `select coalesce(
+         (select e.payload->>'commitSha' from task_events e
+          where e.task_id = t.id and e.type = 'spec_status_set'
+            and e.payload->>'commitSha' is not null
+            and e.id > coalesce((select max(p.id) from task_events p
+              where p.task_id = t.id and p.type = 'pushed'), 0)
+          order by e.id desc limit 1),
+         t.head_sha) as sha
+       from tasks t where t.id = $1`,
+      [taskId]
+    )
+  ).rows[0]?.sha ?? null;
 
 /** The id of the event that last moved the task into `merging`, in SQL for a task id `$1`. */
 const SINCE_MERGING = `coalesce((select max(id) from task_events where task_id = $1
@@ -150,7 +189,13 @@ const autoMergeOnGitHub = async (
   );
   if (tried.rowCount) return;
   try {
-    const merge = await github.mergeWhenReady({ ...input.ref, pullRequest: input.pullRequest });
+    const expected = await expectedHead(pool, input.taskId);
+    if (!expected) throw new Error('the task has no verified head');
+    const merge = await github.mergeWhenReady({
+      ...input.ref,
+      pullRequest: input.pullRequest,
+      expectedHead: expected
+    });
     await appendTaskEvent(pool, {
       taskId: input.taskId,
       actor: ENGINE,
@@ -256,17 +301,30 @@ export const syncSpecStatus = async (
     readonly specDir: string | null;
     readonly status: string;
   }
-): Promise<'updated' | 'unchanged' | 'no_spec'> => {
+): Promise<'updated' | 'unchanged' | 'no_spec' | 'moved'> => {
   if (await hasTaskEvent(pool, input.taskId, 'spec_status_set', { status: input.status })) {
     return 'unchanged';
   }
   const facts = await github.pushFacts({ ...input.ref, base: input.base, branch: input.branch });
+  const expected = await expectedHead(pool, input.taskId);
+  // The branch holds commits nobody verified: a status commit on top of them must not stand for
+  // the task's head. Recorded once, so the approval that follows sees the mismatch and skips.
+  if (facts.headSha !== expected) {
+    await appendTaskEvent(pool, {
+      taskId: input.taskId,
+      actor: ENGINE,
+      type: 'spec_status_set',
+      payload: { status: input.status, path: null, commitSha: null, branchMoved: facts.headSha }
+    });
+    return 'moved';
+  }
   const path = specPathIn(facts.changedPaths, input.specDir);
   if (!path) return 'no_spec';
   const file = await github.readFile({ ...input.ref, path, branch: input.branch });
   if (!file) return 'no_spec';
   const text = file.text.replace(/^Status: .*$/m, `Status: ${input.status}`);
   let commitSha: string | null = null;
+  let unverified: string | null = null;
   if (text !== file.text) {
     const written = await github.updateFile({
       ...input.ref,
@@ -276,7 +334,9 @@ export const syncSpecStatus = async (
       sha: file.sha,
       message: `docs(spec): mark ${path.split('/').pop()!.replace(/\.md$/, '')} ${input.status}`
     });
-    commitSha = written?.commitSha ?? null;
+    // A push between reading the branch and writing would put the commit on top of it instead.
+    if (written?.commitSha && written.parentSha === expected) commitSha = written.commitSha;
+    else if (written?.commitSha) unverified = written.commitSha;
   }
   // The commit is recorded so a review of it counts as a review of the task's head: it only
   // changes the spec's status line on top of the work that was reviewed.
@@ -284,7 +344,7 @@ export const syncSpecStatus = async (
     taskId: input.taskId,
     actor: ENGINE,
     type: 'spec_status_set',
-    payload: { status: input.status, path, commitSha }
+    payload: { status: input.status, path, commitSha, ...(unverified ? { unverified } : {}) }
   });
   return text === file.text ? 'unchanged' : 'updated';
 };

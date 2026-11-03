@@ -1,5 +1,11 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
-import { appendRunEvent, findTaskIdByNumber, startRun } from '@officina/db';
+import {
+  appendRunEvent,
+  appendTaskEvent,
+  applyCommand,
+  findTaskIdByNumber,
+  startRun
+} from '@officina/db';
 import { Pool } from 'pg';
 import { resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
 import { createApp } from '../src/app';
@@ -198,6 +204,38 @@ describe.skipIf(!url)('board api', () => {
     expect(
       (await call(watcher, '/api/projects/00000000-0000-0000-0000-000000000000/board')).status
     ).toBe(404);
+
+    // A request starts paid agent runs, so watchers cannot open one.
+    expect(
+      (
+        await call(watcher, `/api/projects/${seeded.projectId}/tasks`, {
+          title: 'Something new',
+          request: 'Please.'
+        })
+      ).status
+    ).toBe(403);
+    expect((await pool.query('select 1 from tasks')).rowCount).toBe(1);
+
+    // An answer they may not give leaves no comment behind.
+    const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
+    const blocked = await applyCommand(pool, {
+      taskId,
+      command: { type: 'block', question: 'Which name?', askedOf: { role: 'maintainer' } },
+      actor: { kind: 'engine' }
+    });
+    expect(blocked.ok).toBe(true);
+    const comments = async () =>
+      (await pool.query('select 1 from comments where task_id = $1', [taskId])).rowCount;
+    const before = await comments();
+    expect(
+      (
+        await call(watcher, `/api/projects/${seeded.projectId}/tasks/1/actions`, {
+          type: 'answer',
+          text: 'spam'
+        })
+      ).status
+    ).toBe(409);
+    expect(await comments()).toBe(before);
   });
 
   test('run logs are readable only by members of the run project', async () => {
@@ -265,6 +303,63 @@ describe.skipIf(!url)('board api', () => {
     expect(full.costCents).toBe(0);
     expect(full.runs).toHaveLength(1);
     expect((await call(owner, `${project}/runs`)).status).toBe(200);
+
+    // Technical detail in the trail: check output, GitHub errors, a failure asked of a maintainer.
+    const engine = { kind: 'engine' } as const;
+    await appendTaskEvent(pool, {
+      taskId,
+      actor: engine,
+      type: 'ci_failed',
+      payload: { details: 'SECRET check output' }
+    });
+    await appendTaskEvent(pool, {
+      taskId,
+      actor: seeded.owner,
+      type: 'github_approval_failed',
+      payload: { login: 'antonio', error: 'GitHub 422: SECRET body' }
+    });
+    await applyCommand(pool, {
+      taskId,
+      command: {
+        type: 'block',
+        question: 'The builder step failed unexpectedly: GitHub 500 SECRET.',
+        askedOf: { role: 'maintainer' }
+      },
+      actor: engine
+    });
+    const trail = await json(await call(contributor, `${project}/tasks/1`));
+    expect(JSON.stringify(trail)).not.toContain('SECRET');
+    expect(trail.blocked.question).toContain('for someone else to answer');
+    expect(
+      trail.events.find((event: { type: string }) => event.type === 'github_approval_failed')
+        .payload
+    ).toEqual({ login: 'antonio' });
+    const cardBoard = await json(await call(contributor, `${project}/board`));
+    expect(JSON.stringify(cardBoard)).not.toContain('SECRET');
+    const ownerTrail = await json(await call(owner, `${project}/tasks/1`));
+    expect(ownerTrail.blocked.question).toContain('GitHub 500 SECRET');
+    expect(JSON.stringify(ownerTrail.events)).toContain('SECRET check output');
+
+    // A question for one member is theirs: other contributors see only that one is open.
+    await applyCommand(pool, {
+      taskId,
+      command: { type: 'answer', text: 'Retry it.' },
+      actor: seeded.owner
+    });
+    await applyCommand(pool, {
+      taskId,
+      command: {
+        type: 'block',
+        question: 'For the requester: GitHub 404 SECRET2.',
+        askedOf: { memberId: seeded.ownerId }
+      },
+      actor: engine
+    });
+    const asked = await json(await call(contributor, `${project}/tasks/1`));
+    expect(JSON.stringify(asked)).not.toContain('SECRET2');
+    expect((await json(await call(owner, `${project}/tasks/1`))).blocked.question).toContain(
+      'SECRET2'
+    );
   });
 
   test('database changes reach open boards as events', async () => {

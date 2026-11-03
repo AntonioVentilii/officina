@@ -30,6 +30,23 @@ export const consumeOAuthState = async (
   return rows[0] ? { memberId: rows[0].member_id } : null;
 };
 
+/**
+ * Spends a state that was never stored, such as a sign-in's: recorded once it is used, until it
+ * expires, so the same state cannot complete a second time.
+ */
+export const spendOAuthState = async (
+  db: Queryable,
+  state: string,
+  expiresAt: Date
+): Promise<boolean> =>
+  (
+    await db.query(
+      `insert into oauth_states (state_hash, member_id, expires_at) values ($1, null, $2)
+       on conflict (state_hash) do nothing returning state_hash`,
+      [hash(state), expiresAt]
+    )
+  ).rowCount === 1;
+
 export interface GitHubAccountRow {
   readonly memberId: string;
   readonly githubUserId: number;

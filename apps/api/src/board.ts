@@ -8,6 +8,7 @@ import {
   isEligible,
   parseProjectConfig,
   type Actor,
+  type Blocked,
   type Gate,
   type Member,
   type Requirement,
@@ -108,6 +109,66 @@ const viewerMember = (viewer: BoardViewer): Member => ({
  */
 export const seesTechnical = (viewer: BoardViewer): boolean =>
   hasRole(viewerMember(viewer), 'maintainer');
+
+/**
+ * What contributors and watchers read of each event's payload: what the timeline says about the
+ * decision, never the technical detail around it (reviewer notes quoting the code, changed paths,
+ * check output, GitHub error text). An event type missing here shows no payload at all.
+ */
+const PUBLIC_FIELDS: Readonly<Record<string, readonly string[]>> = {
+  created: ['title'],
+  stage_changed: ['from', 'to'],
+  lane_changed: ['from', 'to'],
+  spec_versioned: ['version'],
+  user_visible_changed: ['userVisible'],
+  approval_recorded: ['gate', 'satisfied', 'memberId'],
+  approval_planned: ['gate'],
+  changes_requested: ['stage', 'note'],
+  pushed: ['headSha', 'diffLines'],
+  review_recorded: ['reviewer', 'verdict', 'by'],
+  guardrail_tripped: ['guardrail'],
+  blocked: ['blocked'],
+  unblocked: ['answer'],
+  closed: ['stage', 'reason'],
+  spec_status_set: ['status'],
+  github_approved: ['login', 'merge'],
+  github_approval_failed: ['login'],
+  github_auto_merge: ['merge'],
+  checklist_posted: ['pullRequest']
+};
+
+const HIDDEN_QUESTION =
+  'A question for someone else to answer; maintainers and owners can read it.';
+
+/**
+ * Questions are often an agent's or Officina's own failure, quoting an error; people who can
+ * neither answer them nor see the runs get only that one is open.
+ */
+const questionFor = (viewer: BoardViewer, blocked: Blocked): string =>
+  seesTechnical(viewer) ||
+  ('memberId' in blocked.askedOf
+    ? blocked.askedOf.memberId === viewer.memberId
+    : hasRole(viewerMember(viewer), blocked.askedOf.role))
+    ? blocked.question
+    : HIDDEN_QUESTION;
+
+const payloadFor = (
+  viewer: BoardViewer,
+  type: string,
+  payload: Record<string, unknown>
+): Record<string, unknown> => {
+  if (seesTechnical(viewer)) return payload;
+  const visible = Object.fromEntries(
+    (PUBLIC_FIELDS[type] ?? [])
+      .filter((field) => field in payload)
+      .map((field) => [field, payload[field]])
+  );
+  if (type === 'blocked' && visible.blocked) {
+    const blocked = visible.blocked as Blocked;
+    visible.blocked = { askedOf: blocked.askedOf, question: questionFor(viewer, blocked) };
+  }
+  return visible;
+};
 
 interface ApprovalState {
   readonly gate: Gate;
@@ -295,7 +356,7 @@ const cardView = (row: BoardTaskRow, viewer: BoardViewer, approval: ApprovalStat
   title: row.title,
   stage: row.stage,
   lane: row.lane,
-  blocked: row.blocked ? { question: row.blocked.question } : null,
+  blocked: row.blocked ? { question: questionFor(viewer, row.blocked) } : null,
   paused: row.paused,
   userVisible: row.userVisible,
   requester: row.requesterName,
@@ -399,7 +460,7 @@ export const taskView = async (
     ...cardView(row, viewer, approval),
     blocked: row.blocked
       ? {
-          question: row.blocked.question,
+          question: questionFor(viewer, row.blocked),
           askedOf:
             'memberId' in row.blocked.askedOf
               ? (facts.names.get(row.blocked.askedOf.memberId) ?? 'a member')
@@ -434,7 +495,7 @@ export const taskView = async (
       actor: label(event.actor),
       actorKind: event.actor.kind,
       actorRole: event.actor.kind === 'agent' ? event.actor.role : null,
-      payload: event.payload,
+      payload: payloadFor(viewer, event.type, event.payload),
       at: event.createdAt
     })),
     runs: seesTechnical(viewer) ? runs.map((run) => runView(run, consoleWorkspace)) : [],

@@ -22,7 +22,13 @@ export const createBoardServer = (dir: string) => {
     if (pathname.startsWith('/api/') || pathname.startsWith('/auth/')) {
       return Response.json({ error: 'not found' }, { status: 404 });
     }
-    const target = resolve(root, `.${decodeURIComponent(pathname)}`);
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(pathname);
+    } catch {
+      return new Response('Bad request', { status: 400 });
+    }
+    const target = resolve(root, `.${decoded}`);
     if (target.startsWith(root + sep) && !target.endsWith(sep)) {
       const file = Bun.file(target);
       if (target !== resolve(root, 'index.html') && (await file.exists())) {

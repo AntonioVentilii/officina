@@ -76,6 +76,25 @@ export const endSession = async (db: Queryable, sessionToken: string) => {
   await db.query('delete from sessions where token_hash = $1', [hashToken(sessionToken)]);
 };
 
+/**
+ * Deletes sign-in links, sessions and GitHub authorization states that can no longer be used, so
+ * the tables hold only live credentials.
+ */
+export const purgeExpiredCredentials = async (
+  db: Queryable
+): Promise<{ loginLinks: number; sessions: number; oauthStates: number }> => {
+  const links = await db.query(
+    'delete from login_links where expires_at <= now() or used_at is not null'
+  );
+  const sessions = await db.query('delete from sessions where expires_at <= now()');
+  const states = await db.query('delete from oauth_states where expires_at <= now()');
+  return {
+    loginLinks: links.rowCount ?? 0,
+    sessions: sessions.rowCount ?? 0,
+    oauthStates: states.rowCount ?? 0
+  };
+};
+
 export interface MemberProject {
   readonly id: string;
   readonly name: string;

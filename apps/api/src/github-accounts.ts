@@ -34,13 +34,18 @@ export const createGitHubAccounts = (deps: {
   /**
    * Completes an authorization: links the account to the signed-in member, or, for a sign-in, finds
    * the member it is already linked to. GitHub alone never creates a member: people join by invite.
+   * `claim`, when given, spends the authorization's state once the code proved real and before
+   * anything is stored, so two callbacks with one state never both write.
    */
   const complete = async (
     code: string,
-    linkTo: string | null
+    linkTo: string | null,
+    claim?: () => Promise<boolean>
   ): Promise<{ ok: true; memberId: string; login: string } | { ok: false; why: string }> => {
     const tokens = await deps.auth.exchangeCode(code);
     const user = await deps.asUser.user(tokens.accessToken);
+    if (claim && !(await claim()))
+      return { ok: false, why: 'The GitHub sign-in expired; try again.' };
     const memberId = linkTo ?? (await memberForGitHubUser(pool, user.id));
     if (!memberId) {
       return {
