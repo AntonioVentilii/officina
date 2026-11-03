@@ -125,8 +125,8 @@ const sameWork = (seen: Task) => (current: Task) =>
 
 /**
  * What changed outside the task's own branch while a builder held a token that can write any ref.
- * The default branch may move by a pull request merged meanwhile, which went through the branch
- * rules; any other move, and any tag created, moved or deleted, is reported.
+ * The default branch may move forward by a pull request merged meanwhile, which went through the
+ * branch rules; any other move, and any tag created, moved or deleted, is reported.
  */
 const refChanges = async (
   github: GitHubPort,
@@ -137,7 +137,12 @@ const refChanges = async (
   const changes: string[] = [];
   if (
     before.defaultHead !== after.defaultHead &&
-    !(await github.isPullRequestMerge({ ...ref, sha: after.defaultHead, base: ref.defaultBranch }))
+    !(await github.isPullRequestMerge({
+      ...ref,
+      sha: after.defaultHead,
+      base: ref.defaultBranch,
+      since: before.defaultHead
+    }))
   ) {
     changes.push(
       `${ref.defaultBranch} moved from ${before.defaultHead.slice(0, 7)} to ${after.defaultHead.slice(0, 7)}`

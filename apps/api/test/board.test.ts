@@ -329,7 +329,7 @@ describe.skipIf(!url)('board api', () => {
     });
     const trail = await json(await call(contributor, `${project}/tasks/1`));
     expect(JSON.stringify(trail)).not.toContain('SECRET');
-    expect(trail.blocked.question).toContain('for maintainers and owners');
+    expect(trail.blocked.question).toContain('for someone else to answer');
     expect(
       trail.events.find((event: { type: string }) => event.type === 'github_approval_failed')
         .payload
@@ -339,6 +339,27 @@ describe.skipIf(!url)('board api', () => {
     const ownerTrail = await json(await call(owner, `${project}/tasks/1`));
     expect(ownerTrail.blocked.question).toContain('GitHub 500 SECRET');
     expect(JSON.stringify(ownerTrail.events)).toContain('SECRET check output');
+
+    // A question for one member is theirs: other contributors see only that one is open.
+    await applyCommand(pool, {
+      taskId,
+      command: { type: 'answer', text: 'Retry it.' },
+      actor: seeded.owner
+    });
+    await applyCommand(pool, {
+      taskId,
+      command: {
+        type: 'block',
+        question: 'For the requester: GitHub 404 SECRET2.',
+        askedOf: { memberId: seeded.ownerId }
+      },
+      actor: engine
+    });
+    const asked = await json(await call(contributor, `${project}/tasks/1`));
+    expect(JSON.stringify(asked)).not.toContain('SECRET2');
+    expect((await json(await call(owner, `${project}/tasks/1`))).blocked.question).toContain(
+      'SECRET2'
+    );
   });
 
   test('database changes reach open boards as events', async () => {

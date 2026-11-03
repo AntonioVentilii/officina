@@ -137,16 +137,18 @@ const PUBLIC_FIELDS: Readonly<Record<string, readonly string[]>> = {
   checklist_posted: ['pullRequest']
 };
 
-const HIDDEN_QUESTION = 'A question about how the work is done, for maintainers and owners.';
+const HIDDEN_QUESTION =
+  'A question for someone else to answer; maintainers and owners can read it.';
 
 /**
- * Questions for maintainers or owners are often an agent's or Officina's own failure, quoting an
- * error; people who can neither answer them nor see the runs get only what the question is about.
+ * Questions are often an agent's or Officina's own failure, quoting an error; people who can
+ * neither answer them nor see the runs get only that one is open.
  */
 const questionFor = (viewer: BoardViewer, blocked: Blocked): string =>
   seesTechnical(viewer) ||
-  'memberId' in blocked.askedOf ||
-  hasRole(viewerMember(viewer), blocked.askedOf.role)
+  ('memberId' in blocked.askedOf
+    ? blocked.askedOf.memberId === viewer.memberId
+    : hasRole(viewerMember(viewer), blocked.askedOf.role))
     ? blocked.question
     : HIDDEN_QUESTION;
 

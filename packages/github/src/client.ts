@@ -156,11 +156,16 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
       `/repos/${ref.repo}/git/ref/heads/${encodeURIComponent(ref.defaultBranch)}`,
       { token }
     );
-    // A repository without tags answers with an empty list; this endpoint is not paginated.
-    const tags = await request<{ ref: string; object: { sha: string } }[]>(
-      `/repos/${ref.repo}/git/matching-refs/tags`,
-      { token }
-    );
+    const tags: { ref: string; object: { sha: string } }[] = [];
+    // Every page: a tag on a page left unread could be rewritten unseen.
+    for (let page = 1; ; page++) {
+      const batch = await request<typeof tags>(
+        `/repos/${ref.repo}/git/matching-refs/tags?per_page=100&page=${page}`,
+        { token }
+      );
+      tags.push(...batch);
+      if (batch.length < 100) break;
+    }
     return {
       defaultHead: head.object.sha,
       tags: Object.fromEntries(
@@ -170,13 +175,19 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
   };
 
   /**
-   * Whether a commit is the result of merging a pull request into `base`. Such a move of the
-   * default branch went through the branch rules, unlike a push made with a builder's token.
+   * Whether `base` moving from `since` to `sha` is a pull request merged on top of it. Such a move
+   * went through the branch rules, unlike a push made with a builder's token. The new head must
+   * descend from the old one: an older merge commit would be a rewrite back in history.
    */
   const isPullRequestMerge = async (
-    ref: RepoRef & { readonly sha: string; readonly base: string }
+    ref: RepoRef & { readonly sha: string; readonly base: string; readonly since: string }
   ): Promise<boolean> => {
     const token = await installationToken(ref, { contents: 'read', pull_requests: 'read' });
+    const comparison = await request<{ status: string }>(
+      `/repos/${ref.repo}/compare/${ref.since}...${ref.sha}`,
+      { token }
+    );
+    if (comparison.status !== 'ahead') return false;
     const pulls = await request<
       { merged_at: string | null; merge_commit_sha: string | null; base: { ref: string } }[]
     >(`/repos/${ref.repo}/commits/${ref.sha}/pulls`, { token });
@@ -235,9 +246,11 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
       readonly sha?: string | undefined;
       readonly message: string;
     }
-  ): Promise<{ commitSha: string | null }> => {
+  ): Promise<{ commitSha: string | null; parentSha: string | null }> => {
     const token = await installationToken(ref, { contents: 'write' });
-    const written = await request<{ commit?: { sha?: string } }>(contentsPath(ref.repo, ref.path), {
+    const written = await request<{
+      commit?: { sha?: string; parents?: { sha: string }[] };
+    }>(contentsPath(ref.repo, ref.path), {
       method: 'PUT',
       token,
       body: {
@@ -247,7 +260,10 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
         branch: ref.branch
       }
     });
-    return { commitSha: written.commit?.sha ?? null };
+    return {
+      commitSha: written.commit?.sha ?? null,
+      parentSha: written.commit?.parents?.[0]?.sha ?? null
+    };
   };
 
   /** A file's text at a branch, or `null` when it does not exist there. */

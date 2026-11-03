@@ -53,7 +53,7 @@ const OAUTH_TTL_MS = 10 * 60 * 1000;
 /**
  * A sign-in needs no session, so its state is not stored when the flow starts (anyone could fill
  * the table): it carries its own expiry, is bound to the browser by the cookie, and is recorded
- * only once a GitHub authorization comes back with it.
+ * once GitHub accepts the code that came back with it, before anything else is written.
  */
 const SIGNIN_PREFIX = 's.';
 const signinState = () =>
@@ -294,9 +294,10 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
         if (state.startsWith(SIGNIN_PREFIX)) {
           const expiresAt = signinExpiry(state);
           if (!expiresAt) return expired();
-          const result = await deps.githubLogin.accounts.complete(code, null);
+          const result = await deps.githubLogin.accounts.complete(code, null, () =>
+            spendOAuthState(pool, state, expiresAt)
+          );
           if (!result.ok) return fail(result.why);
-          if (!(await spendOAuthState(pool, state, expiresAt))) return expired();
           const session = await createSession(pool, result.memberId);
           return redirect('/', [clear, sessionCookie(session, SESSION_TTL_MS, secure)]);
         }

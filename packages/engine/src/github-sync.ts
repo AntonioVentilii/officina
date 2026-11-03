@@ -301,17 +301,30 @@ export const syncSpecStatus = async (
     readonly specDir: string | null;
     readonly status: string;
   }
-): Promise<'updated' | 'unchanged' | 'no_spec'> => {
+): Promise<'updated' | 'unchanged' | 'no_spec' | 'moved'> => {
   if (await hasTaskEvent(pool, input.taskId, 'spec_status_set', { status: input.status })) {
     return 'unchanged';
   }
   const facts = await github.pushFacts({ ...input.ref, base: input.base, branch: input.branch });
+  const expected = await expectedHead(pool, input.taskId);
+  // The branch holds commits nobody verified: a status commit on top of them must not stand for
+  // the task's head. Recorded once, so the approval that follows sees the mismatch and skips.
+  if (facts.headSha !== expected) {
+    await appendTaskEvent(pool, {
+      taskId: input.taskId,
+      actor: ENGINE,
+      type: 'spec_status_set',
+      payload: { status: input.status, path: null, commitSha: null, branchMoved: facts.headSha }
+    });
+    return 'moved';
+  }
   const path = specPathIn(facts.changedPaths, input.specDir);
   if (!path) return 'no_spec';
   const file = await github.readFile({ ...input.ref, path, branch: input.branch });
   if (!file) return 'no_spec';
   const text = file.text.replace(/^Status: .*$/m, `Status: ${input.status}`);
   let commitSha: string | null = null;
+  let unverified: string | null = null;
   if (text !== file.text) {
     const written = await github.updateFile({
       ...input.ref,
@@ -321,7 +334,9 @@ export const syncSpecStatus = async (
       sha: file.sha,
       message: `docs(spec): mark ${path.split('/').pop()!.replace(/\.md$/, '')} ${input.status}`
     });
-    commitSha = written?.commitSha ?? null;
+    // A push between reading the branch and writing would put the commit on top of it instead.
+    if (written?.commitSha && written.parentSha === expected) commitSha = written.commitSha;
+    else if (written?.commitSha) unverified = written.commitSha;
   }
   // The commit is recorded so a review of it counts as a review of the task's head: it only
   // changes the spec's status line on top of the work that was reviewed.
@@ -329,7 +344,7 @@ export const syncSpecStatus = async (
     taskId: input.taskId,
     actor: ENGINE,
     type: 'spec_status_set',
-    payload: { status: input.status, path, commitSha }
+    payload: { status: input.status, path, commitSha, ...(unverified ? { unverified } : {}) }
   });
   return text === file.text ? 'unchanged' : 'updated';
 };

@@ -12,12 +12,19 @@ import type { RefSnapshot } from '@officina/github';
 import { RUNNER_ROLES, type SessionRequest } from '@officina/runner';
 import { Pool } from 'pg';
 import { CONFIG_YAML } from '../../core/test/fixtures';
-import { PLAN, applyOrThrow, resetAndSeed, type Seeded } from '../../db/test/seed';
+import {
+  PLAN,
+  applyOrThrow,
+  createTaskInMerging,
+  resetAndSeed,
+  type Seeded
+} from '../../db/test/seed';
 import { createFakePort, idle, toolUse, type ScriptItem } from '../../runner/test/fake-port';
 import {
   cancelStaleAutoMerges,
   finishVerifiedSpecs,
   runAgentStep,
+  syncSpecStatus,
   tick,
   type GitHubPort
 } from '../src';
@@ -60,7 +67,14 @@ const succeed = (request: SessionRequest): ScriptItem[] => [
 const REFS: RefSnapshot = { defaultHead: 'main1', tags: { 'v1.0.0': 'tag1' } };
 
 /** `refs` are the snapshots returned in turn, the last one repeating; `merges` are the shas of merged pull requests. */
-const fakeGitHub = (options: { refs?: RefSnapshot[]; merges?: string[] } = {}) => {
+const fakeGitHub = (
+  options: {
+    refs?: RefSnapshot[];
+    merges?: string[];
+    branchHead?: string;
+    written?: { commitSha: string; parentSha: string };
+  } = {}
+) => {
   const calls: { method: string; args: unknown[] }[] = [];
   const refs = [...(options.refs ?? [REFS])];
   const port = {
@@ -78,7 +92,7 @@ const fakeGitHub = (options: { refs?: RefSnapshot[]; merges?: string[] } = {}) =
     },
     pushFacts: async (...args: unknown[]) => {
       calls.push({ method: 'pushFacts', args });
-      return { headSha: 'sha1', changedPaths: [COPY, SPEC], diffLines: 3 };
+      return { headSha: options.branchHead ?? 'sha1', changedPaths: [COPY, SPEC], diffLines: 3 };
     },
     readFile: async (...args: unknown[]) => {
       calls.push({ method: 'readFile', args });
@@ -86,6 +100,7 @@ const fakeGitHub = (options: { refs?: RefSnapshot[]; merges?: string[] } = {}) =
     },
     updateFile: async (...args: unknown[]) => {
       calls.push({ method: 'updateFile', args });
+      return options.written;
     },
     commentOnIssue: async (...args: unknown[]) => {
       calls.push({ method: 'commentOnIssue', args });
@@ -515,7 +530,51 @@ describe.skipIf(!url)('engine', () => {
     });
     expect(
       github.calls.find((call) => call.method === 'isPullRequestMerge')!.args[0]
-    ).toMatchObject({ sha: 'merged1', base: 'main' });
+    ).toMatchObject({ sha: 'merged1', base: 'main', since: 'main1' });
+  });
+
+  test('a spec status commit stands for the verified head only when it sits right on it', async () => {
+    const taskId = await createTaskInMerging(pool, seeded);
+    const ref = { installationId: 99, repo: 'ViciApp/vici-app' };
+    const sync = (github: ReturnType<typeof fakeGitHub>, status: string) =>
+      syncSpecStatus(pool, github.port, {
+        taskId,
+        ref,
+        branch: 'officina/task-1',
+        base: 'main',
+        specDir: 'docs/specs',
+        status
+      });
+    const statusEvents = async () =>
+      (
+        await pool.query<{ payload: Record<string, unknown> }>(
+          "select payload from task_events where task_id = $1 and type = 'spec_status_set' order by id",
+          [taskId]
+        )
+      ).rows.map((row) => row.payload);
+
+    // Someone pushed on top of the verified head 'abc': no status commit is written.
+    const moved = fakeGitHub({ branchHead: 'foreign' });
+    expect(await sync(moved, 'In progress (#42)')).toBe('moved');
+    expect(moved.calls.some((call) => call.method === 'updateFile')).toBe(false);
+
+    // A push between reading and writing: the commit is not taken for the task's head.
+    const raced = fakeGitHub({
+      branchHead: 'abc',
+      written: { commitSha: 'status1', parentSha: 'foreign' }
+    });
+    expect(await sync(raced, 'Implemented (#42)')).toBe('updated');
+
+    const clean = fakeGitHub({
+      branchHead: 'abc',
+      written: { commitSha: 'status2', parentSha: 'abc' }
+    });
+    expect(await sync(clean, 'Verified (#42)')).toBe('updated');
+    expect(await statusEvents()).toEqual([
+      expect.objectContaining({ commitSha: null, branchMoved: 'foreign' }),
+      expect.objectContaining({ commitSha: null, unverified: 'status1' }),
+      expect.objectContaining({ commitSha: 'status2' })
+    ]);
   });
 
   test('repeated invalid results fail the run and ask a maintainer', async () => {

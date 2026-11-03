@@ -122,6 +122,40 @@ describe('GitHub client', () => {
     expect(reads.every((call) => call.authorization?.startsWith('Bearer ghs_'))).toBe(true);
   });
 
+  test('a ref snapshot reads every page of tags', async () => {
+    const pages = [
+      Array.from({ length: 100 }, (_, i) => ({ ref: `refs/tags/v${i}`, object: { sha: `t${i}` } })),
+      [{ ref: 'refs/tags/v100', object: { sha: 't100' } }]
+    ];
+    const { fetchImpl } = fakeGitHub({
+      'POST /app/installations/99/access_tokens': tokenRoute('2099-01-01T00:00:00Z'),
+      'GET /repos/ViciApp/vici-app/git/ref/heads/main': () => json({ object: { sha: 'main1' } }),
+      'GET /repos/ViciApp/vici-app/git/matching-refs/tags': () => json(pages.shift() ?? [])
+    });
+    const client = createGitHubClient({ appId: '1', privateKeyPem, fetch: fetchImpl });
+    const snapshot = await client.refSnapshot({ ...ref, defaultBranch: 'main' });
+    expect(snapshot.defaultHead).toBe('main1');
+    expect(Object.keys(snapshot.tags)).toHaveLength(101);
+    expect(snapshot.tags['v100']).toBe('t100');
+  });
+
+  test('only a pull request merged on top of the old head counts as a merge', async () => {
+    const merged = [{ merged_at: '2026-11-01', merge_commit_sha: 'm1', base: { ref: 'main' } }];
+    const check = async (status: string) => {
+      const { fetchImpl } = fakeGitHub({
+        'POST /app/installations/99/access_tokens': tokenRoute('2099-01-01T00:00:00Z'),
+        'GET /repos/ViciApp/vici-app/compare/old...m1': () => json({ status }),
+        'GET /repos/ViciApp/vici-app/commits/m1/pulls': () => json(merged)
+      });
+      const client = createGitHubClient({ appId: '1', privateKeyPem, fetch: fetchImpl });
+      return client.isPullRequestMerge({ ...ref, sha: 'm1', base: 'main', since: 'old' });
+    };
+    expect(await check('ahead')).toBe(true);
+    // An older merge commit: the branch was rewritten back in history.
+    expect(await check('behind')).toBe(false);
+    expect(await check('diverged')).toBe(false);
+  });
+
   test('a possibly truncated file list reports an unbounded diff', async () => {
     const files = Array.from({ length: COMPARE_FILE_LIMIT }, (_, index) => ({
       filename: `src/file${index}.ts`,
