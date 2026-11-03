@@ -31,9 +31,9 @@
 
 <nav class="sidebar" aria-label="Main">
   <a class="brand" href="/">
-    <svg viewBox="0 0 32 32" width="26" height="26" aria-hidden="true">
-      <rect width="32" height="32" rx="8" fill="var(--panel-3)" />
-      <path d="M8 13h13l3-3h2v4l-3 2H19v3l3 5H10l3-5v-3H8z" fill="var(--accent)" />
+    <svg viewBox="0 0 28 28" width="28" height="28" aria-hidden="true">
+      <circle cx="9" cy="9" r="9" fill="#ffffff" />
+      <rect x="14" y="14" width="14" height="14" fill="var(--accent)" />
     </svg>
     <span>Officina</span>
   </a>
@@ -50,7 +50,7 @@
       {/each}
     </select>
   {:else if session.project}
-    <div class="project-name mono" title={session.project.repo}>{session.project.repo}</div>
+    <div class="project-name caps" title={session.project.repo}>{session.project.repo}</div>
   {/if}
 
   <ul class="nav">
@@ -68,7 +68,7 @@
         <a href="/agents" class:on={path === '/agents'}>
           <Bot size={16} />Agents
           {#if board.running.length}<span class="running num"
-              ><span class="pulse"></span>{board.running.length}</span
+              ><span class="pulse"></span>{board.running.length} at work</span
             >{/if}
         </a>
       </li>
@@ -89,7 +89,7 @@
     </div>
     {#if session.me?.githubAvailable}
       {#if session.me.github}
-        <div class="github faint" title="Approvals you give here also approve on GitHub as you">
+        <div class="github" title="Approvals you give here also approve on GitHub as you">
           <GitMerge size={13} />@{session.me.github.login}
         </div>
       {:else}
@@ -103,7 +103,7 @@
         <MemberAvatar name={session.me.member.name} size={26} />
         <div class="who">
           <span class="name">{session.me.member.name}</span>
-          <span class="role faint">{session.project?.role ?? ''}</span>
+          <span class="role caps">{session.project?.role ?? ''}</span>
         </div>
         <button
           class="btn ghost icon sm"
@@ -132,35 +132,44 @@
   .sidebar {
     display: flex;
     flex-direction: column;
-    gap: 14px;
     height: 100%;
-    padding: 16px 12px 12px;
-    background: var(--sidebar-bg);
-    border-right: 1px solid var(--border);
+    padding: 28px 0 16px;
+    background: var(--nav-bg);
+    color: var(--nav-text);
+    border-right: 1px solid var(--nav-rule);
   }
 
   .brand {
     display: flex;
     align-items: center;
-    gap: 9px;
-    padding: 2px 6px;
-    font-size: 15px;
-    font-weight: 700;
+    gap: 12px;
+    padding: 0 24px 26px;
+    font-size: 24px;
+    font-weight: 800;
+    font-stretch: 72%;
     letter-spacing: -0.01em;
+    line-height: 1;
   }
 
   .project {
+    width: auto;
+    margin: 0 24px 18px;
     height: 32px;
     padding: 0 8px;
     font-size: 12.5px;
+    color: var(--nav-text);
+    background: transparent;
+    border-bottom-color: var(--nav-text-2);
+  }
+
+  .project option {
+    color: initial;
   }
 
   .project-name {
-    padding: 6px 8px;
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--border);
+    padding: 0 24px 20px;
     font-size: 12px;
-    color: var(--text-2);
+    color: var(--nav-text-2);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -169,7 +178,6 @@
   .nav {
     display: flex;
     flex-direction: column;
-    gap: 2px;
     margin: 0;
     padding: 0;
     list-style: none;
@@ -178,123 +186,125 @@
   .nav a {
     display: flex;
     align-items: center;
-    gap: 10px;
-    height: 34px;
-    padding: 0 10px;
-    border-radius: var(--radius-sm);
-    color: var(--text-2);
+    gap: 12px;
+    padding: 11px 24px 11px 20px;
+    border-left: 4px solid transparent;
+    color: var(--nav-text-2);
+    font-size: 15px;
     font-weight: 500;
   }
 
   .nav a:hover {
-    background: var(--hover);
-    color: var(--text);
+    color: var(--nav-text);
   }
 
   .nav a.on {
-    background: var(--panel-3);
-    color: var(--text);
+    border-left-color: var(--nav-text);
+    color: var(--nav-text);
+    font-weight: 700;
   }
 
   .badge {
     margin-left: auto;
-    min-width: 19px;
-    height: 19px;
-    padding: 0 6px;
-    border-radius: 999px;
-    font-size: 11px;
-    font-weight: 700;
-    line-height: 19px;
+    min-width: 22px;
+    padding: 0 7px;
+    font-size: 13px;
+    font-weight: 800;
+    line-height: 22px;
     text-align: center;
     background: var(--accent);
     color: var(--accent-text);
   }
 
   .badge.quiet {
-    background: var(--panel-3);
-    color: var(--text-2);
+    min-width: 0;
+    padding: 0;
+    font-weight: 400;
+    background: none;
+    color: var(--nav-text-2);
   }
 
   .running {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: 7px;
     margin-left: auto;
-    font-size: 11.5px;
-    color: var(--accent);
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--nav-text-2);
   }
 
   .pulse {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--accent);
-    animation: pulse 1.4s ease-in-out infinite;
+    width: 8px;
+    height: 8px;
+    background: var(--nav-text);
+    animation: signal 1.2s ease-in-out infinite;
   }
 
   .bottom {
     margin-top: auto;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 12px;
+    padding-top: 16px;
   }
 
-  .live {
+  .live,
+  .github {
     display: flex;
     align-items: center;
-    gap: 7px;
-    padding: 0 8px;
+    gap: 8px;
+    padding: 0 24px;
     font-size: 11.5px;
-    color: var(--text-3);
+    font-stretch: 85%;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--nav-text-2);
   }
 
   .live .dot {
-    width: 7px;
-    height: 7px;
+    width: 8px;
+    height: 8px;
     border-radius: 50%;
-    background: var(--text-3);
+    border: 2px solid var(--nav-text-2);
   }
 
   .live.live .dot {
-    background: var(--ok);
-    box-shadow: 0 0 0 3px var(--ok-soft);
+    border-color: var(--nav-text);
+    background: var(--nav-text);
   }
 
   .live.connecting .dot {
-    background: var(--warn);
-    animation: pulse 1.2s infinite;
+    animation: signal 1.2s infinite;
+  }
+
+  .live.offline {
+    color: var(--danger);
   }
 
   .live.offline .dot {
+    border-color: var(--danger);
     background: var(--danger);
   }
 
   .github {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    padding: 0 8px;
-    font-size: 11.5px;
+    text-transform: none;
+    letter-spacing: 0.02em;
   }
 
   .github.connect {
-    height: 30px;
-    border-radius: var(--radius-sm);
-    border: 1px dashed var(--border-strong);
-    color: var(--text-2);
-  }
-
-  .github.connect:hover {
-    color: var(--text);
-    border-color: var(--accent);
+    color: var(--nav-text);
+    text-decoration: underline;
+    text-underline-offset: 3px;
   }
 
   .me {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 8px 6px 2px 8px;
-    border-top: 1px solid var(--border);
+    gap: 10px;
+    margin-top: 4px;
+    padding: 16px 16px 0 24px;
+    border-top: 1px solid var(--nav-rule);
   }
 
   .who {
@@ -302,11 +312,12 @@
     flex-direction: column;
     flex: 1;
     min-width: 0;
-    line-height: 1.25;
+    gap: 2px;
+    line-height: 1.2;
   }
 
   .name {
-    font-size: 12.5px;
+    font-size: 14px;
     font-weight: 600;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -315,7 +326,16 @@
 
   .role {
     font-size: 11px;
-    text-transform: capitalize;
+    color: var(--nav-text-2);
+  }
+
+  .me .btn {
+    color: var(--nav-text-2);
+  }
+
+  .me .btn:hover {
+    color: var(--nav-text);
+    background: none;
   }
 
   /* On phones the sidebar becomes a tab bar along the bottom edge. */
@@ -325,9 +345,8 @@
       align-items: center;
       height: auto;
       gap: 4px;
-      padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
+      padding: 4px 8px calc(4px + env(safe-area-inset-bottom));
       border-right: 0;
-      border-top: 1px solid var(--border);
     }
 
     .brand,
@@ -350,42 +369,43 @@
       position: relative;
       flex-direction: column;
       gap: 2px;
-      height: auto;
       padding: 6px 12px;
+      border-left: 0;
+      border-top: 3px solid transparent;
       font-size: 11px;
     }
 
     .nav a.on {
-      background: none;
-      color: var(--accent);
+      border-top-color: var(--nav-text);
     }
 
     .badge,
     .running {
       position: absolute;
-      top: 0;
+      top: 2px;
       right: 2px;
       margin: 0;
     }
 
     .badge {
       min-width: 16px;
-      height: 16px;
       padding: 0 4px;
       font-size: 10px;
       line-height: 16px;
     }
 
     .running {
-      font-size: 10px;
+      font-size: 0;
     }
 
     .bottom {
       margin: 0;
+      padding: 0;
     }
 
     .me {
       gap: 2px;
+      margin: 0;
       padding: 0;
       border: 0;
     }

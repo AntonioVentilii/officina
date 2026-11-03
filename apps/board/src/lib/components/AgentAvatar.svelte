@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { roleColor, roleIcon } from './roles';
+  import { roleShape } from './roles';
 
   interface Props {
     role: string;
@@ -10,47 +10,72 @@
 
   let { role, label, running = false, size = 24 }: Props = $props();
 
-  const Icon = $derived(roleIcon(role));
+  const shape = $derived(roleShape(role));
 </script>
 
 <span
   class="avatar"
   class:running
-  style:--hue={roleColor(role)}
   style:--size="{size}px"
+  style:--s="{Math.round(size * 0.62)}px"
   title={label}
   aria-label={label}
   role="img"
 >
-  <Icon size={Math.round(size * 0.55)} strokeWidth={2.2} />
+  <span class="shape {shape}"></span>
 </span>
 
 <style>
   .avatar {
-    position: relative;
     display: inline-grid;
     place-items: center;
     flex: none;
     width: var(--size);
     height: var(--size);
-    border-radius: 50%;
-    color: var(--hue);
-    background: color-mix(in srgb, var(--hue) 16%, transparent);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--hue) 30%, transparent);
+    color: currentColor;
   }
 
-  .running::before {
-    content: '';
-    position: absolute;
-    inset: -3px;
+  .shape {
+    display: block;
+    width: var(--s);
+    height: var(--s);
+    background: currentColor;
+  }
+
+  .running .shape {
+    animation: signal 1.2s ease-in-out infinite;
+  }
+
+  .circle {
     border-radius: 50%;
-    background: conic-gradient(from 0deg, transparent 0 55%, var(--hue) 100%);
-    -webkit-mask: radial-gradient(
-      farthest-side,
-      transparent calc(100% - 2px),
-      #000 calc(100% - 2px)
-    );
-    mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
-    animation: spin 1.1s linear infinite;
+  }
+
+  .triangle {
+    clip-path: polygon(50% 0, 100% 100%, 0 100%);
+  }
+
+  .half {
+    height: calc(var(--s) / 2);
+    border-radius: var(--s) var(--s) 0 0;
+  }
+
+  .quarter {
+    border-radius: 0 var(--s) 0 0;
+  }
+
+  .diamond {
+    clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+  }
+
+  .ring {
+    border: calc(var(--s) * 0.22) solid currentColor;
+    border-radius: 50%;
+    background: none;
+  }
+
+  /* A role this board does not know yet still shows, as an outline. */
+  .unknown {
+    border: 2px solid currentColor;
+    background: none;
   }
 </style>

@@ -52,7 +52,7 @@
 
 <div class="page">
   <header>
-    <h1>Inbox</h1>
+    <h1 class="page-title">Inbox</h1>
     <p class="muted">Everything that is waiting on you, oldest first within each group.</p>
   </header>
 
@@ -69,22 +69,20 @@
   {#each groups as group (group.id)}
     <section>
       <h2>
-        <group.icon size={15} />{group.title}<span class="faint num">{group.cards.length}</span>
+        <group.icon size={18} />{group.title}<span class="count num">{group.cards.length}</span>
       </h2>
       <ul>
         {#each [...group.cards].sort( (a, b) => a.stageSince.localeCompare(b.stageSince) ) as card (card.number)}
           <li>
             <a href="/tasks/{card.number}">
-              <span class="number mono">#{card.number}</span>
+              <span class="number caps num">#{card.number}</span>
               <span class="title">{card.title}</span>
               <span class="lane-cell"><LaneChip lane={card.lane} /></span>
-              <span class="label faint"
+              <span class="label"
                 >{card.blocked ? card.blocked.question : card.waitingOn.label}</span
               >
               <MemberAvatar name={card.requester} size={20} />
-              <span class="age faint num" title="Waiting for"
-                >{since(card.stageSince, clock.now)}</span
-              >
+              <span class="age num" title="Waiting for">{since(card.stageSince, clock.now)}</span>
             </a>
           </li>
         {/each}
@@ -97,53 +95,70 @@
   .page {
     height: 100%;
     overflow-y: auto;
-    padding: 18px 24px 40px;
-    max-width: 980px;
+    padding-bottom: 48px;
   }
 
-  header h1 {
-    margin: 0;
-    font-size: 20px;
-    letter-spacing: -0.02em;
+  header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 12px 28px;
+    margin-bottom: 28px;
+    padding: 28px 32px 22px;
+    border-bottom: 3px solid var(--rule);
   }
 
   header p {
-    margin: 4px 0 20px;
+    margin: 0;
+    max-width: 420px;
+  }
+
+  section,
+  .clear {
+    max-width: 1040px;
+    margin: 0 32px;
   }
 
   section + section {
-    margin-top: 24px;
+    margin-top: 36px;
   }
 
   h2 {
     display: flex;
     align-items: center;
-    gap: 8px;
-    margin: 0 0 8px;
-    font-size: 13px;
-    font-weight: 650;
+    gap: 10px;
+    margin: 0;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--rule);
+    font-size: 22px;
+    font-weight: 800;
+    font-stretch: 75%;
+  }
+
+  .count {
+    margin-left: auto;
+    font-size: 40px;
+    font-weight: 300;
+    font-stretch: 62%;
+    line-height: 0.75;
   }
 
   ul {
     margin: 0;
     padding: 0;
     list-style: none;
-    border-radius: var(--radius);
-    border: 1px solid var(--border);
-    background: var(--panel);
-    overflow: hidden;
   }
 
-  li + li {
-    border-top: 1px solid var(--border);
+  li {
+    border-bottom: 1px solid var(--border);
   }
 
   a {
     display: grid;
-    grid-template-columns: auto minmax(0, 1.2fr) auto minmax(0, 1fr) auto 44px;
+    grid-template-columns: 44px minmax(0, 1.2fr) auto minmax(0, 1fr) auto 44px;
     align-items: center;
-    gap: 12px;
-    padding: 11px 14px;
+    gap: 14px;
+    padding: 13px 4px;
   }
 
   a:hover {
@@ -151,54 +166,73 @@
   }
 
   .number {
-    font-size: 12px;
-    color: var(--text-3);
+    font-weight: 800;
   }
 
   .title {
-    font-weight: 560;
+    font-size: 15px;
+    font-weight: 600;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
+  .lane-cell {
+    display: inline-flex;
+  }
+
   .label {
-    font-size: 12.5px;
+    font-size: 13px;
+    color: var(--text-2);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   .age {
-    font-size: 12px;
+    font-size: 12.5px;
+    font-stretch: 85%;
+    color: var(--text-2);
     text-align: right;
   }
 
   .clear {
     display: flex;
     flex-direction: column;
-    align-items: center;
+    align-items: flex-start;
     gap: 6px;
-    padding: 60px 20px;
-    border: 1px dashed var(--border);
-    border-radius: var(--radius-lg);
-    color: var(--text-3);
-    text-align: center;
+    padding: 12px 0;
+    color: var(--text-2);
   }
 
   .clear h2 {
+    padding: 0;
+    border: 0;
     color: var(--text);
-    font-size: 15px;
-    margin: 6px 0 0;
+    font-size: 28px;
+    margin: 8px 0 0;
+  }
+
+  .clear p {
+    margin: 0;
   }
 
   @media (max-width: 720px) {
-    .page {
-      padding: 14px 16px 24px;
+    header {
+      padding: 20px 16px 16px;
+    }
+
+    header :global(.page-title) {
+      font-size: 56px;
+    }
+
+    section,
+    .clear {
+      margin: 0 16px;
     }
 
     a {
-      grid-template-columns: auto minmax(0, 1fr) 40px;
+      grid-template-columns: 40px minmax(0, 1fr) 40px;
     }
 
     .lane-cell,

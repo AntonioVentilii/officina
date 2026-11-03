@@ -1,131 +1,82 @@
-@import '@fontsource-variable/inter';
+/* The width axis is the point: condensed for headings and numerals, normal for reading. */
+@import '@fontsource-variable/archivo/wdth.css';
 @import '@fontsource-variable/jetbrains-mono';
 
 :root {
-  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-sans: 'Archivo Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-mono: 'JetBrains Mono Variable', ui-monospace, 'SF Mono', Menlo, monospace;
 
-  --radius-sm: 6px;
-  --radius: 10px;
-  --radius-lg: 14px;
   --sidebar: 232px;
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
 
-  /* Agent roles keep one hue everywhere: avatar, log rail, running glow. */
-  --role-interviewer: #f472b6;
-  --role-spec: #a78bfa;
-  --role-builder: #ff9f43;
-  --role-reviewer_spec: #22d3ee;
-  --role-reviewer_correctness: #60a5fa;
-  --role-chooser: #a3e635;
-  --role-learner: #facc15;
+  /* Yellow means one thing: waiting on you. Red means one thing: something failed. */
+  --accent: #ffd400;
+  --accent-text: #111111;
+
+  /* The sidebar is ink in both themes, so its colours do not follow the theme. */
+  --nav-bg: #111111;
+  --nav-text: #ffffff;
+  --nav-text-2: #b5b5b5;
+  --nav-rule: #333333;
 }
 
 :root,
 :root[data-theme='dark'] {
   color-scheme: dark;
-  --bg: #0c0d10;
-  --bg-glow: rgba(255, 122, 69, 0.07);
-  --sidebar-bg: #0e0f12;
-  --panel: #131519;
-  --panel-2: #181b20;
-  --panel-3: #1e2228;
-  --hover: rgba(255, 255, 255, 0.04);
-  --border: #23272e;
-  --border-strong: #2f343c;
-  --text: #e9ebee;
-  --text-2: #a3aab4;
-  --text-3: #6b727d;
-  --accent: #ff7a45;
-  --accent-strong: #ff8f5e;
-  --accent-soft: rgba(255, 122, 69, 0.14);
-  --accent-text: #1a0e08;
-  --ok: #3fb950;
-  --ok-soft: rgba(63, 185, 80, 0.14);
-  --warn: #e3b341;
-  --warn-soft: rgba(227, 179, 65, 0.14);
-  --danger: #f85149;
-  --danger-soft: rgba(248, 81, 73, 0.14);
-  --info: #58a6ff;
-  --info-soft: rgba(88, 166, 255, 0.14);
-  --lane-green: #3fb950;
-  --lane-standard: #8b98a9;
-  --lane-red: #f85149;
-  --shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 8px 24px rgba(0, 0, 0, 0.35);
-  --shadow-lg: 0 24px 64px rgba(0, 0, 0, 0.55);
-  --backdrop: rgba(5, 6, 8, 0.55);
-  --code-bg: #0a0b0d;
+  --bg: #111111;
+  --panel: #111111;
+  --tint: #1c1c1b;
+  --hover: rgba(255, 255, 255, 0.05);
+  --border: #2c2c2a;
+  --rule: #ededea;
+  --text: #ededea;
+  --text-2: #a9a9a4;
+  --text-3: #868681;
+  --on-ink: #111111;
+  --danger: #ff3b45;
+  --backdrop: rgba(0, 0, 0, 0.6);
+  --code-bg: #181817;
+  --nav-bg: #000000;
+  --nav-rule: #2c2c2a;
 }
 
 :root[data-theme='light'] {
   color-scheme: light;
-  --bg: #f6f6f4;
-  --bg-glow: rgba(232, 89, 12, 0.06);
-  --sidebar-bg: #efefec;
+  --bg: #ffffff;
   --panel: #ffffff;
-  --panel-2: #fafaf8;
-  --panel-3: #f1f1ee;
-  --hover: rgba(0, 0, 0, 0.035);
-  --border: #e4e4df;
-  --border-strong: #d4d4ce;
-  --text: #1b1c1f;
-  --text-2: #565c66;
-  --text-3: #8a9099;
-  --accent: #e8590c;
-  --accent-strong: #d9480f;
-  --accent-soft: rgba(232, 89, 12, 0.1);
-  --accent-text: #ffffff;
-  --ok: #1a7f37;
-  --ok-soft: rgba(26, 127, 55, 0.1);
-  --warn: #9a6700;
-  --warn-soft: rgba(154, 103, 0, 0.1);
-  --danger: #cf222e;
-  --danger-soft: rgba(207, 34, 46, 0.08);
-  --info: #0969da;
-  --info-soft: rgba(9, 105, 218, 0.08);
-  --lane-green: #1a7f37;
-  --lane-standard: #6e7781;
-  --lane-red: #cf222e;
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 6px 18px rgba(0, 0, 0, 0.06);
-  --shadow-lg: 0 24px 64px rgba(0, 0, 0, 0.18);
-  --backdrop: rgba(30, 30, 28, 0.28);
-  --code-bg: #f3f3f0;
+  --tint: #f2f2f0;
+  --hover: rgba(17, 17, 17, 0.04);
+  --border: #d9d9d6;
+  --rule: #111111;
+  --text: #111111;
+  --text-2: #555555;
+  --text-3: #707070;
+  --on-ink: #ffffff;
+  --danger: #e3000f;
+  --backdrop: rgba(17, 17, 17, 0.32);
+  --code-bg: #f5f5f3;
+  --nav-bg: #111111;
+  --nav-rule: #333333;
 }
 
 @media (prefers-color-scheme: light) {
   :root:not([data-theme]) {
     color-scheme: light;
-    --bg: #f6f6f4;
-    --bg-glow: rgba(232, 89, 12, 0.06);
-    --sidebar-bg: #efefec;
+    --bg: #ffffff;
     --panel: #ffffff;
-    --panel-2: #fafaf8;
-    --panel-3: #f1f1ee;
-    --hover: rgba(0, 0, 0, 0.035);
-    --border: #e4e4df;
-    --border-strong: #d4d4ce;
-    --text: #1b1c1f;
-    --text-2: #565c66;
-    --text-3: #8a9099;
-    --accent: #e8590c;
-    --accent-strong: #d9480f;
-    --accent-soft: rgba(232, 89, 12, 0.1);
-    --accent-text: #ffffff;
-    --ok: #1a7f37;
-    --ok-soft: rgba(26, 127, 55, 0.1);
-    --warn: #9a6700;
-    --warn-soft: rgba(154, 103, 0, 0.1);
-    --danger: #cf222e;
-    --danger-soft: rgba(207, 34, 46, 0.08);
-    --info: #0969da;
-    --info-soft: rgba(9, 105, 218, 0.08);
-    --lane-green: #1a7f37;
-    --lane-standard: #6e7781;
-    --lane-red: #cf222e;
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 6px 18px rgba(0, 0, 0, 0.06);
-    --shadow-lg: 0 24px 64px rgba(0, 0, 0, 0.18);
-    --backdrop: rgba(30, 30, 28, 0.28);
-    --code-bg: #f3f3f0;
+    --tint: #f2f2f0;
+    --hover: rgba(17, 17, 17, 0.04);
+    --border: #d9d9d6;
+    --rule: #111111;
+    --text: #111111;
+    --text-2: #555555;
+    --text-3: #707070;
+    --on-ink: #ffffff;
+    --danger: #e3000f;
+    --backdrop: rgba(17, 17, 17, 0.32);
+    --code-bg: #f5f5f3;
+    --nav-bg: #111111;
+    --nav-rule: #333333;
   }
 }
 
@@ -147,7 +98,6 @@ body {
   font-family: var(--font-sans);
   font-size: 14px;
   line-height: 1.5;
-  font-feature-settings: 'cv11', 'ss01';
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -163,6 +113,7 @@ textarea,
 select {
   font: inherit;
   color: inherit;
+  border-radius: 0;
 }
 
 button {
@@ -170,13 +121,12 @@ button {
 }
 
 :focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--text);
   outline-offset: 2px;
-  border-radius: var(--radius-sm);
 }
 
 ::selection {
-  background: var(--accent-soft);
+  background: color-mix(in srgb, var(--text) 16%, transparent);
 }
 
 .mono {
@@ -186,6 +136,14 @@ button {
 
 .num {
   font-variant-numeric: tabular-nums;
+}
+
+/* Meta lines: numbers, stages, kickers. Narrow capitals read as labels, not as prose. */
+.caps {
+  font-size: 11.5px;
+  font-stretch: 85%;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .muted {
@@ -208,92 +166,114 @@ button {
   border: 0;
 }
 
+/* Page titles share one size across the board, inbox, agents and learnings. */
+.page-title {
+  margin: 0;
+  font-size: 72px;
+  font-weight: 800;
+  font-stretch: 62%;
+  line-height: 0.8;
+  letter-spacing: -0.02em;
+}
+
+/* The block that says what you must do. The only yellow on a task. */
+.you {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 9px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.you strong {
+  font-weight: 800;
+}
+
 /* Buttons */
 .btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 32px;
-  padding: 0 12px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border-strong);
-  background: var(--panel-2);
+  height: 34px;
+  padding: 0 14px;
+  border: 2px solid var(--rule);
+  background: transparent;
   color: var(--text);
-  font-weight: 500;
-  font-size: 13px;
+  font-weight: 700;
+  font-size: 13.5px;
   white-space: nowrap;
   transition:
     background 0.15s,
-    border-color 0.15s,
-    transform 0.1s;
+    color 0.15s;
 }
 
 .btn:hover {
-  background: var(--panel-3);
-}
-
-.btn:active {
-  transform: translateY(1px);
+  background: var(--hover);
 }
 
 .btn:disabled {
-  opacity: 0.55;
+  opacity: 0.45;
   cursor: default;
 }
 
 .btn.primary {
-  background: var(--accent);
-  border-color: transparent;
-  color: var(--accent-text);
+  background: var(--rule);
+  color: var(--on-ink);
 }
 
-.btn.primary:hover {
-  background: var(--accent-strong);
+.btn.primary:hover:not(:disabled) {
+  background: var(--text-2);
+  border-color: var(--text-2);
 }
 
 .btn.ghost {
-  background: transparent;
   border-color: transparent;
   color: var(--text-2);
 }
 
 .btn.ghost:hover {
-  background: var(--hover);
   color: var(--text);
 }
 
 .btn.danger {
   color: var(--danger);
+  border-color: var(--danger);
 }
 
 .btn.sm {
-  height: 26px;
-  padding: 0 8px;
-  font-size: 12px;
+  height: 28px;
+  padding: 0 9px;
+  font-size: 12.5px;
 }
 
 .btn.icon {
-  width: 32px;
+  width: 34px;
   padding: 0;
   justify-content: center;
 }
 
-/* Fields */
+.btn.icon.sm {
+  width: 28px;
+}
+
+/* Fields: a rule underneath, as on a printed form. */
 .field {
   width: 100%;
-  border: 1px solid var(--border-strong);
-  background: var(--panel-2);
-  border-radius: var(--radius-sm);
+  border: 0;
+  border-bottom: 2px solid var(--rule);
+  background: var(--tint);
   padding: 8px 10px;
-  transition:
-    border-color 0.15s,
-    box-shadow 0.15s;
+  transition: background 0.15s;
 }
 
 .field:focus {
   outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  background: var(--hover);
+  border-bottom-width: 3px;
+  padding-bottom: 7px;
 }
 
 textarea.field {
@@ -302,50 +282,37 @@ textarea.field {
   line-height: 1.5;
 }
 
-/* Pills */
+/* Status words: narrow capitals, never a coloured lozenge. */
 .pill {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  height: 20px;
-  padding: 0 7px;
-  border-radius: 999px;
+  gap: 6px;
   font-size: 11.5px;
-  font-weight: 550;
+  font-stretch: 85%;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   white-space: nowrap;
-  background: var(--panel-3);
   color: var(--text-2);
 }
 
-.pill.accent {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
-.pill.ok {
-  background: var(--ok-soft);
-  color: var(--ok);
-}
-
+.pill.accent,
+.pill.ok,
+.pill.info,
 .pill.warn {
-  background: var(--warn-soft);
-  color: var(--warn);
+  color: var(--text);
+  font-weight: 800;
 }
 
 .pill.danger {
-  background: var(--danger-soft);
   color: var(--danger);
-}
-
-.pill.info {
-  background: var(--info-soft);
-  color: var(--info);
+  font-weight: 800;
 }
 
 /* Scrollbars */
 * {
   scrollbar-width: thin;
-  scrollbar-color: var(--border-strong) transparent;
+  scrollbar-color: var(--border) transparent;
 }
 
 @keyframes spin {
@@ -354,24 +321,14 @@ textarea.field {
   }
 }
 
-@keyframes pulse {
+/* A running agent's shape blinks like a machine's signal lamp. */
+@keyframes signal {
   0%,
   100% {
     opacity: 1;
-    transform: scale(1);
   }
   50% {
-    opacity: 0.45;
-    transform: scale(0.85);
-  }
-}
-
-@keyframes shimmer {
-  from {
-    background-position: -200% 0;
-  }
-  to {
-    background-position: 200% 0;
+    opacity: 0.25;
   }
 }
 
@@ -382,18 +339,5 @@ textarea.field {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
-  }
-}
-
-/* Lets a gradient border rotate: the angle must be a typed custom property to animate. */
-@property --angle {
-  syntax: '<angle>';
-  initial-value: 0deg;
-  inherits: false;
-}
-
-@keyframes orbit {
-  to {
-    --angle: 360deg;
   }
 }

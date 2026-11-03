@@ -27,7 +27,7 @@
 
 <div class="page">
   <header>
-    <h1>Learnings</h1>
+    <h1 class="page-title">Learnings</h1>
     <p class="muted">
       After every merged task the learner looks back at what slowed it down and proposes an exact
       edit to the project's docs or to an agent's prompt. Accepting a project learning opens a pull
@@ -35,9 +35,13 @@
     </p>
   </header>
 
-  <div class="segmented" role="group" aria-label="Status">
+  <div class="tabs" role="group" aria-label="Status">
     {#each FILTERS as item (item.id)}
-      <button class:on={filter === item.id} onclick={() => (filter = item.id)}>
+      <button
+        class:on={filter === item.id}
+        aria-pressed={filter === item.id}
+        onclick={() => (filter = item.id)}
+      >
         {item.label}<span class="count num">{count(item.id)}</span>
       </button>
     {/each}
@@ -65,79 +69,98 @@
   .page {
     height: 100%;
     overflow-y: auto;
-    padding: 18px 24px 40px;
-    max-width: 920px;
+    padding-bottom: 48px;
   }
 
-  h1 {
-    margin: 0;
-    font-size: 20px;
-    letter-spacing: -0.02em;
+  header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 12px 28px;
+    padding: 28px 32px 22px;
+    border-bottom: 3px solid var(--rule);
   }
 
   header p {
-    margin: 4px 0 16px;
-    max-width: 680px;
+    margin: 0;
+    max-width: 560px;
   }
 
-  .segmented {
-    display: inline-flex;
-    padding: 2px;
-    margin-bottom: 14px;
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--border);
-    background: var(--panel);
+  .tabs,
+  .list,
+  .empty {
+    max-width: 920px;
+    margin-left: 32px;
+    margin-right: 32px;
   }
 
-  .segmented button {
+  .tabs {
+    display: flex;
+    gap: 24px;
+    margin-top: 22px;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .tabs button {
     display: inline-flex;
-    align-items: center;
+    align-items: baseline;
     gap: 6px;
-    height: 28px;
-    padding: 0 10px;
+    padding: 4px 0 8px;
+    margin-bottom: -1px;
     border: 0;
-    border-radius: 5px;
+    border-bottom: 3px solid transparent;
     background: none;
     color: var(--text-2);
-    font-size: 12.5px;
-    font-weight: 500;
+    font-size: 14px;
+    font-weight: 600;
   }
 
-  .segmented button.on {
-    background: var(--panel-3);
+  .tabs button:hover {
     color: var(--text);
   }
 
+  .tabs button.on {
+    color: var(--text);
+    border-bottom-color: var(--rule);
+  }
+
   .count {
-    font-size: 11px;
-    color: var(--text-3);
+    font-size: 15px;
+    font-weight: 300;
+    font-stretch: 75%;
   }
 
   .list {
     display: flex;
     flex-direction: column;
-    gap: 10px;
   }
 
   .empty {
     display: flex;
     flex-direction: column;
-    align-items: center;
+    align-items: flex-start;
     gap: 4px;
-    padding: 48px 20px;
-    border: 1px dashed var(--border);
-    border-radius: var(--radius-lg);
-    color: var(--text-3);
-    text-align: center;
+    padding: 28px 0;
+    color: var(--text-2);
   }
 
   @media (max-width: 720px) {
-    .page {
-      padding: 14px 16px 24px;
+    header {
+      padding: 20px 16px 16px;
     }
 
-    .segmented {
-      display: flex;
+    header :global(.page-title) {
+      font-size: 56px;
+    }
+
+    .tabs,
+    .list,
+    .empty {
+      margin-left: 16px;
+      margin-right: 16px;
+    }
+
+    .tabs {
       overflow-x: auto;
     }
   }

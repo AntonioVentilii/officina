@@ -57,7 +57,7 @@
 {#if beforeAfter.length}
   <div class="compare">
     <div class="compare-head">
-      <h4>Before and after</h4>
+      <h4 class="caps">Before and after</h4>
       {#if locales.length > 1}
         <div class="locales">
           {#each locales as code (code)}
@@ -67,7 +67,7 @@
       {/if}
     </div>
     <table>
-      <thead><tr><th>Key</th><th>Before</th><th>After</th></tr></thead>
+      <thead class="caps"><tr><th>Key</th><th>Before</th><th>After</th></tr></thead>
       <tbody>
         {#each rows as row (row.key + row.locale)}
           <tr>
@@ -85,23 +85,21 @@
   .progress {
     display: flex;
     align-items: center;
-    gap: 10px;
-    margin-bottom: 8px;
+    gap: 12px;
+    margin-bottom: 6px;
     font-size: 12px;
   }
 
   .bar {
     flex: 1;
-    height: 4px;
-    border-radius: 2px;
-    background: var(--panel-3);
-    overflow: hidden;
+    height: 3px;
+    background: var(--border);
   }
 
   .bar span {
     display: block;
     height: 100%;
-    background: var(--ok);
+    background: var(--rule);
     transition: width 0.3s var(--ease);
   }
 
@@ -111,17 +109,19 @@
     list-style: none;
     display: flex;
     flex-direction: column;
-    gap: 2px;
+  }
+
+  li + li {
+    border-top: 1px solid var(--border);
   }
 
   label {
     display: flex;
-    gap: 10px;
-    padding: 8px 10px;
-    border-radius: var(--radius-sm);
+    gap: 12px;
+    padding: 10px 4px;
     cursor: pointer;
-    font-size: 13px;
-    line-height: 1.55;
+    font-size: 14px;
+    line-height: 1.5;
   }
 
   label:hover {
@@ -130,79 +130,75 @@
 
   input {
     flex: none;
-    width: 15px;
-    height: 15px;
-    margin-top: 3px;
-    accent-color: var(--ok);
+    width: 16px;
+    height: 16px;
+    margin-top: 2px;
+    accent-color: var(--text);
   }
 
   .done span {
     color: var(--text-3);
     text-decoration: line-through;
-    text-decoration-color: var(--border-strong);
   }
 
   .compare {
-    margin-top: 18px;
+    margin-top: 22px;
   }
 
   .compare-head {
     display: flex;
-    align-items: center;
+    align-items: baseline;
     justify-content: space-between;
     gap: 10px;
-    margin-bottom: 8px;
+    margin-bottom: 6px;
   }
 
   h4 {
     margin: 0;
-    font-size: 12.5px;
-    font-weight: 650;
+    font-weight: 700;
   }
 
   .locales {
     display: flex;
-    gap: 2px;
+    gap: 12px;
     flex-wrap: wrap;
   }
 
   .locales button {
-    height: 24px;
-    padding: 0 8px;
-    border-radius: 5px;
-    border: 1px solid transparent;
+    padding: 2px 0 3px;
+    border: 0;
+    border-bottom: 3px solid transparent;
     background: none;
     color: var(--text-2);
-    font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
   }
 
   .locales button.on {
-    border-color: var(--border-strong);
-    background: var(--panel-3);
     color: var(--text);
+    border-bottom-color: var(--rule);
   }
 
   table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 12.5px;
+    font-size: 13px;
   }
 
   th,
   td {
-    padding: 7px 10px;
+    padding: 8px 10px 8px 0;
     border-bottom: 1px solid var(--border);
     text-align: left;
     vertical-align: top;
   }
 
   th {
-    font-size: 11px;
-    font-weight: 650;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--text-3);
+    font-weight: 700;
+    color: var(--text-2);
+    border-bottom-color: var(--rule);
   }
 
   .key {
@@ -215,12 +211,10 @@
   .before {
     color: var(--text-3);
     text-decoration: line-through;
-    text-decoration-color: color-mix(in srgb, var(--danger) 60%, transparent);
   }
 
   .after {
     color: var(--text);
-    font-weight: 550;
-    background: color-mix(in srgb, var(--ok) 7%, transparent);
+    font-weight: 600;
   }
 </style>

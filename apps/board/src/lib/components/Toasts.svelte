@@ -24,28 +24,28 @@
     max-width: min(380px, calc(100vw - 40px));
   }
 
+  /* Toasts are solid slabs of the strong rule colour; a failure is the one red slab. */
   .toast {
     display: flex;
     align-items: flex-start;
-    gap: 9px;
-    padding: 11px 14px;
-    border-radius: var(--radius);
-    border: 1px solid var(--border-strong);
-    background: var(--panel);
-    box-shadow: var(--shadow-lg);
+    gap: 10px;
+    padding: 12px 16px;
+    border: 0;
+    background: var(--rule);
+    color: var(--on-ink);
     text-align: left;
-    font-size: 13px;
+    font-size: 14px;
     animation: slide 0.25s var(--ease);
   }
 
-  .ok :global(svg) {
-    color: var(--ok);
+  .toast :global(svg) {
     flex: none;
+    margin-top: 2px;
   }
 
-  .error :global(svg) {
-    color: var(--danger);
-    flex: none;
+  .error {
+    background: var(--danger);
+    color: #ffffff;
   }
 
   @keyframes slide {

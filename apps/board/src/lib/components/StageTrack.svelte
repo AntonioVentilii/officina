@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { Check } from '@lucide/svelte';
   import { CLOSED, TRACK, trackIndex } from '$lib/stages';
   import type { Stage } from '$lib/types';
 
@@ -23,87 +22,64 @@
       class:working={state === 'current' && working}
       aria-current={state === 'current' ? 'step' : undefined}
     >
-      <span class="node">
-        {#if state === 'past'}<Check size={11} strokeWidth={3} />{/if}
-      </span>
+      <span class="bar"></span>
       <span class="label">{step.label}</span>
     </li>
   {/each}
 </ol>
 
 <style>
+  /* A segmented rule: done steps are solid ink, the current one is thick, the rest a hairline. */
   .track {
     display: grid;
-    grid-template-columns: repeat(8, 1fr);
+    grid-template-columns: repeat(6, 1fr);
+    gap: 4px;
     margin: 0;
     padding: 0;
     list-style: none;
   }
 
   li {
-    position: relative;
     display: flex;
     flex-direction: column;
-    align-items: center;
-    gap: 6px;
-    font-size: 11px;
+    gap: 7px;
+    font-size: 11.5px;
+    font-stretch: 85%;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
     color: var(--text-3);
   }
 
-  li:not(:first-child)::before {
-    content: '';
-    position: absolute;
-    top: 8px;
-    right: 50%;
-    width: 100%;
-    height: 2px;
-    background: var(--border);
-    z-index: 0;
-  }
-
-  li.past::before,
-  li.current::before {
-    background: var(--accent);
-  }
-
-  .node {
-    position: relative;
-    z-index: 1;
-    display: grid;
-    place-items: center;
-    width: 18px;
-    height: 18px;
-    border-radius: 50%;
-    background: var(--panel);
-    border: 2px solid var(--border-strong);
-    color: var(--accent-text);
-  }
-
-  .past .node {
-    background: var(--accent);
-    border-color: var(--accent);
-  }
-
-  .current .node {
-    border-color: var(--accent);
-    box-shadow: 0 0 0 4px var(--accent-soft);
-  }
-
-  .current .node::after {
-    content: '';
-    width: 6px;
+  .bar {
+    display: flex;
+    align-items: flex-end;
     height: 6px;
-    border-radius: 50%;
-    background: var(--accent);
   }
 
-  .working .node::after {
-    animation: pulse 1.2s ease-in-out infinite;
+  .bar::before {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  .past .bar::before {
+    height: 3px;
+    background: var(--rule);
+  }
+
+  .current .bar::before {
+    height: 6px;
+    background: var(--rule);
+  }
+
+  .working .bar::before {
+    animation: signal 1.2s ease-in-out infinite;
   }
 
   .current .label {
     color: var(--text);
-    font-weight: 600;
+    font-weight: 800;
   }
 
   .past .label {
@@ -111,8 +87,7 @@
   }
 
   .closed {
-    opacity: 0.5;
-    filter: grayscale(1);
+    opacity: 0.45;
   }
 
   @media (max-width: 640px) {
@@ -122,13 +97,7 @@
 
     .current .label {
       display: block;
-      position: absolute;
-      top: 24px;
       white-space: nowrap;
-    }
-
-    .track {
-      padding-bottom: 18px;
     }
   }
 </style>

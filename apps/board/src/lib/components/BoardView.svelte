@@ -6,6 +6,7 @@
   import { clock } from '$lib/state/clock.svelte';
   import { session } from '$lib/state/session.svelte';
   import type { Card, Lane } from '$lib/types';
+  import LaneChip from './LaneChip.svelte';
   import NewRequest from './NewRequest.svelte';
   import TaskCard from './TaskCard.svelte';
 
@@ -54,33 +55,41 @@
 
 <section class="board">
   <header class="toolbar">
-    <div class="heading">
-      <h1>Board</h1>
-      <span class="count faint num">{board.tasks.length - closedCount} open</span>
+    <h1 class="page-title">Board</h1>
+    <div class="stats">
+      <div class="stat">
+        <span class="caps muted">Open</span>
+        <span class="figure num">{board.tasks.length - closedCount}</span>
+      </div>
+      <div class="stat">
+        <span class="caps muted">Waiting on you</span>
+        <span class="figure num">{board.waitingOnMe.length}</span>
+      </div>
     </div>
 
     <div class="filters">
       <label class="search">
-        <Search size={14} />
+        <Search size={15} />
         <input bind:value={query} placeholder="Filter tasks" aria-label="Filter tasks" />
       </label>
-      <div class="segmented" role="group" aria-label="Show">
-        <button class:on={!onlyMine} onclick={() => (onlyMine = false)}>All</button>
-        <button class:on={onlyMine} onclick={() => (onlyMine = true)}>
-          Waiting on me
-          {#if board.waitingOnMe.length}<span class="badge num">{board.waitingOnMe.length}</span
-            >{/if}
-        </button>
+      <div class="tabs" role="group" aria-label="Show">
+        <button class:on={!onlyMine} aria-pressed={!onlyMine} onclick={() => (onlyMine = false)}
+          >All</button
+        >
+        <button class:on={onlyMine} aria-pressed={onlyMine} onclick={() => (onlyMine = true)}
+          >Waiting on me</button
+        >
       </div>
       {#if session.technical}
         <div class="lanes" role="group" aria-label="Risk">
-          {#each [['green', 'Low risk'], ['standard', 'Standard'], ['red', 'Sensitive']] as const as [lane, label] (lane)}
+          {#each ['green', 'standard', 'red'] as const as lane (lane)}
             <button
-              class="lane {lane}"
+              class="lane"
               class:on={lanes.includes(lane)}
+              aria-pressed={lanes.includes(lane)}
               onclick={() => toggleLane(lane)}
             >
-              <span class="dot"></span>{label}
+              <LaneChip {lane} showStandard named />
             </button>
           {/each}
         </div>
@@ -93,21 +102,23 @@
     </div>
 
     {#if canRequest}
-      <button class="btn primary" onclick={() => (creating = true)}>
-        <Plus size={15} strokeWidth={2.5} />New request
+      <button class="btn primary new" onclick={() => (creating = true)}>
+        <Plus size={16} strokeWidth={2.5} />New request
       </button>
     {/if}
   </header>
 
   <div class="columns">
     {#each columns as column (column.id)}
-      <div class="column">
+      <section class="column" aria-label={column.title}>
         <div class="column-head" title={column.hint}>
-          <span class="column-title">{column.title}</span>
+          <h2 class="column-title">
+            {column.title}
+            {#if column.cards.some((card) => card.running.length)}
+              <span class="live-dot" title="An agent is working here"></span>
+            {/if}
+          </h2>
           <span class="column-count num">{column.cards.length}</span>
-          {#if column.cards.some((card) => card.running.length)}
-            <span class="live-dot" title="An agent is working here"></span>
-          {/if}
         </div>
         <div class="cards">
           {#each column.cards as card (card.number)}
@@ -121,7 +132,7 @@
             <div class="empty">{board.loaded ? column.hint : ''}</div>
           {/each}
         </div>
-      </div>
+      </section>
     {/each}
   </div>
 </section>
@@ -138,60 +149,64 @@
     min-height: 0;
   }
 
+  /* Title, figures and the one action on top; the filters run underneath as a strip. */
   .toolbar {
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    grid-template-areas: 'heading filters action';
-    align-items: center;
-    gap: 12px 16px;
-    padding: 18px 24px 14px;
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      'title stats . action'
+      'filters filters filters filters';
+    align-items: end;
+    gap: 22px 28px;
+    padding: 28px 32px 18px;
+    border-bottom: 3px solid var(--rule);
   }
 
-  .toolbar > .btn {
-    grid-area: action;
+  .toolbar > :global(.page-title) {
+    grid-area: title;
   }
 
-  .heading {
-    grid-area: heading;
+  .stats {
+    grid-area: stats;
     display: flex;
-    align-items: baseline;
-    gap: 10px;
+    gap: 28px;
   }
 
-  h1 {
-    margin: 0;
-    font-size: 20px;
-    font-weight: 650;
-    letter-spacing: -0.02em;
+  .stat {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding-bottom: 2px;
   }
 
-  .count {
-    font-size: 12.5px;
+  .stat .caps {
+    font-size: 12px;
+    letter-spacing: 0.1em;
+  }
+
+  .figure {
+    font-size: 28px;
+    font-weight: 300;
+    font-stretch: 62%;
+    line-height: 1;
   }
 
   .filters {
     grid-area: filters;
     display: flex;
-    align-items: center;
-    gap: 8px;
+    align-items: flex-end;
+    gap: 14px 28px;
     flex-wrap: wrap;
   }
 
   .search {
     display: flex;
     align-items: center;
-    gap: 6px;
-    height: 32px;
-    padding: 0 10px;
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--border);
-    background: var(--panel);
-    color: var(--text-3);
-    width: 200px;
-  }
-
-  .search:focus-within {
-    border-color: var(--accent);
+    gap: 8px;
+    width: 190px;
+    padding: 6px 0;
+    border-bottom: 2px solid var(--rule);
+    color: var(--text-2);
   }
 
   .search input {
@@ -201,167 +216,124 @@
     background: none;
     outline: none;
     color: var(--text);
-    font-size: 13px;
+    font-size: 15px;
   }
 
-  .segmented {
-    display: inline-flex;
-    padding: 2px;
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--border);
-    background: var(--panel);
+  .tabs,
+  .lanes {
+    display: flex;
+    gap: 18px;
   }
 
-  .segmented button {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    height: 26px;
-    padding: 0 10px;
+  .tabs button,
+  .lane {
+    padding: 4px 0;
     border: 0;
-    border-radius: 5px;
+    border-bottom: 3px solid transparent;
     background: none;
     color: var(--text-2);
-    font-size: 12.5px;
-    font-weight: 500;
+    font-size: 14px;
+    font-weight: 600;
   }
 
-  .segmented button.on {
-    background: var(--panel-3);
+  .tabs button:hover,
+  .lane:hover {
     color: var(--text);
   }
 
-  .badge {
-    min-width: 17px;
-    height: 17px;
-    padding: 0 5px;
-    border-radius: 999px;
-    font-size: 10.5px;
-    font-weight: 700;
-    line-height: 17px;
-    background: var(--accent);
-    color: var(--accent-text);
-  }
-
-  .lanes {
-    display: inline-flex;
-    gap: 4px;
+  .tabs button.on,
+  .lane.on {
+    color: var(--text);
+    border-bottom-color: var(--rule);
   }
 
   .lane {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    height: 28px;
-    padding: 0 9px;
-    border-radius: 999px;
-    border: 1px solid var(--border);
-    background: none;
-    color: var(--text-2);
-    font-size: 12px;
+    font-weight: 500;
   }
 
-  .lane .dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--c);
-  }
-
-  .lane.on {
-    border-color: var(--c);
-    color: var(--text);
-    background: color-mix(in srgb, var(--c) 10%, transparent);
-  }
-
-  .lane.green {
-    --c: var(--lane-green);
-  }
-
-  .lane.standard {
-    --c: var(--lane-standard);
-  }
-
-  .lane.red {
-    --c: var(--lane-red);
+  .new {
+    grid-area: action;
+    height: 44px;
+    padding: 0 22px;
+    font-size: 15px;
   }
 
   .columns {
     flex: 1;
     min-height: 0;
-    display: flex;
-    gap: 12px;
-    padding: 4px 24px 24px;
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(230px, 1fr);
     overflow-x: auto;
   }
 
   .column {
-    flex: 1 0 272px;
-    max-width: 360px;
     display: flex;
     flex-direction: column;
     min-height: 0;
-    border-radius: var(--radius-lg);
-    background: color-mix(in srgb, var(--panel-2) 55%, transparent);
-    border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+    border-right: 1px solid var(--rule);
   }
 
   .column-head {
     display: flex;
-    align-items: center;
+    align-items: flex-end;
+    justify-content: space-between;
     gap: 8px;
-    padding: 11px 13px 9px;
+    padding: 18px 18px 14px;
+    border-bottom: 1px solid var(--rule);
   }
 
   .column-title {
-    font-size: 12.5px;
-    font-weight: 650;
-    letter-spacing: 0.01em;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 0;
+    font-size: 22px;
+    font-weight: 800;
+    font-stretch: 75%;
+    line-height: 1.1;
   }
 
   .column-count {
-    font-size: 11.5px;
-    color: var(--text-3);
+    font-size: 64px;
+    font-weight: 300;
+    font-stretch: 62%;
+    line-height: 0.75;
   }
 
   .live-dot {
-    width: 7px;
-    height: 7px;
-    margin-left: auto;
-    border-radius: 50%;
-    background: var(--accent);
-    box-shadow: 0 0 0 3px var(--accent-soft);
-    animation: pulse 1.6s ease-in-out infinite;
+    width: 9px;
+    height: 9px;
+    background: var(--text);
+    animation: signal 1.2s ease-in-out infinite;
   }
 
   .cards {
     flex: 1;
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    padding: 2px 8px 10px;
     overflow-y: auto;
   }
 
   .empty {
-    display: grid;
-    place-items: center;
-    min-height: 72px;
-    padding: 10px;
-    border: 1px dashed var(--border);
-    border-radius: var(--radius);
+    padding: 16px 18px;
     color: var(--text-3);
-    font-size: 12px;
-    text-align: center;
+    font-size: 13px;
   }
 
   @media (max-width: 720px) {
     .toolbar {
       grid-template-columns: minmax(0, 1fr) auto;
       grid-template-areas:
-        'heading action'
+        'title action'
+        'stats stats'
         'filters filters';
-      padding: 14px 16px 10px;
+      gap: 14px 20px;
+      padding: 20px 16px 16px;
+    }
+
+    .toolbar :global(.page-title) {
+      font-size: 56px;
     }
 
     .filters {
@@ -376,18 +348,22 @@
       flex: none;
     }
 
+    .new {
+      height: 38px;
+      padding: 0 14px;
+    }
+
     .columns {
-      padding: 4px 16px 16px;
+      grid-auto-columns: calc(100vw - 32px);
       scroll-snap-type: x mandatory;
     }
 
     .column {
-      flex-basis: calc(100vw - 48px);
       scroll-snap-align: start;
     }
 
     .search {
-      width: 170px;
+      width: 160px;
     }
   }
 </style>
