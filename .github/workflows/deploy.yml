@@ -20,6 +20,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  # Read the GitHub Release behind the tag, to verify who cut it.
   contents: read
 
 jobs:
@@ -37,6 +38,26 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+          fetch-depth: 0
+      # The environment only checks the ref name, and anyone who can push a tag
+      # can name it v-something. Deploy only a tag that release-please released
+      # (a published GitHub Release by the av-automation app) on a commit that
+      # is already on main.
+      - name: Verify the tag is a release-please release on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          author=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json author,isDraft \
+            --jq 'select(.isDraft | not) | .author.login')
+          if [ "$author" != "av-automation[bot]" ]; then
+            echo "::error::$TAG is not a published release by av-automation (author: ${author:-none})."
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$TAG points to a commit that is not on main."
+            exit 1
+          fi
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # 1.6
       # --ha=false: exactly one machine, because orphaned-run recovery assumes a
       # single scheduler.
