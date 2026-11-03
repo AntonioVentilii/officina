@@ -87,9 +87,10 @@
 </script>
 
 {#if task.blocked}
-  <section class="next blocked">
+  <section class="next blocked" class:mine={task.waitingOn.me}>
     <div class="head">
-      <CircleHelp size={18} />
+      {#if task.waitingOn.me && look.current === 'tecnica'}<strong class="you-word">Question</strong
+        >{:else}<CircleHelp size={18} />{/if}
       <div>
         <div class="kicker caps">A question for {task.blocked.askedOf}</div>
         <div class="question"><Markdown source={task.blocked.question} /></div>
@@ -294,6 +295,12 @@
     color: var(--accent-text);
   }
 
+  /* A question for you is yellow too, so its text takes the yellow's ink in both themes. */
+  .mine .kicker,
+  .mine :global(.md) {
+    color: var(--accent-text);
+  }
+
   .mine .approval {
     color: var(--accent-text);
     opacity: 0.75;
@@ -342,6 +349,11 @@
     padding: 14px 16px;
     border: 1.5px solid var(--rule);
     background: var(--panel);
+    color: var(--text);
+  }
+
+  :global([data-look='tecnica']) .mine .kicker,
+  :global([data-look='tecnica']) .mine :global(.md) {
     color: var(--text);
   }
 
