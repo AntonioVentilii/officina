@@ -129,7 +129,13 @@ describe.skipIf(!url)('api', () => {
     ]);
     const taskId = await createTaskInMerging(pool, seeded);
     await linkPullRequest(pool, taskId, 42);
-    const review = (delivery: string, commitId: string, type = 'Bot', state = 'commented') =>
+    const review = (
+      delivery: string,
+      commitId: string,
+      type = 'Bot',
+      state = 'commented',
+      association = 'NONE'
+    ) =>
       deliver(reviewing, {
         event: 'pull_request_review',
         delivery,
@@ -140,6 +146,7 @@ describe.skipIf(!url)('api', () => {
             state,
             body: '',
             commit_id: commitId,
+            author_association: association,
             user: { login: 'copilot-pull-request-reviewer[bot]', type }
           },
           pull_request: { number: 42 },
@@ -147,9 +154,14 @@ describe.skipIf(!url)('api', () => {
         }
       });
 
-    // A person's plain comment asks for nothing.
-    expect(await (await review('r-1', 'abc', 'User')).json()).toEqual({
+    // A collaborator's plain comment asks for nothing.
+    expect(await (await review('r-1', 'abc', 'User', 'commented', 'COLLABORATOR')).json()).toEqual({
       status: 'applied',
+      outcomes: []
+    });
+    // A stranger asking for changes on a public repository steers nothing.
+    expect(await (await review('r-0', 'abc', 'User', 'changes_requested', 'NONE')).json()).toEqual({
+      status: 'ignored',
       outcomes: []
     });
     expect(await (await review('r-2', 'old')).json()).toEqual({

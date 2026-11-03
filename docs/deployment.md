@@ -17,14 +17,14 @@ Stage them without deploying: `fly secrets set --app vici-officina --stage NAME=
 
 | Secret                     | Status     | Where it comes from                                                                                                                                                                                                                                   |
 | -------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GITHUB_APP_ID`            | staged     | `4965437`                                                                                                                                                                                                                                             |
-| `GITHUB_APP_PRIVATE_KEY`   | staged     | Generated on the GitHub App settings page and piped from the downloaded file without being read; the file was moved to the Trash.                                                                                                                     |
+| `GITHUB_APP_ID`            | set        | `4965437`                                                                                                                                                                                                                                             |
+| `GITHUB_APP_PRIVATE_KEY`   | set        | Generated on the GitHub App settings page and piped from the downloaded file without being read; the file was moved to the Trash.                                                                                                                     |
 | `GITHUB_APP_CLIENT_SECRET` | set        | Generated on the GitHub App settings page and copied into Fly from the clipboard without being read. With `OFFICINA_TOKEN_KEY` it turns on GitHub sign-in and approving and merging as the verifier. The client ID is public and lives in `fly.toml`. |
 | `OFFICINA_TOKEN_KEY`       | set        | `openssl rand -base64 32`, piped straight into Fly. Encrypts members' GitHub tokens at rest; rotating it only means members connect GitHub again.                                                                                                     |
-| `GITHUB_WEBHOOK_SECRET`    | to do      | Generate with `openssl rand -hex 32`, stage it, and set the same value on the GitHub App webhook.                                                                                                                                                     |
+| `GITHUB_WEBHOOK_SECRET`    | set        | Generate with `openssl rand -hex 32`, stage it, and set the same value on the GitHub App webhook.                                                                                                                                                     |
 | `ANTHROPIC_API_KEY`        | not needed | Production authenticates by workload identity federation (below). An API key is only for local development on a non-Fly host.                                                                                                                         |
 | `ANTHROPIC_MODEL`          | not needed | Unset, the agents run the newest Opus the Models API lists. Set it only to hold the agents on a specific model id.                                                                                                                                    |
-| `DATABASE_URL`             | to do      | Set when Postgres is attached.                                                                                                                                                                                                                        |
+| `DATABASE_URL`             | set        | Set by `fly postgres attach`.                                                                                                                                                                                                                         |
 
 Without the GitHub App credentials or any Anthropic credentials the API still runs and logs `engine disabled` with the missing names.
 
@@ -49,7 +49,7 @@ The API is built from the root `Dockerfile` (which includes `agents/`) and confi
 
 ## Project: vici-app
 
-Registered as project `010b5462-fb9f-4c75-8b71-39643a8b1e7a` in workspace `vici`, owner `antonioventilii@gmail.com`. Its config came from the adoption spec while `.github/officina.yml` is not yet merged in vici-app; once it is, a push to `main` refreshes it automatically.
+Registered as project `010b5462-fb9f-4c75-8b71-39643a8b1e7a` in workspace `vici`, owned by the instance owner. Its config came from the adoption spec while `.github/officina.yml` is not yet merged in vici-app; once it is, a push to `main` refreshes it automatically.
 
 ## First deploy (done 2026-09-26)
 
