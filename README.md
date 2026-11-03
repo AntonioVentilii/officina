@@ -20,7 +20,7 @@ Anyone on the team describes what they need. Agents **interview, spec, build and
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="./docs/assets/board-dark.png" />
-  <img src="./docs/assets/board-light.png" alt="The Officina board: Requests, Plan, Building, Check and Done columns, with risk lanes, costs and a 'Your turn' badge on every card waiting for a person" width="900" />
+  <img src="./docs/assets/board-light.png" alt="The Officina board in the Modernista look: Requests, Plan, Building, Check and Done columns, risk lanes as fill levels, agents as shapes, and a yellow block on every task that is waiting on you" width="900" />
 </picture>
 
 </div>
@@ -89,8 +89,19 @@ A change touching sensitive paths needs an owner's approval of the exact spec ve
 
 <table>
 <tr>
-<td width="50%"><img src="./docs/assets/agents.png" alt="The Agents page: spec writer, builder, spec reviewer, code reviewer and approval chooser, with runs, success rate and cost, and a list of live sessions" /><br/><sub><b>Agents</b>: every role, every session, live, with its cost</sub></td>
+<td width="50%"><img src="./docs/assets/agents.png" alt="The Agents page: spec writer, builder, spec reviewer, code reviewer and approval chooser, each with its own shape, runs, success rate and cost, and a list of live sessions" /><br/><sub><b>Agents</b>: every role has a shape; every session is live, with its cost</sub></td>
 <td width="50%"><img src="./docs/assets/learnings.png" alt="The Learnings page: two proposed learnings with evidence and the exact edit to an agent prompt or the project's AGENTS.md" /><br/><sub><b>Learnings</b>: proposed edits, accepted by people</sub></td>
+</tr>
+</table>
+
+### Two looks, light and dark
+
+Pick one in the sidebar footer, or set a project default with `board.look` in `.github/officina.yml`. **Modernista** is a strict grid with big numerals and a shape for every agent. **Tecnica** treats every task as a work order on a technical drawing, with risk drawn as hatching. In both, yellow means one thing only: it is your turn.
+
+<table>
+<tr>
+<td width="50%"><img src="./docs/assets/tecnica-light.png" alt="The board in the Tecnica look, light: tasks as bordered work orders with title-block footers, numbered columns, hatched risk lanes and three-letter agent codes" /><br/><sub><b>Tecnica</b>, light</sub></td>
+<td width="50%"><img src="./docs/assets/tecnica-dark.png" alt="The board in the Tecnica look, dark" /><br/><sub><b>Tecnica</b>, dark</sub></td>
 </tr>
 </table>
 
