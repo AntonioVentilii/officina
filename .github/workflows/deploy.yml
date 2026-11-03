@@ -1,0 +1,46 @@
+name: Deploy
+
+# Production ships only released versions: release-please cuts a `vX.Y.Z` tag
+# with the av-automation app token when its release PR merges, and that tag
+# deploys the Vici instance, Fly app `vici-officina`.
+#
+# A deploy restarts the one machine, and the scheduler inside it: runs in
+# flight are failed and their sessions interrupted on boot. That is why merges
+# to main do not deploy on their own; merging the release PR is the decision.
+#
+# REQUIRES the `FLY_API_TOKEN` secret on the `production` environment, a deploy
+# token for this app only:
+#   fly tokens create deploy -a vici-officina
+# Runtime secrets (DATABASE_URL, GITHUB_APP_PRIVATE_KEY, ...) live on Fly; CI
+# only ships the image.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  production:
+    # Only ever deploy a released version: a workflow_dispatch must be run
+    # against a v* tag, not a branch.
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    environment: production
+    # One deploy at a time; never cancel a deploy mid-flight.
+    concurrency:
+      group: deploy-vici-officina
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # 1.6
+      # --ha=false: exactly one machine, because orphaned-run recovery assumes a
+      # single scheduler.
+      - name: Deploy to Fly
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl deploy --remote-only --ha=false

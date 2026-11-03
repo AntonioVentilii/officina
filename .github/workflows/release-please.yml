@@ -1,0 +1,57 @@
+name: Release Please
+
+# Automates versioning and the changelog from Conventional Commit PR titles.
+# Same pattern as sfrido and scaven-family.
+#
+# On every push to `main`, release-please maintains a standing "release PR"
+# that bumps the root package.json version and regenerates CHANGELOG.md from
+# the commits since the last release. Merging that PR cuts a `vX.Y.Z` tag and a
+# GitHub Release, and the tag ships to Fly through deploy.yml, kept apart so a
+# deploy failure never shows up as a release failure.
+#
+# TOKEN: release-please runs as the av-automation GitHub App. GitHub does not
+# start other workflows for events created with the default GITHUB_TOKEN: the
+# release PR's checks would wait for a manual approval and the v* tag would not
+# fire deploy.yml. With the app token both just work.
+# Needs the RELEASE_BOT_APP_ID repo variable, the RELEASE_BOT_PRIVATE_KEY repo
+# secret and the app installed on this repo.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# One group whatever ref triggered the run: releases only ever target main.
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+# Everything runs with the app token; GITHUB_TOKEN needs no access.
+permissions: {}
+
+jobs:
+  release-please:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Generate bot token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          # Only what release-please needs, whatever else the app may hold.
+          permission-contents: write
+          permission-issues: write
+          permission-pull-requests: write
+
+      # When updating this action, also bump the $schema version in
+      # release-please-config.json to match the bundled release-please version.
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          # Pinned to main, not github.ref_name: workflow_dispatch can run from
+          # any branch, and a dynamic target would let a dispatch on another
+          # branch cut a v* tag there. Releases only ever come off main.
+          target-branch: main
