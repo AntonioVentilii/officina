@@ -1,6 +1,7 @@
 <script lang="ts">
   import { CircleCheck, CircleHelp, GitMerge, Radio, UserRound } from '@lucide/svelte';
   import { post } from '$lib/api';
+  import { look } from '$lib/state/look.svelte';
   import { session } from '$lib/state/session.svelte';
   import { toasts } from '$lib/state/toasts.svelte';
   import type { TaskDetail } from '$lib/types';
@@ -190,9 +191,9 @@
 {:else if task.waitingOn.kind === 'people'}
   <section class="next people" class:mine={task.waitingOn.me}>
     <div class="head">
-      {#if task.waitingOn.me}<strong class="you-word">You</strong>{:else}<UserRound
-          size={18}
-        />{/if}
+      {#if task.waitingOn.me}<strong class="you-word"
+          >{look.current === 'tecnica' ? 'Your turn' : 'You'}</strong
+        >{:else}<UserRound size={18} />{/if}
       <div class="grow">
         <div class="label">{task.waitingOn.label}</div>
         {#if task.approval}
@@ -334,6 +335,66 @@
     font-weight: 800;
     font-stretch: 75%;
     line-height: 1;
+  }
+
+  /* Tecnica: every panel is a ruled box, and waiting on you is a yellow tag, not a yellow field. */
+  :global([data-look='tecnica']) .next {
+    padding: 14px 16px;
+    border: 1.5px solid var(--rule);
+    background: var(--panel);
+    color: var(--text);
+  }
+
+  :global([data-look='tecnica']) .mine .approval {
+    color: var(--text-3);
+    opacity: 1;
+  }
+
+  :global([data-look='tecnica']) .mine .btn {
+    border-color: var(--rule);
+    color: var(--text);
+  }
+
+  :global([data-look='tecnica']) .mine .btn.primary {
+    background: var(--rule);
+    color: var(--on-ink);
+  }
+
+  :global([data-look='tecnica']) .mine .btn:hover:not(:disabled) {
+    background: var(--hover);
+    text-decoration: none;
+  }
+
+  :global([data-look='tecnica']) .mine .btn.primary:hover:not(:disabled) {
+    background: var(--text-2);
+  }
+
+  :global([data-look='tecnica']) .mine .btn.ghost {
+    border-color: transparent;
+  }
+
+  :global([data-look='tecnica']) .mine .field {
+    background: var(--panel);
+    border-color: var(--rule);
+    color: var(--text);
+  }
+
+  :global([data-look='tecnica']) .you-word {
+    padding: 2px 7px;
+    background: var(--accent);
+    color: var(--accent-text);
+    font-family: var(--font-display);
+    font-size: 13px;
+    font-weight: 700;
+    font-stretch: normal;
+    letter-spacing: 0.04em;
+    line-height: 1.4;
+    text-transform: uppercase;
+  }
+
+  :global([data-look='tecnica']) .label {
+    font-size: 14px;
+    font-weight: 500;
   }
 
   .head {

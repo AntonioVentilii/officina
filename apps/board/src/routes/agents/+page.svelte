@@ -205,6 +205,50 @@
     color: var(--text-3);
   }
 
+  /* Tecnica: a ruled header strip and condensed section heads, numbers in mono. */
+  :global([data-look='tecnica']) header {
+    align-items: center;
+    padding: 18px 24px;
+    background: var(--panel);
+    border-bottom-width: 1.5px;
+  }
+
+  :global([data-look='tecnica']) h2 {
+    font-family: var(--font-display);
+    font-size: 15px;
+    font-weight: 700;
+    font-stretch: normal;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  :global([data-look='tecnica']) .count {
+    font-size: 12px;
+    font-weight: 400;
+    font-stretch: normal;
+    line-height: 1.5;
+  }
+
+  :global([data-look='tecnica']) .roster {
+    gap: 12px;
+    padding: 20px 24px 0;
+    border: 0;
+  }
+
+  :global([data-look='tecnica']) .agent {
+    border: 1.5px solid var(--rule);
+    background: var(--panel);
+  }
+
+  :global([data-look='tecnica']) .info strong {
+    font-family: var(--font-display);
+    font-size: 17px;
+    font-weight: 700;
+    font-stretch: normal;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
   @media (max-width: 720px) {
     header {
       padding: 20px 16px 16px;

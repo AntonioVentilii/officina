@@ -13,7 +13,9 @@
   import { page } from '$app/state';
   import { board } from '$lib/state/board.svelte';
   import { live } from '$lib/state/live.svelte';
+  import { LOOKS, look } from '$lib/state/look.svelte';
   import { session } from '$lib/state/session.svelte';
+  import Logo from './Logo.svelte';
   import MemberAvatar from './MemberAvatar.svelte';
 
   interface Props {
@@ -31,10 +33,7 @@
 
 <nav class="sidebar" aria-label="Main">
   <a class="brand" href="/">
-    <svg viewBox="0 0 28 28" width="28" height="28" aria-hidden="true">
-      <circle cx="9" cy="9" r="9" fill="#ffffff" />
-      <rect x="14" y="14" width="14" height="14" fill="var(--accent)" />
-    </svg>
+    <Logo />
     <span>Officina</span>
   </a>
 
@@ -98,6 +97,17 @@
         </a>
       {/if}
     {/if}
+    <div class="looks" role="group" aria-label="Look">
+      {#each LOOKS as item (item.id)}
+        <button
+          class:on={look.current === item.id}
+          aria-pressed={look.current === item.id}
+          onclick={() => look.choose(item.id)}
+        >
+          <Logo look={item.id} size={14} tile />{item.label}
+        </button>
+      {/each}
+    </div>
     {#if session.me}
       <div class="me">
         <MemberAvatar name={session.me.member.name} size={26} />
@@ -298,6 +308,33 @@
     text-underline-offset: 3px;
   }
 
+  .looks {
+    display: flex;
+    gap: 16px;
+    padding: 0 24px;
+  }
+
+  .looks button {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 2px 0 4px;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    background: none;
+    color: var(--nav-text-2);
+    font-size: 12.5px;
+  }
+
+  .looks button:hover {
+    color: var(--nav-text);
+  }
+
+  .looks button.on {
+    color: var(--nav-text);
+    border-bottom-color: var(--nav-text);
+  }
+
   .me {
     display: flex;
     align-items: center;
@@ -338,6 +375,86 @@
     background: none;
   }
 
+  /* Tecnica: a light panel ruled off from the board, with a title-block brand row. */
+  :global([data-look='tecnica']) .sidebar {
+    padding: 0 0 14px;
+    border-right-width: 1.5px;
+  }
+
+  :global([data-look='tecnica']) .brand {
+    gap: 10px;
+    padding: 18px 20px;
+    border-bottom: 1.5px solid var(--nav-rule);
+    font-family: var(--font-display);
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+
+  :global([data-look='tecnica']) .project-name {
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    text-transform: none;
+  }
+
+  :global([data-look='tecnica']) .project {
+    margin: 12px 20px;
+  }
+
+  :global([data-look='tecnica']) .nav {
+    padding: 8px 0;
+  }
+
+  :global([data-look='tecnica']) .nav a {
+    padding: 10px 20px;
+    border: 0;
+    border-top: 1px solid transparent;
+    border-bottom: 1px solid transparent;
+    color: var(--nav-text);
+    font-size: 14px;
+  }
+
+  :global([data-look='tecnica']) .nav a.on {
+    background: var(--bg);
+    border-color: var(--border);
+    font-weight: 600;
+  }
+
+  :global([data-look='tecnica']) .badge {
+    min-width: 0;
+    padding: 0 6px;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 20px;
+  }
+
+  :global([data-look='tecnica']) .badge.quiet {
+    padding: 0;
+    color: var(--nav-text);
+  }
+
+  :global([data-look='tecnica']) .running {
+    font-family: var(--font-num);
+    font-size: 12px;
+    color: var(--nav-text);
+  }
+
+  :global([data-look='tecnica']) .live,
+  :global([data-look='tecnica']) .github,
+  :global([data-look='tecnica']) .looks {
+    padding: 0 20px;
+    font-family: var(--font-num);
+    font-size: 11px;
+    font-stretch: normal;
+  }
+
+  :global([data-look='tecnica']) .me {
+    padding: 14px 12px 0 20px;
+    border-top-width: 1.5px;
+  }
+
   /* On phones the sidebar becomes a tab bar along the bottom edge. */
   @media (max-width: 720px) {
     .sidebar {
@@ -350,6 +467,7 @@
     }
 
     .brand,
+    .looks,
     .github,
     .project,
     .project-name,

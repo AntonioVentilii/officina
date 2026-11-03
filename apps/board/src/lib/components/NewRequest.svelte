@@ -97,6 +97,13 @@
     color: var(--text-2);
   }
 
+  :global([data-look='tecnica']) label span {
+    font-family: var(--font-display);
+    font-size: 12.5px;
+    font-stretch: normal;
+    font-weight: 600;
+  }
+
   .check {
     flex-direction: row;
     align-items: flex-start;

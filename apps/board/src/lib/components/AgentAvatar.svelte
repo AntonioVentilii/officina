@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { roleShape } from './roles';
+  import { look } from '$lib/state/look.svelte';
+  import { roleCode, roleShape } from './roles';
 
   interface Props {
     role: string;
@@ -22,7 +23,11 @@
   aria-label={label}
   role="img"
 >
-  <span class="shape {shape}"></span>
+  {#if look.current === 'tecnica'}
+    <span class="code">{roleCode(role)}</span>
+  {:else}
+    <span class="shape {shape}"></span>
+  {/if}
 </span>
 
 <style>
@@ -42,8 +47,25 @@
     background: currentColor;
   }
 
-  .running .shape {
+  .running .shape,
+  .running .code {
     animation: signal 1.2s ease-in-out infinite;
+  }
+
+  /* Tecnica: the code sits in a ruled box, so it is as wide as it needs to be. */
+  .avatar:has(.code) {
+    width: auto;
+    min-width: var(--size);
+  }
+
+  .code {
+    padding: 1px 4px;
+    border: 1.5px solid currentColor;
+    font-family: var(--font-num);
+    font-size: max(10px, calc(var(--size) * 0.42));
+    font-weight: 500;
+    line-height: 1.2;
+    letter-spacing: 0.02em;
   }
 
   .circle {

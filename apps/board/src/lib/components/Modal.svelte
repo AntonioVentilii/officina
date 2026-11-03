@@ -79,6 +79,24 @@
     padding: 20px 24px 22px;
   }
 
+  :global([data-look='tecnica']) .box {
+    border: 1.5px solid var(--rule);
+  }
+
+  :global([data-look='tecnica']) header {
+    padding: 16px 12px 12px 20px;
+    border-bottom-width: 1.5px;
+  }
+
+  :global([data-look='tecnica']) h2 {
+    font-family: var(--font-display);
+    font-size: 20px;
+    font-weight: 700;
+    font-stretch: normal;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
   footer {
     display: flex;
     justify-content: flex-end;

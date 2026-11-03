@@ -77,7 +77,9 @@
           >All</button
         >
         <button class:on={onlyMine} aria-pressed={onlyMine} onclick={() => (onlyMine = true)}
-          >Waiting on me</button
+          >Waiting on me{#if board.waitingOnMe.length}<span class="tab-count num"
+              >{board.waitingOnMe.length}</span
+            >{/if}</button
         >
       </div>
       {#if session.technical}
@@ -109,9 +111,10 @@
   </header>
 
   <div class="columns">
-    {#each columns as column (column.id)}
+    {#each columns as column, index (column.id)}
       <section class="column" aria-label={column.title}>
         <div class="column-head" title={column.hint}>
+          <span class="column-no num">{String(index + 1).padStart(2, '0')}</span>
           <h2 class="column-title">
             {column.title}
             {#if column.cards.some((card) => card.running.length)}
@@ -319,6 +322,153 @@
     padding: 16px 18px;
     color: var(--text-3);
     font-size: 13px;
+  }
+
+  /* Only Tecnica numbers its columns and repeats the count on the tab; Modernista has the figure. */
+  .column-no,
+  .tab-count {
+    display: none;
+  }
+
+  /* Tecnica: a ruled header strip, boxed controls, and work orders stacked on graph paper. */
+  :global([data-look='tecnica']) .toolbar {
+    align-items: center;
+    gap: 14px 16px;
+    padding: 16px 24px;
+    background: var(--panel);
+    border-bottom: 1.5px solid var(--rule);
+  }
+
+  :global([data-look='tecnica']) .stats {
+    gap: 16px;
+  }
+
+  :global([data-look='tecnica']) .stat {
+    flex-direction: row-reverse;
+    gap: 6px;
+    padding: 0;
+    font-family: var(--font-num);
+  }
+
+  :global([data-look='tecnica']) .stat .caps {
+    font-size: 13px;
+    letter-spacing: 0.02em;
+  }
+
+  :global([data-look='tecnica']) .figure {
+    font-size: 13px;
+    font-weight: 400;
+    line-height: 1.5;
+    color: var(--text-2);
+  }
+
+  :global([data-look='tecnica']) .filters {
+    align-items: center;
+    gap: 12px 16px;
+  }
+
+  :global([data-look='tecnica']) .search {
+    height: 36px;
+    padding: 0 10px;
+    border: 1.5px solid var(--rule);
+    background: var(--bg);
+  }
+
+  :global([data-look='tecnica']) .search input {
+    font-size: 14px;
+  }
+
+  :global([data-look='tecnica']) .tabs {
+    gap: 0;
+    border: 1.5px solid var(--rule);
+  }
+
+  :global([data-look='tecnica']) .tabs button {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    height: 33px;
+    padding: 0 14px;
+    border: 0;
+    background: var(--panel);
+    color: var(--text);
+    font-size: 13px;
+  }
+
+  :global([data-look='tecnica']) .tabs button + button {
+    border-left: 1.5px solid var(--rule);
+  }
+
+  :global([data-look='tecnica']) .tabs button.on {
+    background: var(--tint);
+  }
+
+  :global([data-look='tecnica']) .tab-count {
+    display: inline;
+    padding: 0 5px;
+    background: var(--accent);
+    color: var(--accent-text);
+    font-weight: 400;
+  }
+
+  :global([data-look='tecnica']) .lanes {
+    gap: 14px;
+  }
+
+  :global([data-look='tecnica']) .lane {
+    padding: 2px 0;
+    border-bottom-width: 1.5px;
+    color: var(--text);
+    font-size: 13px;
+  }
+
+  :global([data-look='tecnica']) .new {
+    height: 36px;
+    padding: 0 16px;
+    font-size: 14px;
+  }
+
+  :global([data-look='tecnica']) .column {
+    border-right: 1px solid var(--border);
+  }
+
+  :global([data-look='tecnica']) .column-head {
+    align-items: baseline;
+    justify-content: flex-start;
+    gap: 10px;
+    padding: 14px 16px 10px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  :global([data-look='tecnica']) .column-no {
+    display: inline;
+    font-size: 12px;
+    color: var(--text-2);
+  }
+
+  :global([data-look='tecnica']) .column-title {
+    font-family: var(--font-display);
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  :global([data-look='tecnica']) .column-count {
+    margin-left: auto;
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.5;
+  }
+
+  :global([data-look='tecnica']) .cards {
+    gap: 12px;
+    padding: 12px;
+  }
+
+  :global([data-look='tecnica']) .empty {
+    padding: 4px;
+    font-size: 12.5px;
   }
 
   @media (max-width: 720px) {

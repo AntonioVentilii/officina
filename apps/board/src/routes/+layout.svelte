@@ -7,6 +7,7 @@
   import Toasts from '$lib/components/Toasts.svelte';
   import { board } from '$lib/state/board.svelte';
   import { live } from '$lib/state/live.svelte';
+  import { look } from '$lib/state/look.svelte';
   import { session } from '$lib/state/session.svelte';
   import { toasts } from '$lib/state/toasts.svelte';
 
@@ -37,6 +38,10 @@
     } catch {
       // The theme then lasts for this visit only.
     }
+  });
+
+  $effect(() => {
+    document.documentElement.dataset.look = look.current;
   });
 
   const cycleTheme = () =>

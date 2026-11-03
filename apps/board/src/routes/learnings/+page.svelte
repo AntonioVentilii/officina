@@ -144,6 +144,29 @@
     color: var(--text-2);
   }
 
+  /* Tecnica: a ruled header strip and condensed section heads, numbers in mono. */
+  :global([data-look='tecnica']) header {
+    align-items: center;
+    padding: 18px 24px;
+    background: var(--panel);
+    border-bottom-width: 1.5px;
+  }
+
+  :global([data-look='tecnica']) .count {
+    font-size: 12px;
+    font-weight: 400;
+    font-stretch: normal;
+    line-height: 1.5;
+  }
+
+  :global([data-look='tecnica']) .tabs button {
+    font-family: var(--font-display);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    font-size: 13px;
+  }
+
   @media (max-width: 720px) {
     header {
       padding: 20px 16px 16px;

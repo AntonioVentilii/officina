@@ -594,6 +594,66 @@
     height: 120px;
   }
 
+  /* Tecnica: the task is a drawing sheet, a ruled header over the paper. */
+  :global([data-look='tecnica']) .drawer {
+    border-left-width: 1.5px;
+  }
+
+  :global([data-look='tecnica']) header {
+    padding: 16px 28px 20px;
+    background: var(--panel);
+    border-bottom-width: 1.5px;
+  }
+
+  :global([data-look='tecnica']) .number {
+    font-weight: 400;
+  }
+
+  :global([data-look='tecnica']) h1 {
+    margin: 12px 0 20px;
+    font-size: 24px;
+    font-weight: 600;
+    font-stretch: normal;
+    line-height: 1.25;
+    letter-spacing: 0;
+  }
+
+  :global([data-look='tecnica']) .tabs {
+    background: var(--bg);
+    border-bottom-width: 1.5px;
+  }
+
+  :global([data-look='tecnica']) .tabs button {
+    font-family: var(--font-display);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    font-size: 13px;
+  }
+
+  :global([data-look='tecnica']) .count {
+    font-family: var(--font-num);
+    font-weight: 400;
+    font-size: 12px;
+  }
+
+  :global([data-look='tecnica']) h3 {
+    border-bottom-width: 1.5px;
+  }
+
+  :global([data-look='tecnica']) dt {
+    font-size: 11px;
+    font-stretch: normal;
+    letter-spacing: 0.02em;
+    font-family: var(--font-num);
+  }
+
+  :global([data-look='tecnica']) .spec {
+    padding: 20px 24px;
+    border: 1.5px solid var(--rule);
+    background: var(--panel);
+  }
+
   @keyframes enter {
     from {
       transform: translateX(32px);

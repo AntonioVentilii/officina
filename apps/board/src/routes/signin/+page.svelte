@@ -1,6 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { post } from '$lib/api';
+  import Logo from '$lib/components/Logo.svelte';
   import { session } from '$lib/state/session.svelte';
 
   let status = $state<'working' | 'no-link' | 'failed'>('working');
@@ -50,11 +51,7 @@
 
 <div class="page">
   <div class="card">
-    <svg viewBox="0 0 32 32" width="48" height="48" aria-hidden="true">
-      <rect width="32" height="32" fill="#111111" />
-      <circle cx="11.5" cy="11.5" r="7.5" fill="#ffffff" />
-      <rect x="16" y="16" width="12" height="12" fill="var(--accent)" />
-    </svg>
+    <Logo size={48} tile />
     <h1 class="page-title">Officina</h1>
     {#if status === 'working'}
       <p class="muted">Signing you in…</p>
@@ -83,6 +80,12 @@
 </div>
 
 <style>
+  :global([data-look='tecnica']) .card {
+    padding: 24px;
+    border: 1.5px solid var(--rule);
+    background: var(--panel);
+  }
+
   .page {
     display: grid;
     place-items: center;

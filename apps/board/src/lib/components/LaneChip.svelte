@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { look } from '$lib/state/look.svelte';
   import type { Lane } from '$lib/types';
 
   interface Props {
@@ -24,7 +25,7 @@
 </script>
 
 {#if lane && (lane !== 'standard' || showStandard)}
-  <span class="lane" title={TITLES[lane]}>
+  <span class="lane" class:tecnica={look.current === 'tecnica'} title={TITLES[lane]}>
     {#if named}
       <span class="mark {lane}" aria-hidden="true"></span><span>{LABELS[lane]}</span>
     {:else}
@@ -60,5 +61,30 @@
 
   .red {
     background: currentColor;
+  }
+
+  /* Tecnica marks risk by hatching: an open box, vertical ruling, red cross-hatching. */
+  .tecnica .mark {
+    width: 22px;
+    height: 11px;
+    border-radius: 0;
+    border-width: 1.5px;
+  }
+
+  .tecnica .standard {
+    background: repeating-linear-gradient(90deg, currentColor 0 1.5px, transparent 1.5px 5px);
+  }
+
+  .tecnica .standard::after {
+    content: none;
+  }
+
+  .tecnica .red {
+    color: var(--danger);
+    background: repeating-linear-gradient(45deg, currentColor 0 1.5px, transparent 1.5px 4px);
+  }
+
+  .tecnica:has(.red) {
+    color: var(--danger);
   }
 </style>

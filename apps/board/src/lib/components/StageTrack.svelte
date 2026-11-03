@@ -90,6 +90,17 @@
     opacity: 0.45;
   }
 
+  :global([data-look='tecnica']) li {
+    font-family: var(--font-num);
+    font-size: 11px;
+    font-stretch: normal;
+    letter-spacing: 0.02em;
+  }
+
+  :global([data-look='tecnica']) .current .label {
+    font-weight: 500;
+  }
+
   @media (max-width: 640px) {
     .label {
       display: none;

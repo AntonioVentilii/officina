@@ -275,6 +275,26 @@
     border-left-color: var(--border);
   }
 
+  /* Tecnica: each learning is a ruled sheet with its title set in Plex Sans. */
+  :global([data-look='tecnica']) .learning {
+    margin-top: 12px;
+    padding: 16px 18px;
+    border: 1.5px solid var(--rule);
+    background: var(--panel);
+  }
+
+  :global([data-look='tecnica']) h3 {
+    font-size: 16px;
+    font-weight: 600;
+    font-stretch: normal;
+  }
+
+  :global([data-look='tecnica']) .meta {
+    font-family: var(--font-num);
+    font-stretch: normal;
+    letter-spacing: 0;
+  }
+
   .actions,
   .reject {
     display: flex;
