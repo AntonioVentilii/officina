@@ -2,3 +2,4 @@ apps/board/.svelte-kit/
 apps/board/build/
 bun.lock
 CHANGELOG.md
+.release-please-manifest.json
