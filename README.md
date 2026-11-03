@@ -49,7 +49,7 @@ A request goes in as a sentence. An interviewer agent asks the follow-up questio
   what's missing                               spec and for bugs      product                to improve
 ```
 
-A maintainer can **claim the build** from the agent at any point before it is pushed, and hand it back. Every event records who did it: a person, or an agent role at a specific version.
+A maintainer can **claim the build** from the agent, before it starts or while it runs, and hand it back. Every event records who did it: a person, or an agent role at a specific version.
 
 ---
 
