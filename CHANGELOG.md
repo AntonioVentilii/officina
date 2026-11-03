@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/AntonioVentilii/officina/compare/v1.0.1...v1.1.0) (2026-11-03)
+
+
+### Features
+
+* **board:** reveal the new look in a circle from the switch ([#30](https://github.com/AntonioVentilii/officina/issues/30)) ([4ade8bc](https://github.com/AntonioVentilii/officina/commit/4ade8bceaad6a8fb891ef8f977027bf4a48218e7))
+
 ## [1.0.1](https://github.com/AntonioVentilii/officina/compare/v1.0.0...v1.0.1) (2026-11-03)
 
 
