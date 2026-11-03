@@ -13,6 +13,7 @@ import {
   memberForSession,
   redeemLoginLink,
   SESSION_TTL_MS,
+  spendOAuthState,
   type MemberProject,
   type SessionMember
 } from '@officina/db';
@@ -49,6 +50,22 @@ export interface BoardApiDependencies {
 const COOKIE = 'officina_session';
 const OAUTH_COOKIE = 'officina_oauth';
 const OAUTH_TTL_MS = 10 * 60 * 1000;
+/**
+ * A sign-in needs no session, so its state is not stored when the flow starts (anyone could fill
+ * the table): it carries its own expiry, is bound to the browser by the cookie, and is recorded
+ * only once a GitHub authorization comes back with it.
+ */
+const SIGNIN_PREFIX = 's.';
+const signinState = () =>
+  `${SIGNIN_PREFIX}${Date.now() + OAUTH_TTL_MS}.${randomBytes(24).toString('base64url')}`;
+const signinExpiry = (state: string): Date | null => {
+  const expires = Number(state.slice(SIGNIN_PREFIX.length).split('.')[0]);
+  return Number.isSafeInteger(expires) &&
+    expires > Date.now() &&
+    expires <= Date.now() + OAUTH_TTL_MS
+    ? new Date(expires)
+    : null;
+};
 /**
  * State-changing requests must carry this header. Browsers only send custom headers cross-origin
  * after a CORS preflight, which this API never grants, so another site cannot forge a request.
@@ -247,10 +264,12 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
       // an account linked before. The state is single-use and bound to this browser by a cookie.
       .get('/auth/github/start', async ({ request, query }) => {
         if (!deps.githubLogin) throw new HttpError(404, 'GitHub sign-in is not configured');
-        const linking = query.mode === 'link';
-        const memberId = linking ? (await signedIn(request)).member.id : null;
-        const state = randomBytes(24).toString('base64url');
-        await createOAuthState(pool, state, memberId, OAUTH_TTL_MS);
+        let state = signinState();
+        if (query.mode === 'link') {
+          const memberId = (await signedIn(request)).member.id;
+          state = randomBytes(24).toString('base64url');
+          await createOAuthState(pool, state, memberId, OAUTH_TTL_MS);
+        }
         const cookie = [
           `${OAUTH_COOKIE}=${state}`,
           'Path=/auth/github',
@@ -271,8 +290,18 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
         const state = typeof query.state === 'string' ? query.state : null;
         if (!code || !state || readCookie(request, OAUTH_COOKIE) !== state)
           return fail('The GitHub sign-in did not match this browser; try again.');
+        const expired = () => fail('The GitHub sign-in expired; try again.');
+        if (state.startsWith(SIGNIN_PREFIX)) {
+          const expiresAt = signinExpiry(state);
+          if (!expiresAt) return expired();
+          const result = await deps.githubLogin.accounts.complete(code, null);
+          if (!result.ok) return fail(result.why);
+          if (!(await spendOAuthState(pool, state, expiresAt))) return expired();
+          const session = await createSession(pool, result.memberId);
+          return redirect('/', [clear, sessionCookie(session, SESSION_TTL_MS, secure)]);
+        }
         const consumed = await consumeOAuthState(pool, state);
-        if (!consumed) return fail('The GitHub sign-in expired; try again.');
+        if (!consumed) return expired();
         const result = await deps.githubLogin.accounts.complete(code, consumed.memberId);
         if (!result.ok) return fail(result.why);
         if (consumed.memberId) return redirect('/?github=linked', [clear]);
@@ -328,6 +357,8 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
       .post('/api/projects/:projectId/tasks', async ({ request, params, body }) => {
         mutation(request);
         const viewer = viewerFor(await signedIn(request), params.projectId);
+        if (viewer.role === 'watcher')
+          throw new HttpError(403, 'watchers can read but not open requests');
         const { interview, ...input } = parse(requestSchema, body);
         return createRequestAs(pool, {
           projectId: viewer.projectId,

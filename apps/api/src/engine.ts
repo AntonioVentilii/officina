@@ -6,7 +6,12 @@ import {
   runAgentStep,
   type EngineDependencies
 } from '@officina/engine';
-import { failOrphanedRuns, listActiveTaskIds, listSchedulableProjectIds } from '@officina/db';
+import {
+  failOrphanedRuns,
+  listActiveTaskIds,
+  listSchedulableProjectIds,
+  purgeExpiredCredentials
+} from '@officina/db';
 import type { GitHubClient } from '@officina/github';
 import {
   createAnthropicClient,
@@ -19,6 +24,8 @@ import {
 import type { Pool } from 'pg';
 import { startScheduler, type Scheduler } from './scheduler';
 import { setupAgents } from './setup';
+
+const PURGE_INTERVAL_MS = 60 * 60 * 1000;
 
 export const createAgentsPort = (
   auth: AnthropicAuth,
@@ -70,10 +77,21 @@ export const startEngine = async (input: {
     }
   }
 
+  let lastPurge = 0;
   return startScheduler({
     intervalMs: input.intervalMs,
     log: input.log,
     collect: async () => {
+      // Hourly is plenty: expired rows are already refused, they only take up space.
+      if (Date.now() - lastPurge >= PURGE_INTERVAL_MS) {
+        lastPurge = Date.now();
+        const purged = await purgeExpiredCredentials(input.pool).catch((error: unknown) => {
+          input.log('credential purge failed', { error: (error as Error).message });
+          return null;
+        });
+        if (purged && purged.loginLinks + purged.sessions + purged.oauthStates > 0)
+          input.log('expired credentials purged', purged);
+      }
       const due = [];
       for (const projectId of await listSchedulableProjectIds(input.pool)) {
         due.push(...(await collectDueSteps(deps, projectId)).due);

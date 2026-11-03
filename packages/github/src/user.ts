@@ -121,19 +121,21 @@ export const createGitHubAsUser = (options: { fetch?: typeof fetch } = {}) => {
   /**
    * Turns on auto-merge, so GitHub merges once every branch rule is met. A pull request that
    * already meets them cannot take auto-merge; it is merged straight away, still as the person.
+   * Both are pinned to `expectedHead`, the commit the person verified, so a later push never lands.
    */
   const mergeWhenReady = async (
     token: string,
     repo: string,
-    number: number
+    number: number,
+    expectedHead: string
   ): Promise<'auto_merge' | 'merged'> => {
     const pr = await pullRequest(token, repo, number);
     const response = await request<{ errors?: { message: string }[] }>(token, '/graphql', {
       method: 'POST',
       body: {
         query:
-          'mutation($id: ID!) { enablePullRequestAutoMerge(input: { pullRequestId: $id, mergeMethod: SQUASH }) { clientMutationId } }',
-        variables: { id: pr.node_id }
+          'mutation($id: ID!, $head: GitObjectID!) { enablePullRequestAutoMerge(input: { pullRequestId: $id, mergeMethod: SQUASH, expectedHeadOid: $head }) { clientMutationId } }',
+        variables: { id: pr.node_id, head: expectedHead }
       }
     });
     if (!response.errors?.length) return 'auto_merge';
@@ -143,7 +145,7 @@ export const createGitHubAsUser = (options: { fetch?: typeof fetch } = {}) => {
     }
     await request(token, `/repos/${repo}/pulls/${number}/merge`, {
       method: 'PUT',
-      body: { merge_method: 'squash', sha: pr.head.sha }
+      body: { merge_method: 'squash', sha: expectedHead }
     });
     return 'merged';
   };

@@ -8,6 +8,7 @@ import {
   saveAgentVersion,
   startRun
 } from '@officina/db';
+import type { RefSnapshot } from '@officina/github';
 import { RUNNER_ROLES, type SessionRequest } from '@officina/runner';
 import { Pool } from 'pg';
 import { CONFIG_YAML } from '../../core/test/fixtures';
@@ -56,9 +57,21 @@ const succeed = (request: SessionRequest): ScriptItem[] => [
   idle('end_turn')
 ];
 
-const fakeGitHub = () => {
+const REFS: RefSnapshot = { defaultHead: 'main1', tags: { 'v1.0.0': 'tag1' } };
+
+/** `refs` are the snapshots returned in turn, the last one repeating; `merges` are the shas of merged pull requests. */
+const fakeGitHub = (options: { refs?: RefSnapshot[]; merges?: string[] } = {}) => {
   const calls: { method: string; args: unknown[] }[] = [];
+  const refs = [...(options.refs ?? [REFS])];
   const port = {
+    refSnapshot: async (...args: unknown[]) => {
+      calls.push({ method: 'refSnapshot', args });
+      return refs.length > 1 ? refs.shift()! : refs[0]!;
+    },
+    isPullRequestMerge: async (...args: unknown[]) => {
+      calls.push({ method: 'isPullRequestMerge', args });
+      return (options.merges ?? []).includes((args[0] as { sha: string }).sha);
+    },
     installationToken: async (...args: unknown[]) => {
       calls.push({ method: 'installationToken', args });
       return `token-${(args[1] as { contents: string }).contents}`;
@@ -344,7 +357,9 @@ describe.skipIf(!url)('engine', () => {
     const resolved = github.calls.filter((call) => call.method === 'resolveReviewThreads');
     expect(resolved).toHaveLength(1);
     expect(resolved[0]!.args[0]).toMatchObject({ pullRequest: 42, reviewIds: [5] });
-    expect(github.calls.filter((call) => call.method === 'mergeWhenReady')).toHaveLength(1);
+    const merges = github.calls.filter((call) => call.method === 'mergeWhenReady');
+    expect(merges).toHaveLength(1);
+    expect(merges[0]!.args[0]).toMatchObject({ pullRequest: 42, expectedHead: 'def' });
 
     // A later review sends it back: auto-merge is turned off until GitHub confirms, once.
     await applyOrThrow(
@@ -464,6 +479,43 @@ describe.skipIf(!url)('engine', () => {
     expect(stored?.task.blocked?.question).toContain('officina/elsewhere');
     expect(github.calls.some((call) => call.method === 'openPullRequest')).toBe(false);
     expect((await runStatuses(taskId)).at(-1)).toEqual({ agent_role: 'builder', status: 'failed' });
+  });
+
+  test('a builder that moves the default branch or a tag is blocked before its result counts', async () => {
+    const github = fakeGitHub({
+      refs: [REFS, { defaultHead: 'evil', tags: { 'v1.0.0': 'tag1', 'v9.9.9': 'evil' } }]
+    });
+    const agents = createFakePort(succeed);
+    const taskId = await taskInReady(github, agents);
+    await tick({ pool, github: github.port, agents, publicUrl: PUBLIC_URL }, seeded.projectId);
+
+    const stored = await loadTask(pool, taskId);
+    expect(stored?.task.stage).toBe('building');
+    expect(stored?.task.headSha).toBeNull();
+    expect(stored?.task.blocked).toMatchObject({ askedOf: { role: 'maintainer' } });
+    expect(stored?.task.blocked?.question).toContain('main moved from main1 to evil');
+    expect(stored?.task.blocked?.question).toContain('tag v9.9.9 was created');
+    expect(github.calls.filter((call) => call.method === 'refSnapshot')).toHaveLength(2);
+    expect(github.calls.some((call) => call.method === 'openPullRequest')).toBe(false);
+    expect((await runStatuses(taskId)).at(-1)).toEqual({ agent_role: 'builder', status: 'failed' });
+  });
+
+  test('a pull request merged into the default branch during a build is not a builder push', async () => {
+    const github = fakeGitHub({
+      refs: [REFS, { defaultHead: 'merged1', tags: REFS.tags }],
+      merges: ['merged1']
+    });
+    const agents = createFakePort(succeed);
+    const taskId = await taskInReady(github, agents);
+    await tick({ pool, github: github.port, agents, publicUrl: PUBLIC_URL }, seeded.projectId);
+
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({
+      stage: 'reviewing',
+      blocked: null
+    });
+    expect(
+      github.calls.find((call) => call.method === 'isPullRequestMerge')!.args[0]
+    ).toMatchObject({ sha: 'merged1', base: 'main' });
   });
 
   test('repeated invalid results fail the run and ask a maintainer', async () => {

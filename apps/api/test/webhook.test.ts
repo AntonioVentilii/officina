@@ -193,6 +193,72 @@ describe.skipIf(!url)('api', () => {
     expect(notes.rows[0]?.notes).toContain('`src/a.ts:3`: Typo in the key.');
   });
 
+  test('concurrent deliveries of one id are applied once', async () => {
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    const responses = await Promise.all(
+      Array.from({ length: 5 }, () =>
+        deliver(app, { event: 'pull_request', payload: mergedPayload, delivery: 'd-race' })
+      )
+    );
+    const statuses = await Promise.all(
+      responses.map(async (response) => ((await response.json()) as { status: string }).status)
+    );
+    expect(statuses.sort()).toEqual([
+      'applied',
+      'duplicate',
+      'duplicate',
+      'duplicate',
+      'duplicate'
+    ]);
+    expect(
+      (
+        await pool.query(
+          "select 1 from task_events where task_id = $1 and type = 'stage_changed' and payload->>'to' = 'done'",
+          [taskId]
+        )
+      ).rowCount
+    ).toBe(1);
+  });
+
+  test('a delivery that fails mid-way is given back for its redelivery, and its error stays on the server', async () => {
+    let fail = true;
+    const flaky = createApp({
+      pool,
+      webhookSecret: SECRET,
+      github: {
+        fileContent: async () => {
+          if (fail) throw new Error('GitHub 502 on /repos/x/contents: <html>secret body</html>');
+          return 'version: 1\ndocs: { entry: CONTRIBUTING.md }\n';
+        }
+      }
+    });
+    await pool.query('update projects set github_installation_id = 99 where id = $1', [
+      seeded.projectId
+    ]);
+    const push = () =>
+      deliver(flaky, {
+        event: 'push',
+        delivery: 'd-flaky',
+        payload: {
+          ref: 'refs/heads/main',
+          commits: [{ modified: ['.github/officina.yml'] }],
+          repository
+        }
+      });
+    const logged = console.error;
+    console.error = () => {};
+    try {
+      const failed = await push();
+      expect(failed.status).toBe(500);
+      expect(await failed.json()).toEqual({ error: 'internal' });
+    } finally {
+      console.error = logged;
+    }
+    fail = false;
+    expect(((await (await push()).json()) as { status: string }).status).toBe('applied');
+  });
+
   test('unrelated events and unlinked pull requests are acknowledged without effect', async () => {
     const ignored = await deliver(app, { event: 'push', payload: { repository }, delivery: 'd-3' });
     expect(await ignored.json()).toEqual({ status: 'ignored', outcomes: [] });

@@ -40,12 +40,15 @@
         return 'asked for changes';
       case 'assigned':
         return null;
+      // Contributors and watchers get no paths, quoted text or error details (`payloadFor` in the API).
       case 'pushed':
-        return `pushed ${String(p.headSha).slice(0, 7)} (${p.diffLines} lines in ${(p.changedPaths as string[]).length} files)`;
+        return Array.isArray(p.changedPaths)
+          ? `pushed ${String(p.headSha).slice(0, 7)} (${p.diffLines} lines in ${p.changedPaths.length} files)`
+          : `pushed ${String(p.headSha).slice(0, 7)} (${p.diffLines} lines)`;
       case 'review_recorded':
         return p.verdict === 'approve' ? 'approved the change' : 'asked for changes';
       case 'guardrail_tripped':
-        return `stopped it: ${p.details}`;
+        return `stopped it: ${p.details ?? String(p.guardrail).replaceAll('_', ' ')}`;
       case 'ci_failed':
         return 'reported failing checks';
       case 'blocked':
@@ -65,7 +68,9 @@
           ? `approved and merged the pull request on GitHub as @${p.login}`
           : `approved the pull request on GitHub as @${p.login} and turned on auto-merge`;
       case 'github_approval_failed':
-        return `could not approve on GitHub as @${p.login}: ${p.error}`;
+        return p.error
+          ? `could not approve on GitHub as @${p.login}: ${p.error}`
+          : `could not approve on GitHub as @${p.login}`;
       case 'checklist_posted':
         return `posted the checklist on pull request #${p.pullRequest}`;
       default:
@@ -76,7 +81,7 @@
   const detail = (event: TaskEvent): string | null => {
     const p = event.payload;
     if (event.type === 'changes_requested') return String(p.note ?? '');
-    if (event.type === 'review_recorded') return String(p.notes ?? '');
+    if (event.type === 'review_recorded') return p.notes ? String(p.notes) : null;
     if (event.type === 'blocked')
       return String((p.blocked as { question?: string })?.question ?? '');
     return null;

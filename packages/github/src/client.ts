@@ -49,6 +49,12 @@ export interface RepoRef {
   readonly repo: string;
 }
 
+export interface RefSnapshot {
+  readonly defaultHead: string;
+  /** Tag name to the sha it points at. */
+  readonly tags: Readonly<Record<string, string>>;
+}
+
 interface CachedToken {
   readonly token: string;
   readonly expiresAtMs: number;
@@ -136,6 +142,48 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
       ? Number.MAX_SAFE_INTEGER
       : files.reduce((total, file) => total + file.changes, 0);
     return { headSha, changedPaths, diffLines };
+  };
+
+  /**
+   * The refs a builder's token could rewrite outside its own branch: the default branch head and
+   * every tag. Taken before and after a build run, so a push anywhere else is caught.
+   */
+  const refSnapshot = async (
+    ref: RepoRef & { readonly defaultBranch: string }
+  ): Promise<RefSnapshot> => {
+    const token = await installationToken(ref, { contents: 'read' });
+    const head = await request<{ object: { sha: string } }>(
+      `/repos/${ref.repo}/git/ref/heads/${encodeURIComponent(ref.defaultBranch)}`,
+      { token }
+    );
+    // A repository without tags answers with an empty list; this endpoint is not paginated.
+    const tags = await request<{ ref: string; object: { sha: string } }[]>(
+      `/repos/${ref.repo}/git/matching-refs/tags`,
+      { token }
+    );
+    return {
+      defaultHead: head.object.sha,
+      tags: Object.fromEntries(
+        tags.map((tag) => [tag.ref.replace(/^refs\/tags\//, ''), tag.object.sha])
+      )
+    };
+  };
+
+  /**
+   * Whether a commit is the result of merging a pull request into `base`. Such a move of the
+   * default branch went through the branch rules, unlike a push made with a builder's token.
+   */
+  const isPullRequestMerge = async (
+    ref: RepoRef & { readonly sha: string; readonly base: string }
+  ): Promise<boolean> => {
+    const token = await installationToken(ref, { contents: 'read', pull_requests: 'read' });
+    const pulls = await request<
+      { merged_at: string | null; merge_commit_sha: string | null; base: { ref: string } }[]
+    >(`/repos/${ref.repo}/commits/${ref.sha}/pulls`, { token });
+    return pulls.some(
+      (pull) =>
+        pull.merged_at !== null && pull.merge_commit_sha === ref.sha && pull.base.ref === ref.base
+    );
   };
 
   /** The installation of this app on a repository, authenticated as the app itself. */
@@ -316,16 +364,17 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
   /**
    * Turns on auto-merge as the app, for a result that needed no person's check, so the branch
    * rules (checks, resolved threads, any required review) still decide when it lands. A pull request
-   * that already meets them cannot take auto-merge and is merged straight away.
+   * that already meets them cannot take auto-merge and is merged straight away. Both are pinned to
+   * `expectedHead`, so a commit pushed after the result was accepted is never merged with it.
    */
   const mergeWhenReady = async (
-    ref: RepoRef & { readonly pullRequest: number }
+    ref: RepoRef & { readonly pullRequest: number; readonly expectedHead: string }
   ): Promise<'auto_merge' | 'merged'> => {
     const pr = await pullRequestNode(ref);
     const response = await graphql(
       ref,
-      'mutation($id: ID!) { enablePullRequestAutoMerge(input: { pullRequestId: $id, mergeMethod: SQUASH }) { clientMutationId } }',
-      { id: pr.node_id }
+      'mutation($id: ID!, $head: GitObjectID!) { enablePullRequestAutoMerge(input: { pullRequestId: $id, mergeMethod: SQUASH, expectedHeadOid: $head }) { clientMutationId } }',
+      { id: pr.node_id, head: ref.expectedHead }
     );
     if (!response.errors?.length) return 'auto_merge';
     const message = response.errors.map((error) => error.message).join('; ');
@@ -336,7 +385,7 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     await request(`/repos/${ref.repo}/pulls/${ref.pullRequest}/merge`, {
       method: 'PUT',
       token,
-      body: { merge_method: 'squash', sha: pr.head.sha }
+      body: { merge_method: 'squash', sha: ref.expectedHead }
     });
     return 'merged';
   };
@@ -412,6 +461,8 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     updateFile,
     createBranch,
     pushFacts,
+    refSnapshot,
+    isPullRequestMerge,
     openPullRequest,
     commentOnIssue,
     reviewComments,

@@ -50,23 +50,41 @@ export const approveOnGitHub = async (
   try {
     const pr = await onBehalf.asUser.pullRequest(account.token, input.repo, input.pullRequest);
     if (pr.merged || pr.state !== 'open') return;
+    const expected = await expectedHead(pool, input.taskId);
+    // Someone pushed after the verification: approving now would put the member's name on a
+    // commit they never checked.
+    if (pr.head.sha !== expected) {
+      await appendTaskEvent(pool, {
+        taskId: input.taskId,
+        actor,
+        type: 'github_approval_failed',
+        payload: {
+          login: account.login,
+          error: `the pull request head ${pr.head.sha.slice(0, 7)} is not the verified ${expected?.slice(0, 7) ?? 'head'}`,
+          expectedHead: expected,
+          actualHead: pr.head.sha
+        }
+      });
+      return;
+    }
     await onBehalf.asUser.approve(
       account.token,
       input.repo,
       input.pullRequest,
-      pr.head.sha,
+      expected,
       `Verified in ${taskLink(onBehalf.publicUrl, input.taskNumber)}.`
     );
     const merge = await onBehalf.asUser.mergeWhenReady(
       account.token,
       input.repo,
-      input.pullRequest
+      input.pullRequest,
+      expected
     );
     await appendTaskEvent(pool, {
       taskId: input.taskId,
       actor,
       type: 'github_approved',
-      payload: { login: account.login, headSha: pr.head.sha, merge }
+      payload: { login: account.login, headSha: expected, merge }
     });
   } catch (error) {
     await appendTaskEvent(pool, {
@@ -88,6 +106,27 @@ export type SyncGitHubPort = Pick<
   | 'cancelAutoMerge'
   | 'resolveReviewThreads'
 >;
+
+/**
+ * The commit the pull request should have as its head: the task's verified head, or Officina's own
+ * latest commit that only set the spec's status line on top of it. Anything else was pushed after
+ * the result was accepted.
+ */
+const expectedHead = async (pool: Pool, taskId: string): Promise<string | null> =>
+  (
+    await pool.query<{ sha: string | null }>(
+      `select coalesce(
+         (select e.payload->>'commitSha' from task_events e
+          where e.task_id = t.id and e.type = 'spec_status_set'
+            and e.payload->>'commitSha' is not null
+            and e.id > coalesce((select max(p.id) from task_events p
+              where p.task_id = t.id and p.type = 'pushed'), 0)
+          order by e.id desc limit 1),
+         t.head_sha) as sha
+       from tasks t where t.id = $1`,
+      [taskId]
+    )
+  ).rows[0]?.sha ?? null;
 
 /** The id of the event that last moved the task into `merging`, in SQL for a task id `$1`. */
 const SINCE_MERGING = `coalesce((select max(id) from task_events where task_id = $1
@@ -150,7 +189,13 @@ const autoMergeOnGitHub = async (
   );
   if (tried.rowCount) return;
   try {
-    const merge = await github.mergeWhenReady({ ...input.ref, pullRequest: input.pullRequest });
+    const expected = await expectedHead(pool, input.taskId);
+    if (!expected) throw new Error('the task has no verified head');
+    const merge = await github.mergeWhenReady({
+      ...input.ref,
+      pullRequest: input.pullRequest,
+      expectedHead: expected
+    });
     await appendTaskEvent(pool, {
       taskId: input.taskId,
       actor: ENGINE,
