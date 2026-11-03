@@ -47,6 +47,19 @@ The rule only accepts tokens whose subject starts with `vici:vici-officina:` and
 
 The API is built from the root `Dockerfile` (which includes `agents/`) and configured by `fly.toml` (region `ams`, health check on `/health`, one machine always on because the scheduler runs inside it). On boot it validates its environment, applies pending migrations and starts listening; then the engine fails runs orphaned by a previous process and interrupts their sessions, resolves the Opus model (log line `model in use`) and syncs the role agents to it (`agents synced`), then starts the scheduler every `SCHEDULER_INTERVAL_MS` (default 15 seconds). Run exactly one machine: orphaned-run recovery assumes a single scheduler.
 
+## Releases and deploys
+
+Merges to `main` do not deploy. `.github/workflows/release-please.yml` keeps a standing release PR, titled `chore(release): vX.Y.Z`, with the version bump and `CHANGELOG.md` built from the merged PR titles. Merging it cuts the `vX.Y.Z` tag, and `.github/workflows/deploy.yml` ships that tag to `vici-officina` with `flyctl deploy --remote-only --ha=false`. Merge the release PR when a restart is acceptable: runs in flight are failed and their sessions interrupted on boot.
+
+| Setting                   | Where                                  | Value                                                                                                                     |
+| ------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `RELEASE_BOT_APP_ID`      | repository variable                    | `4365677`, the av-automation GitHub App, which must be installed on this repository                                       |
+| `RELEASE_BOT_PRIVATE_KEY` | repository secret                      | the av-automation app's private key, the same one sfrido and scaven-family use                                            |
+| `FLY_API_TOKEN`           | secret on the `production` environment | `fly tokens create deploy -a vici-officina`, piped into `gh secret set FLY_API_TOKEN --env production` without being read |
+| `production` environment  | repository settings                    | deployments limited to `v*` tags, so only a released version can read `FLY_API_TOKEN`                                     |
+
+A manual `fly deploy` still works for an emergency fix; the next release supersedes it.
+
 ## Project: vici-app
 
 Registered as project `010b5462-fb9f-4c75-8b71-39643a8b1e7a` in workspace `vici`, owned by the instance owner. Its config came from the adoption spec while `.github/officina.yml` is not yet merged in vici-app; once it is, a push to `main` refreshes it automatically.
