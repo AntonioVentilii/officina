@@ -1,3 +1,4 @@
 apps/board/.svelte-kit/
 apps/board/build/
 bun.lock
+CHANGELOG.md

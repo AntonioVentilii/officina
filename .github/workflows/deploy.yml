@@ -1,0 +1,67 @@
+name: Deploy
+
+# Production ships only released versions: release-please cuts a `vX.Y.Z` tag
+# with the av-automation app token when its release PR merges, and that tag
+# deploys the Vici instance, Fly app `vici-officina`.
+#
+# A deploy restarts the one machine, and the scheduler inside it: runs in
+# flight are failed and their sessions interrupted on boot. That is why merges
+# to main do not deploy on their own; merging the release PR is the decision.
+#
+# REQUIRES the `FLY_API_TOKEN` secret on the `production` environment, a deploy
+# token for this app only:
+#   fly tokens create deploy -a vici-officina
+# Runtime secrets (DATABASE_URL, GITHUB_APP_PRIVATE_KEY, ...) live on Fly; CI
+# only ships the image.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  # Read the GitHub Release behind the tag, to verify who cut it.
+  contents: read
+
+jobs:
+  production:
+    # Only ever deploy a released version: a workflow_dispatch must be run
+    # against a v* tag, not a branch.
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    environment: production
+    # One deploy at a time; never cancel a deploy mid-flight.
+    concurrency:
+      group: deploy-vici-officina
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      # The environment only checks the ref name, and anyone who can push a tag
+      # can name it v-something. Deploy only a tag that release-please released
+      # (a published GitHub Release by the av-automation app) on a commit that
+      # is already on main.
+      - name: Verify the tag is a release-please release on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          author=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json author,isDraft \
+            --jq 'select(.isDraft | not) | .author.login')
+          if [ "$author" != "av-automation[bot]" ]; then
+            echo "::error::$TAG is not a published release by av-automation (author: ${author:-none})."
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$TAG points to a commit that is not on main."
+            exit 1
+          fi
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # 1.6
+      # --ha=false: exactly one machine, because orphaned-run recovery assumes a
+      # single scheduler.
+      - name: Deploy to Fly
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl deploy --remote-only --ha=false
