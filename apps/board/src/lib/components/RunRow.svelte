@@ -6,7 +6,6 @@
   import type { Run, Stage } from '$lib/types';
   import AgentAvatar from './AgentAvatar.svelte';
   import RunLog from './RunLog.svelte';
-  import { roleColor } from './roles';
 
   interface Props {
     run: Run;
@@ -27,7 +26,7 @@
   } as const;
 </script>
 
-<div class="run" class:open class:running style:--hue={roleColor(run.role)}>
+<div class="run" class:open class:running>
   <button class="head" onclick={() => (open = !open)} aria-expanded={open}>
     <ChevronRight size={14} class="chev" />
     <AgentAvatar role={run.role} label={run.label} {running} size={26} />
@@ -37,7 +36,7 @@
         {#if showTask}<span class="faint">on</span>
           <span class="task">#{run.taskNumber} {run.taskTitle}</span>{/if}
       </span>
-      <span class="sub faint">
+      <span class="sub caps">
         {STAGE_LABELS[run.stage as Stage] ?? run.stage} · v{run.agentVersion}
       </span>
     </span>
@@ -66,22 +65,19 @@
 
 <style>
   .run {
-    border-radius: var(--radius);
-    border: 1px solid var(--border);
-    background: var(--panel);
-    overflow: hidden;
+    border-bottom: 1px solid var(--border);
   }
 
-  .run.running {
-    border-color: color-mix(in srgb, var(--hue) 45%, var(--border));
+  .run.open {
+    border-bottom-color: var(--rule);
   }
 
   .head {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 12px;
     width: 100%;
-    padding: 9px 10px 9px 8px;
+    padding: 12px 4px 12px 0;
     border: 0;
     background: none;
     text-align: left;
@@ -93,7 +89,7 @@
 
   .head :global(.chev) {
     flex: none;
-    color: var(--text-3);
+    color: var(--text-2);
     transition: transform 0.15s;
   }
 
@@ -104,14 +100,15 @@
   .what {
     display: flex;
     flex-direction: column;
+    gap: 2px;
     flex: 1;
     min-width: 0;
     line-height: 1.3;
   }
 
   .title {
-    font-size: 13px;
-    font-weight: 600;
+    font-size: 14px;
+    font-weight: 700;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -122,20 +119,21 @@
   }
 
   .sub {
-    font-size: 11.5px;
+    font-size: 11px;
+    color: var(--text-2);
   }
 
   .pill .dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
+    width: 7px;
+    height: 7px;
     background: currentColor;
-    animation: pulse 1.2s ease-in-out infinite;
+    animation: signal 1.2s ease-in-out infinite;
   }
 
   .time,
   .cost {
-    font-size: 12px;
+    font-size: 12.5px;
+    font-stretch: 85%;
     min-width: 52px;
     text-align: right;
   }

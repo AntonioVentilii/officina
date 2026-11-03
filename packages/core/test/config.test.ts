@@ -59,6 +59,23 @@ describe('project config', () => {
     expect(result.errors.some((error) => error.startsWith('lanes'))).toBe(true);
   });
 
+  test('defaults the board look to modernista and rejects an unknown look', () => {
+    const plain = parseProjectConfig({ version: 1, docs: { entry: 'AGENTS.md' } });
+    expect(plain.ok && plain.config.board.look).toBe('modernista');
+    const tecnica = parseProjectConfig({
+      version: 1,
+      docs: { entry: 'AGENTS.md' },
+      board: { look: 'tecnica' }
+    });
+    expect(tecnica.ok && tecnica.config.board.look).toBe('tecnica');
+    const unknown = parseProjectConfig({
+      version: 1,
+      docs: { entry: 'AGENTS.md' },
+      board: { look: 'neon' }
+    });
+    expect(unknown.ok).toBe(false);
+  });
+
   test('accepts a pull request title pattern and rejects one that is not a valid regex', () => {
     const valid = parseProjectConfig({
       version: 1,

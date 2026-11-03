@@ -48,7 +48,6 @@
 
   dialog::backdrop {
     background: var(--backdrop);
-    backdrop-filter: blur(3px);
   }
 
   dialog[open] {
@@ -56,34 +55,53 @@
   }
 
   .box {
-    border-radius: var(--radius-lg);
     background: var(--panel);
-    border: 1px solid var(--border-strong);
-    box-shadow: var(--shadow-lg);
+    border-top: 6px solid var(--rule);
   }
 
   header {
     display: flex;
-    align-items: center;
+    align-items: flex-end;
     justify-content: space-between;
-    padding: 14px 14px 0 20px;
+    padding: 22px 16px 14px 24px;
+    border-bottom: 1px solid var(--rule);
   }
 
   h2 {
     margin: 0;
-    font-size: 16px;
-    font-weight: 650;
+    font-size: 32px;
+    font-weight: 800;
+    font-stretch: 70%;
+    line-height: 0.9;
   }
 
   .body {
-    padding: 14px 20px 18px;
+    padding: 20px 24px 22px;
+  }
+
+  :global([data-look='tecnica']) .box {
+    border: 1.5px solid var(--rule);
+  }
+
+  :global([data-look='tecnica']) header {
+    padding: 16px 12px 12px 20px;
+    border-bottom-width: 1.5px;
+  }
+
+  :global([data-look='tecnica']) h2 {
+    font-family: var(--font-display);
+    font-size: 20px;
+    font-weight: 700;
+    font-stretch: normal;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
   }
 
   footer {
     display: flex;
     justify-content: flex-end;
     gap: 8px;
-    padding: 12px 20px;
+    padding: 14px 24px;
     border-top: 1px solid var(--border);
   }
 

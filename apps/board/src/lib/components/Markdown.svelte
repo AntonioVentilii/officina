@@ -44,20 +44,21 @@
   .md :global(h2),
   .md :global(h3),
   .md :global(h4) {
-    line-height: 1.3;
+    line-height: 1.2;
     margin: 1.6em 0 0.5em;
-    letter-spacing: -0.01em;
+    font-weight: 800;
+    font-stretch: 85%;
   }
 
   .md :global(h1) {
-    font-size: 20px;
+    font-size: 24px;
     margin-top: 0.2em;
   }
 
   .md :global(h2) {
-    font-size: 16px;
+    font-size: 17px;
     padding-bottom: 6px;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--rule);
   }
 
   .md :global(h3) {
@@ -80,7 +81,7 @@
   }
 
   .md :global(a) {
-    color: var(--info);
+    color: inherit;
     text-decoration: underline;
     text-underline-offset: 2px;
   }
@@ -89,15 +90,13 @@
     font-family: var(--font-mono);
     font-size: 12.5px;
     padding: 1px 5px;
-    border-radius: 5px;
-    background: var(--panel-3);
+    background: var(--tint);
   }
 
   .md :global(pre) {
     padding: 12px 14px;
-    border-radius: var(--radius-sm);
     background: var(--code-bg);
-    border: 1px solid var(--border);
+    border-left: 2px solid var(--rule);
     overflow-x: auto;
   }
 
@@ -109,7 +108,7 @@
   .md :global(blockquote) {
     margin: 0.8em 0;
     padding: 2px 14px;
-    border-left: 3px solid var(--border-strong);
+    border-left: 3px solid var(--rule);
     color: var(--text-2);
   }
 
@@ -124,15 +123,15 @@
 
   .md :global(th),
   .md :global(td) {
-    padding: 6px 10px;
-    border: 1px solid var(--border);
+    padding: 6px 10px 6px 0;
+    border-bottom: 1px solid var(--border);
     text-align: left;
     vertical-align: top;
   }
 
   .md :global(th) {
-    background: var(--panel-2);
-    font-weight: 600;
+    border-bottom-color: var(--rule);
+    font-weight: 700;
   }
 
   .md :global(hr) {

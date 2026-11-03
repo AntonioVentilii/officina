@@ -179,14 +179,14 @@
     bottom: 8px;
     left: 11px;
     width: 1px;
-    background: var(--border);
+    background: var(--rule);
   }
 
   li {
     position: relative;
     display: flex;
-    gap: 12px;
-    padding: 6px 0;
+    gap: 14px;
+    padding: 7px 0;
   }
 
   .rail {
@@ -195,34 +195,36 @@
     flex: none;
     width: 24px;
     z-index: 1;
+    background: var(--bg);
   }
 
+  /* Officina itself: a short bar across the rail, neither a person nor an agent. */
   .engine {
-    width: 9px;
-    height: 9px;
-    margin-top: 6px;
-    border-radius: 50%;
-    background: var(--panel);
-    border: 2px solid var(--border-strong);
+    width: 12px;
+    height: 3px;
+    margin-top: 9px;
+    background: var(--text);
   }
 
   .line {
     display: flex;
     flex-wrap: wrap;
     align-items: baseline;
-    column-gap: 8px;
-    font-size: 12.5px;
+    column-gap: 10px;
+    font-size: 13px;
     color: var(--text-2);
     padding-top: 1px;
   }
 
   .line strong {
     color: var(--text);
-    font-weight: 600;
+    font-weight: 700;
   }
 
   time {
-    font-size: 11.5px;
+    font-size: 12px;
+    font-stretch: 85%;
+    letter-spacing: 0.04em;
   }
 
   .more {
@@ -233,32 +235,32 @@
   .more summary {
     cursor: pointer;
     font-size: 11.5px;
-    color: var(--text-3);
+    font-stretch: 85%;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-2);
   }
 
   .more :global(.md) {
     margin-top: 6px;
-    padding: 10px 12px;
-    border-radius: var(--radius-sm);
-    background: var(--panel-2);
-    border: 1px solid var(--border);
-    font-size: 12.5px;
+    padding: 2px 0 2px 12px;
+    border-left: 2px solid var(--rule);
+    font-size: 13px;
   }
 
   .bubble {
     flex: 1;
     min-width: 0;
-    padding: 10px 14px;
-    border-radius: var(--radius);
-    border: 1px solid var(--border);
-    background: var(--panel);
+    padding: 10px 0 12px;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
   }
 
   .bubble .meta {
     display: flex;
-    gap: 8px;
+    gap: 10px;
     align-items: baseline;
     margin-bottom: 4px;
-    font-size: 12.5px;
+    font-size: 13px;
   }
 </style>

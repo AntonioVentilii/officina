@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import type { Role } from '@officina/core';
+import type { BoardLook, Role } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
 
 type Queryable = Pool | PoolClient;
@@ -82,6 +82,8 @@ export interface MemberProject {
   readonly repo: string;
   readonly role: Role;
   readonly domains: readonly string[];
+  /** The project's default board look; the config is validated before it is stored. */
+  readonly look: BoardLook;
 }
 
 export const listMemberProjects = async (
@@ -90,7 +92,8 @@ export const listMemberProjects = async (
 ): Promise<MemberProject[]> =>
   (
     await db.query<MemberProject>(
-      `select p.id, p.name, p.github_repo as repo, r.role, r.domains
+      `select p.id, p.name, p.github_repo as repo, r.role, r.domains,
+              coalesce(p.config #>> '{board,look}', 'modernista') as look
        from project_roles r join projects p on p.id = r.project_id
        where r.member_id = $1 order by p.name`,
       [memberId]

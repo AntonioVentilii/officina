@@ -4,17 +4,42 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="dark light" />
-    <meta name="theme-color" content="#0c0d10" />
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#111111" />
     <link rel="icon" href="%sveltekit.assets%/favicon.svg" type="image/svg+xml" />
     <title>Officina</title>
+    <script>
+      // The saved look and theme apply before first paint, so a reload never flashes the default.
+      try {
+        var look = localStorage.getItem('officina.look');
+        if (look === 'modernista' || look === 'tecnica')
+          document.documentElement.dataset.look = look;
+        var theme = localStorage.getItem('officina.theme');
+        if (theme === 'dark' || theme === 'light') document.documentElement.dataset.theme = theme;
+      } catch (error) {}
+    </script>
     <style>
       html {
-        background: #0c0d10;
+        background: #111111;
       }
       @media (prefers-color-scheme: light) {
-        html {
-          background: #f6f6f4;
+        html:not([data-theme]) {
+          background: #ffffff;
         }
+      }
+      html[data-theme='light'] {
+        background: #ffffff;
+      }
+      html[data-look='tecnica'] {
+        background: #12161b;
+      }
+      @media (prefers-color-scheme: light) {
+        html[data-look='tecnica']:not([data-theme]) {
+          background: #edefeb;
+        }
+      }
+      html[data-look='tecnica'][data-theme='light'] {
+        background: #edefeb;
       }
     </style>
     %sveltekit.head%

@@ -4,6 +4,7 @@
   import { get } from '$lib/api';
   import { coalesce, live } from '$lib/state/live.svelte';
   import type { LogEntry, Run } from '$lib/types';
+  import AgentAvatar from './AgentAvatar.svelte';
   import Markdown from './Markdown.svelte';
 
   interface Props {
@@ -131,7 +132,10 @@
         <pre>{block.text}</pre>
       </details>
     {:else if block.kind === 'message'}
-      <div class="message"><Markdown source={block.text} /></div>
+      <div class="message">
+        <span class="mark"><AgentAvatar role={run.role} label={run.label} size={16} /></span>
+        <Markdown source={block.text} />
+      </div>
     {:else if block.kind === 'thinking'}
       <div class="thinking">Thought{block.count > 1 ? ` ×${block.count}` : ''}</div>
     {:else if block.kind === 'tool'}
@@ -140,7 +144,7 @@
           <ChevronRight size={13} class="chev" />
           <span class="name mono">{block.name}</span>
           <span class="summary mono">{block.summary}</span>
-          {#if !block.result}<span class="spinner" aria-label="Running"></span>{/if}
+          {#if !block.result}<span class="spinner" role="img" aria-label="Running"></span>{/if}
         </summary>
         {#if block.result}
           <pre class="output">{block.result.text || '(no output)'}</pre>
@@ -169,29 +173,31 @@
 </div>
 
 <style>
+  /* The rail on the left carries the agent's shape at each thing it says. */
   .log {
     display: flex;
     flex-direction: column;
     gap: 6px;
     max-height: 520px;
     overflow-y: auto;
-    padding: 12px 14px 14px 18px;
-    border-top: 1px solid var(--border);
+    padding: 12px 14px 16px 0;
     background: var(--code-bg);
-    border-left: 2px solid color-mix(in srgb, var(--hue) 55%, transparent);
+    border-top: 1px solid var(--border);
+  }
+
+  .log > * {
+    margin-left: 34px;
   }
 
   .empty {
     margin: 4px 0;
-    font-size: 12.5px;
+    font-size: 13px;
   }
 
   .skeleton {
     height: 14px;
-    border-radius: 4px;
-    background: linear-gradient(90deg, var(--panel-2), var(--panel-3), var(--panel-2));
-    background-size: 200% 100%;
-    animation: shimmer 1.4s linear infinite;
+    background: var(--tint);
+    animation: signal 1.4s ease-in-out infinite;
   }
 
   .skeleton.short {
@@ -213,7 +219,7 @@
 
   summary :global(.chev) {
     flex: none;
-    color: var(--text-3);
+    color: var(--text-2);
     transition: transform 0.15s;
   }
 
@@ -222,7 +228,7 @@
   }
 
   .brief summary {
-    font-size: 12px;
+    font-size: 12.5px;
     color: var(--text-2);
   }
 
@@ -231,9 +237,8 @@
     padding: 10px 12px;
     max-height: 300px;
     overflow: auto;
-    border-radius: var(--radius-sm);
     background: var(--panel);
-    border: 1px solid var(--border);
+    border-left: 2px solid var(--rule);
     font-family: var(--font-mono);
     font-size: 11.5px;
     line-height: 1.55;
@@ -243,15 +248,23 @@
   }
 
   .message {
+    position: relative;
     padding: 6px 0 4px;
   }
 
+  .mark {
+    position: absolute;
+    top: 8px;
+    left: -26px;
+    color: var(--text);
+  }
+
   .message :global(.md) {
-    font-size: 13.5px;
+    font-size: 14px;
   }
 
   .thinking {
-    font-size: 12px;
+    font-size: 12.5px;
     font-style: italic;
     color: var(--text-3);
     padding-left: 20px;
@@ -265,10 +278,10 @@
   .tool .name {
     flex: none;
     padding: 1px 6px;
-    border-radius: 4px;
     font-size: 11px;
-    color: var(--hue);
-    background: color-mix(in srgb, var(--hue) 12%, transparent);
+    font-weight: 600;
+    color: var(--on-ink);
+    background: var(--rule);
   }
 
   .tool .summary {
@@ -279,31 +292,31 @@
   }
 
   .tool.error .name {
-    color: var(--danger);
-    background: var(--danger-soft);
+    background: var(--danger);
+    color: #ffffff;
   }
 
   .tool.error .output {
     color: var(--danger);
+    border-left-color: var(--danger);
   }
 
   .spinner {
     flex: none;
-    width: 11px;
-    height: 11px;
-    border-radius: 50%;
-    border: 1.5px solid var(--border-strong);
-    border-top-color: var(--hue);
-    animation: spin 0.7s linear infinite;
+    width: 8px;
+    height: 8px;
+    background: var(--text);
+    animation: signal 0.8s ease-in-out infinite;
   }
 
   .event {
     display: flex;
     align-items: flex-start;
-    gap: 7px;
-    padding: 7px 10px;
-    border-radius: var(--radius-sm);
-    font-size: 12.5px;
+    gap: 8px;
+    padding: 7px 0;
+    font-size: 13px;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
   }
 
   .event :global(svg) {
@@ -311,41 +324,36 @@
     margin-top: 2px;
   }
 
-  .event.ok {
-    color: var(--ok);
-    background: var(--ok-soft);
-  }
-
-  .event.warn {
-    color: var(--warn);
-    background: var(--warn-soft);
+  .event.ok strong {
+    font-weight: 800;
   }
 
   .event.danger {
     color: var(--danger);
-    background: var(--danger-soft);
+    border-color: var(--danger);
   }
 
   .event.info {
-    color: var(--info);
-    background: var(--info-soft);
+    text-decoration: underline;
+    text-underline-offset: 3px;
   }
 
   .working {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
     padding: 6px 0 0 20px;
-    font-size: 12px;
-    color: var(--text-3);
+    font-size: 11.5px;
+    font-stretch: 85%;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-2);
   }
 
   .bar {
-    width: 38px;
+    width: 28px;
     height: 3px;
-    border-radius: 2px;
-    background: linear-gradient(90deg, transparent, var(--hue), transparent);
-    background-size: 200% 100%;
-    animation: shimmer 1.2s linear infinite;
+    background: var(--text);
+    animation: signal 1.2s ease-in-out infinite;
   }
 </style>

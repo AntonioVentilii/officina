@@ -60,7 +60,7 @@
 
 <div class="page">
   <header>
-    <h1>Agents</h1>
+    <h1 class="page-title">Agents</h1>
     <p class="muted">
       {board.running.length
         ? `${board.running.length} working right now.`
@@ -72,21 +72,25 @@
   <div class="roster">
     {#each stats as agent (agent.role)}
       <div class="agent" class:running={agent.running}>
-        <AgentAvatar role={agent.role} label={agent.label} running={agent.running} size={34} />
+        <AgentAvatar role={agent.role} label={agent.label} running={agent.running} size={40} />
         <div class="info">
           <strong>{agent.label}</strong>
-          <span class="faint">{agent.does}</span>
-          <span class="numbers num">
-            {agent.runs} runs{#if agent.success !== null}
-              · {agent.success}% ok{/if}{#if agent.cost}
-              · {money(agent.cost)}{/if}
+          <span class="does">{agent.does}</span>
+          <span class="numbers caps num">
+            {[
+              `${agent.runs} runs`,
+              agent.success !== null ? `${agent.success}% ok` : '',
+              agent.cost ? money(agent.cost) : ''
+            ]
+              .filter(Boolean)
+              .join('   ')}
           </span>
         </div>
       </div>
     {/each}
   </div>
 
-  <h2>Sessions</h2>
+  <h2>Sessions<span class="count num">{board.runs.length}</span></h2>
   {#if board.runs.length}
     <div class="runs">
       {#each board.runs as run (run.id)}
@@ -106,84 +110,159 @@
   .page {
     height: 100%;
     overflow-y: auto;
-    padding: 18px 24px 40px;
-    max-width: 1080px;
+    padding-bottom: 48px;
   }
 
-  h1 {
-    margin: 0;
-    font-size: 20px;
-    letter-spacing: -0.02em;
+  header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 12px 28px;
+    padding: 28px 32px 22px;
+    border-bottom: 3px solid var(--rule);
   }
 
   header p {
-    margin: 4px 0 18px;
-  }
-
-  h2 {
-    margin: 28px 0 10px;
-    font-size: 11.5px;
-    font-weight: 650;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--text-3);
+    margin: 0;
+    max-width: 460px;
   }
 
   .roster {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
-    gap: 10px;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    border-bottom: 1px solid var(--rule);
   }
 
   .agent {
     display: flex;
-    gap: 12px;
-    padding: 14px;
-    border-radius: var(--radius);
-    border: 1px solid var(--border);
-    background: var(--panel);
-  }
-
-  .agent.running {
-    border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+    flex-direction: column;
+    gap: 14px;
+    padding: 22px 20px 20px;
+    border-right: 1px solid var(--rule);
   }
 
   .info {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 4px;
     min-width: 0;
-    font-size: 12.5px;
+    font-size: 13px;
     line-height: 1.4;
   }
 
   .info strong {
-    font-size: 13.5px;
+    font-size: 22px;
+    font-weight: 800;
+    font-stretch: 75%;
+    line-height: 1.1;
+  }
+
+  .does {
+    color: var(--text-2);
   }
 
   .numbers {
-    margin-top: 4px;
-    font-size: 11.5px;
-    color: var(--text-2);
+    margin-top: 6px;
+    color: var(--text);
+    white-space: pre;
+  }
+
+  h2,
+  .runs,
+  .empty {
+    max-width: 1080px;
+    margin-left: 32px;
+    margin-right: 32px;
+  }
+
+  h2 {
+    display: flex;
+    align-items: flex-end;
+    margin-top: 40px;
+    margin-bottom: 0;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--rule);
+    font-size: 22px;
+    font-weight: 800;
+    font-stretch: 75%;
+  }
+
+  .count {
+    margin-left: auto;
+    font-size: 40px;
+    font-weight: 300;
+    font-stretch: 62%;
+    line-height: 0.75;
   }
 
   .runs {
     display: flex;
     flex-direction: column;
-    gap: 8px;
   }
 
   .empty {
-    padding: 28px;
-    border: 1px dashed var(--border);
-    border-radius: var(--radius);
-    text-align: center;
+    padding: 24px 0;
     color: var(--text-3);
   }
 
+  /* Tecnica: a ruled header strip and condensed section heads, numbers in mono. */
+  :global([data-look='tecnica']) header {
+    align-items: center;
+    padding: 18px 24px;
+    background: var(--panel);
+    border-bottom-width: 1.5px;
+  }
+
+  :global([data-look='tecnica']) h2 {
+    font-family: var(--font-display);
+    font-size: 15px;
+    font-weight: 700;
+    font-stretch: normal;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  :global([data-look='tecnica']) .count {
+    font-size: 12px;
+    font-weight: 400;
+    font-stretch: normal;
+    line-height: 1.5;
+  }
+
+  :global([data-look='tecnica']) .roster {
+    gap: 12px;
+    padding: 20px 24px 0;
+    border: 0;
+  }
+
+  :global([data-look='tecnica']) .agent {
+    border: 1.5px solid var(--rule);
+    background: var(--panel);
+  }
+
+  :global([data-look='tecnica']) .info strong {
+    font-family: var(--font-display);
+    font-size: 17px;
+    font-weight: 700;
+    font-stretch: normal;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
   @media (max-width: 720px) {
-    .page {
-      padding: 14px 16px 24px;
+    header {
+      padding: 20px 16px 16px;
+    }
+
+    header :global(.page-title) {
+      font-size: 56px;
+    }
+
+    h2,
+    .runs,
+    .empty {
+      margin-left: 16px;
+      margin-right: 16px;
     }
   }
 </style>
