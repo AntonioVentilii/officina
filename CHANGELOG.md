@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/AntonioVentilii/officina/compare/v1.1.0...v1.1.1) (2026-11-04)
+
+
+### Continuous Integration
+
+* **workflows:** pass client-id to create-github-app-token ([#32](https://github.com/AntonioVentilii/officina/issues/32)) ([650ec2d](https://github.com/AntonioVentilii/officina/commit/650ec2d5ee5c48fab81a7aaa9bc1cf33457a76e6))
+
 ## [1.1.0](https://github.com/AntonioVentilii/officina/compare/v1.0.1...v1.1.0) (2026-11-03)
 
 
