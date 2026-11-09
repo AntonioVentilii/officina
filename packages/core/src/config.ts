@@ -241,6 +241,15 @@ const normalizeStandards = (raw: RawDocs): StandardsDocs => {
   };
 };
 
+/** Tool layers the onboarder turns into thin pointers to the entry document. */
+export const TOOL_LAYER_DOCS = ['CLAUDE.md'] as const;
+
+/** Whether a path is part of the agent docs: the entry document, a tool layer or the docs folder. */
+export const isAgentDocsPath = (config: Pick<ProjectConfig, 'docs'>, path: string): boolean =>
+  path === config.docs.entry ||
+  (TOOL_LAYER_DOCS as readonly string[]).includes(path) ||
+  path.startsWith(`${config.docs.standards.dir}/`);
+
 /**
  * Every file a project must hold before agents build in it: the entry document, the agent docs
  * pages and every catalog page, each once.
