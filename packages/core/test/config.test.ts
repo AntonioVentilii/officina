@@ -84,6 +84,16 @@ describe('project config', () => {
     ]);
   });
 
+  test('the entry document is a repository path too, so pushed paths can match it', () => {
+    // Push facts name paths from the repository root; an entry written with a leading slash
+    // would never be recognised as part of the agent docs.
+    const result = parseProjectConfig({ version: 1, docs: { entry: '/AGENTS.md' } });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors).toEqual(['docs.entry: must be a relative path inside the repository']);
+    expect(parseProjectConfig({ version: 1, docs: { entry: 'AGENTS' } }).ok).toBe(false);
+  });
+
   test('assumes a merge deploys to production, and nothing verifies itself, unless told', () => {
     const result = parseProjectConfig({ version: 1, docs: { entry: 'AGENTS.md' } });
     expect(result.ok && result.config.release.onMerge).toBe('production');
