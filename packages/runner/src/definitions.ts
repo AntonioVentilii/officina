@@ -4,6 +4,7 @@ import { OUTPUT_SCHEMAS } from '@officina/core';
 import type { AgentCreateParams } from '@anthropic-ai/sdk/resources/beta/agents/agents';
 import { z } from 'zod';
 import { PINNED_MODELS } from './models';
+import { loadStandard, withStandard } from './standard';
 
 export type AgentTools = NonNullable<AgentCreateParams['tools']>;
 type AgentToolConfig = NonNullable<
@@ -106,13 +107,22 @@ export const buildDefinition = (
   return { role, name, model, system, tools, hash };
 };
 
-/** Reads `agents/<role>.md` prompts from a directory and builds every runner role's definition. */
+/**
+ * Reads `agents/<role>.md` prompts from a directory and builds every runner role's definition, each
+ * prompt followed by the code standard.
+ */
 export const loadDefinitions = async (
   promptsDir: string,
   modelId: string = PINNED_MODELS.opus
-): Promise<AgentDefinition[]> =>
-  Promise.all(
+): Promise<AgentDefinition[]> => {
+  const standard = await loadStandard();
+  return Promise.all(
     RUNNER_ROLES.map(async (role) =>
-      buildDefinition(role, await Bun.file(join(promptsDir, `${role}.md`)).text(), modelId)
+      buildDefinition(
+        role,
+        withStandard(await Bun.file(join(promptsDir, `${role}.md`)).text(), standard),
+        modelId
+      )
     )
   );
+};

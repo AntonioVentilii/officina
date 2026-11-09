@@ -31,6 +31,7 @@ COPY packages packages
 COPY apps/api apps/api
 COPY --from=board /app/apps/board/build apps/board/build
 COPY agents agents
+COPY standards standards
 COPY docker/entrypoint.sh /usr/local/bin/officina-entrypoint
 
 EXPOSE 8080
