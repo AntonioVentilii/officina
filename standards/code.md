@@ -12,13 +12,13 @@ Cite a rule by its number and name, for example "rule 5, one value, one place", 
 
 Follow the conventions of the surrounding code: its naming, its file layout, its error handling, its test style. Not the conventions of your training data, and not those of another repository. When the code holds two styles, follow the one its `docs/ai/patterns.md` names, or the more recent one.
 
-### 2. Atomic
+### 2. Scoped
 
-One logical change per pull request. No drive-by refactors, no "while I'm here" edits, no formatting churn in lines the change does not touch. Something worth fixing that is outside the change becomes a follow-up, named in the pull request body.
+A pull request has one purpose: one feature, one fix, one refactor, one docs change, one dependency bump. Scope is the measure, not size: a large pull request with one purpose is right, a small one with two is not. Its title names that purpose in one line; a title that needs an "and" is two pull requests. No drive-by refactors, no "while I'm here" edits, no formatting churn in lines the change does not touch. Something worth fixing that is outside the purpose gets its own pull request, or a follow-up named in the body.
 
-### 3. Small
+### 3. Small steps
 
-Five small pull requests beat one big one. When a change needs a preparatory refactor, land the refactor first, on its own.
+Within one purpose, prefer steps a reviewer can hold in their head, each leaving the code working. A preparatory refactor is a purpose of its own: it lands first, in its own pull request.
 
 ### 4. Reuse before you write
 
