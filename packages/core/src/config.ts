@@ -61,7 +61,8 @@ const projectConfigSchema = z
   .strictObject({
     version: z.literal(1),
     docs: z.strictObject({
-      entry: z.string().min(1),
+      /** What every agent reads first. A path from the repository root, like every other doc. */
+      entry: markdownPage,
       spec_template: z.string().min(1).optional(),
       spec_dir: z.string().min(1).optional(),
       pr_template: z.string().min(1).optional(),
