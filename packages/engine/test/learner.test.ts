@@ -7,7 +7,8 @@ import { RUNNER_ROLES } from '@officina/runner';
 import { Pool } from 'pg';
 import { applyOrThrow, createTaskInMerging, resetAndSeed, type Seeded } from '../../db/test/seed';
 import { createFakePort, idle, toolUse } from '../../runner/test/fake-port';
-import { collectDueSteps, runAgentStep, type GitHubPort } from '../src';
+import { parseProjectConfig } from '@officina/core';
+import { collectDueSteps, learningProblems, runAgentStep, type GitHubPort } from '../src';
 
 const url = process.env.TEST_DATABASE_URL;
 
@@ -54,6 +55,30 @@ describe.skipIf(!url)('learner', () => {
 
   afterAll(async () => {
     await pool.end();
+  });
+
+  test('a tool layer such as CLAUDE.md takes no learning under any target', async () => {
+    const parsed = parseProjectConfig({ version: 1, docs: { entry: 'AGENTS.md' } });
+    if (!parsed.ok) throw new Error(parsed.errors.join('\n'));
+    const problems = learningProblems({
+      deps: { pool, github: fakeGitHub(), agents: createFakePort(() => []), publicUrl: 'x' },
+      repoRef: { installationId: 99, repo: 'ViciApp/vici-app' },
+      branch: 'main',
+      config: parsed.config
+    });
+    // A pointer to the entry document holds no rule: neither target may write to it.
+    expect(
+      await problems({
+        learnings: [
+          learning({ edit: { file: 'CLAUDE.md', text: 'x' } }),
+          learning({ target: 'project', edit: { file: 'CLAUDE.md', text: 'x' } }),
+          learning({ edit: { file: 'docs/ai/workflows/new.md', text: 'x' } })
+        ]
+      } as never)
+    ).toEqual([
+      'learnings.0: docs edits go to AGENTS.md or a page under docs/ai/, not CLAUDE.md, a pointer to the entry document',
+      'learnings.1: CLAUDE.md is part of the agent docs; it is a pointer to the entry document and takes no rule'
+    ]);
   });
 
   const doneTask = async () => {

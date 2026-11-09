@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   DEFAULT_STANDARDS_PAGES,
   isAgentDocsPath,
+  isStandardsPage,
   parseProjectConfig,
   parseProjectConfigYaml,
   requiredDocs
@@ -64,6 +65,12 @@ describe('project config', () => {
     if (!result.ok) throw new Error(result.errors.join('\n'));
     const docs = ['AGENTS.md', 'CLAUDE.md', 'docs/ai/patterns.md', 'docs/ai/workflows/x.md'];
     expect(docs.every((path) => isAgentDocsPath(result.config, path))).toBe(true);
+    // The pages agents learn from leave the tool layers out: those only point at the entry.
+    expect(docs.filter((path) => isStandardsPage(result.config, path))).toEqual([
+      'AGENTS.md',
+      'docs/ai/patterns.md',
+      'docs/ai/workflows/x.md'
+    ]);
     expect(
       ['docs/aide.md', 'src/AGENTS.md', 'docs/ai'].some((path) =>
         isAgentDocsPath(result.config, path)

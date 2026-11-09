@@ -4,6 +4,7 @@ import {
   computeLane,
   editsProject,
   isAgentDocsPath,
+  isStandardsPage,
   parseProjectConfig,
   type AgentOutput,
   type ProjectConfig
@@ -191,16 +192,18 @@ export const learningProblems =
           );
           continue;
         }
-        // One target per file, so the board and the pull request say what kind of doc changes.
-        const agentDocs = isAgentDocsPath(input.config, file);
-        if (learning.target === 'docs' && !agentDocs) {
+        // One target per file, so the board and the pull request say what kind of doc changes. A
+        // tool layer such as CLAUDE.md is a pointer to the entry document and takes no rule at all.
+        if (learning.target === 'docs' && !isStandardsPage(input.config, file)) {
           problems.push(
-            `${at}: docs edits go to ${input.config.docs.entry} or a page under ${input.config.docs.standards.dir}/, not ${file}; use target project`
+            `${at}: docs edits go to ${input.config.docs.entry} or a page under ${input.config.docs.standards.dir}/, not ${file}${isAgentDocsPath(input.config, file) ? ', a pointer to the entry document' : '; use target project'}`
           );
           continue;
         }
-        if (learning.target === 'project' && agentDocs) {
-          problems.push(`${at}: ${file} is part of the agent docs; use target docs`);
+        if (learning.target === 'project' && isAgentDocsPath(input.config, file)) {
+          problems.push(
+            `${at}: ${file} is part of the agent docs; ${isStandardsPage(input.config, file) ? 'use target docs' : 'it is a pointer to the entry document and takes no rule'}`
+          );
           continue;
         }
         if (computeLane([file], input.config.laneMatcher) === 'red') {
