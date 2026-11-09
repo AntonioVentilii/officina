@@ -18,7 +18,7 @@
 
 An agent may, without asking: change code inside the package that owns the concern, add tests, add a new migration, add a field the board shows, change a role prompt with its contract, and update these pages and `docs/architecture.md`.
 
-An agent asks first before it: adds a dependency, a package or an app; changes the stack; moves scheduling, limits, state transitions or recovery out of deterministic code; changes who may approve, merge or see what (the policies, the security model, `PUBLIC_FIELDS`); or touches a path in the table above.
+An agent asks first before it: adds a dependency, a package or an app; changes the stack; moves scheduling, limits, state transitions or recovery out of deterministic code; changes who may approve, merge or see what (the policies, the security model, `PUBLIC_FIELDS`); or changes a path whose row above says to ask. The other rows are rules to follow without asking: a new migration file, for example, is fine, an edit to an applied one is not.
 
 ## Meta-update map
 

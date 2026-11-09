@@ -46,7 +46,7 @@ The agent docs in [`docs/ai/`](./docs/ai/README.md) are read off this code; [`do
 | Change the database schema                             | [`docs/ai/workflows/migration.md`](./docs/ai/workflows/migration.md)                       |
 | Show something new on the board                        | [`docs/ai/workflows/board-field.md`](./docs/ai/workflows/board-field.md)                   |
 
-**Truth hierarchy:** the code, then CI, then `docs/ai/**` and `docs/architecture.md`, then this file, then tool layers such as `CLAUDE.md`; the [code standard](https://github.com/AntonioVentilii/officina/blob/main/standards/code.md#truth-hierarchy) says what to do on a contradiction. **Meta-update rule:** a change that adds a pattern, a shared piece, a convention or a workflow updates the matching page in the same pull request; [`docs/ai/governance.md`](./docs/ai/governance.md#meta-update-map) says which.
+**Truth hierarchy:** the code, then CI, then `CODEOWNERS` (this repository has none yet), then `docs/ai/**` and `docs/architecture.md`, then this file, then tool layers such as `CLAUDE.md`; the [code standard](https://github.com/AntonioVentilii/officina/blob/main/standards/code.md#truth-hierarchy) says what to do on a contradiction. **Meta-update rule:** a change that adds a pattern, a shared piece, a convention or a workflow updates the matching page in the same pull request; [`docs/ai/governance.md`](./docs/ai/governance.md#meta-update-map) says which.
 
 ## Rules
 

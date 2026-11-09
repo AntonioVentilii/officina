@@ -19,7 +19,7 @@ The patterns Officina really uses, each with one place to copy from. [`../archit
 
 - **Ports, not clients, inside the engine.** `GitHubPort` (`packages/engine/src/step.ts:41`) and `ManagedAgentsPort` (`packages/runner/src/port.ts:52`) are `Pick`s or interfaces over the real clients; tests pass fakes. The real clients are built only in `apps/api`.
 - **Text written by people or agents is fenced as data in a brief**, with a fence longer than any backtick run inside it: `fence` in `packages/engine/src/brief.ts:69`.
-- **Config is parsed once into a normalized shape.** Code reads `ProjectConfig` from `parseProjectConfig` (`packages/core/src/config.ts:181`), with defaults filled in, never the raw YAML.
+- **Config is parsed once into a normalized shape.** New code reads `ProjectConfig` from `parseProjectConfig` (`packages/core/src/config.ts:181`), with defaults filled in, not the raw YAML. Two older reads of the raw config remain and are listed below as follow-ups.
 
 ## API and board
 
@@ -33,7 +33,7 @@ The patterns Officina really uses, each with one place to copy from. [`../archit
 
 Named so nobody copies them; each is a follow-up of its own.
 
-- `fence` is written twice, in `packages/engine/src/brief.ts:69` and `packages/engine/src/learner.ts:32`. Import the brief's.
+- `fence` is written twice, privately, in `packages/engine/src/brief.ts:69` and `packages/engine/src/learner.ts:32`. Export one shared helper and use it in both.
 - `const RUNNER = 'managed_agents'` and `const ENGINE: Actor = { kind: 'engine' }` are repeated in several engine and API modules. One owner should export each.
 - The red-lane paths are read from the raw config with a cast (`packages/engine/src/step.ts:225`, `packages/engine/src/learner.ts:245`) instead of from the normalized `ProjectConfig`.
 - SQL outside `packages/db`: the interviewer's question count (`packages/engine/src/step.ts:209`) and the learner's "looked once" check (`packages/engine/src/learner.ts:233`). Queries belong in the db module that owns the table.
