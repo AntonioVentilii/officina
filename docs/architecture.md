@@ -186,16 +186,8 @@ docs:
   entry: AGENTS.md # what every agent reads first
   spec_template: docs/specs/template.md
   spec_dir: docs/specs # the engine sets a spec's `Status:` line to In progress / Implemented
-  standards: docs/ai # the agent docs folder the code standard asks for (the default)
-  pages: [
-      README.md,
-      governance.md,
-      structure.md,
-      patterns.md,
-      reusability.md,
-      testing.md,
-      pr-and-ci.md
-    ] # relative to it; these are the default
+  standards: docs/ai # the agent docs folder (the default); its pages default to DEFAULT_STANDARDS_PAGES
+  pages: [README.md, structure.md, reusability.md] # only when a project needs other pages, relative to the folder
   catalogs: # a file added under the glob must be listed on the page, relative to the docs folder
     'src/lib/components/**': reusability.md
 pull_request:
