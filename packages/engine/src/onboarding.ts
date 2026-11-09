@@ -1,10 +1,9 @@
 import { requiredDocs, type ProjectConfig } from '@officina/core';
 import { createOnboardingTask } from '@officina/db';
 import type { Pool } from 'pg';
+import { list } from './brief';
 
 export const ONBOARDING_TITLE = 'Write the agent docs for this repository';
-
-const list = (items: readonly string[]) => items.map((item) => `- \`${item}\``).join('\n');
 
 /**
  * The spec people approve before the onboarder writes a project's agent docs. The onboarder's own

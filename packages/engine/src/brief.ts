@@ -82,7 +82,8 @@ const fence = (text: string): string => {
   return `${marks}text\n${text}\n${marks}`;
 };
 
-const list = (items: readonly string[]): string =>
+/** A bullet list of code paths, or `- none`. */
+export const list = (items: readonly string[]): string =>
   items.length ? items.map((item) => `- \`${item}\``).join('\n') : '- none';
 
 const onboardingSection = (entry: string, standards: StandardsDocs): string =>
