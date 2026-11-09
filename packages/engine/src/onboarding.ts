@@ -1,6 +1,12 @@
 import { requiredDocs, type Actor, type ProjectConfig } from '@officina/core';
-import { applyCommand, createOnboardingTask, openOnboardingTask } from '@officina/db';
-import type { Pool } from 'pg';
+import {
+  applyCommand,
+  createOnboardingTask,
+  insertOnboardingTask,
+  openOnboardingTask,
+  type NewOnboardingTask
+} from '@officina/db';
+import type { Pool, PoolClient } from 'pg';
 import { list } from './brief';
 
 export const ONBOARDING_TITLE = 'Write the agent docs for this repository';
@@ -42,6 +48,32 @@ export const onboardingSpec = (
 
 const ENGINE: Actor = { kind: 'engine' };
 
+export interface OnboardingInput {
+  readonly projectId: string;
+  readonly requesterId: string;
+  readonly repo: string;
+  readonly config: ProjectConfig;
+  readonly missing: readonly string[];
+}
+
+const onboardingTask = (input: OnboardingInput): NewOnboardingTask => ({
+  projectId: input.projectId,
+  requesterId: input.requesterId,
+  title: ONBOARDING_TITLE,
+  spec: onboardingSpec(input.repo, input.config, input.missing),
+  paths: requiredDocs(input.config),
+  config: input.config
+});
+
+/**
+ * Opens the onboarding task inside the caller's transaction, unless one is open. Registration uses
+ * it so a project is never schedulable without the gate its missing pages call for.
+ */
+export const openOnboardingIn = async (
+  client: PoolClient,
+  input: OnboardingInput
+): Promise<number> => (await insertOnboardingTask(client, onboardingTask(input))).number;
+
 /**
  * Opens the onboarding task when a project lacks required agent docs, unless one is already open.
  * Returns the task's number, or `null` when nothing is missing. When nothing is missing but an
@@ -50,13 +82,7 @@ const ENGINE: Actor = { kind: 'engine' };
  */
 export const ensureOnboarding = async (
   pool: Pool,
-  input: {
-    readonly projectId: string;
-    readonly requesterId: string;
-    readonly repo: string;
-    readonly config: ProjectConfig;
-    readonly missing: readonly string[];
-  }
+  input: OnboardingInput
 ): Promise<number | null> => {
   if (input.missing.length === 0) {
     const open = await openOnboardingTask(pool, input.projectId);
@@ -72,13 +98,6 @@ export const ensureOnboarding = async (
     }
     return null;
   }
-  const task = await createOnboardingTask(pool, {
-    projectId: input.projectId,
-    requesterId: input.requesterId,
-    title: ONBOARDING_TITLE,
-    spec: onboardingSpec(input.repo, input.config, input.missing),
-    paths: requiredDocs(input.config),
-    config: input.config
-  });
+  const task = await createOnboardingTask(pool, onboardingTask(input));
   return task.number;
 };

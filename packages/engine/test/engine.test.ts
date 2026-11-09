@@ -349,8 +349,7 @@ describe.skipIf(!url)('engine', () => {
       {
         type: 'dispatch',
         assignee: { kind: 'agent', role: 'builder' },
-        openInLane: 0,
-        onboardingOpen: false
+        openInLane: 0
       },
       engine
     );

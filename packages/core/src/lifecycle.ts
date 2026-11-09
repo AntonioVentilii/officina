@@ -145,8 +145,6 @@ export type Command =
       readonly type: 'dispatch';
       readonly assignee: Assignee;
       readonly openInLane: number;
-      /** The project has an onboarding task that is not done yet. */
-      readonly onboardingOpen: boolean;
     }
   | { readonly type: 'claim' }
   | { readonly type: 'release' }
@@ -256,6 +254,11 @@ export interface DecideContext {
   readonly members: readonly Member[];
   /** Every approval already recorded on this task, for any subject. */
   readonly approvals: readonly Approval[];
+  /**
+   * The project has an onboarding task that is not done yet. The store reads it under the project
+   * lock that opening one takes, so a dispatch and a new gate can never cross.
+   */
+  readonly onboardingOpen: boolean;
 }
 
 const fail = (error: DecisionError): Decision => ({ ok: false, error });
@@ -524,7 +527,7 @@ export const decide = (
       if (actor.kind !== 'engine') return fail('not_allowed');
       if (task.lane === null) return fail('no_lane');
       // Agents build in a project only once its agent docs exist, so they reuse what is there.
-      if (task.kind === 'request' && command.onboardingOpen) return fail('awaiting_onboarding');
+      if (task.kind === 'request' && context.onboardingOpen) return fail('awaiting_onboarding');
       const settings = context.config.lanes[task.lane];
       if (command.assignee.kind === 'agent') {
         if (command.assignee.role !== buildRoleFor(task.kind)) return fail('not_allowed');

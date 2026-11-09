@@ -1,4 +1,4 @@
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 
 /**
  * Claims a webhook delivery before it is processed. Only one of two concurrent deliveries with the
@@ -33,8 +33,8 @@ export const linkPullRequest = async (
 };
 
 /** Forgets a task's pull request, so the next push opens a new one. */
-export const unlinkPullRequest = async (pool: Pool, taskId: string): Promise<void> => {
-  await pool.query('update tasks set github_pr = null, updated_at = now() where id = $1', [taskId]);
+export const unlinkPullRequest = async (db: Pool | PoolClient, taskId: string): Promise<void> => {
+  await db.query('update tasks set github_pr = null, updated_at = now() where id = $1', [taskId]);
 };
 
 export const findTasksByPullRequest = async (

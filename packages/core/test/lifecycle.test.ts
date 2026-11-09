@@ -56,8 +56,7 @@ const dispatchAgent = (driver: Driver, task: Task, openInLane = 0): Task =>
     {
       type: 'dispatch',
       assignee: { kind: 'agent', role: 'builder' },
-      openInLane,
-      onboardingOpen: false
+      openInLane
     },
     engine
   );
@@ -181,8 +180,7 @@ describe('guardrails', () => {
       {
         type: 'dispatch',
         assignee: { kind: 'agent', role: 'builder' },
-        openInLane: 0,
-        onboardingOpen: false
+        openInLane: 0
       },
       engine
     );
@@ -231,8 +229,7 @@ describe('guardrails', () => {
         {
           type: 'dispatch',
           assignee: { kind: 'agent', role: 'builder' },
-          openInLane: 3,
-          onboardingOpen: false
+          openInLane: 3
         },
         engine
       )
@@ -609,33 +606,34 @@ describe('onboarding', () => {
     lane: 'standard',
     specVersion: 1
   });
-  const dispatch = (role: 'builder' | 'onboarder', onboardingOpen: boolean) => ({
+  const dispatch = (role: 'builder' | 'onboarder') => ({
     type: 'dispatch' as const,
     assignee: { kind: 'agent' as const, role },
-    openInLane: 0,
-    onboardingOpen
+    openInLane: 0
   });
+  /** A driver for a project whose onboarding task is still open. */
+  const gated = () => createDriver([owner], loadConfig(), { onboardingOpen: true });
 
   test('no request is dispatched while the project has an open onboarding task', () => {
-    const driver = createDriver([owner]);
+    const driver = gated();
     const task = toReady(driver, PAGE_PATHS);
-    expect(driver.attempt(task, dispatch('builder', true), engine)).toEqual({
+    expect(driver.attempt(task, dispatch('builder'), engine)).toEqual({
       ok: false,
       error: 'awaiting_onboarding'
     });
-    expect(driver.step(task, dispatch('builder', false), engine).stage).toBe('building');
+    expect(createDriver([owner]).step(task, dispatch('builder'), engine).stage).toBe('building');
     // People still decide: a maintainer can claim the work by hand.
     expect(driver.step(task, { type: 'claim' }, asMember(owner)).stage).toBe('building');
   });
 
   test('the onboarding task goes to the onboarder, never to the builder', () => {
-    const driver = createDriver([owner]);
+    const driver = gated();
     const task = onboardingAt('ready');
-    expect(driver.attempt(task, dispatch('builder', true), engine)).toEqual({
+    expect(driver.attempt(task, dispatch('builder'), engine)).toEqual({
       ok: false,
       error: 'not_allowed'
     });
-    const building = driver.step(task, dispatch('onboarder', true), engine);
+    const building = driver.step(task, dispatch('onboarder'), engine);
     expect(nextAgentRoles(building)).toEqual(['onboarder']);
     expect(
       driver.attempt(
@@ -647,9 +645,9 @@ describe('onboarding', () => {
   });
 
   test('the gate never holds the onboarding task itself, from dispatch to merge', () => {
-    const driver = createDriver([owner]);
+    const driver = gated();
     const docs = ['AGENTS.md', 'docs/ai/README.md'];
-    let task = driver.step(onboardingAt('ready'), dispatch('onboarder', true), engine);
+    let task = driver.step(onboardingAt('ready'), dispatch('onboarder'), engine);
     task = driver.step(
       task,
       { type: 'push', headSha: 'abc', changedPaths: docs, diffLines: 120 },
@@ -678,8 +676,8 @@ describe('onboarding', () => {
   });
 
   test('a pull request closed without a merge sends the task back, held for a maintainer', () => {
-    const driver = createDriver([owner]);
-    const building = driver.step(onboardingAt('ready'), dispatch('onboarder', true), engine);
+    const driver = gated();
+    const building = driver.step(onboardingAt('ready'), dispatch('onboarder'), engine);
     // Before the first push there is no pull request to close.
     expect(
       driver.attempt(building, { type: 'pull_request_closed', pullRequest: 7 }, engine)
@@ -699,14 +697,14 @@ describe('onboarding', () => {
     expect(driver.events()).toContainEqual({ type: 'pull_request_closed', pullRequest: 7 });
     // Answering lets the engine dispatch it again as a first round; cancelling lifts the gate.
     const answered = driver.step(held, { type: 'answer', text: 'build it again' }, asMember(owner));
-    expect(driver.step(answered, dispatch('onboarder', true), engine).stage).toBe('building');
+    expect(driver.step(answered, dispatch('onboarder'), engine).stage).toBe('building');
     expect(driver.step(held, { type: 'cancel', reason: 'not now' }, asMember(owner)).stage).toBe(
       'cancelled'
     );
   });
 
   test('the engine may close an onboarding task whose pages exist, never a request', () => {
-    const driver = createDriver([owner]);
+    const driver = gated();
     const reason = 'every required agent docs page is on the default branch already';
     expect(driver.step(onboardingAt('ready'), { type: 'cancel', reason }, engine).stage).toBe(
       'cancelled'
@@ -719,8 +717,8 @@ describe('onboarding', () => {
   });
 
   test('the onboarder may change the agent docs and nothing else', () => {
-    const driver = createDriver([owner]);
-    const building = driver.step(onboardingAt('ready'), dispatch('onboarder', true), engine);
+    const driver = gated();
+    const building = driver.step(onboardingAt('ready'), dispatch('onboarder'), engine);
     const docs = ['AGENTS.md', 'CLAUDE.md', 'docs/ai/README.md', 'docs/ai/workflows/add-a-page.md'];
     const reviewed = driver.step(
       building,

@@ -8,7 +8,7 @@ import {
   upsertProject,
   upsertWorkspace
 } from '@officina/db';
-import { ensureOnboarding } from '@officina/engine';
+import { ensureOnboarding, openOnboardingIn } from '@officina/engine';
 import type { GitHubClient } from '@officina/github';
 import {
   ensureEnvironment,
@@ -103,7 +103,7 @@ export const addProject = async (
   });
 
   const client = await pool.connect();
-  let registered: { projectId: string; ownerId: string };
+  let registered: { projectId: string; ownerId: string; onboardingTask: number | null };
   try {
     await client.query('begin');
     const workspaceId = await upsertWorkspace(client, input.workspace);
@@ -123,26 +123,33 @@ export const addProject = async (
     const role: Role = 'owner';
     await setProjectRole(client, { projectId, memberId: ownerId, role });
     await setProjectEnvironment(client, projectId, environment.id);
+    // In the same transaction: the scheduler must never see the project ungated.
+    const onboardingTask = missingDocs.length
+      ? await openOnboardingIn(client, {
+          projectId,
+          requesterId: ownerId,
+          repo: input.repo,
+          config: parsed.config,
+          missing: missingDocs
+        })
+      : null;
     await client.query('commit');
-    registered = { projectId, ownerId };
+    registered = { projectId, ownerId, onboardingTask };
   } catch (error) {
     await client.query('rollback');
     throw error;
   } finally {
     client.release();
   }
-  const onboardingTask = await ensureOnboarding(pool, {
-    projectId: registered.projectId,
-    requesterId: registered.ownerId,
-    repo: input.repo,
-    config: parsed.config,
-    missing: missingDocs
-  });
-  return {
-    ...registered,
-    environmentId: environment.id,
-    installationId,
-    missingDocs,
-    onboardingTask
-  };
+  // Lifting a gate is safe to do after the commit: it only lets builds start later than they could.
+  if (missingDocs.length === 0) {
+    await ensureOnboarding(pool, {
+      projectId: registered.projectId,
+      requesterId: registered.ownerId,
+      repo: input.repo,
+      config: parsed.config,
+      missing: []
+    });
+  }
+  return { ...registered, environmentId: environment.id, installationId, missingDocs };
 };

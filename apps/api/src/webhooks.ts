@@ -177,12 +177,14 @@ const handleClosed = async (
 ): Promise<WebhookOutcome[]> => {
   const outcomes: WebhookOutcome[] = [];
   for (const taskId of await findTasksByPullRequest(pool, action.repo, action.prNumber)) {
+    // The link is cleared in the same transaction as the move, so a crash between the two can
+    // never leave a rebuilt task pointing at the closed pull request.
     const result = await applyCommand(pool, {
       taskId,
       command: { type: 'pull_request_closed', pullRequest: action.prNumber },
-      actor: ENGINE
+      actor: ENGINE,
+      onApplied: (client) => unlinkPullRequest(client, taskId)
     });
-    if (result.ok) await unlinkPullRequest(pool, taskId);
     outcomes.push(result.ok ? { taskId, ok: true } : { taskId, ok: false, error: result.error });
   }
   return outcomes;

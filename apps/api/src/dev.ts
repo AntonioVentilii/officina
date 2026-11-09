@@ -284,8 +284,7 @@ const seed = async (
         {
           type: 'dispatch',
           assignee: { kind: 'agent', role: 'builder' },
-          openInLane: 0,
-          onboardingOpen: false
+          openInLane: 0
         },
         engine
       );
@@ -531,8 +530,7 @@ const seedDemo = async (pool: Pool) => {
     {
       type: 'dispatch',
       assignee: { kind: 'agent', role: 'builder' },
-      openInLane: 0,
-      onboardingOpen: false
+      openInLane: 0
     },
     engine
   );

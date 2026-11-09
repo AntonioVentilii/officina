@@ -130,52 +130,62 @@ export const openOnboardingTask = async (
     )
   ).rows[0] ?? null;
 
+export interface NewOnboardingTask {
+  readonly projectId: string;
+  readonly requesterId: string;
+  readonly title: string;
+  readonly spec: string;
+  readonly paths: readonly string[];
+  readonly config: ProjectConfig;
+}
+
 /**
- * Opens the task that writes a project's agent docs, unless one is already open. People approve
- * its spec like any other, so it starts at spec review with the engine's spec as version 1.
+ * Opens the task that writes a project's agent docs, unless one is already open, inside the
+ * caller's transaction, so registering a project and gating it are one change. People approve its
+ * spec like any other, so it starts at spec review with the engine's spec as version 1.
  */
-export const createOnboardingTask = (
-  pool: Pool,
-  input: {
-    projectId: string;
-    requesterId: string;
-    title: string;
-    spec: string;
-    paths: readonly string[];
-    config: ProjectConfig;
-  }
-): Promise<{ created: boolean; id: string; number: number }> =>
-  inTransaction(pool, async (client) => {
-    // Locking the project serializes task numbering and keeps a single open onboarding task.
-    await client.query('select id from projects where id = $1 for update', [input.projectId]);
-    const open = await openOnboardingTask(client, input.projectId);
-    if (open) return { created: false, ...open };
-    const lane = computeLane(input.paths, input.config.laneMatcher);
-    const { rows } = await client.query<{ id: string; number: number }>(
-      `insert into tasks (project_id, number, title, requester_id, kind, stage, lane, spec_version)
+export const insertOnboardingTask = async (
+  client: PoolClient,
+  input: NewOnboardingTask
+): Promise<{ created: boolean; id: string; number: number }> => {
+  // Locking the project serializes task numbering, keeps a single open onboarding task, and
+  // waits for any dispatch reading the gate under its share lock.
+  await client.query('select id from projects where id = $1 for update', [input.projectId]);
+  const open = await openOnboardingTask(client, input.projectId);
+  if (open) return { created: false, ...open };
+  const lane = computeLane(input.paths, input.config.laneMatcher);
+  const { rows } = await client.query<{ id: string; number: number }>(
+    `insert into tasks (project_id, number, title, requester_id, kind, stage, lane, spec_version)
        select $1, coalesce(max(number), 0) + 1, $2, $3, 'onboarding', 'spec_review', $4, 1
        from tasks where project_id = $1
        returning id, number`,
-      [input.projectId, input.title, input.requesterId, lane]
-    );
-    const row = rows[0]!;
-    const engine: Actor = { kind: 'engine' };
-    await client.query(
-      'insert into task_events (task_id, actor, type, payload) values ($1, $2, $3, $4)',
-      [row.id, json(engine), 'created', json({ title: input.title, kind: 'onboarding' })]
-    );
-    await client.query(
-      'insert into spec_versions (task_id, version, body, created_by) values ($1, 1, $2, $3)',
-      [row.id, input.spec, json(engine)]
-    );
-    const events: DomainEvent[] = [
-      { type: 'spec_versioned', version: 1 },
-      { type: 'lane_changed', from: null, to: lane },
-      { type: 'stage_changed', from: 'request', to: 'spec_review' }
-    ];
-    for (const event of events) await insertEvent(client, row.id, engine, event);
-    return { created: true, id: row.id, number: row.number };
-  });
+    [input.projectId, input.title, input.requesterId, lane]
+  );
+  const row = rows[0]!;
+  const engine: Actor = { kind: 'engine' };
+  await client.query(
+    'insert into task_events (task_id, actor, type, payload) values ($1, $2, $3, $4)',
+    [row.id, json(engine), 'created', json({ title: input.title, kind: 'onboarding' })]
+  );
+  await client.query(
+    'insert into spec_versions (task_id, version, body, created_by) values ($1, 1, $2, $3)',
+    [row.id, input.spec, json(engine)]
+  );
+  const events: DomainEvent[] = [
+    { type: 'spec_versioned', version: 1 },
+    { type: 'lane_changed', from: null, to: lane },
+    { type: 'stage_changed', from: 'request', to: 'spec_review' }
+  ];
+  for (const event of events) await insertEvent(client, row.id, engine, event);
+  return { created: true, id: row.id, number: row.number };
+};
+
+/** `insertOnboardingTask` in a transaction of its own. */
+export const createOnboardingTask = (
+  pool: Pool,
+  input: NewOnboardingTask
+): Promise<{ created: boolean; id: string; number: number }> =>
+  inTransaction(pool, (client) => insertOnboardingTask(client, input));
 
 export const loadTask = async (pool: Pool, taskId: string): Promise<StoredTask | null> => {
   const { rows } = await pool.query<TaskRow>('select * from tasks where id = $1', [taskId]);
@@ -235,10 +245,18 @@ export const applyCommand = (pool: Pool, input: ApplyInput): Promise<ApplyResult
 
     const before = toStored(row).task;
     if (input.guard && !input.guard(before)) return { ok: false, error: 'conflict' };
+    // Only a dispatch reads the onboarding gate; the share lock waits for an onboarding task
+    // being opened, so the gate it reads is the one in force when the build starts.
+    let onboardingOpen = false;
+    if (input.command.type === 'dispatch') {
+      await client.query('select id from projects where id = $1 for share', [row.project_id]);
+      onboardingOpen = (await openOnboardingTask(client, row.project_id)) !== null;
+    }
     const decision = decide(before, input.command, input.actor, {
       config: parsedConfig.config,
       members,
-      approvals
+      approvals,
+      onboardingOpen
     });
     if (!decision.ok) return decision;
 
