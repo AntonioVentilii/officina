@@ -4,7 +4,7 @@ The rules every agent and every person follows when changing code in a repositor
 
 This page is the only copy. A repository links it from its `AGENTS.md` and never restates these rules; its own `docs/ai/**` pages add only what is specific to it (its structure, its patterns, its catalog of shared code, its commands). When this page changes, every repository that links it follows at once.
 
-Cite a rule by its number and name, for example "rule 5, one value, one place", so the author can find it.
+Cite a rule by its number and name, for example "rule 5, one value, one place", so the author can find it. Numbers never change: a new rule is added at the end.
 
 ## Rules
 
@@ -63,6 +63,10 @@ The meta-update rule: a pull request that adds a pattern, a shared piece of code
 ### 14. Writing
 
 No em dashes or en dashes anywhere, in code, comments, docs or messages: use hyphens, commas, colons or two sentences. Comments say why, never what. No AI attribution in commits, pull requests or code.
+
+### 15. Idempotent
+
+Anything that can run twice leaves the same result as running once: migrations, jobs and scheduled runs, webhooks and retried handlers, scripts, seeds, setup commands, and every write driven by an outside event. Claim the work before doing it, so a second run finds it taken. Write with upserts or natural keys, never a blind insert. Check before acting, so a step already done is skipped. Give every retry a key, so the receiver can tell a repeat from new work. A test runs the thing twice and asserts that nothing changed the second time.
 
 ## Truth hierarchy
 
