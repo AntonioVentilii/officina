@@ -346,7 +346,12 @@ describe.skipIf(!url)('engine', () => {
     await applyOrThrow(
       pool,
       id,
-      { type: 'dispatch', assignee: { kind: 'agent', role: 'builder' }, openInLane: 0 },
+      {
+        type: 'dispatch',
+        assignee: { kind: 'agent', role: 'builder' },
+        openInLane: 0,
+        onboardingOpen: false
+      },
       engine
     );
     await pushAndReview('abc');

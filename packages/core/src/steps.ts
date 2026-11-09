@@ -20,7 +20,7 @@ export const nextAgentRoles = (task: Task): AgentRole[] => {
         ? []
         : ['chooser'];
     case 'building':
-      return task.assignee?.kind === 'agent' ? ['builder'] : [];
+      return task.assignee?.kind === 'agent' ? [task.assignee.role] : [];
     case 'reviewing':
       return REVIEWER_ROLES.filter((role) => task.reviews[role] !== 'approve');
     case 'choosing':

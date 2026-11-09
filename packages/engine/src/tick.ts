@@ -1,10 +1,11 @@
-import { nextAgentRoles, parseProjectConfig, type Actor } from '@officina/core';
+import { buildRoleFor, nextAgentRoles, parseProjectConfig, type Actor } from '@officina/core';
 import {
   applyCommand,
   countOpenAgentWork,
   listActiveTaskIds,
   listTasksAwaitingLearning,
-  loadTaskContext
+  loadTaskContext,
+  openOnboardingTask
 } from '@officina/db';
 import { RUNNER_ROLES, type RunnerRole } from '@officina/runner';
 import { runAgentStep, type EngineDependencies, type StepResult } from './step';
@@ -38,6 +39,8 @@ export const collectDueSteps = async (
   const due: DueStep[] = [];
   const dueFor = (taskId: string, roles: readonly string[]) =>
     due.push(...roles.filter(isRunnerRole).map((role) => ({ taskId, role })));
+  // Read once per pass: the gate holds every other build until the onboarding task is done.
+  const onboardingOpen = (await openOnboardingTask(deps.pool, projectId)) !== null;
 
   for (const taskId of await listActiveTaskIds(deps.pool, projectId)) {
     const context = await loadTaskContext(deps.pool, taskId);
@@ -51,8 +54,9 @@ export const collectDueSteps = async (
           taskId,
           command: {
             type: 'dispatch',
-            assignee: { kind: 'agent', role: 'builder' },
-            openInLane: await countOpenAgentWork(deps.pool, projectId, task.lane)
+            assignee: { kind: 'agent', role: buildRoleFor(task.kind) },
+            openInLane: await countOpenAgentWork(deps.pool, projectId, task.lane),
+            onboardingOpen
           },
           actor: ENGINE
         });

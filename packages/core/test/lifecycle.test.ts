@@ -53,7 +53,12 @@ const buildAndReview = (driver: Driver, task: Task, headSha: string, paths: read
 const dispatchAgent = (driver: Driver, task: Task, openInLane = 0): Task =>
   driver.step(
     task,
-    { type: 'dispatch', assignee: { kind: 'agent', role: 'builder' }, openInLane },
+    {
+      type: 'dispatch',
+      assignee: { kind: 'agent', role: 'builder' },
+      openInLane,
+      onboardingOpen: false
+    },
     engine
   );
 
@@ -173,7 +178,12 @@ describe('guardrails', () => {
     task = driver.step(task, { type: 'answer', text: 'I will do it' }, asMember(owner));
     const redispatch = driver.attempt(
       task,
-      { type: 'dispatch', assignee: { kind: 'agent', role: 'builder' }, openInLane: 0 },
+      {
+        type: 'dispatch',
+        assignee: { kind: 'agent', role: 'builder' },
+        openInLane: 0,
+        onboardingOpen: false
+      },
       engine
     );
     expect(redispatch).toEqual({ ok: false, error: 'agents_cannot_build_lane' });
@@ -218,7 +228,12 @@ describe('guardrails', () => {
     expect(
       driver.attempt(
         task,
-        { type: 'dispatch', assignee: { kind: 'agent', role: 'builder' }, openInLane: 3 },
+        {
+          type: 'dispatch',
+          assignee: { kind: 'agent', role: 'builder' },
+          openInLane: 3,
+          onboardingOpen: false
+        },
         engine
       )
     ).toEqual({ ok: false, error: 'wip_limit' });
@@ -583,6 +598,76 @@ describe('reviews on GitHub', () => {
     expect(driver.attempt(task, review('abc'), asMember(owner))).toEqual({
       ok: false,
       error: 'not_allowed'
+    });
+  });
+});
+
+describe('onboarding', () => {
+  const onboardingAt = (stage: Task['stage']): Task => ({
+    ...newTask('t9', owner.id, 'onboarding'),
+    stage,
+    lane: 'standard',
+    specVersion: 1
+  });
+  const dispatch = (role: 'builder' | 'onboarder', onboardingOpen: boolean) => ({
+    type: 'dispatch' as const,
+    assignee: { kind: 'agent' as const, role },
+    openInLane: 0,
+    onboardingOpen
+  });
+
+  test('no request is dispatched while the project has an open onboarding task', () => {
+    const driver = createDriver([owner]);
+    const task = toReady(driver, PAGE_PATHS);
+    expect(driver.attempt(task, dispatch('builder', true), engine)).toEqual({
+      ok: false,
+      error: 'awaiting_onboarding'
+    });
+    expect(driver.step(task, dispatch('builder', false), engine).stage).toBe('building');
+    // People still decide: a maintainer can claim the work by hand.
+    expect(driver.step(task, { type: 'claim' }, asMember(owner)).stage).toBe('building');
+  });
+
+  test('the onboarding task goes to the onboarder, never to the builder', () => {
+    const driver = createDriver([owner]);
+    const task = onboardingAt('ready');
+    expect(driver.attempt(task, dispatch('builder', true), engine)).toEqual({
+      ok: false,
+      error: 'not_allowed'
+    });
+    const building = driver.step(task, dispatch('onboarder', true), engine);
+    expect(nextAgentRoles(building)).toEqual(['onboarder']);
+    expect(
+      driver.attempt(
+        building,
+        { type: 'push', headSha: 'abc', changedPaths: ['AGENTS.md'], diffLines: 10 },
+        asAgent('builder')
+      )
+    ).toEqual({ ok: false, error: 'not_allowed' });
+  });
+
+  test('the onboarder may change the agent docs and nothing else', () => {
+    const driver = createDriver([owner]);
+    const building = driver.step(onboardingAt('ready'), dispatch('onboarder', true), engine);
+    const docs = ['AGENTS.md', 'CLAUDE.md', 'docs/ai/README.md', 'docs/ai/workflows/add-a-page.md'];
+    const reviewed = driver.step(
+      building,
+      { type: 'push', headSha: 'abc', changedPaths: docs, diffLines: 300 },
+      asAgent('onboarder')
+    );
+    expect(reviewed.stage).toBe('reviewing');
+
+    const stopped = driver.step(
+      building,
+      { type: 'push', headSha: 'abc', changedPaths: [...docs, 'src/app.ts'], diffLines: 310 },
+      asAgent('onboarder')
+    );
+    expect(stopped).toMatchObject({ stage: 'ready', assignee: null });
+    expect(stopped.blocked?.question).toContain('src/app.ts');
+    expect(driver.events()).toContainEqual({
+      type: 'guardrail_tripped',
+      guardrail: 'outside_agent_docs',
+      details: 'src/app.ts'
     });
   });
 });

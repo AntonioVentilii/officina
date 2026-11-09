@@ -50,6 +50,23 @@ export const builderOutputSchema = z.discriminatedUnion('outcome', [
   blockedSchema
 ]);
 
+/**
+ * The onboarder pushes the agent docs like a builder pushes code, and also hands back the worst
+ * smells it found (duplicates, god files, misplaced code) as follow-ups for the pull request body.
+ */
+export const onboarderOutputSchema = z.discriminatedUnion('outcome', [
+  z.strictObject({
+    outcome: z.literal('pushed'),
+    branch: text.regex(/^officina\//, 'branch must start with officina/'),
+    prTitle: text.max(120),
+    verified: z.array(text),
+    notVerified: z.array(text),
+    followUps: z.array(text.max(500)).max(15)
+  }),
+  z.strictObject({ outcome: z.literal('failed'), why: text }),
+  blockedSchema
+]);
+
 export const reviewerOutputSchema = z.discriminatedUnion('outcome', [
   z.strictObject({ outcome: z.literal('approve'), summary: text }),
   z.strictObject({
@@ -127,7 +144,8 @@ export const OUTPUT_SCHEMAS = {
   reviewer_spec: reviewerOutputSchema,
   reviewer_correctness: reviewerOutputSchema,
   chooser: chooserOutputSchema,
-  learner: learnerOutputSchema
+  learner: learnerOutputSchema,
+  onboarder: onboarderOutputSchema
 } as const;
 
 export type ContractRole = keyof typeof OUTPUT_SCHEMAS;
@@ -179,6 +197,11 @@ export type RoleOutput =
       readonly facts?: PushFacts;
     }
   | {
+      readonly role: 'onboarder';
+      readonly output: AgentOutput<'onboarder'>;
+      readonly facts?: PushFacts;
+    }
+  | {
       readonly role: 'reviewer_spec' | 'reviewer_correctness';
       readonly output: AgentOutput<'reviewer_spec'>;
     }
@@ -212,7 +235,8 @@ export const commandForOutput = (task: Task, result: RoleOutput): CommandResult 
         }
       };
     }
-    case 'builder': {
+    case 'builder':
+    case 'onboarder': {
       const output = result.output;
       if (output.outcome === 'blocked') {
         return { ok: true, command: blockCommand(task, output.question, output.askedOf) };

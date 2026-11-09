@@ -1,6 +1,7 @@
 import {
   branchForTask,
   commandForOutput,
+  isBuildRole,
   nextAgentRoles,
   parseProjectConfig,
   type Actor,
@@ -78,7 +79,7 @@ const planProblems =
   };
 
 const titleProblems = (pattern: string | null) => (output: AgentOutput<RunnerRole>) => {
-  const built = output as AgentOutput<'builder'>;
+  const built = output as AgentOutput<'builder' | 'onboarder'>;
   if (!pattern || built.outcome !== 'pushed' || new RegExp(pattern).test(built.prTitle)) return [];
   return [`prTitle "${built.prTitle}" does not match the required pattern ${pattern}`];
 };
@@ -215,12 +216,14 @@ export const runAgentStep = async (
       : 0;
 
   try {
+    const builds = isBuildRole(role);
+    // Only the build roles get a token that can push; every other role reads.
     const token = await deps.github.installationToken(repoRef, {
-      contents: role === 'builder' ? 'write' : 'read'
+      contents: builds ? 'write' : 'read'
     });
     const guardedRefs = { ...repoRef, defaultBranch: context.defaultBranch };
     // Taken before the session starts, so nothing the builder does can land before it.
-    const refsBefore = role === 'builder' ? await deps.github.refSnapshot(guardedRefs) : null;
+    const refsBefore = builds ? await deps.github.refSnapshot(guardedRefs) : null;
     const lane = context.task.lane ?? 'standard';
     const rawLanes = (context.rawConfig as { lanes?: { red?: { paths?: string[] } } }).lanes;
     const gate = context.task.stage === 'spec_review' ? 'spec_review' : 'verifying';
@@ -254,11 +257,12 @@ export const runAgentStep = async (
       protectedPaths: rawLanes?.red?.paths ?? [],
       requestThread:
         role === 'spec' || role === 'interviewer' ? await listComments(pool, taskId) : [],
-      feedback: role === 'builder' ? await feedbackSinceLastPush(pool, taskId) : [],
+      feedback: builds ? await feedbackSinceLastPush(pool, taskId) : [],
       firstRound,
       prTitlePattern: config.pullRequest.titlePattern,
       chooser,
-      questionsAsked
+      questionsAsked,
+      standards: role === 'onboarder' ? config.docs.standards : undefined
     });
 
     const report = await executeRun(deps.agents, {
@@ -282,14 +286,13 @@ export const runAgentStep = async (
             ? INTERVIEW_BUDGET_CENTS
             : Math.round(config.lanes[lane].budgetUsd * 100)
       },
-      validate:
-        role === 'builder'
-          ? titleProblems(config.pullRequest.titlePattern)
-          : role === 'chooser'
-            ? planProblems(gate, new Set(members.map((member) => member.id)))
-            : role === 'interviewer'
-              ? interviewProblems(questionsAsked)
-              : undefined,
+      validate: builds
+        ? titleProblems(config.pullRequest.titlePattern)
+        : role === 'chooser'
+          ? planProblems(gate, new Set(members.map((member) => member.id)))
+          : role === 'interviewer'
+            ? interviewProblems(questionsAsked)
+            : undefined,
       onSessionCreated: (sessionId) => setRunExternalId(pool, runId, sessionId),
       onEvent: (event) => appendRunEvent(pool, runId, event.type, event)
     });
@@ -312,7 +315,7 @@ export const runAgentStep = async (
         await blockTask(
           pool,
           taskId,
-          `While the builder ran, ${changes.join('; ')}. The builder may only push ${taskBranch}. Check those refs on GitHub and restore them if the builder changed them; if a person made the change, answer to run the build again.`
+          `While the ${role} ran, ${changes.join('; ')}. The ${role} may only push ${taskBranch}. Check those refs on GitHub and restore them if the ${role} changed them; if a person made the change, answer to run the build again.`
         );
         return { status: 'blocked', reason };
       }
@@ -332,8 +335,8 @@ export const runAgentStep = async (
 
     const output = outcome.output;
     let roleOutput: RoleOutput;
-    if (role === 'builder') {
-      const built = output as AgentOutput<'builder'>;
+    if (builds) {
+      const built = output as AgentOutput<'builder' | 'onboarder'>;
       if (built.outcome === 'pushed' && built.branch !== taskBranch) {
         const reason = `it pushed to ${built.branch} instead of ${taskBranch}`;
         await finishRun(pool, runId, {
@@ -341,21 +344,22 @@ export const runAgentStep = async (
           costCents: report.costCents,
           result: output
         });
-        await blockTask(pool, taskId, `The builder agent could not complete its step: ${reason}.`);
+        await blockTask(pool, taskId, `The ${role} agent could not complete its step: ${reason}.`);
         return { status: 'blocked', reason };
       }
-      roleOutput =
-        built.outcome === 'pushed'
+      roleOutput = {
+        role,
+        output: built,
+        ...(built.outcome === 'pushed'
           ? {
-              role,
-              output: built,
               facts: await deps.github.pushFacts({
                 ...repoRef,
                 base: context.defaultBranch,
                 branch: taskBranch
               })
             }
-          : { role, output: built };
+          : {})
+      } as RoleOutput;
     } else {
       roleOutput = { role, output } as RoleOutput;
     }
@@ -406,12 +410,17 @@ export const runAgentStep = async (
       return { status: 'discarded', reason: applied.error };
     }
 
-    if (role === 'builder' && applied.task.stage === 'reviewing' && context.pullRequest === null) {
-      const built = output as Extract<AgentOutput<'builder'>, { outcome: 'pushed' }>;
+    if (builds && applied.task.stage === 'reviewing' && context.pullRequest === null) {
+      const built = output as Extract<AgentOutput<'builder' | 'onboarder'>, { outcome: 'pushed' }>;
+      const bullets = (items: readonly string[]) =>
+        items.map((item) => `- ${item}`).join('\n') || '- nothing reported';
       const body = [
         `Implements the approved spec of ${taskLink(deps.publicUrl, context.number)}.`,
-        `Verified:\n${built.verified.map((item) => `- ${item}`).join('\n') || '- nothing reported'}`,
-        `Not verified:\n${built.notVerified.map((item) => `- ${item}`).join('\n') || '- nothing reported'}`,
+        `Verified:\n${bullets(built.verified)}`,
+        `Not verified:\n${bullets(built.notVerified)}`,
+        'followUps' in built
+          ? `Follow-ups, smells found while reading the code and left for their own changes:\n${bullets(built.followUps)}`
+          : null,
         context.issue ? `Closes #${context.issue}` : null
       ]
         .filter(Boolean)

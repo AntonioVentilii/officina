@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
+import { isBuildRole } from '@officina/core';
 import {
   RESULT_TOOL,
   RUNNER_ROLES,
@@ -16,15 +17,16 @@ const toolset = (role: (typeof RUNNER_ROLES)[number]) =>
   };
 
 describe('agent definitions', () => {
-  test('web access is off for every role and only the builder can write files', () => {
+  test('web access is off for every role and only the builder and the onboarder write files', () => {
+    expect(RUNNER_ROLES.filter(isBuildRole)).toEqual(['builder', 'onboarder']);
     for (const role of RUNNER_ROLES) {
       const disabled = toolset(role)
         .configs.filter((config) => !config.enabled)
         .map((config) => config.name);
       expect(disabled).toContain('web_search');
       expect(disabled).toContain('web_fetch');
-      expect(disabled.includes('write')).toBe(role !== 'builder');
-      expect(disabled.includes('edit')).toBe(role !== 'builder');
+      expect(disabled.includes('write')).toBe(!isBuildRole(role));
+      expect(disabled.includes('edit')).toBe(!isBuildRole(role));
     }
   });
 

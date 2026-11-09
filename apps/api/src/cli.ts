@@ -231,8 +231,10 @@ const main = async () => {
         }
       );
       console.log(JSON.stringify(result, null, 2));
-      if (result.missingDocs.length) {
-        console.log(`agent docs missing on the default branch: ${result.missingDocs.join(', ')}`);
+      if (result.onboardingTask !== null) {
+        console.log(
+          `agent docs missing on the default branch: ${result.missingDocs.join(', ')}. Task ${result.onboardingTask} writes them; no other task is built until it is merged.`
+        );
       }
       return;
     }

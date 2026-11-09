@@ -281,7 +281,12 @@ const seed = async (
       await apply(
         demo,
         task.id,
-        { type: 'dispatch', assignee: { kind: 'agent', role: 'builder' }, openInLane: 0 },
+        {
+          type: 'dispatch',
+          assignee: { kind: 'agent', role: 'builder' },
+          openInLane: 0,
+          onboardingOpen: false
+        },
         engine
       );
       if (running) return run(demo, task.id, 'building', 'builder', { events: 9, running: true });
@@ -523,7 +528,12 @@ const seedDemo = async (pool: Pool) => {
   await apply(
     demo,
     blocked.id,
-    { type: 'dispatch', assignee: { kind: 'agent', role: 'builder' }, openInLane: 0 },
+    {
+      type: 'dispatch',
+      assignee: { kind: 'agent', role: 'builder' },
+      openInLane: 0,
+      onboardingOpen: false
+    },
     engine
   );
   await apply(

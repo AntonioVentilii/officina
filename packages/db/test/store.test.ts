@@ -58,7 +58,12 @@ describe.skipIf(!url)('task store', () => {
     await apply(id, { type: 'approve' }, antonio);
     await apply(
       id,
-      { type: 'dispatch', assignee: { kind: 'agent', role: 'builder' }, openInLane: 0 },
+      {
+        type: 'dispatch',
+        assignee: { kind: 'agent', role: 'builder' },
+        openInLane: 0,
+        onboardingOpen: false
+      },
       engine
     );
     await apply(

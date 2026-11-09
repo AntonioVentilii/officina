@@ -37,6 +37,7 @@ const ERROR_TEXT: Record<StoreError, string> = {
   agents_cannot_approve: 'agents cannot approve',
   blocked: 'the task is waiting for an answer first (use task answer)',
   paused: 'the task is paused',
+  awaiting_onboarding: 'the project waits for its agent docs to be merged first',
   already_blocked: 'the task already has an open question',
   not_blocked: 'the task has no open question',
   already_paused: 'the task is already paused',

@@ -1,4 +1,10 @@
-import type { Gate, Policy, ProjectConfig, Requirement } from './config';
+import {
+  isAgentDocsPath,
+  type Gate,
+  type Policy,
+  type ProjectConfig,
+  type Requirement
+} from './config';
 import { computeLane, redPaths, stricterLane, type Lane } from './lanes';
 import { evaluatePolicy, type Approval } from './policies';
 import { hasRole, type Member, type Role } from './roles';
@@ -29,9 +35,27 @@ export const AGENT_ROLES = [
   'reviewer_spec',
   'reviewer_correctness',
   'chooser',
-  'learner'
+  'learner',
+  'onboarder'
 ] as const;
 export type AgentRole = (typeof AGENT_ROLES)[number];
+
+/**
+ * A request people made, or the task that writes a project's agent docs. A project with an open
+ * onboarding task gets no other build dispatched until it is done.
+ */
+export const TASK_KINDS = ['request', 'onboarding'] as const;
+export type TaskKind = (typeof TASK_KINDS)[number];
+
+/** The agent roles that change files on a task branch, one per kind of task. */
+export const BUILD_ROLES = ['builder', 'onboarder'] as const;
+export type BuildRole = (typeof BUILD_ROLES)[number];
+
+export const isBuildRole = (role: string): role is BuildRole =>
+  (BUILD_ROLES as readonly string[]).includes(role);
+
+export const buildRoleFor = (kind: TaskKind): BuildRole =>
+  kind === 'onboarding' ? 'onboarder' : 'builder';
 
 /** Every one of these must approve the same head commit before a task leaves review. */
 export const REVIEWER_ROLES = ['reviewer_spec', 'reviewer_correctness'] as const;
@@ -44,7 +68,7 @@ export type Actor =
 
 export type Assignee =
   | { readonly kind: 'member'; readonly memberId: string }
-  | { readonly kind: 'agent'; readonly role: 'builder' };
+  | { readonly kind: 'agent'; readonly role: BuildRole };
 
 export interface Blocked {
   readonly question: string;
@@ -53,6 +77,7 @@ export interface Blocked {
 
 export interface Task {
   readonly id: string;
+  readonly kind: TaskKind;
   readonly requesterId: string;
   readonly stage: Stage;
   readonly lane: Lane | null;
@@ -88,8 +113,9 @@ export interface ApprovalPlan {
 
 export type PlanInput = Omit<ApprovalPlan, 'subject'>;
 
-export const newTask = (id: string, requesterId: string): Task => ({
+export const newTask = (id: string, requesterId: string, kind: TaskKind = 'request'): Task => ({
   id,
+  kind,
   requesterId,
   stage: 'request',
   lane: null,
@@ -115,7 +141,13 @@ export type Command =
     }
   | { readonly type: 'approve' }
   | { readonly type: 'request_changes'; readonly note: string }
-  | { readonly type: 'dispatch'; readonly assignee: Assignee; readonly openInLane: number }
+  | {
+      readonly type: 'dispatch';
+      readonly assignee: Assignee;
+      readonly openInLane: number;
+      /** The project has an onboarding task that is not done yet. */
+      readonly onboardingOpen: boolean;
+    }
   | { readonly type: 'claim' }
   | { readonly type: 'release' }
   | {
@@ -142,7 +174,8 @@ export type Command =
   | { readonly type: 'resume' }
   | { readonly type: 'cancel'; readonly reason: string };
 
-export type Guardrail = 'red_paths' | 'diff_too_large' | 'fix_rounds_exhausted';
+export type Guardrail =
+  'red_paths' | 'outside_agent_docs' | 'diff_too_large' | 'fix_rounds_exhausted';
 
 export type DomainEvent =
   | { readonly type: 'stage_changed'; readonly from: Stage; readonly to: Stage }
@@ -208,7 +241,8 @@ export type DecisionError =
   | 'wip_limit'
   | 'agents_cannot_build_lane'
   | 'not_planned'
-  | 'stale_head';
+  | 'stale_head'
+  | 'awaiting_onboarding';
 
 export type Decision =
   | { readonly ok: true; readonly task: Task; readonly events: readonly DomainEvent[] }
@@ -482,8 +516,11 @@ export const decide = (
       if (task.stage !== 'ready') return fail('wrong_stage');
       if (actor.kind !== 'engine') return fail('not_allowed');
       if (task.lane === null) return fail('no_lane');
+      // Agents build in a project only once its agent docs exist, so they reuse what is there.
+      if (task.kind === 'request' && command.onboardingOpen) return fail('awaiting_onboarding');
       const settings = context.config.lanes[task.lane];
       if (command.assignee.kind === 'agent') {
+        if (command.assignee.role !== buildRoleFor(task.kind)) return fail('not_allowed');
         if (!settings.agentsBuild) return fail('agents_cannot_build_lane');
         if (command.openInLane >= settings.wip) return fail('wip_limit');
       } else {
@@ -528,7 +565,7 @@ export const decide = (
       const assignee = task.assignee;
       const isAssignee =
         assignee !== null &&
-        ((assignee.kind === 'agent' && actor.kind === 'agent' && actor.role === 'builder') ||
+        ((assignee.kind === 'agent' && actor.kind === 'agent' && actor.role === assignee.role) ||
           (assignee.kind === 'member' &&
             actor.kind === 'member' &&
             actor.memberId === assignee.memberId));
@@ -560,6 +597,31 @@ export const decide = (
           { type: 'assigned', assignee: null },
           { type: 'blocked', blocked }
         ]);
+      }
+
+      if (assignee.kind === 'agent' && task.kind === 'onboarding') {
+        const outside = command.changedPaths.filter(
+          (path) => !isAgentDocsPath(context.config, path)
+        );
+        if (outside.length) {
+          const blocked: Blocked = {
+            question: `The onboarder changed files outside the agent docs: ${outside.join(', ')}. Re-dispatch, claim the task, or cancel it.`,
+            askedOf: { role: 'maintainer' }
+          };
+          const [moved, stageEvent] = moveTo(task, 'ready', { lane, assignee: null, blocked });
+          return ok(moved, [
+            pushed,
+            ...laneEvents,
+            {
+              type: 'guardrail_tripped',
+              guardrail: 'outside_agent_docs',
+              details: outside.join(', ')
+            },
+            stageEvent,
+            { type: 'assigned', assignee: null },
+            { type: 'blocked', blocked }
+          ]);
+        }
       }
 
       const maxLines = context.config.lanes[lane].diffLines;

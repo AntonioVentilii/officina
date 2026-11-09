@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { loadAgentVersions, migrate } from '@officina/db';
 import { Pool } from 'pg';
 import { CONFIG_YAML } from '../../../packages/core/test/fixtures';
+import { RUNNER_ROLES } from '@officina/runner';
 import { createFakePort } from '../../../packages/runner/test/fake-port';
 import { SetupError, addProject, environmentNameFor, setupAgents, type SetupGitHub } from '../src';
 
@@ -43,7 +44,12 @@ describe.skipIf(!url)('setup', () => {
     const agents = createFakePort(() => []);
     const yaml = `${CONFIG_YAML}\nruntime:\n  allowed_hosts: ['registry.example.com']\n`;
     const first = await addProject(pool, { github: fakeGitHub(yaml), agents }, input);
-    expect(first).toMatchObject({ installationId: 99, environmentId: 'env_1', missingDocs: [] });
+    expect(first).toMatchObject({
+      installationId: 99,
+      environmentId: 'env_1',
+      missingDocs: [],
+      onboardingTask: null
+    });
 
     const project = await pool.query(
       `select github_repo, github_installation_id::int as installation, default_branch, agent_environment_id,
@@ -82,6 +88,17 @@ describe.skipIf(!url)('setup', () => {
       input
     );
     expect(result.missingDocs).toEqual(missing);
+    expect(result.onboardingTask).toBe(1);
+    const tasks = await pool.query('select kind, stage from tasks');
+    expect(tasks.rows).toEqual([{ kind: 'onboarding', stage: 'spec_review' }]);
+
+    const again = await addProject(
+      pool,
+      { github: fakeGitHub(CONFIG_YAML, missing), agents },
+      input
+    );
+    expect(again.onboardingTask).toBe(1);
+    expect((await pool.query('select 1 from tasks')).rowCount).toBe(1);
   });
 
   test('a missing or invalid config writes nothing', async () => {
@@ -110,9 +127,9 @@ describe.skipIf(!url)('setup', () => {
     const agents = createFakePort(() => []);
     const promptsDir = join(import.meta.dir, '..', '..', '..', 'agents');
     expect((await setupAgents(pool, agents, promptsDir, 'claude-opus-5-5')).changed).toHaveLength(
-      7
+      RUNNER_ROLES.length
     );
-    expect(await loadAgentVersions(pool)).toHaveLength(7);
+    expect(await loadAgentVersions(pool)).toHaveLength(RUNNER_ROLES.length);
     expect((await setupAgents(pool, agents, promptsDir, 'claude-opus-5-5')).changed).toEqual([]);
   });
 });

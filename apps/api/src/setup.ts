@@ -8,6 +8,7 @@ import {
   upsertProject,
   upsertWorkspace
 } from '@officina/db';
+import { ensureOnboarding } from '@officina/engine';
 import type { GitHubClient } from '@officina/github';
 import {
   ensureEnvironment,
@@ -59,8 +60,9 @@ export interface AddProjectInput {
 /**
  * Registers a repository as a project: finds the app installation and default branch, validates the
  * project config, records workspace, owner and project, and prepares the project's agent environment.
- * Nothing is written when the config is missing or invalid. It also reports which of the agent docs
- * the config requires are not on the default branch yet.
+ * Nothing is written when the config is missing or invalid. When the agent docs the config requires
+ * are not all on the default branch, it opens the onboarding task that writes them, which holds every
+ * other build in the project until it is done.
  */
 export const addProject = async (
   pool: Pool,
@@ -73,6 +75,8 @@ export const addProject = async (
   installationId: number;
   /** Required agent docs (the entry document, `docs/ai` pages, catalog pages) the repository lacks. */
   missingDocs: string[];
+  /** The open onboarding task's number, or `null` when the project holds every required page. */
+  onboardingTask: number | null;
 }> => {
   const installationId = await deps.github.repoInstallationId(input.repo);
   const ref = { installationId, repo: input.repo };
@@ -99,6 +103,7 @@ export const addProject = async (
   });
 
   const client = await pool.connect();
+  let registered: { projectId: string; ownerId: string };
   try {
     await client.query('begin');
     const workspaceId = await upsertWorkspace(client, input.workspace);
@@ -119,11 +124,25 @@ export const addProject = async (
     await setProjectRole(client, { projectId, memberId: ownerId, role });
     await setProjectEnvironment(client, projectId, environment.id);
     await client.query('commit');
-    return { projectId, ownerId, environmentId: environment.id, installationId, missingDocs };
+    registered = { projectId, ownerId };
   } catch (error) {
     await client.query('rollback');
     throw error;
   } finally {
     client.release();
   }
+  const onboardingTask = await ensureOnboarding(pool, {
+    projectId: registered.projectId,
+    requesterId: registered.ownerId,
+    repo: input.repo,
+    config: parsed.config,
+    missing: missingDocs
+  });
+  return {
+    ...registered,
+    environmentId: environment.id,
+    installationId,
+    missingDocs,
+    onboardingTask
+  };
 };
