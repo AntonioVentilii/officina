@@ -51,6 +51,8 @@
         return `stopped it: ${p.details ?? String(p.guardrail).replaceAll('_', ' ')}`;
       case 'ci_failed':
         return 'reported failing checks';
+      case 'pull_request_closed':
+        return `found pull request #${p.pullRequest} closed without a merge`;
       case 'blocked':
         return 'asked a question';
       case 'unblocked':

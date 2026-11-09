@@ -132,6 +132,7 @@ const PUBLIC_FIELDS: Readonly<Record<string, readonly string[]>> = {
   blocked: ['blocked'],
   unblocked: ['answer'],
   closed: ['stage', 'reason'],
+  pull_request_closed: ['pullRequest'],
   spec_status_set: ['status'],
   github_approved: ['login', 'merge'],
   github_approval_failed: ['login'],

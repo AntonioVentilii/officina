@@ -99,6 +99,11 @@ describe.skipIf(!url)('setup', () => {
     );
     expect(again.onboardingTask).toBe(1);
     expect((await pool.query('select 1 from tasks')).rowCount).toBe(1);
+
+    // People wrote the pages themselves: registering again closes the task that would have.
+    const complete = await addProject(pool, { github: fakeGitHub(CONFIG_YAML), agents }, input);
+    expect(complete).toMatchObject({ missingDocs: [], onboardingTask: null });
+    expect((await pool.query('select stage from tasks')).rows).toEqual([{ stage: 'cancelled' }]);
   });
 
   test('a missing or invalid config writes nothing', async () => {

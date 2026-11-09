@@ -32,6 +32,11 @@ export const linkPullRequest = async (
   ]);
 };
 
+/** Forgets a task's pull request, so the next push opens a new one. */
+export const unlinkPullRequest = async (pool: Pool, taskId: string): Promise<void> => {
+  await pool.query('update tasks set github_pr = null, updated_at = now() where id = $1', [taskId]);
+};
+
 export const findTasksByPullRequest = async (
   pool: Pool,
   repo: string,

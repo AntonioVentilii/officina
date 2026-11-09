@@ -1,6 +1,13 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { parseProjectConfig, requiredDocs } from '@officina/core';
-import { createTask, loadTask, loadTaskContext, saveAgentVersion } from '@officina/db';
+import {
+  createTask,
+  failOrphanedRuns,
+  loadTask,
+  loadTaskContext,
+  saveAgentVersion,
+  startRun
+} from '@officina/db';
 import { RUNNER_ROLES } from '@officina/runner';
 import { Pool } from 'pg';
 import { PLAN, applyOrThrow, resetAndSeed, type Seeded } from '../../db/test/seed';
@@ -156,9 +163,117 @@ describe.skipIf(!url)('onboarding', () => {
       role: 'onboarder'
     });
 
-    await pool.query("update tasks set stage = 'done' where id = $1", [onboardingId]);
+    // The gate never holds the onboarding task itself: its push, reviews, check and merge go
+    // through like any other task's, and the merge is what releases the request.
+    const engine = { kind: 'engine' as const };
+    await applyOrThrow(
+      pool,
+      onboardingId,
+      { type: 'push', headSha: 'abc', changedPaths: DOCS, diffLines: 200 },
+      { kind: 'agent', role: 'onboarder', version: 1 }
+    );
+    for (const role of ['reviewer_spec', 'reviewer_correctness'] as const)
+      await applyOrThrow(
+        pool,
+        onboardingId,
+        { type: 'review', verdict: 'approve', notes: 'ok' },
+        { kind: 'agent', role, version: 1 }
+      );
+    await applyOrThrow(
+      pool,
+      onboardingId,
+      { type: 'choose', userVisible: false, plan: PLAN },
+      engine
+    );
+    await applyOrThrow(pool, onboardingId, { type: 'approve' }, seeded.owner);
+    expect((await collectDueSteps({ pool }, seeded.projectId)).dispatched).toEqual([]);
+    await applyOrThrow(pool, onboardingId, { type: 'merged' }, engine);
     const released = await collectDueSteps({ pool }, seeded.projectId);
     expect(released.dispatched).toEqual([requestId]);
+  });
+
+  test('a build already in flight when the onboarding task opens goes on; only new dispatches wait', async () => {
+    const requestId = await readyRequest();
+    expect((await collectDueSteps({ pool }, seeded.projectId)).dispatched).toEqual([requestId]);
+    const onboardingNumber = await openOnboarding();
+    const later = await readyRequest();
+
+    const pass = await collectDueSteps({ pool }, seeded.projectId);
+    expect(pass.dispatched).toEqual([]);
+    expect(pass.due).toContainEqual({ taskId: requestId, role: 'builder' });
+    expect((await loadTask(pool, later))?.task.stage).toBe('ready');
+    await applyOrThrow(
+      pool,
+      requestId,
+      { type: 'push', headSha: 'abc', changedPaths: ['src/routes/+page.svelte'], diffLines: 20 },
+      { kind: 'agent', role: 'builder', version: 1 }
+    );
+    expect((await loadTask(pool, requestId))?.task.stage).toBe('reviewing');
+    expect(onboardingNumber).toBe(2);
+  });
+
+  test('a restart in the middle of the onboarder run fails it and the next pass runs it again', async () => {
+    await openOnboarding();
+    const onboardingId = (
+      await pool.query<{ id: string }>("select id from tasks where kind = 'onboarding'")
+    ).rows[0]!.id;
+    await applyOrThrow(
+      pool,
+      onboardingId,
+      { type: 'plan_approval', userVisible: false, plan: PLAN },
+      { kind: 'engine' }
+    );
+    await applyOrThrow(pool, onboardingId, { type: 'approve' }, seeded.owner);
+    await collectDueSteps({ pool }, seeded.projectId);
+
+    // A run the previous process left running still holds the claim: nothing starts twice.
+    const orphan = await startRun(pool, {
+      taskId: onboardingId,
+      stage: 'building',
+      role: 'onboarder',
+      agentVersion: 1,
+      runner: 'managed_agents'
+    });
+    expect(orphan.ok).toBe(true);
+    const github = fakeGitHub(DOCS);
+    const agents = createFakePort(() => [
+      toolUse(ONBOARDED),
+      idle('requires_action'),
+      idle('end_turn')
+    ]);
+    const deps = { pool, github: github.port, agents, publicUrl: PUBLIC_URL };
+    expect(await runAgentStep(deps, onboardingId, 'onboarder')).toEqual({
+      status: 'skipped',
+      reason: 'already_running'
+    });
+
+    // Boot fails what the old process left behind; the task is still due for the onboarder.
+    expect(await failOrphanedRuns(pool)).toHaveLength(1);
+    const pass = await collectDueSteps({ pool }, seeded.projectId);
+    expect(pass.due).toEqual([{ taskId: onboardingId, role: 'onboarder' }]);
+    expect(await runAgentStep(deps, onboardingId, 'onboarder')).toEqual({ status: 'applied' });
+    expect((await loadTask(pool, onboardingId))?.task.stage).toBe('reviewing');
+  });
+
+  test('registering again once the pages exist closes the open onboarding task and lifts the gate', async () => {
+    await openOnboarding();
+    const requestId = await readyRequest();
+    expect((await collectDueSteps({ pool }, seeded.projectId)).dispatched).toEqual([]);
+
+    expect(
+      await ensureOnboarding(pool, {
+        projectId: seeded.projectId,
+        requesterId: seeded.ownerId,
+        repo: 'ViciApp/vici-app',
+        config: await config(),
+        missing: []
+      })
+    ).toBeNull();
+    const { rows } = await pool.query<{ stage: string }>(
+      "select stage from tasks where kind = 'onboarding'"
+    );
+    expect(rows).toEqual([{ stage: 'cancelled' }]);
+    expect((await collectDueSteps({ pool }, seeded.projectId)).dispatched).toEqual([requestId]);
   });
 
   test('the onboarder pushes the docs and the pull request lists its follow-ups', async () => {

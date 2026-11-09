@@ -34,10 +34,17 @@ describe('webhook events', () => {
     ).toEqual({ kind: 'pull_request_merged', repo: 'ViciApp/vici-app', prNumber: 42 });
   });
 
-  test('a closed but unmerged pull request is ignored', () => {
+  test('a pull request closed without a merge is told apart from a merged one', () => {
     expect(
       parseWebhookEvent('pull_request', {
         action: 'closed',
+        pull_request: { merged: false, number: 42 },
+        repository
+      })
+    ).toEqual({ kind: 'pull_request_closed', repo: 'ViciApp/vici-app', prNumber: 42 });
+    expect(
+      parseWebhookEvent('pull_request', {
+        action: 'reopened',
         pull_request: { merged: false, number: 42 },
         repository
       })

@@ -23,6 +23,8 @@ export type WebhookAction =
       readonly changedPaths: readonly string[];
     }
   | { readonly kind: 'pull_request_merged'; readonly repo: string; readonly prNumber: number }
+  /** Closed without being merged; a reopened one comes back as a new pull request. */
+  | { readonly kind: 'pull_request_closed'; readonly repo: string; readonly prNumber: number }
   | {
       /** A review on a pull request that asks for changes, from a bot such as Copilot or a person. */
       readonly kind: 'pull_request_reviewed';
@@ -63,14 +65,12 @@ export const parseWebhookEvent = (event: string | null, payload: unknown): Webho
       action?: string;
       pull_request?: { merged?: boolean; number?: number };
     };
-    if (
-      body.action === 'closed' &&
-      body.pull_request?.merged === true &&
-      body.pull_request.number
-    ) {
-      return { kind: 'pull_request_merged', repo, prNumber: body.pull_request.number };
-    }
-    return null;
+    if (body.action !== 'closed' || !body.pull_request?.number) return null;
+    return {
+      kind: body.pull_request.merged === true ? 'pull_request_merged' : 'pull_request_closed',
+      repo,
+      prNumber: body.pull_request.number
+    };
   }
 
   if (event === 'push') {

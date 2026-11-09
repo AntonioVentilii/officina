@@ -161,6 +161,8 @@ export type Command =
   | { readonly type: 'choose'; readonly userVisible: boolean; readonly plan: PlanInput }
   | { readonly type: 'merged' }
   | { readonly type: 'ci_failed'; readonly details: string }
+  /** The task's pull request was closed on GitHub without being merged. */
+  | { readonly type: 'pull_request_closed'; readonly pullRequest: number }
   | {
       readonly type: 'github_review';
       readonly headSha: string;
@@ -210,6 +212,7 @@ export type DomainEvent =
     }
   | { readonly type: 'guardrail_tripped'; readonly guardrail: Guardrail; readonly details: string }
   | { readonly type: 'ci_failed'; readonly details: string }
+  | { readonly type: 'pull_request_closed'; readonly pullRequest: number }
   | { readonly type: 'blocked'; readonly blocked: Blocked }
   | { readonly type: 'unblocked'; readonly answer: string }
   | { readonly type: 'paused' }
@@ -389,13 +392,17 @@ const GITHUB_REVIEWABLE: ReadonlySet<Stage> = new Set([
   'merging'
 ]);
 
+/** Stages where the task's pull request may exist: from the first push until it is merged. */
+const WITH_PULL_REQUEST: ReadonlySet<Stage> = new Set(['building', ...GITHUB_REVIEWABLE]);
+
 const ALLOWED_WHILE_HELD: ReadonlySet<Command['type']> = new Set([
   'submit_request',
   'answer',
   'resume',
   'cancel',
   'block',
-  'pause'
+  'pause',
+  'pull_request_closed'
 ]);
 
 export const decide = (
@@ -729,6 +736,31 @@ export const decide = (
       return backToBuilding(task, context, { type: 'ci_failed', details: command.details });
     }
 
+    case 'pull_request_closed': {
+      if (actor.kind !== 'engine') return fail('not_allowed');
+      if (task.headSha === null || !WITH_PULL_REQUEST.has(task.stage)) return fail('wrong_stage');
+      // The work on GitHub is gone, so the task cannot wait for it: it goes back to the start of
+      // the build, held for a person, who rebuilds it (a new pull request opens on the next push)
+      // or cancels it. An onboarding task left here would otherwise hold the project forever.
+      const blocked: Blocked = {
+        question: `Pull request #${command.pullRequest} was closed without being merged. Answer to build the change again on a new pull request, or cancel the task.`,
+        askedOf: { role: 'maintainer' }
+      };
+      const [moved, stageEvent] = moveTo(task, 'ready', {
+        assignee: null,
+        headSha: null,
+        fixRounds: 0,
+        reviews: {},
+        blocked
+      });
+      return ok(moved, [
+        { type: 'pull_request_closed', pullRequest: command.pullRequest },
+        stageEvent,
+        { type: 'assigned', assignee: null },
+        { type: 'blocked', blocked }
+      ]);
+    }
+
     case 'github_review': {
       if (!GITHUB_REVIEWABLE.has(task.stage)) return fail('wrong_stage');
       if (actor.kind !== 'engine') return fail('not_allowed');
@@ -778,10 +810,13 @@ export const decide = (
 
     case 'cancel': {
       const member = memberFor(actor, context);
+      // The engine closes an onboarding task itself once every page it would write is on the
+      // default branch; every other cancellation is a person's decision.
       const allowed =
-        member !== undefined &&
-        (hasRole(member, 'maintainer') ||
-          (member.id === task.requesterId && hasRole(member, 'contributor')));
+        (actor.kind === 'engine' && task.kind === 'onboarding') ||
+        (member !== undefined &&
+          (hasRole(member, 'maintainer') ||
+            (member.id === task.requesterId && hasRole(member, 'contributor'))));
       if (!allowed) return fail('not_allowed');
       const [moved, event] = moveTo(task, 'cancelled', { assignee: null, blocked: null });
       return ok(moved, [event, { type: 'closed', stage: 'cancelled', reason: command.reason }]);

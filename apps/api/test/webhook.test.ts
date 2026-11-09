@@ -68,6 +68,26 @@ describe.skipIf(!url)('api', () => {
     expect((await loadTask(pool, taskId))?.task.stage).toBe('merging');
   });
 
+  test('a pull request closed without a merge sends its task back, held for a maintainer', async () => {
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    const response = await deliver(app, {
+      event: 'pull_request',
+      payload: { action: 'closed', pull_request: { merged: false, number: 42 }, repository },
+      delivery: 'd-closed'
+    });
+    expect(await response.json()).toEqual({ status: 'applied', outcomes: [{ taskId, ok: true }] });
+    const task = (await loadTask(pool, taskId))?.task;
+    expect(task).toMatchObject({ stage: 'ready', assignee: null, headSha: null });
+    expect(task?.blocked?.question).toContain('#42');
+    // The next push opens a new pull request; the old number is kept only in the timeline.
+    const { rows } = await pool.query<{ github_pr: number | null }>(
+      'select github_pr from tasks where id = $1',
+      [taskId]
+    );
+    expect(rows[0]?.github_pr).toBeNull();
+  });
+
   test('a merged pull request completes its task, and a redelivery is ignored', async () => {
     const taskId = await createTaskInMerging(pool, seeded);
     await linkPullRequest(pool, taskId, 42);

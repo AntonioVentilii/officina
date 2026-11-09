@@ -1,5 +1,5 @@
-import { requiredDocs, type ProjectConfig } from '@officina/core';
-import { createOnboardingTask } from '@officina/db';
+import { requiredDocs, type Actor, type ProjectConfig } from '@officina/core';
+import { applyCommand, createOnboardingTask, openOnboardingTask } from '@officina/db';
 import type { Pool } from 'pg';
 import { list } from './brief';
 
@@ -40,9 +40,13 @@ export const onboardingSpec = (
     ].join('\n')
   ].join('\n\n');
 
+const ENGINE: Actor = { kind: 'engine' };
+
 /**
  * Opens the onboarding task when a project lacks required agent docs, unless one is already open.
- * Returns the task's number, or `null` when nothing is missing.
+ * Returns the task's number, or `null` when nothing is missing. When nothing is missing but an
+ * onboarding task is still open (people wrote the pages themselves and merged them), that task is
+ * cancelled, so the gate it holds lifts without anyone having to find it on the board.
  */
 export const ensureOnboarding = async (
   pool: Pool,
@@ -54,7 +58,20 @@ export const ensureOnboarding = async (
     readonly missing: readonly string[];
   }
 ): Promise<number | null> => {
-  if (input.missing.length === 0) return null;
+  if (input.missing.length === 0) {
+    const open = await openOnboardingTask(pool, input.projectId);
+    if (open) {
+      await applyCommand(pool, {
+        taskId: open.id,
+        command: {
+          type: 'cancel',
+          reason: 'every required agent docs page is on the default branch already'
+        },
+        actor: ENGINE
+      });
+    }
+    return null;
+  }
   const task = await createOnboardingTask(pool, {
     projectId: input.projectId,
     requesterId: input.requesterId,
