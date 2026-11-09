@@ -231,6 +231,9 @@ const main = async () => {
         }
       );
       console.log(JSON.stringify(result, null, 2));
+      if (result.missingDocs.length) {
+        console.log(`agent docs missing on the default branch: ${result.missingDocs.join(', ')}`);
+      }
       return;
     }
 
