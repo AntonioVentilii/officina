@@ -58,7 +58,7 @@ The smallest correct change wins. No abstraction without duplication that alread
 
 ### 13. Docs adapt with the code
 
-The meta-update rule: a pull request that adds a pattern, a shared piece of code, a naming convention, a policy or a workflow updates the matching `docs/ai/**` page in the same pull request. The repository's `docs/ai/governance.md` says which page covers which kind of change. Docs that no longer match the code are a bug.
+The meta-update rule: a pull request that adds a pattern, a shared piece of code, a naming convention, a policy or a workflow updates the matching `docs/ai/**` page in the same pull request. The repository's `docs/ai/governance.md` says which page covers which kind of change. A repository that does not hold these pages yet gets them first, in their own docs-only pull request, before other changes rely on them. Docs that no longer match the code are a bug.
 
 ### 14. Writing
 
