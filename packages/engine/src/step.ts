@@ -1,5 +1,6 @@
 import {
   branchForTask,
+  catalogPagesToRead,
   commandForOutput,
   nextAgentRoles,
   parseProjectConfig,
@@ -344,18 +345,24 @@ export const runAgentStep = async (
         await blockTask(pool, taskId, `The builder agent could not complete its step: ${reason}.`);
         return { status: 'blocked', reason };
       }
-      roleOutput =
-        built.outcome === 'pushed'
-          ? {
-              role,
-              output: built,
-              facts: await deps.github.pushFacts({
-                ...repoRef,
-                base: context.defaultBranch,
-                branch: taskBranch
-              })
-            }
-          : { role, output: built };
+      if (built.outcome === 'pushed') {
+        const facts = await deps.github.pushFacts({
+          ...repoRef,
+          base: context.defaultBranch,
+          branch: taskBranch
+        });
+        // The catalog check reads the pages as pushed, so an edit that does not name the new file
+        // does not pass for listing it.
+        const catalogPages: Record<string, string | null> = {};
+        for (const page of catalogPagesToRead(config.docs.standards.catalogs, facts.addedPaths)) {
+          catalogPages[page] =
+            (await deps.github.readFile({ ...repoRef, path: page, branch: taskBranch }))?.text ??
+            null;
+        }
+        roleOutput = { role, output: built, facts: { ...facts, catalogPages } };
+      } else {
+        roleOutput = { role, output: built };
+      }
     } else {
       roleOutput = { role, output } as RoleOutput;
     }

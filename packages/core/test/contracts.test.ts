@@ -57,7 +57,13 @@ describe('agent output contracts', () => {
       ok: false,
       error: 'missing_push_facts'
     });
-    const facts = { headSha: 'abc', changedPaths: ['src/a.ts'], addedPaths: [], diffLines: 3 };
+    const facts = {
+      headSha: 'abc',
+      changedPaths: ['src/a.ts'],
+      addedPaths: [],
+      catalogPages: {},
+      diffLines: 3
+    };
     expect(commandForOutput(task, { role: 'builder', output: pushed.output, facts })).toEqual({
       ok: true,
       command: { type: 'push', ...facts }

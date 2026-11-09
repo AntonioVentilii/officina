@@ -1,4 +1,4 @@
-import { describeUnlisted, unlistedFiles } from './catalogs';
+import { describeUnlisted, unlistedFiles, type CatalogPages } from './catalogs';
 import type { Gate, Policy, ProjectConfig, Requirement } from './config';
 import { computeLane, redPaths, stricterLane, type Lane } from './lanes';
 import { evaluatePolicy, type Approval } from './policies';
@@ -124,6 +124,8 @@ export type Command =
       readonly headSha: string;
       readonly changedPaths: readonly string[];
       readonly addedPaths: readonly string[];
+      /** The catalog pages the added files fall under, as pushed, for the catalog check. */
+      readonly catalogPages: CatalogPages;
       readonly diffLines: number;
     }
   | { readonly type: 'review'; readonly verdict: 'approve' | 'changes'; readonly notes: string }
@@ -587,7 +589,7 @@ export const decide = (
       const unlisted = unlistedFiles(
         context.config.docs.standards.catalogs,
         command.addedPaths,
-        command.changedPaths
+        command.catalogPages
       );
       if (unlisted.length) {
         return backToBuilding(

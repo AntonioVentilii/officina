@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { CatalogPages } from './catalogs';
 import type { Blocked, Command, Task } from './lifecycle';
 
 /*
@@ -155,7 +156,7 @@ export const parseAgentOutput = <R extends ContractRole>(
   };
 };
 
-/** Facts the engine establishes itself after a builder reports a push. */
+/** Facts the engine establishes itself after a builder reports a push, read from GitHub. */
 export interface PushFacts {
   readonly headSha: string;
   readonly changedPaths: readonly string[];
@@ -180,7 +181,8 @@ export type RoleOutput =
   | {
       readonly role: 'builder';
       readonly output: AgentOutput<'builder'>;
-      readonly facts?: PushFacts;
+      /** The push facts plus the catalog pages the engine read at the pushed head. */
+      readonly facts?: PushFacts & { readonly catalogPages: CatalogPages };
     }
   | {
       readonly role: 'reviewer_spec' | 'reviewer_correctness';

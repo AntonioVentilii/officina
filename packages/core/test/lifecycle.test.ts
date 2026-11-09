@@ -35,7 +35,7 @@ const toReady = (driver: Driver, paths: readonly string[], userVisible = false):
 const buildAndReview = (driver: Driver, task: Task, headSha: string, paths: readonly string[]) => {
   let next = driver.step(
     task,
-    { type: 'push', headSha, changedPaths: paths, addedPaths: [], diffLines: 40 },
+    { type: 'push', headSha, changedPaths: paths, addedPaths: [], catalogPages: {}, diffLines: 40 },
     asAgent('builder')
   );
   next = driver.step(
@@ -144,7 +144,14 @@ describe('collaboration', () => {
     expect(
       driver.attempt(
         task,
-        { type: 'push', headSha: 'x', changedPaths: PAGE_PATHS, addedPaths: [], diffLines: 1 },
+        {
+          type: 'push',
+          headSha: 'x',
+          changedPaths: PAGE_PATHS,
+          addedPaths: [],
+          catalogPages: {},
+          diffLines: 1
+        },
         asAgent('builder')
       ).ok
     ).toBe(false);
@@ -164,6 +171,7 @@ describe('guardrails', () => {
         headSha: 'abc',
         changedPaths: ['src/satellite/index.ts'],
         addedPaths: [],
+        catalogPages: {},
         diffLines: 10
       },
       asAgent('builder')
@@ -211,7 +219,14 @@ describe('guardrails', () => {
     let task = dispatchAgent(driver, toReady(driver, PAGE_PATHS));
     task = driver.step(
       task,
-      { type: 'push', headSha: 'abc', changedPaths: PAGE_PATHS, addedPaths: [], diffLines: 5000 },
+      {
+        type: 'push',
+        headSha: 'abc',
+        changedPaths: PAGE_PATHS,
+        addedPaths: [],
+        catalogPages: {},
+        diffLines: 5000
+      },
       asAgent('builder')
     );
     expect(task.stage).toBe('building');
@@ -237,7 +252,14 @@ describe('guardrails', () => {
     for (const sha of ['a', 'b']) {
       task = driver.step(
         task,
-        { type: 'push', headSha: sha, changedPaths: PAGE_PATHS, addedPaths: [], diffLines: 5 },
+        {
+          type: 'push',
+          headSha: sha,
+          changedPaths: PAGE_PATHS,
+          addedPaths: [],
+          catalogPages: {},
+          diffLines: 5
+        },
         asAgent('builder')
       );
       task = driver.step(
@@ -249,7 +271,14 @@ describe('guardrails', () => {
     }
     task = driver.step(
       task,
-      { type: 'push', headSha: 'c', changedPaths: PAGE_PATHS, addedPaths: [], diffLines: 5 },
+      {
+        type: 'push',
+        headSha: 'c',
+        changedPaths: PAGE_PATHS,
+        addedPaths: [],
+        catalogPages: {},
+        diffLines: 5
+      },
       asAgent('builder')
     );
     task = driver.step(
@@ -602,16 +631,18 @@ describe('catalog check', () => {
   );
   const NEW_COMPONENT = 'src/lib/components/Chip.svelte';
 
-  test('a new shared file the catalog does not list goes back to the builder, head kept', () => {
+  test('a new shared file the catalog does not name goes back to the builder, head kept', () => {
     const driver = createDriver([owner], withCatalog);
     let task = dispatchAgent(driver, toReady(driver, PAGE_PATHS));
+    // The page was edited in the same push, but still says nothing about the new file.
     task = driver.step(
       task,
       {
         type: 'push',
         headSha: 'abc',
-        changedPaths: [...PAGE_PATHS, NEW_COMPONENT],
+        changedPaths: [...PAGE_PATHS, NEW_COMPONENT, 'docs/ai/reusability.md'],
         addedPaths: [NEW_COMPONENT],
+        catalogPages: { 'docs/ai/reusability.md': '# Reusability\n\n- `$lib/Button.svelte`\n' },
         diffLines: 40
       },
       asAgent('builder')
@@ -629,6 +660,9 @@ describe('catalog check', () => {
         headSha: 'def',
         changedPaths: [...PAGE_PATHS, NEW_COMPONENT, 'docs/ai/reusability.md'],
         addedPaths: [NEW_COMPONENT],
+        catalogPages: {
+          'docs/ai/reusability.md': '# Reusability\n\n- `$lib/components/Chip.svelte`: a chip\n'
+        },
         diffLines: 44
       },
       asAgent('builder')
@@ -644,6 +678,7 @@ describe('catalog check', () => {
       headSha: 'abc',
       changedPaths: [NEW_COMPONENT],
       addedPaths: [NEW_COMPONENT],
+      catalogPages: {},
       diffLines: 10
     };
     task = driver.step(task, push, asAgent('builder'));

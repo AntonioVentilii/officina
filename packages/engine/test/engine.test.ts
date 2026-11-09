@@ -324,7 +324,14 @@ describe.skipIf(!url)('engine', () => {
       await applyOrThrow(
         pool,
         id,
-        { type: 'push', headSha, changedPaths: [COPY], addedPaths: [], diffLines: 4 },
+        {
+          type: 'push',
+          headSha,
+          changedPaths: [COPY],
+          addedPaths: [],
+          catalogPages: {},
+          diffLines: 4
+        },
         agent('builder')
       );
       for (const role of ['reviewer_spec', 'reviewer_correctness'] as const)
@@ -505,6 +512,18 @@ describe.skipIf(!url)('engine', () => {
     expect(finding).toContain(`\`${COPY}\``);
     expect(finding).toContain('`docs/ai/messages.md`');
     expect(github.calls.some((call) => call.method === 'openPullRequest')).toBe(false);
+    // The page is read as pushed on the task branch, not taken from the agent's word.
+    expect(github.calls).toContainEqual({
+      method: 'readFile',
+      args: [
+        {
+          installationId: 99,
+          repo: 'ViciApp/vici-app',
+          path: 'docs/ai/messages.md',
+          branch: 'officina/task-1'
+        }
+      ]
+    });
   });
 
   test('a push to any other branch blocks the task and opens no pull request', async () => {
