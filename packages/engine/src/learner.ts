@@ -6,6 +6,7 @@ import {
   isAgentDocsPath,
   isStandardsPage,
   parseProjectConfig,
+  requiredDocs,
   type AgentOutput,
   type ProjectConfig
 } from '@officina/core';
@@ -153,7 +154,7 @@ export const learnerBrief = async (
     [
       '## Where an edit may go',
       `- \`docs\`: the project's agent docs, read from \`${context.defaultBranch}\`: \`${config.docs.entry}\` and the pages under \`${config.docs.standards.dir}/\`, a new page there included. The first choice for a lesson about where code goes, the patterns to use, the shared code to reuse, testing, or pull request rules. Its pages:`,
-      [config.docs.entry, ...config.docs.standards.pages]
+      requiredDocs(config)
         .map((path) => `  - \`${path}\``)
         .join('\n'),
       `- \`project\`: any other Markdown file in this repository, read from \`${context.defaultBranch}\`. Never a protected path:`,

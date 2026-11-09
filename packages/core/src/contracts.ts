@@ -97,8 +97,9 @@ export const chooserOutputSchema = z.strictObject({
 });
 
 /**
- * Where a learning's edit goes: the project's agent docs (its entry document and `docs/ai/**`),
- * another Markdown doc of the project, or an Officina role prompt (`agents/<role>.md`).
+ * Where a learning's edit goes: the project's agent docs (its entry document and the pages of its
+ * `docs.standards` folder), another Markdown doc of the project, or an Officina role prompt
+ * (`agents/<role>.md`).
  */
 export const LEARNING_TARGETS = ['docs', 'project', 'agent'] as const;
 export type LearningTarget = (typeof LEARNING_TARGETS)[number];
