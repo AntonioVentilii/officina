@@ -221,16 +221,19 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
   const contentsPath = (repo: string, path: string) =>
     `/repos/${repo}/contents/${path.split('/').map(encodeURIComponent).join('/')}`;
 
-  /** A file's text and blob sha at a branch, or `null` when it does not exist there. */
+  /**
+   * A file's text and blob sha at a branch, or `null` when no file exists there. A directory (or a
+   * symlink or submodule) at that path is not a file, so it reads as missing instead of failing.
+   */
   const readFile = async (
     ref: RepoRef & { readonly path: string; readonly branch: string }
   ): Promise<{ text: string; sha: string } | null> => {
     const token = await installationToken(ref, { contents: 'read' });
     try {
-      const file = await request<{ content: string; encoding: string; sha: string }>(
-        `${contentsPath(ref.repo, ref.path)}?ref=${encodeURIComponent(ref.branch)}`,
-        { token }
-      );
+      const file = await request<
+        { type?: string; content: string; encoding: string; sha: string } | unknown[]
+      >(`${contentsPath(ref.repo, ref.path)}?ref=${encodeURIComponent(ref.branch)}`, { token });
+      if (Array.isArray(file) || file.type !== 'file') return null;
       return {
         text: Buffer.from(file.content, file.encoding === 'base64' ? 'base64' : 'utf8').toString(
           'utf8'
@@ -272,24 +275,10 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     };
   };
 
-  /** A file's text at a branch, or `null` when it does not exist there. */
+  /** A file's text at a branch, or `null` when no file exists there. */
   const fileContent = async (
     ref: RepoRef & { readonly path: string; readonly branch: string }
-  ): Promise<string | null> => {
-    const token = await installationToken(ref, { contents: 'read' });
-    try {
-      const file = await request<{ content: string; encoding: string }>(
-        `/repos/${ref.repo}/contents/${ref.path.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(ref.branch)}`,
-        { token }
-      );
-      return Buffer.from(file.content, file.encoding === 'base64' ? 'base64' : 'utf8').toString(
-        'utf8'
-      );
-    } catch (error) {
-      if (error instanceof GitHubError && error.status === 404) return null;
-      throw error;
-    }
-  };
+  ): Promise<string | null> => (await readFile(ref))?.text ?? null;
 
   /** Creates a branch pointing at the current head of another one. */
   const createBranch = async (

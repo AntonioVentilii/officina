@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   DEFAULT_STANDARDS_PAGES,
+  isAgentDocsPath,
   parseProjectConfig,
   parseProjectConfigYaml,
   requiredDocs
@@ -56,6 +57,18 @@ describe('project config', () => {
       'docs/agents/frontend/reusability.md',
       'docs/agents/utils.md'
     ]);
+  });
+
+  test('the agent docs are the entry document, the tool layers and the docs folder', () => {
+    const result = parseProjectConfig({ version: 1, docs: { entry: 'AGENTS.md' } });
+    if (!result.ok) throw new Error(result.errors.join('\n'));
+    const docs = ['AGENTS.md', 'CLAUDE.md', 'docs/ai/patterns.md', 'docs/ai/workflows/x.md'];
+    expect(docs.every((path) => isAgentDocsPath(result.config, path))).toBe(true);
+    expect(
+      ['docs/aide.md', 'src/AGENTS.md', 'docs/ai'].some((path) =>
+        isAgentDocsPath(result.config, path)
+      )
+    ).toBe(false);
   });
 
   test('agent docs pages are Markdown inside the repository', () => {

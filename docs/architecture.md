@@ -221,7 +221,7 @@ lanes:
       verifying: [{ requester: true }]
 ```
 
-**Agent docs.** Every project follows the universal code standard ([`standards/code.md`](../standards/code.md)) and holds its own agent docs: the `docs.entry` document plus the pages of `docs.standards`, read off the code (structure, patterns, the catalog of shared code, testing, pull request conventions). `requiredDocs` in `packages/core/src/config.ts` is the one list of what a project must hold: the entry, every page and every catalog page. The correctness reviewer holds each change to the project's pages and the standard and cites the rule each item breaks (`rule` in its contract), and every catalog is checked mechanically after each build round (section 13). Registering a project (`add-project`) checks each of them on the default branch through the GitHub App and reports the ones missing.
+**Agent docs.** Every project follows the universal code standard ([`standards/code.md`](https://github.com/AntonioVentilii/officina/blob/main/standards/code.md)) and holds its own agent docs: the `docs.entry` document plus the pages of `docs.standards`, read off the code (structure, patterns, the catalog of shared code, testing, pull request conventions). `requiredDocs` in `packages/core/src/config.ts` is the one list of what a project must hold: the entry, every page and every catalog page. The correctness reviewer holds each change to the project's pages and the standard and cites the rule each item breaks (`rule` in its contract), and every catalog is checked mechanically after each build round (section 13). Registering a project (`add-project`) checks each of them on the default branch through the GitHub App and reports the ones missing.
 
 ## 12. Data model
 

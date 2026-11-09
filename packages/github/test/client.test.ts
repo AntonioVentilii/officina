@@ -183,7 +183,14 @@ describe('GitHub client', () => {
       'POST /app/installations/99/access_tokens': tokenRoute('2099-01-01T00:00:00Z'),
       'GET /repos/ViciApp/vici-app': () => json({ default_branch: 'main' }),
       'GET /repos/ViciApp/vici-app/contents/.github/officina.yml': () =>
-        json({ content: Buffer.from('version: 1\n').toString('base64'), encoding: 'base64' })
+        json({
+          type: 'file',
+          content: Buffer.from('version: 1\n').toString('base64'),
+          encoding: 'base64',
+          sha: 'blob1'
+        }),
+      'GET /repos/ViciApp/vici-app/contents/docs/ai/notes.md': () =>
+        json([{ type: 'file', name: 'a.md', path: 'docs/ai/notes.md/a.md' }])
     });
     const client = createGitHubClient({ appId: '1', privateKeyPem, fetch: fetchImpl });
     expect(await client.repoInstallationId('ViciApp/vici-app')).toBe(99);
@@ -193,6 +200,10 @@ describe('GitHub client', () => {
       'version: 1\n'
     );
     expect(await client.fileContent({ ...ref, path: 'missing.yml', branch: 'main' })).toBeNull();
+    // A directory named like a page is not the page.
+    expect(
+      await client.fileContent({ ...ref, path: 'docs/ai/notes.md', branch: 'main' })
+    ).toBeNull();
   });
 
   test('opens pull requests and surfaces GitHub errors with status and path', async () => {
