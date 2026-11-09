@@ -356,7 +356,8 @@ export const runAgentStep = async (
         const catalogPages: Record<string, string | null> = {};
         for (const page of catalogPagesToRead(config.docs.standards.catalogs, facts.addedPaths)) {
           catalogPages[page] =
-            (await deps.github.readFile({ ...repoRef, path: page, branch: taskBranch }))?.text ??
+            // At the head the diff was read from, so a later push cannot change what is checked.
+            (await deps.github.readFile({ ...repoRef, path: page, branch: facts.headSha }))?.text ??
             null;
         }
         roleOutput = { role, output: built, facts: { ...facts, catalogPages } };

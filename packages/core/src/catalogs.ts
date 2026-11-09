@@ -23,12 +23,22 @@ export const catalogPagesToRead = (
   )
 ];
 
+const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * Whether `text` names `value` as a whole token: not inside a longer name before it (`MyButton`,
+ * `lib/src/a.ts`) nor after it (`a.tsx`). A sentence's closing period still counts as an end.
+ */
+const namesToken = (text: string, value: string, before: string): boolean =>
+  new RegExp(`(?<!${before})${escape(value)}(?![\\w/-]|\\.\\w)`).test(text);
+
 /**
  * Whether a page names a file: by its path from the repository root, or by its file name, since
  * pages often write paths through an alias (`$lib/components/Chip.svelte`).
  */
 export const pageLists = (text: string, path: string): boolean =>
-  text.includes(path) || text.includes(path.slice(path.lastIndexOf('/') + 1));
+  namesToken(text, path, '[\\w./-]') ||
+  namesToken(text, path.slice(path.lastIndexOf('/') + 1), '[\\w.-]');
 
 /**
  * Files a change adds under a catalog's glob that the catalog's page, as pushed, does not name.

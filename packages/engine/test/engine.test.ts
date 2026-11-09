@@ -512,7 +512,7 @@ describe.skipIf(!url)('engine', () => {
     expect(finding).toContain(`\`${COPY}\``);
     expect(finding).toContain('`docs/ai/messages.md`');
     expect(github.calls.some((call) => call.method === 'openPullRequest')).toBe(false);
-    // The page is read as pushed on the task branch, not taken from the agent's word.
+    // The page is read at the head the diff came from, not taken from the agent's word.
     expect(github.calls).toContainEqual({
       method: 'readFile',
       args: [
@@ -520,7 +520,7 @@ describe.skipIf(!url)('engine', () => {
           installationId: 99,
           repo: 'ViciApp/vici-app',
           path: 'docs/ai/messages.md',
-          branch: 'officina/task-1'
+          branch: 'sha1'
         }
       ]
     });
