@@ -29,6 +29,25 @@ Officina: a collaborative agent workshop. The design lives in [`docs/architectur
 - `apps/board`: the board, a SvelteKit single-page app built to static files that the API serves. It reads `/api/*`, listens to `/api/stream` (server-sent events that only say what changed, so views refetch) and sends decisions as `POST`s with the `x-officina-request` header. Agent-written text is rendered through `Markdown.svelte`, which sanitizes it.
 - `apps/api`: the Elysia HTTP server (`/health`, `/github/webhook`, the board API in `api.ts` and `board.ts`, sign-in links in `people.ts`, realtime in `realtime.ts`, the board's static files in `static.ts`). `main.ts` validates the environment, runs migrations and, when GitHub App and Anthropic credentials are present, starts the scheduler (`engine.ts`, `scheduler.ts`), failing runs orphaned by a previous process first and syncing the role agents to the resolved model. `setup.ts` and `cli.ts` register projects and sync agents.
 
+## Where to look
+
+The agent docs in [`docs/ai/`](./docs/ai/README.md) are read off this code; [`docs/architecture.md`](./docs/architecture.md) says why it works this way.
+
+| You are about to                                       | Read first                                                                                 |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| Touch CI, deployment, migrations, releases or a prompt | [`docs/ai/governance.md`](./docs/ai/governance.md)                                         |
+| Add a file or an import between packages               | [`docs/ai/structure.md`](./docs/ai/structure.md)                                           |
+| Write engine, store, API, runner or board code         | [`docs/ai/patterns.md`](./docs/ai/patterns.md)                                             |
+| Write a helper, a type, a component or a test fake     | [`docs/ai/reusability.md`](./docs/ai/reusability.md)                                       |
+| Add or change a test                                   | [`docs/ai/testing.md`](./docs/ai/testing.md)                                               |
+| Open a pull request                                    | [`docs/ai/pr-and-ci.md`](./docs/ai/pr-and-ci.md)                                           |
+| Change a stage, a command or a guardrail               | [`docs/ai/workflows/change-the-lifecycle.md`](./docs/ai/workflows/change-the-lifecycle.md) |
+| Add or change an agent role                            | [`docs/ai/workflows/agent-role.md`](./docs/ai/workflows/agent-role.md)                     |
+| Change the database schema                             | [`docs/ai/workflows/migration.md`](./docs/ai/workflows/migration.md)                       |
+| Show something new on the board                        | [`docs/ai/workflows/board-field.md`](./docs/ai/workflows/board-field.md)                   |
+
+**Truth hierarchy:** the code, then CI, then `docs/ai/**` and `docs/architecture.md`, then this file, then tool layers such as `CLAUDE.md`; the [code standard](https://github.com/AntonioVentilii/officina/blob/main/standards/code.md#truth-hierarchy) says what to do on a contradiction. **Meta-update rule:** a change that adds a pattern, a shared piece, a convention or a workflow updates the matching page in the same pull request; [`docs/ai/governance.md`](./docs/ai/governance.md#meta-update-map) says which.
+
 ## Rules
 
 - **Collaborative first.** Every feature must work for several people on the same task. A design that only works for one user is incomplete.
