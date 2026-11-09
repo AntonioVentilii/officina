@@ -59,6 +59,8 @@ export const reviewerOutputSchema = z.discriminatedUnion('outcome', [
         z.strictObject({
           file: text,
           line: z.number().int().positive().optional(),
+          /** The rule the change breaks: a numbered rule of the code standard or a project docs page. */
+          rule: text.max(200).optional(),
           issue: text
         })
       )
@@ -157,6 +159,8 @@ export const parseAgentOutput = <R extends ContractRole>(
 export interface PushFacts {
   readonly headSha: string;
   readonly changedPaths: readonly string[];
+  /** Files the branch adds (new, copied, or renamed to a new path), for the catalog check. */
+  readonly addedPaths: readonly string[];
   readonly diffLines: number;
 }
 
@@ -235,7 +239,7 @@ export const commandForOutput = (task: Task, result: RoleOutput): CommandResult 
       const notes = output.items
         .map(
           (item, index) =>
-            `${index + 1}. ${item.file}${item.line ? `:${item.line}` : ''} ${item.issue}`
+            `${index + 1}. ${item.file}${item.line ? `:${item.line}` : ''}${item.rule ? ` [${item.rule}]` : ''} ${item.issue}`
         )
         .join('\n');
       return { ok: true, command: { type: 'review', verdict: 'changes', notes } };

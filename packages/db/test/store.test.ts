@@ -63,7 +63,7 @@ describe.skipIf(!url)('task store', () => {
     );
     await apply(
       id,
-      { type: 'push', headSha: 'abc', changedPaths: copyPaths, diffLines: 4 },
+      { type: 'push', headSha: 'abc', changedPaths: copyPaths, addedPaths: [], diffLines: 4 },
       agent('builder')
     );
     await apply(id, { type: 'review', verdict: 'approve', notes: 'ok' }, agent('reviewer_spec'));

@@ -112,7 +112,7 @@ Model ids live in one place, `packages/runner/src/models.ts`, by tier. The Opus 
 | **Spec**                       | request, thread, project docs and spec template, code               | read-only repo access                              | spec markdown, predicted file scope, predicted lane, or `blocked` with a question      |
 | **Builder**                    | approved spec version, thread, fix notes                            | edit, bash (allowlist), git on `officina/*` branch | `pushed` with branch and verify results, `failed` with output, or `blocked`            |
 | **Reviewer: spec conformance** | spec version, diff                                                  | read-only                                          | `approve` or numbered `changes` with file:line                                         |
-| **Reviewer: correctness**      | diff, project conventions                                           | read-only                                          | `approve` or numbered `changes` with file:line                                         |
+| **Reviewer: correctness**      | diff, the project's agent docs, the code standard                   | read-only                                          | `approve` or numbered `changes` with file:line and the rule each one breaks            |
 | **Chooser**                    | diff, spec, lane result, approval policy                            | read-only                                          | user-visible or not, verifiers per policy, verification checklist, before/after tables |
 | **Learner**                    | full task history (thread, spec versions, runs, reviews, overrides) | read-only                                          | 0-3 learnings, each with evidence and a proposed change                                |
 
@@ -221,7 +221,7 @@ lanes:
       verifying: [{ requester: true }]
 ```
 
-**Agent docs.** Every project follows the universal code standard ([`standards/code.md`](../standards/code.md)) and holds its own agent docs: the `docs.entry` document plus the pages of `docs.standards`, read off the code (structure, patterns, the catalog of shared code, testing, pull request conventions). `requiredDocs` in `packages/core/src/config.ts` is the one list of what a project must hold: the entry, every page and every catalog page. Registering a project (`add-project`) checks each of them on the default branch through the GitHub App and reports the ones missing.
+**Agent docs.** Every project follows the universal code standard ([`standards/code.md`](../standards/code.md)) and holds its own agent docs: the `docs.entry` document plus the pages of `docs.standards`, read off the code (structure, patterns, the catalog of shared code, testing, pull request conventions). `requiredDocs` in `packages/core/src/config.ts` is the one list of what a project must hold: the entry, every page and every catalog page. The correctness reviewer holds each change to the project's pages and the standard and cites the rule each item breaks (`rule` in its contract), and every catalog is checked mechanically after each build round (section 13). Registering a project (`add-project`) checks each of them on the default branch through the GitHub App and reports the ones missing.
 
 ## 12. Data model
 
@@ -248,6 +248,7 @@ lanes:
 - **Credentials do not pile up.** Starting a GitHub sign-in writes nothing: its state carries its own expiry, is bound to the browser by a cookie, and is spent atomically once GitHub accepts the code, before the account is written, so it works once. The scheduler purges expired or spent sign-in links, sessions and authorization states hourly.
 - **Errors stay on the server.** An unexpected error is logged and answered with `{"error":"internal"}`, since its message can quote a GitHub response or a query; a malformed path is a 400.
 - **Mechanical guardrails after every build round:** red-lane paths and diff size are checked by the engine; a hit blocks the task instead of opening a PR.
+- **The catalog check runs after every build round too**, from the real diff like the lane: a file the branch adds (new, copied or renamed to a new path) under a `docs.catalogs` glob, while the catalog page is untouched, is a finding (`unlisted_files`, `unlistedFiles` in `packages/core/src/catalogs.ts`). It sends the work straight back to the builder with the finding as a note, keeping the head, as one more bounded fix round, so a shared file nobody listed never reaches the reviewers. It holds for a person building the task as much as for an agent.
 - **Credentials stay outside sandboxes** (git proxy and vault on Managed Agents; OIDC on the fallback runner). Officina's own secrets live in the deployment's secret store.
 - **Branch protection remains the final authority.** Officina assumes the repository requires human review and passing CI, and never works around it.
 - **Tool calls that need a person** use `always_ask` and route to the inbox; unattended safety evaluation is not treated as a human checkpoint.

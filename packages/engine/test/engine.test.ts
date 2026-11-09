@@ -3,6 +3,7 @@ import type { AgentRole } from '@officina/core';
 import {
   applyCommand,
   createTask,
+  feedbackSinceLastPush,
   linkPullRequest,
   loadTask,
   saveAgentVersion,
@@ -72,6 +73,7 @@ const fakeGitHub = (
     refs?: RefSnapshot[];
     merges?: string[];
     branchHead?: string;
+    addedPaths?: string[];
     written?: { commitSha: string; parentSha: string };
   } = {}
 ) => {
@@ -92,7 +94,12 @@ const fakeGitHub = (
     },
     pushFacts: async (...args: unknown[]) => {
       calls.push({ method: 'pushFacts', args });
-      return { headSha: options.branchHead ?? 'sha1', changedPaths: [COPY, SPEC], diffLines: 3 };
+      return {
+        headSha: options.branchHead ?? 'sha1',
+        changedPaths: [COPY, SPEC],
+        addedPaths: options.addedPaths ?? [],
+        diffLines: 3
+      };
     },
     readFile: async (...args: unknown[]) => {
       calls.push({ method: 'readFile', args });
@@ -317,7 +324,7 @@ describe.skipIf(!url)('engine', () => {
       await applyOrThrow(
         pool,
         id,
-        { type: 'push', headSha, changedPaths: [COPY], diffLines: 4 },
+        { type: 'push', headSha, changedPaths: [COPY], addedPaths: [], diffLines: 4 },
         agent('builder')
       );
       for (const role of ['reviewer_spec', 'reviewer_correctness'] as const)
@@ -475,6 +482,29 @@ describe.skipIf(!url)('engine', () => {
       status: 'skipped',
       reason: 'not_due'
     });
+  });
+
+  test('a new file the catalog does not list sends the build back with the finding', async () => {
+    await pool.query(
+      `update projects set config = jsonb_set(config, '{docs,catalogs}',
+         '{"src/lib/constants/**": "messages.md"}') where id = $1`,
+      [seeded.projectId]
+    );
+    const github = fakeGitHub({ addedPaths: [COPY] });
+    const agents = createFakePort(succeed);
+    const taskId = await taskInReady(github, agents);
+    await tick({ pool, github: github.port, agents, publicUrl: PUBLIC_URL }, seeded.projectId);
+
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({
+      stage: 'building',
+      headSha: 'sha1',
+      fixRounds: 1,
+      blocked: null
+    });
+    const [finding] = await feedbackSinceLastPush(pool, taskId);
+    expect(finding).toContain(`\`${COPY}\``);
+    expect(finding).toContain('`docs/ai/messages.md`');
+    expect(github.calls.some((call) => call.method === 'openPullRequest')).toBe(false);
   });
 
   test('a push to any other branch blocks the task and opens no pull request', async () => {

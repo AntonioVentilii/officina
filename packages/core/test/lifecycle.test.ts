@@ -35,7 +35,7 @@ const toReady = (driver: Driver, paths: readonly string[], userVisible = false):
 const buildAndReview = (driver: Driver, task: Task, headSha: string, paths: readonly string[]) => {
   let next = driver.step(
     task,
-    { type: 'push', headSha, changedPaths: paths, diffLines: 40 },
+    { type: 'push', headSha, changedPaths: paths, addedPaths: [], diffLines: 40 },
     asAgent('builder')
   );
   next = driver.step(
@@ -144,7 +144,7 @@ describe('collaboration', () => {
     expect(
       driver.attempt(
         task,
-        { type: 'push', headSha: 'x', changedPaths: PAGE_PATHS, diffLines: 1 },
+        { type: 'push', headSha: 'x', changedPaths: PAGE_PATHS, addedPaths: [], diffLines: 1 },
         asAgent('builder')
       ).ok
     ).toBe(false);
@@ -159,7 +159,13 @@ describe('guardrails', () => {
     let task = dispatchAgent(driver, toReady(driver, PAGE_PATHS));
     task = driver.step(
       task,
-      { type: 'push', headSha: 'abc', changedPaths: ['src/satellite/index.ts'], diffLines: 10 },
+      {
+        type: 'push',
+        headSha: 'abc',
+        changedPaths: ['src/satellite/index.ts'],
+        addedPaths: [],
+        diffLines: 10
+      },
       asAgent('builder')
     );
     expect(task).toMatchObject({ stage: 'ready', lane: 'red', assignee: null });
@@ -205,7 +211,7 @@ describe('guardrails', () => {
     let task = dispatchAgent(driver, toReady(driver, PAGE_PATHS));
     task = driver.step(
       task,
-      { type: 'push', headSha: 'abc', changedPaths: PAGE_PATHS, diffLines: 5000 },
+      { type: 'push', headSha: 'abc', changedPaths: PAGE_PATHS, addedPaths: [], diffLines: 5000 },
       asAgent('builder')
     );
     expect(task.stage).toBe('building');
@@ -231,7 +237,7 @@ describe('guardrails', () => {
     for (const sha of ['a', 'b']) {
       task = driver.step(
         task,
-        { type: 'push', headSha: sha, changedPaths: PAGE_PATHS, diffLines: 5 },
+        { type: 'push', headSha: sha, changedPaths: PAGE_PATHS, addedPaths: [], diffLines: 5 },
         asAgent('builder')
       );
       task = driver.step(
@@ -243,7 +249,7 @@ describe('guardrails', () => {
     }
     task = driver.step(
       task,
-      { type: 'push', headSha: 'c', changedPaths: PAGE_PATHS, diffLines: 5 },
+      { type: 'push', headSha: 'c', changedPaths: PAGE_PATHS, addedPaths: [], diffLines: 5 },
       asAgent('builder')
     );
     task = driver.step(
@@ -584,5 +590,66 @@ describe('reviews on GitHub', () => {
       ok: false,
       error: 'not_allowed'
     });
+  });
+});
+
+describe('catalog check', () => {
+  const withCatalog = loadConfig(
+    CONFIG_YAML.replace(
+      'docs: { entry: AGENTS.md }',
+      "docs: { entry: AGENTS.md, catalogs: { 'src/lib/components/**': reusability.md } }"
+    )
+  );
+  const NEW_COMPONENT = 'src/lib/components/Chip.svelte';
+
+  test('a new shared file the catalog does not list goes back to the builder, head kept', () => {
+    const driver = createDriver([owner], withCatalog);
+    let task = dispatchAgent(driver, toReady(driver, PAGE_PATHS));
+    task = driver.step(
+      task,
+      {
+        type: 'push',
+        headSha: 'abc',
+        changedPaths: [...PAGE_PATHS, NEW_COMPONENT],
+        addedPaths: [NEW_COMPONENT],
+        diffLines: 40
+      },
+      asAgent('builder')
+    );
+    expect(task).toMatchObject({ stage: 'building', headSha: 'abc', fixRounds: 1, blocked: null });
+    expect(nextAgentRoles(task)).toEqual(['builder']);
+    const finding = driver.events().find((event) => event.type === 'guardrail_tripped');
+    expect(finding).toMatchObject({ guardrail: 'unlisted_files' });
+    expect(JSON.stringify(finding)).toContain('docs/ai/reusability.md');
+
+    task = driver.step(
+      task,
+      {
+        type: 'push',
+        headSha: 'def',
+        changedPaths: [...PAGE_PATHS, NEW_COMPONENT, 'docs/ai/reusability.md'],
+        addedPaths: [NEW_COMPONENT],
+        diffLines: 44
+      },
+      asAgent('builder')
+    );
+    expect(task.stage).toBe('reviewing');
+  });
+
+  test('past the fix rounds the finding holds the task for a maintainer', () => {
+    const driver = createDriver([owner], withCatalog);
+    let task = dispatchAgent(driver, toReady(driver, PAGE_PATHS));
+    const push = {
+      type: 'push' as const,
+      headSha: 'abc',
+      changedPaths: [NEW_COMPONENT],
+      addedPaths: [NEW_COMPONENT],
+      diffLines: 10
+    };
+    task = driver.step(task, push, asAgent('builder'));
+    task = driver.step(task, push, asAgent('builder'));
+    task = driver.step(task, push, asAgent('builder'));
+    expect(task).toMatchObject({ stage: 'ready', assignee: null });
+    expect(task.blocked?.askedOf).toEqual({ role: 'maintainer' });
   });
 });
