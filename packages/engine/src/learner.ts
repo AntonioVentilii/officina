@@ -2,6 +2,8 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   computeLane,
+  editsProject,
+  isAgentDocsPath,
   parseProjectConfig,
   type AgentOutput,
   type ProjectConfig
@@ -149,7 +151,11 @@ export const learnerBrief = async (
     `## Already proposed or decided (do not repeat these)\n\n${earlier.length ? earlier.map((item) => `- [${item.status}] ${item.title} (${item.file})`).join('\n') : '- nothing yet'}`,
     [
       '## Where an edit may go',
-      `- \`project\`: a Markdown file in this repository, read from \`${context.defaultBranch}\`. Never a protected path:`,
+      `- \`docs\`: the project's agent docs, read from \`${context.defaultBranch}\`: \`${config.docs.entry}\` and the pages under \`${config.docs.standards.dir}/\`, a new page there included. The first choice for a lesson about where code goes, the patterns to use, the shared code to reuse, testing, or pull request rules. Its pages:`,
+      [config.docs.entry, ...config.docs.standards.pages]
+        .map((path) => `  - \`${path}\``)
+        .join('\n'),
+      `- \`project\`: any other Markdown file in this repository, read from \`${context.defaultBranch}\`. Never a protected path:`,
       redPaths.map((path) => `  - \`${path}\``).join('\n') || '  - none',
       `- \`agent\`: one of Officina's role prompts: ${RUNNER_ROLES.map((role) => `\`agents/${role}.md\``).join(', ')}.`
     ].join('\n'),
@@ -178,11 +184,23 @@ export const learningProblems =
       const at = `learnings.${index}`;
       const { file, find } = learning.edit;
       let content: string | null = null;
-      if (learning.target === 'project') {
+      if (editsProject(learning.target)) {
         if (!file.endsWith('.md') || file.startsWith('/') || file.includes('..')) {
           problems.push(
             `${at}: project edits go to a Markdown file in the repository, not ${file}`
           );
+          continue;
+        }
+        // One target per file, so the board and the pull request say what kind of doc changes.
+        const agentDocs = isAgentDocsPath(input.config, file);
+        if (learning.target === 'docs' && !agentDocs) {
+          problems.push(
+            `${at}: docs edits go to ${input.config.docs.entry} or a page under ${input.config.docs.standards.dir}/, not ${file}; use target project`
+          );
+          continue;
+        }
+        if (learning.target === 'project' && agentDocs) {
+          problems.push(`${at}: ${file} is part of the agent docs; use target docs`);
           continue;
         }
         if (computeLane([file], input.config.laneMatcher) === 'red') {

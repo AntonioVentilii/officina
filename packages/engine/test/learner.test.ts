@@ -24,7 +24,7 @@ const learning = (overrides: Record<string, unknown>) => ({
   title: 'Say where locale files live',
   lesson: 'Copy changes must cover every live locale.',
   evidence: 'The reviewer sent the build back because Italian was missing.',
-  target: 'project',
+  target: 'docs',
   edit: { file: 'AGENTS.md', find: '## Copy\n', text: '## Copy\n\nUpdate every live locale.\n' },
   ...overrides
 });
@@ -71,9 +71,16 @@ describe.skipIf(!url)('learner', () => {
     const agents = createFakePort(() => [
       toolUse({
         learnings: [
-          learning({ edit: { file: '.github/README.md', text: 'x' } }),
+          learning({ target: 'project', edit: { file: '.github/README.md', text: 'x' } }),
           learning({ edit: { file: 'AGENTS.md', find: 'o', text: 'x' } }),
           learning({ target: 'agent', edit: { file: 'agents/wizard.md', text: 'x' } })
+        ]
+      }),
+      idle('requires_action'),
+      toolUse({
+        learnings: [
+          learning({ target: 'project', edit: { file: 'docs/ai/patterns.md', text: 'x' } }),
+          learning({ edit: { file: 'docs/product.md', text: 'x' } })
         ]
       }),
       idle('requires_action'),
@@ -101,17 +108,21 @@ describe.skipIf(!url)('learner', () => {
     expect(feedback).toContain('is a protected path');
     expect(feedback).toContain('must appear exactly once in AGENTS.md');
     expect(feedback).toContain('agents/<role>.md for a known role');
+    expect(feedback).toContain('docs/ai/patterns.md is part of the agent docs; use target docs');
+    expect(feedback).toContain('not docs/product.md; use target project');
 
     const brief = (agents.sent[0]!.events[0] as { text: string }).text;
     expect(brief).toContain('role: learner');
     expect(brief).toContain('## Timeline');
     expect(brief).toContain('review approve by reviewer_spec');
+    expect(brief).toContain("- `docs`: the project's agent docs");
+    expect(brief).toContain('  - `docs/ai/reusability.md`');
     expect(agents.sessions[0]!.repository).toMatchObject({ token: 'token-read', branch: 'main' });
 
     const learnings = await listLearnings(pool, seeded.projectId);
     expect(learnings.map((item) => [item.target, item.file, item.status])).toEqual(
       expect.arrayContaining([
-        ['project', 'AGENTS.md', 'proposed'],
+        ['docs', 'AGENTS.md', 'proposed'],
         ['agent', 'agents/builder.md', 'proposed']
       ])
     );

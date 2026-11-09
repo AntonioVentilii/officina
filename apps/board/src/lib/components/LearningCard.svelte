@@ -16,6 +16,15 @@
 
   let { learning, compact = false }: Props = $props();
 
+  const TARGET_LABELS = {
+    docs: 'agent docs',
+    project: 'project docs',
+    agent: 'Officina agent prompt'
+  } as const;
+
+  // Only edits to Officina's own prompts stay on the board; the others land as a pull request.
+  const opensPullRequest = $derived(learning.target !== 'agent');
+
   let rejecting = $state(false);
   let note = $state('');
   let busy = $state(false);
@@ -61,7 +70,7 @@
         'ok',
         decision === 'reject'
           ? 'Learning rejected'
-          : learning.target === 'project'
+          : opensPullRequest
             ? 'Accepted: pull request opened'
             : 'Accepted for the Officina prompts'
       );
@@ -106,10 +115,10 @@
 
   <div class="change">
     <div class="file">
-      {#if learning.target === 'project'}<FileText size={13} />{:else}<Bot size={13} />{/if}
+      {#if opensPullRequest}<FileText size={13} />{:else}<Bot size={13} />{/if}
       <span class="mono">{learning.file}</span>
       <span class="caps faint">
-        {learning.target === 'project' ? 'project docs' : 'Officina agent prompt'} ·
+        {TARGET_LABELS[learning.target]} ·
         {learning.find ? 'replace' : 'append at the end'}
       </span>
     </div>
@@ -135,9 +144,7 @@
       <div class="actions">
         <button class="btn ghost" disabled={busy} onclick={() => (rejecting = true)}>Reject</button>
         <button class="btn primary" disabled={busy} onclick={() => decide('accept')}>
-          <Check size={14} />{learning.target === 'project'
-            ? 'Accept and open pull request'
-            : 'Accept'}
+          <Check size={14} />{opensPullRequest ? 'Accept and open pull request' : 'Accept'}
         </button>
       </div>
     {/if}
