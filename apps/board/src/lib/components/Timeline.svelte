@@ -67,6 +67,8 @@
         return `approved the pull request on GitHub as @${p.login}`;
       case 'awaiting_merge':
         return `left pull request #${p.pullRequest} for a person to merge on GitHub`;
+      case 'merge_held':
+        return `found commits nobody verified on pull request #${p.pullRequest}: do not merge it until they are reviewed`;
       case 'github_approval_failed':
         return p.error
           ? `could not approve on GitHub as @${p.login}: ${p.error}`

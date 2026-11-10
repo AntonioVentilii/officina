@@ -134,6 +134,7 @@ const PUBLIC_FIELDS: Readonly<Record<string, readonly string[]>> = {
   github_approved: ['login'],
   github_approval_failed: ['login'],
   awaiting_merge: ['pullRequest'],
+  merge_held: ['pullRequest'],
   checklist_posted: ['pullRequest']
 };
 

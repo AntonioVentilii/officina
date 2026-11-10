@@ -363,7 +363,10 @@ describe.skipIf(!url)('engine', () => {
     );
     expect((await loadTask(pool, id))?.task.stage).toBe('merging');
 
-    const github = fakeGitHub();
+    const github = fakeGitHub({
+      branchHead: 'def',
+      written: { commitSha: 'status1', parentSha: 'def' }
+    });
     await finishVerifiedSpecs(pool, github.port, [id]);
     await finishVerifiedSpecs(pool, github.port, [id]);
     const resolved = github.calls.filter((call) => call.method === 'resolveReviewThreads');
@@ -585,6 +588,44 @@ describe.skipIf(!url)('engine', () => {
       expect.objectContaining({ commitSha: null, unverified: 'status1' }),
       expect.objectContaining({ commitSha: 'status2' })
     ]);
+  });
+
+  test('a branch holding commits nobody verified is held from merging, not left to merge', async () => {
+    const mergeEvents = async (taskId: string) =>
+      (
+        await pool.query<{ type: string }>(
+          `select type from task_events where task_id = $1
+             and type in ('awaiting_merge', 'merge_held') order by id`,
+          [taskId]
+        )
+      ).rows.map((row) => row.type);
+
+    const moved = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, moved, 42);
+    const foreign = fakeGitHub({ branchHead: 'foreign' });
+    await finishVerifiedSpecs(pool, foreign.port, [moved]);
+    await finishVerifiedSpecs(pool, foreign.port, [moved]);
+    expect(await mergeEvents(moved)).toEqual(['merge_held']);
+
+    // A push raced Officina's own status commit: the branch still holds an unverified commit.
+    const raced = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, raced, 43);
+    await finishVerifiedSpecs(
+      pool,
+      fakeGitHub({ branchHead: 'abc', written: { commitSha: 'status1', parentSha: 'foreign' } })
+        .port,
+      [raced]
+    );
+    expect(await mergeEvents(raced)).toEqual(['merge_held']);
+
+    const clean = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, clean, 44);
+    await finishVerifiedSpecs(
+      pool,
+      fakeGitHub({ branchHead: 'abc', written: { commitSha: 'status2', parentSha: 'abc' } }).port,
+      [clean]
+    );
+    expect(await mergeEvents(clean)).toEqual(['awaiting_merge']);
   });
 
   test('repeated invalid results fail the run and ask a maintainer', async () => {

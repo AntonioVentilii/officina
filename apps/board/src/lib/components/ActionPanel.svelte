@@ -30,6 +30,13 @@
   const githubFailed = $derived(
     lastEvent('github_approval_failed')?.payload as { login: string; error?: string } | undefined
   );
+  // The engine's latest word on merging: waiting for a person, or held for unverified commits.
+  const held = $derived(
+    [...task.events]
+      .reverse()
+      .find((event) => event.type === 'awaiting_merge' || event.type === 'merge_held')?.type ===
+      'merge_held'
+  );
   const gate = $derived(
     task.stage === 'spec_review' ? 'spec' : task.stage === 'verifying' ? 'result' : null
   );
@@ -142,8 +149,15 @@
     <div class="head">
       <GitMerge size={18} />
       <div class="grow">
-        <div class="kicker caps">{task.autoVerified ? 'Low-risk change' : 'Checked'}</div>
-        {#if task.autoVerified}
+        <div class="kicker caps">
+          {held ? 'Do not merge yet' : task.autoVerified ? 'Low-risk change' : 'Checked'}
+        </div>
+        {#if held}
+          <div class="label">
+            The branch holds commits nobody verified. Do not merge the pull request until they are
+            reviewed.
+          </div>
+        {:else if task.autoVerified}
           <div class="label">
             Agents and GitHub's checks reviewed it; no person needs to check a change like this. It
             waits for a person to merge it on GitHub.

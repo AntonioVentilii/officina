@@ -166,12 +166,34 @@ const resolveForwardedThreads = async (
 };
 
 /**
- * Records that the engine's part is over and the pull request waits for a person to merge it,
- * once per time the task reaches merging, so the board and the timeline say whose turn it is.
+ * The commit on the task branch that nobody verified, as the spec status step found it: the branch
+ * had moved past the verified head, or a push raced Officina's own status commit. `null` when the
+ * branch held only verified work.
  */
-const awaitMerge = async (pool: Pool, input: { taskId: string; pullRequest: number }) => {
+const unverifiedHead = async (pool: Pool, taskId: string, status: string): Promise<string | null> =>
+  (
+    await pool.query<{ sha: string | null }>(
+      `select coalesce(payload->>'branchMoved', payload->>'unverified') as sha from task_events
+       where task_id = $1 and type = 'spec_status_set' and payload->>'status' = $2
+         and id > coalesce((select max(p.id) from task_events p
+           where p.task_id = $1 and p.type = 'pushed'), 0)
+       order by id desc limit 1`,
+      [taskId, status]
+    )
+  ).rows[0]?.sha ?? null;
+
+/**
+ * Records, once per time the task reaches merging, that the engine's part is over: the pull request
+ * waits for a person to merge it (`awaiting_merge`), or, when the branch holds commits nobody
+ * verified, that it must not be merged until they are reviewed (`merge_held`). The board and the
+ * timeline say whose turn it is from these.
+ */
+const recordMergeState = async (
+  pool: Pool,
+  input: { taskId: string; pullRequest: number; unverified: string | null }
+) => {
   const recorded = await pool.query(
-    `select 1 from task_events where task_id = $1 and type = 'awaiting_merge'
+    `select 1 from task_events where task_id = $1 and type in ('awaiting_merge', 'merge_held')
        and id > ${SINCE_MERGING}`,
     [input.taskId]
   );
@@ -179,8 +201,12 @@ const awaitMerge = async (pool: Pool, input: { taskId: string; pullRequest: numb
   await appendTaskEvent(pool, {
     taskId: input.taskId,
     actor: ENGINE,
-    type: 'awaiting_merge',
-    payload: { pullRequest: input.pullRequest }
+    ...(input.unverified
+      ? {
+          type: 'merge_held',
+          payload: { pullRequest: input.pullRequest, headSha: input.unverified }
+        }
+      : { type: 'awaiting_merge', payload: { pullRequest: input.pullRequest } })
   });
 };
 
@@ -392,13 +418,14 @@ export const finishVerifiedSpecs = async (
     const config = parseProjectConfig(context.rawConfig);
     if (!config.ok) continue;
     const ref: RepoRef = { installationId: context.installationId, repo: context.repo };
+    const status = `Implemented (#${context.pullRequest})`;
     await syncSpecStatus(pool, github, {
       taskId,
       ref,
       branch: branchForTask(context.number),
       base: context.defaultBranch,
       specDir: config.config.docs.specDir,
-      status: `Implemented (#${context.pullRequest})`
+      status
     });
     await resolveForwardedThreads(pool, github, {
       taskId,
@@ -420,6 +447,10 @@ export const finishVerifiedSpecs = async (
         pullRequest: context.pullRequest
       });
     }
-    await awaitMerge(pool, { taskId, pullRequest: context.pullRequest });
+    await recordMergeState(pool, {
+      taskId,
+      pullRequest: context.pullRequest,
+      unverified: await unverifiedHead(pool, taskId, status)
+    });
   }
 };
