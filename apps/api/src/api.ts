@@ -29,6 +29,7 @@ import {
   taskView,
   type BoardViewer
 } from './board';
+import { checkAuthorization, consentRedirect } from './connector';
 import type { GitHubAccounts } from './github-accounts';
 import { decide as decideLearning, type LearningGitHub } from './learnings';
 import type { BoardEvent, RealtimeHub } from './realtime';
@@ -49,6 +50,8 @@ export interface BoardApiDependencies {
 
 const COOKIE = 'officina_session';
 const OAUTH_COOKIE = 'officina_oauth';
+/** Where a GitHub sign-in returns to, such as the connector's consent page. */
+const NEXT_COOKIE = 'officina_next';
 const OAUTH_TTL_MS = 10 * 60 * 1000;
 /**
  * A sign-in needs no session, so its state is not stored when the flow starts (anyone could fill
@@ -116,6 +119,21 @@ const requestSchema = z.strictObject({
 });
 
 const commentSchema = z.strictObject({ body: z.string().trim().min(1).max(20_000) });
+
+/** Only a path on this site, so a sign-in can never be turned into a redirect elsewhere. */
+const localPath = (value: unknown): string | null =>
+  typeof value === 'string' &&
+  value.startsWith('/') &&
+  !value.startsWith('//') &&
+  !value.includes('\\') &&
+  value.length <= 4_000
+    ? value
+    : null;
+
+const consentSchema = z.strictObject({
+  params: z.record(z.string(), z.string().max(4_000)),
+  allow: z.boolean()
+});
 
 const learningDecisionSchema = z.strictObject({
   decision: z.enum(['accept', 'reject']),
@@ -270,22 +288,31 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
           state = randomBytes(24).toString('base64url');
           await createOAuthState(pool, state, memberId, OAUTH_TTL_MS);
         }
-        const cookie = [
-          `${OAUTH_COOKIE}=${state}`,
-          'Path=/auth/github',
-          'HttpOnly',
-          'SameSite=Lax',
-          `Max-Age=${OAUTH_TTL_MS / 1000}`,
-          secure ? 'Secure' : null
-        ]
-          .filter(Boolean)
-          .join('; ');
-        return redirect(deps.githubLogin.authorizeUrl(state), [cookie]);
+        const cookie = (name: string, value: string) =>
+          [
+            `${name}=${value}`,
+            'Path=/auth/github',
+            'HttpOnly',
+            'SameSite=Lax',
+            `Max-Age=${OAUTH_TTL_MS / 1000}`,
+            secure ? 'Secure' : null
+          ]
+            .filter(Boolean)
+            .join('; ');
+        const next = localPath(query.next);
+        return redirect(deps.githubLogin.authorizeUrl(state), [
+          cookie(OAUTH_COOKIE, state),
+          cookie(NEXT_COOKIE, next ? encodeURIComponent(next) : '')
+        ]);
       })
       .get('/auth/github/callback', async ({ request, query }) => {
         if (!deps.githubLogin) throw new HttpError(404, 'GitHub sign-in is not configured');
         const clear = `${OAUTH_COOKIE}=; Path=/auth/github; HttpOnly; SameSite=Lax; Max-Age=0`;
-        const fail = (why: string) => redirect(`/signin?error=${encodeURIComponent(why)}`, [clear]);
+        const clearNext = `${NEXT_COOKIE}=; Path=/auth/github; HttpOnly; SameSite=Lax; Max-Age=0`;
+        const rawNext = readCookie(request, NEXT_COOKIE);
+        const next = (rawNext && localPath(decodeURIComponent(rawNext))) || '/';
+        const fail = (why: string) =>
+          redirect(`/signin?error=${encodeURIComponent(why)}`, [clear, clearNext]);
         const code = typeof query.code === 'string' ? query.code : null;
         const state = typeof query.state === 'string' ? query.state : null;
         if (!code || !state || readCookie(request, OAUTH_COOKIE) !== state)
@@ -299,7 +326,7 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
           );
           if (!result.ok) return fail(result.why);
           const session = await createSession(pool, result.memberId);
-          return redirect('/', [clear, sessionCookie(session, SESSION_TTL_MS, secure)]);
+          return redirect(next, [clear, clearNext, sessionCookie(session, SESSION_TTL_MS, secure)]);
         }
         const consumed = await consumeOAuthState(pool, state);
         if (!consumed) return expired();
@@ -327,6 +354,40 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
           projects: signed.projects,
           github: login ? { login } : null,
           githubAvailable: Boolean(deps.githubLogin)
+        };
+      })
+      // The connector's consent step: the person, signed in on the board, allows or refuses an
+      // app that asked to act as them through `/oauth/authorize`.
+      .get('/api/connector/authorization', async ({ request, query }) => {
+        const signed = await signedIn(request);
+        const checked = await checkAuthorization(pool, deps.publicUrl, query);
+        if (!checked.ok) {
+          if (checked.redirectable) return { redirect: checked.redirect };
+          throw new HttpError(400, checked.message);
+        }
+        return {
+          client: checked.request.client.name,
+          returnsTo: new URL(checked.request.redirectUri).host,
+          member: signed.member.displayName,
+          projects: signed.projects.map((project) => project.name)
+        };
+      })
+      .post('/api/connector/authorization', async ({ request, body }) => {
+        mutation(request);
+        const signed = await signedIn(request);
+        const { params, allow } = parse(consentSchema, body);
+        const checked = await checkAuthorization(pool, deps.publicUrl, params);
+        if (!checked.ok) {
+          if (checked.redirectable) return { redirect: checked.redirect };
+          throw new HttpError(400, checked.message);
+        }
+        return {
+          redirect: await consentRedirect(
+            pool,
+            deps.publicUrl,
+            checked.request,
+            allow ? { allow: true, memberId: signed.member.id } : { allow: false }
+          )
         };
       })
       .get('/api/stream', async ({ request }) => stream(await signedIn(request), request))

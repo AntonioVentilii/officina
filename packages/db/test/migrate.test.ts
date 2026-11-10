@@ -27,7 +27,8 @@ describe.skipIf(!url)('migrations', () => {
       '0005_board.sql',
       '0006_approval_plans.sql',
       '0007_learnings.sql',
-      '0008_github_accounts.sql'
+      '0008_github_accounts.sql',
+      '0009_connector.sql'
     ]);
     expect(await migrate(client)).toEqual([]);
   });

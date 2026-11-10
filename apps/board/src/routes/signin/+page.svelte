@@ -8,6 +8,11 @@
   let message = $state('');
   let github = $state(false);
 
+  // Only a path on this site, never an address elsewhere.
+  const raw = new URLSearchParams(location.search).get('next') ?? '';
+  const next = raw.startsWith('/') && !raw.startsWith('//') && !raw.includes('\\') ? raw : '/';
+  const githubHref = `/auth/github/start?mode=signin${next === '/' ? '' : `&next=${encodeURIComponent(next)}`}`;
+
   $effect(() => {
     fetch('/auth/options')
       .then((response) => response.json() as Promise<{ github: boolean }>)
@@ -33,7 +38,7 @@
     post('/auth/redeem', { token })
       .then(async () => {
         await session.load();
-        await goto('/', { replaceState: true });
+        await goto(next, { replaceState: true });
       })
       .catch((error: Error) => {
         status = 'failed';
@@ -59,16 +64,12 @@
       <p class="error">{message}</p>
       <p class="muted">Ask an owner for a new link.</p>
       {#if github}
-        <a class="btn github" href="/auth/github/start?mode=signin" data-sveltekit-reload>
-          Sign in with GitHub
-        </a>
+        <a class="btn github" href={githubHref} data-sveltekit-reload> Sign in with GitHub </a>
       {/if}
     {:else}
       <p class="muted">Sign in with the link an owner sent you.</p>
       {#if github}
-        <a class="btn github" href="/auth/github/start?mode=signin" data-sveltekit-reload>
-          Sign in with GitHub
-        </a>
+        <a class="btn github" href={githubHref} data-sveltekit-reload> Sign in with GitHub </a>
         <p class="faint small">Works once you have connected GitHub from the board.</p>
       {/if}
       <p class="faint small">

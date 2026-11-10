@@ -9,3 +9,4 @@ export * from './auth';
 export * from './board';
 export * from './learnings';
 export * from './github-accounts';
+export * from './connector';

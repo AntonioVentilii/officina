@@ -155,6 +155,8 @@ bun apps/api/src/cli.ts add-project --workspace acme --repo acme/shop --owner-em
 bun apps/api/src/cli.ts invite --email giulia@acme.dev --name "Giulia" --role contributor --domains product
 ```
 
+5. Each person can add Officina to Claude as a connector (`<public URL>/mcp`) and work from chat: open requests, answer questions, check results ([how](./docs/running-a-task.md#from-claude)).
+
 Protect your default branch and tags with a ruleset the App cannot bypass: Officina assumes branch rules are the final authority and never works around them. [Running a task](./docs/running-a-task.md) walks through one change end to end.
 
 ---

@@ -54,7 +54,10 @@
   });
 
   $effect(() => {
-    if (session.status === 'signed-out' && !onSignIn) void goto('/signin');
+    if (session.status !== 'signed-out' || onSignIn) return;
+    // Back to the same page after signing in, for example the connector's consent page.
+    const here = page.url.pathname === '/' ? '' : `${page.url.pathname}${page.url.search}`;
+    void goto(here ? `/signin?next=${encodeURIComponent(here)}` : '/signin');
   });
 
   // Back from GitHub after connecting an account.
