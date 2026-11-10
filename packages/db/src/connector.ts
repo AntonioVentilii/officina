@@ -125,41 +125,63 @@ export const issueConnectorTokens = async (
 };
 
 /**
- * Spends a refresh token of the given client. A token presented a second time means it leaked or
- * was replayed, so the whole grant is revoked and both parties must authorize again.
+ * Rotates a refresh token of the given client: spends it and issues the grant's next access and
+ * refresh tokens, in one transaction that holds the token's row. A token presented a second time
+ * means it leaked or was replayed, so the whole grant is revoked and both parties must authorize
+ * again. The row lock makes a concurrent use wait and then see the token spent, so two requests
+ * can never both rotate it, and a replay never misses tokens issued meanwhile.
  */
-export const spendConnectorRefreshToken = async (
-  db: Queryable,
+export const rotateConnectorRefreshToken = async (
+  pool: Pool,
   token: string,
-  clientId: string
-): Promise<{ grantId: string; memberId: string; resource: string } | null> => {
-  const { rows } = await db.query<{
-    grantId: string;
-    memberId: string;
-    resource: string;
-    reused: boolean;
-  }>(
-    `with found as (
-       select token_hash, grant_id, member_id, resource, used_at is not null as reused
-       from connector_tokens
-       where token_hash = $1 and kind = 'refresh' and client_id = $2 and expires_at > now()
-     ), spent as (
-       update connector_tokens t set used_at = now()
-       from found where t.token_hash = found.token_hash and not found.reused
-       returning t.token_hash
-     )
-     select grant_id as "grantId", member_id as "memberId", resource,
-       not exists (select 1 from spent) as reused
-     from found`,
-    [hashToken(token), clientId]
-  );
-  const found = rows[0];
-  if (!found) return null;
-  if (found.reused) {
-    await db.query('delete from connector_tokens where grant_id = $1', [found.grantId]);
-    return null;
+  input: { clientId: string; accessTtlMs: number; refreshTtlMs: number }
+): Promise<ConnectorTokens | null> => {
+  const client = await pool.connect();
+  try {
+    await client.query('begin');
+    const found = (
+      await client.query<{
+        grantId: string;
+        memberId: string;
+        resource: string;
+        spent: boolean;
+      }>(
+        `select grant_id as "grantId", member_id as "memberId", resource,
+           used_at is not null as spent
+         from connector_tokens
+         where token_hash = $1 and kind = 'refresh' and client_id = $2 and expires_at > now()
+         for update`,
+        [hashToken(token), input.clientId]
+      )
+    ).rows[0];
+    if (!found) {
+      await client.query('rollback');
+      return null;
+    }
+    if (found.spent) {
+      await client.query('delete from connector_tokens where grant_id = $1', [found.grantId]);
+      await client.query('commit');
+      return null;
+    }
+    await client.query('update connector_tokens set used_at = now() where token_hash = $1', [
+      hashToken(token)
+    ]);
+    const tokens = await issueConnectorTokens(client, {
+      clientId: input.clientId,
+      memberId: found.memberId,
+      resource: found.resource,
+      grantId: found.grantId,
+      accessTtlMs: input.accessTtlMs,
+      refreshTtlMs: input.refreshTtlMs
+    });
+    await client.query('commit');
+    return tokens;
+  } catch (error) {
+    await client.query('rollback');
+    throw error;
+  } finally {
+    client.release();
   }
-  return { grantId: found.grantId, memberId: found.memberId, resource: found.resource };
 };
 
 /** The member an access token acts for, when it is live and was issued for `resource`. */
@@ -184,10 +206,8 @@ export const purgeConnectorCredentials = async (db: Queryable): Promise<number> 
   const codes = await db.query(
     'delete from connector_codes where expires_at <= now() or used_at is not null'
   );
-  const tokens = await db.query(
-    `delete from connector_tokens where expires_at <= now()
-       or (kind = 'refresh' and used_at < now() - interval '1 day')`
-  );
+  // A spent refresh token is kept until it expires: presenting it again is how a replay is caught.
+  const tokens = await db.query('delete from connector_tokens where expires_at <= now()');
   const clients = await db.query(
     `delete from connector_clients c where c.created_at < now() - interval '1 day'
        and not exists (select 1 from connector_tokens t where t.client_id = c.id)

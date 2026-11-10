@@ -191,6 +191,21 @@ describe.skipIf(!url)('connector for Claude', () => {
     expect(await purgeConnectorCredentials(pool)).toBe(0);
   });
 
+  test('two concurrent uses of one refresh token never both rotate it', async () => {
+    const { tokens, clientId } = await connect();
+    const refresh = {
+      grant_type: 'refresh_token',
+      refresh_token: tokens.refresh_token,
+      client_id: clientId
+    };
+    const answers = await Promise.all([form(refresh), form(refresh)]);
+    expect(answers.map((answer) => answer.status).sort()).toEqual([200, 400]);
+    // The second use is a replay: the grant is revoked, tokens issued a moment before included.
+    const issued = await json(answers.find((answer) => answer.status === 200)!);
+    expect((await rpc(issued.access_token, 'tools/list')).status).toBe(401);
+    expect((await rpc(tokens.access_token, 'tools/list')).status).toBe(401);
+  });
+
   test('a wrong verifier gets no token', async () => {
     const client = await json(await register());
     const verifier = randomBytes(32).toString('base64url');
@@ -284,7 +299,9 @@ describe.skipIf(!url)('connector for Claude', () => {
       skip_interview: true
     });
     expect(opened.isError).toBe(false);
-    expect(opened.content[0]!.text).toContain(`Opened task 1 in vici-app: ${PUBLIC_URL}/tasks/1`);
+    expect(opened.content[0]!.text).toContain(
+      `Opened task 1 in vici-app: ${PUBLIC_URL}/tasks/1?project=${seeded.projectId}`
+    );
 
     const inbox = (await tool(token, 'whats_waiting_on_me')).content[0]!.text;
     expect(inbox).toContain('Task 1: Rename the Wager button');

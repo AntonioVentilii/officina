@@ -4,8 +4,8 @@ import {
   issueConnectorTokens,
   loadConnectorClient,
   registerConnectorClient,
+  rotateConnectorRefreshToken,
   spendConnectorCode,
-  spendConnectorRefreshToken,
   type ConnectorClient
 } from '@officina/db';
 import type { Pool } from 'pg';
@@ -54,7 +54,7 @@ export const authorizationServerMetadata = (publicUrl: string) => ({
   scopes_supported: [SCOPE]
 });
 
-const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+export const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(['localhost', '127.0.0.1', '[::1]']);
 
 const isLoopback = (url: URL) => url.protocol === 'http:' && LOOPBACK_HOSTS.has(url.hostname);
 
@@ -278,17 +278,9 @@ export const exchangeToken = async (pool: Pool, publicUrl: string, body: unknown
     case 'refresh_token': {
       const token = value('refresh_token');
       if (!token) throw new OAuthError('invalid_request', 'refresh_token is required');
-      const grant = await spendConnectorRefreshToken(pool, token, clientId);
-      if (!grant) throw new OAuthError('invalid_grant', 'the refresh token is invalid or spent');
-      return tokenResponse(
-        await issueConnectorTokens(pool, {
-          clientId,
-          memberId: grant.memberId,
-          resource: grant.resource,
-          grantId: grant.grantId,
-          ...ttl
-        })
-      );
+      const tokens = await rotateConnectorRefreshToken(pool, token, { clientId, ...ttl });
+      if (!tokens) throw new OAuthError('invalid_grant', 'the refresh token is invalid or spent');
+      return tokenResponse(tokens);
     }
     default:
       throw new OAuthError('unsupported_grant_type', 'authorization_code or refresh_token');

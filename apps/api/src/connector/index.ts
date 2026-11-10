@@ -15,7 +15,7 @@ import {
   SCOPE
 } from './oauth';
 
-export { checkAuthorization, consentRedirect } from './oauth';
+export { checkAuthorization, consentRedirect, LOOPBACK_HOSTS } from './oauth';
 
 const json = (status: number, body: unknown, headers: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), {

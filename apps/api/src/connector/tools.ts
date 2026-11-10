@@ -32,8 +32,9 @@ const PROJECT = z
   );
 const NUMBER = z.number().int().min(1).describe('The task number, as in "task 12".');
 
-const taskUrl = (context: ToolContext, number: number) =>
-  `${context.publicUrl.replace(/\/$/, '')}/tasks/${number}`;
+/** Task numbers are per project, so the link names the project the board must open. */
+const taskUrl = (context: ToolContext, project: MemberProject, number: number) =>
+  `${context.publicUrl.replace(/\/$/, '')}/tasks/${number}?project=${project.id}`;
 
 const viewerFor = (context: ToolContext, project: MemberProject): BoardViewer => ({
   memberId: context.memberId,
@@ -76,8 +77,8 @@ const ROLE_CAN: Record<MemberProject['role'], string> = {
   owner: 'everything, including the project settings'
 };
 
-const cardLine = (context: ToolContext, card: CardView) =>
-  `- Task ${card.number}: ${card.title}. Now: ${card.waitingOn.label}. ${taskUrl(context, card.number)}`;
+const cardLine = (context: ToolContext, project: MemberProject, card: CardView) =>
+  `- Task ${card.number}: ${card.title}. Now: ${card.waitingOn.label}. ${taskUrl(context, project, card.number)}`;
 
 const truncate = (text: string, max: number) =>
   text.length > max ? `${text.slice(0, max)}\n\n(cut here; the full text is on the board)` : text;
@@ -194,7 +195,7 @@ After it is opened, tell the person the task link and that an agent may ask them
         created.stage === 'request'
           ? 'An agent reads it now and may ask a few questions; they show up in whats_waiting_on_me and on the board.'
           : 'It waits for a maintainer to accept it; then an agent writes the plan.';
-      return `Opened task ${created.number} in ${project.name}: ${taskUrl(context, created.number)}\n${next}`;
+      return `Opened task ${created.number} in ${project.name}: ${taskUrl(context, project, created.number)}\n${next}`;
     }
   }),
   tool({
@@ -215,7 +216,7 @@ After it is opened, tell the person the task link and that an agent may ask them
         );
         if (mine.length)
           sections.push(
-            `${project.name}:\n${mine.map((card) => cardLine(context, card)).join('\n')}`
+            `${project.name}:\n${mine.map((card) => cardLine(context, project, card)).join('\n')}`
           );
       }
       return sections.length
@@ -236,7 +237,7 @@ After it is opened, tell the person the task link and that an agent may ask them
       if (!task) throw new ToolError(`There is no task ${input.number} in ${project.name}.`);
       const lines = [
         `Task ${task.number} in ${project.name}: ${task.title}`,
-        `Link: ${taskUrl(context, task.number)}`,
+        `Link: ${taskUrl(context, project, task.number)}`,
         `Requested by ${task.requester}. Now: ${task.waitingOn.label}${task.waitingOn.me ? ' (your turn)' : ''}.`
       ];
       if (task.pullRequestUrl) lines.push(`Pull request: ${task.pullRequestUrl}`);
@@ -282,7 +283,7 @@ After it is opened, tell the person the task link and that an agent may ask them
         number: input.number,
         action: { type: 'answer', text: input.answer }
       });
-      return `Answered; the work on task ${input.number} continues: ${taskUrl(context, input.number)}`;
+      return `Answered; the work on task ${input.number} continues: ${taskUrl(context, project, input.number)}`;
     }
   }),
   tool({
@@ -308,7 +309,7 @@ After it is opened, tell the person the task link and that an agent may ask them
         { kind: 'member', memberId: context.memberId },
         input.text
       );
-      return `Comment added to task ${input.number}: ${taskUrl(context, input.number)}`;
+      return `Comment added to task ${input.number}: ${taskUrl(context, project, input.number)}`;
     }
   }),
   tool({
@@ -351,7 +352,7 @@ Always call show_task first, show the person the plan or the list of what to che
           : result.satisfied === false
             ? 'Your approval is recorded; more approvals are still needed.'
             : 'Approved.';
-      return `${outcome} Task ${input.number}: ${taskUrl(context, input.number)}`;
+      return `${outcome} Task ${input.number}: ${taskUrl(context, project, input.number)}`;
     }
   })
 ] as const;
