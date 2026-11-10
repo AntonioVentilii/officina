@@ -25,7 +25,7 @@
   const lastEvent = (type: string) =>
     [...task.events].reverse().find((event) => event.type === type);
   const githubApproved = $derived(
-    lastEvent('github_approved')?.payload as { login: string; merge: string } | undefined
+    lastEvent('github_approved')?.payload as { login: string } | undefined
   );
   const githubFailed = $derived(
     lastEvent('github_approval_failed')?.payload as { login: string; error?: string } | undefined
@@ -33,7 +33,7 @@
   const gate = $derived(
     task.stage === 'spec_review' ? 'spec' : task.stage === 'verifying' ? 'result' : null
   );
-  const mergesToo = $derived(
+  const approvesOnGitHub = $derived(
     gate === 'result' && Boolean(session.me?.github) && Boolean(task.pullRequest)
   );
 
@@ -145,15 +145,13 @@
         <div class="kicker caps">{task.autoVerified ? 'Low-risk change' : 'Checked'}</div>
         {#if task.autoVerified}
           <div class="label">
-            Agents and GitHub's checks reviewed it; no person needs to check a change like this.
-            GitHub merges it once its rules are met.
+            Agents and GitHub's checks reviewed it; no person needs to check a change like this. It
+            waits for a person to merge it on GitHub.
           </div>
         {:else if githubApproved}
           <div class="label">
-            Approved on GitHub as @{githubApproved.login}.
-            {githubApproved.merge === 'merged'
-              ? 'Merged; the task closes itself.'
-              : 'Auto-merge is on: GitHub merges once checks pass and threads are resolved.'}
+            Approved on GitHub as @{githubApproved.login}. It waits for a person to merge it there;
+            the task closes itself.
           </div>
         {:else if githubFailed}
           <div class="label">
@@ -173,7 +171,7 @@
               <a class="inline" href="/auth/github/start?mode=link" data-sveltekit-reload
                 >Connect GitHub</a
               >
-              and your next verification approves and merges from here.
+              and your next verification approves the pull request on GitHub as you.
             </div>
           {/if}
         {/if}
@@ -252,8 +250,8 @@
           >
             <CircleCheck size={15} />{gate === 'spec'
               ? 'Approve plan'
-              : mergesToo
-                ? 'Looks good, merge it'
+              : approvesOnGitHub
+                ? 'Looks good, approve on GitHub'
                 : 'Looks good'}
           </button>
         {/if}
