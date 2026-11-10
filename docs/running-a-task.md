@@ -13,6 +13,8 @@ minutes, works once):
 scripts/officina login-link
 ```
 
+The first time someone signs in, the board shows a short guide: how to make a request, three examples to start from, what the yellow block means and how to add Officina to Claude. **Guide** in the sidebar opens it again.
+
 To bring someone in, give them a role and send them the link it prints (valid 7 days):
 
 ```bash
