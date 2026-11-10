@@ -14,7 +14,7 @@
   const shown = $derived(look ?? current.current);
 
   // The anvil is drawn once, in the favicon (the README shows it too), so the mark cannot drift.
-  const ANVIL = /<path d="([^"]+)"/.exec(favicon)?.[1];
+  const ANVIL = /<path\b[^>]*?\sd\s*=\s*(["'])(.+?)\1/.exec(favicon)?.[2];
   if (!ANVIL) throw new Error('static/favicon.svg has no anvil path');
 
   // One anvil for every look; only its colours change: yellow on ink, or ink on highlighter.
