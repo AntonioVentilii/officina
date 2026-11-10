@@ -50,7 +50,8 @@
     }
   ] as const;
 
-  const canRequest = $derived(session.project?.role !== 'watcher');
+  const project = $derived(session.project);
+  const canRequest = $derived(project !== null && project.role !== 'watcher');
   const connectorUrl = `${location.origin}/mcp`;
 
   const copy = async () => {
@@ -83,7 +84,9 @@
           </button>
         {/each}
       </div>
-      {#if !canRequest}
+      {#if !project}
+        <p class="faint">Ask an owner to add you to a project first.</p>
+      {:else if !canRequest}
         <p class="faint">You can read this project; ask an owner to let you open requests.</p>
       {/if}
     </section>
