@@ -110,10 +110,24 @@ describe.skipIf(!url)('api', () => {
     expect(await eventCount(taskId)).toBe(events);
   });
 
-  test('failed checks send a merging task back to building', async () => {
+  test('failed checks send a merging task back to building and stop auto-merge', async () => {
+    const calls: string[] = [];
+    const checking = createApp({
+      pool,
+      webhookSecret: SECRET,
+      github: {
+        fileContent: async () => null,
+        cancelAutoMerge: async () => {
+          calls.push('cancelAutoMerge');
+        }
+      }
+    });
+    await pool.query('update projects set github_installation_id = 99 where id = $1', [
+      seeded.projectId
+    ]);
     const taskId = await createTaskInMerging(pool, seeded);
     await linkPullRequest(pool, taskId, 42);
-    const response = await deliver(app, {
+    const response = await deliver(checking, {
       event: 'check_suite',
       delivery: 'd-2',
       payload: {
@@ -129,6 +143,7 @@ describe.skipIf(!url)('api', () => {
     expect(await response.json()).toEqual({ status: 'applied', outcomes: [{ taskId, ok: true }] });
     const stored = await loadTask(pool, taskId);
     expect(stored?.task).toMatchObject({ stage: 'building', fixRounds: 1 });
+    expect(calls).toEqual(['cancelAutoMerge']);
   });
 
   test('a Copilot review with comments sends the work back to the builder and stops auto-merge', async () => {

@@ -134,9 +134,10 @@ const PUBLIC_FIELDS: Readonly<Record<string, readonly string[]>> = {
   closed: ['stage', 'reason'],
   pull_request_closed: ['pullRequest'],
   spec_status_set: ['status'],
-  github_approved: ['login', 'merge'],
+  github_approved: ['login'],
   github_approval_failed: ['login'],
-  github_auto_merge: ['merge'],
+  awaiting_merge: ['pullRequest'],
+  merge_held: ['pullRequest'],
   checklist_posted: ['pullRequest']
 };
 
@@ -316,9 +317,7 @@ const waitingOn = (
     case 'choosing':
       return { kind: 'agent', label: 'Preparing what to check', me: false };
     case 'merging':
-      return row.autoVerified
-        ? { kind: 'github', label: 'Merging once GitHub checks pass', me: false }
-        : { kind: 'github', label: 'Merge on GitHub', me: hasRole(member, 'maintainer') };
+      return { kind: 'github', label: 'Merge on GitHub', me: hasRole(member, 'maintainer') };
     default:
       return { kind: 'nobody', label: row.stage, me: false };
   }

@@ -3,9 +3,12 @@
   import type { Snippet } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
+  import Guide from '$lib/components/Guide.svelte';
+  import NewRequest from '$lib/components/NewRequest.svelte';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import Toasts from '$lib/components/Toasts.svelte';
   import { board } from '$lib/state/board.svelte';
+  import { guide } from '$lib/state/guide.svelte';
   import { live } from '$lib/state/live.svelte';
   import { look } from '$lib/state/look.svelte';
   import { session } from '$lib/state/session.svelte';
@@ -65,6 +68,13 @@
     void goto(page.url.pathname, { replaceState: true, noScroll: true });
   });
 
+  // The welcome guide, the first time someone signs in here.
+  $effect(() => {
+    if (session.status === 'ready' && session.me) guide.showIfNew(session.me.member.id);
+  });
+
+  let draft = $state<{ title: string; request: string } | null>(null);
+
   $effect(() => {
     if (session.status !== 'ready' || !session.projectId) return;
     board.start(session.projectId);
@@ -96,6 +106,19 @@
   </div>
 {:else}
   <div class="state"><span class="loader" aria-label="Loading"></span></div>
+{/if}
+
+{#if session.status === 'ready' && guide.open}
+  <Guide
+    onclose={() => guide.close(session.me?.member.id)}
+    onexample={(example) => {
+      guide.close(session.me?.member.id);
+      draft = example;
+    }}
+  />
+{/if}
+{#if draft}
+  <NewRequest {draft} onclose={() => (draft = null)} />
 {/if}
 
 <Toasts />
