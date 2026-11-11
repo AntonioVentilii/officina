@@ -317,7 +317,7 @@ After it is opened, tell the person the task link and that an agent may ask them
     title: 'Approve or ask for changes',
     description: `Records the person's decision at one of the two moments people decide:
 - a plan to approve (before anything is built): "approve" sends it to be built;
-- a result to check (after it is built): "approve" is the "Looks good" button. Officina then approves the pull request on GitHub as them if they connected GitHub; a person still merges it.
+- a result to check (after it is built): "approve" is the "Looks good" button. Officina then approves the pull request on GitHub as them if they connected GitHub; depending on the project, a person merges it or GitHub does once its checks pass.
 "changes" sends it back to the agents with the note, which must say what is wrong or missing.
 
 Always call show_task first, show the person the plan or the list of what to check, and only approve when they say they read the plan or checked every item. Never approve on their behalf without that.`,
