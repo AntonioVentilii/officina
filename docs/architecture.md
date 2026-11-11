@@ -187,6 +187,10 @@ docs:
   entry: AGENTS.md # what every agent reads first
   spec_template: docs/specs/template.md
   spec_dir: docs/specs # the engine sets a spec's `Status:` line to In progress / Implemented
+  standards: docs/ai # the agent docs folder (the default); its pages default to DEFAULT_STANDARDS_PAGES
+  pages: [README.md, structure.md, reusability.md] # only when a project needs other pages, relative to the folder
+  catalogs: # a file added under the glob must be listed on the page, relative to the docs folder
+    'src/lib/components/**': reusability.md
 pull_request:
   title_pattern: '^(feat|fix|docs|chore)\([a-z-]+\): .+$' # the builder's PR title must match
 verify: ['npm ci', 'npm run lint', 'npm run check'] # run by the builder before pushing
@@ -217,6 +221,8 @@ lanes:
       spec_review: [{ requester: true }, { domain: product }]
       verifying: [{ requester: true }]
 ```
+
+**Agent docs.** Every project follows the universal code standard ([`standards/code.md`](https://github.com/AntonioVentilii/officina/blob/main/standards/code.md)) and holds its own agent docs: the `docs.entry` document plus the pages of `docs.standards`, read off the code (structure, patterns, the catalog of shared code, testing, pull request conventions). `requiredDocs` in `packages/core/src/config.ts` is the one list of what a project must hold: the entry, every page and every catalog page. Registering a project (`add-project`) checks each of them on the default branch through the GitHub App and reports the ones missing.
 
 ## 12. Data model
 

@@ -1,4 +1,4 @@
-import { parseProjectConfigYaml, type Role } from '@officina/core';
+import { parseProjectConfigYaml, requiredDocs, type Role } from '@officina/core';
 import {
   loadAgentVersions,
   saveAgentVersion,
@@ -59,7 +59,8 @@ export interface AddProjectInput {
 /**
  * Registers a repository as a project: finds the app installation and default branch, validates the
  * project config, records workspace, owner and project, and prepares the project's agent environment.
- * Nothing is written when the config is missing or invalid.
+ * Nothing is written when the config is missing or invalid. It also reports which of the agent docs
+ * the config requires are not on the default branch yet.
  */
 export const addProject = async (
   pool: Pool,
@@ -70,6 +71,8 @@ export const addProject = async (
   ownerId: string;
   environmentId: string;
   installationId: number;
+  /** Required agent docs (the entry document, `docs/ai` pages, catalog pages) the repository lacks. */
+  missingDocs: string[];
 }> => {
   const installationId = await deps.github.repoInstallationId(input.repo);
   const ref = { installationId, repo: input.repo };
@@ -82,6 +85,13 @@ export const addProject = async (
   }
   const parsed = parseProjectConfigYaml(configYaml);
   if (!parsed.ok) throw new SetupError(`invalid project config:\n${parsed.errors.join('\n')}`);
+
+  const missingDocs: string[] = [];
+  for (const path of requiredDocs(parsed.config)) {
+    if ((await deps.github.fileContent({ ...ref, path, branch: defaultBranch })) === null) {
+      missingDocs.push(path);
+    }
+  }
 
   const environment = await ensureEnvironment(deps.agents, {
     name: environmentNameFor(input.repo),
@@ -109,7 +119,7 @@ export const addProject = async (
     await setProjectRole(client, { projectId, memberId: ownerId, role });
     await setProjectEnvironment(client, projectId, environment.id);
     await client.query('commit');
-    return { projectId, ownerId, environmentId: environment.id, installationId };
+    return { projectId, ownerId, environmentId: environment.id, installationId, missingDocs };
   } catch (error) {
     await client.query('rollback');
     throw error;
