@@ -5,8 +5,11 @@ import {
   RUNNER_ROLES,
   buildDefinition,
   ensureEnvironment,
+  STANDARD_URL,
   loadDefinitions,
-  syncAgents
+  loadStandard,
+  syncAgents,
+  withStandard
 } from '../src';
 import { createFakePort } from './fake-port';
 
@@ -55,6 +58,23 @@ describe('agent definitions', () => {
     expect(definitions.every((definition) => definition.system.includes('submit_result'))).toBe(
       true
     );
+  });
+
+  test('every role carries the code standard after its own prompt', async () => {
+    const standard = await loadStandard();
+    expect(standard).toContain('One value, one place');
+    const definitions = await loadDefinitions(join(import.meta.dir, '..', '..', '..', 'agents'));
+    for (const definition of definitions) {
+      expect(definition.system.endsWith(standard.trim())).toBe(true);
+      expect(definition.system).toContain(STANDARD_URL);
+    }
+  });
+
+  test('a change to the standard is a new agent version', () => {
+    const before = buildDefinition('builder', withStandard('prompt', 'rule one'));
+    const after = buildDefinition('builder', withStandard('prompt', 'rule two'));
+    expect(after.hash).not.toBe(before.hash);
+    expect(withStandard('prompt\n', 'rules').startsWith('prompt\n\n---')).toBe(true);
   });
 });
 

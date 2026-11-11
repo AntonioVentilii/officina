@@ -8,7 +8,7 @@
 
 Anyone on the team describes what they need. Agents **interview, spec, build and review** it; the right people **approve, verify and merge**. Developers and non-developers share one board, one thread per task and one audit trail.
 
-[Architecture](./docs/architecture.md) · [Running a task](./docs/running-a-task.md) · [Deployment](./docs/deployment.md) · [AGENTS.md](./AGENTS.md) · [Security](./SECURITY.md)
+[Architecture](./docs/architecture.md) · [Code standard](./standards/code.md) · [Running a task](./docs/running-a-task.md) · [Deployment](./docs/deployment.md) · [AGENTS.md](./AGENTS.md) · [Security](./SECURITY.md)
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-3fb950.svg)](./LICENSE)
 [![CI](https://github.com/AntonioVentilii/officina/actions/workflows/ci.yml/badge.svg)](https://github.com/AntonioVentilii/officina/actions/workflows/ci.yml)
@@ -55,17 +55,17 @@ A maintainer can **claim the build** from the agent, before it starts or while i
 
 ## What makes it different
 
-|                                   |                                                                                                                                                                                                              |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 👥 **Collaborative first**        | One shared board, one thread per task, approvals by policy, an inbox of what is waiting on you. A single-user flow is just a team of one.                                                                    |
-| 🚦 **Mechanical risk lanes**      | Path globs in `.github/officina.yml` put every change in a lane (`green`, `standard`, `red`), recomputed from the **real diff** after every build round. The stricter lane wins; a model never decides risk. |
-| ✅ **People decide, agents do**   | The spec is always a human decision, and so is the result, unless a project explicitly lets low-risk changes through. Agents never merge and never approve their own work.                                   |
-| 🎯 **Checks, not diffs**          | The chooser turns a change into a short checklist for the right people: "open Battles, the label reads _On the line_". Text changes come with before/after tables in every locale.                           |
-| ⚙️ **Deterministic engine**       | Scheduling, state transitions, leases, budgets, retries and recovery are plain code. Models run only inside stage agents and return typed contracts the engine validates.                                    |
-| 🔐 **No keys to steal**           | Production holds no Anthropic API key: the Fly machine proves its identity with OIDC and gets a short-lived token. GitHub tokens are scoped to one repository and the permissions a role needs.              |
-| 🐙 **GitHub stays the authority** | Officina opens branches and pull requests through its GitHub App and respects your CI and branch rules. Reviews left on GitHub flow back to the builder; approvals can be submitted as the verifier.         |
-| 🧪 **It learns from every merge** | After each task the learner looks at what slowed it down and proposes an exact edit to the project docs or an agent prompt. People accept it, and it lands as a pull request.                                |
-| 💸 **Budgets per lane**           | Each lane caps work in progress, diff size and spend per step. Every task shows what its runs cost.                                                                                                          |
+|                                   |                                                                                                                                                                                                                                                 |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 👥 **Collaborative first**        | One shared board, one thread per task, approvals by policy, an inbox of what is waiting on you. A single-user flow is just a team of one.                                                                                                       |
+| 🚦 **Mechanical risk lanes**      | Path globs in `.github/officina.yml` put every change in a lane (`green`, `standard`, `red`), recomputed from the **real diff** after every build round. The stricter lane wins; a model never decides risk.                                    |
+| ✅ **People decide, agents do**   | The spec is always a human decision, and so is the result, unless a project explicitly lets low-risk changes through. Agents never merge and never approve their own work, and no pull request merges by itself: a person always presses merge. |
+| 🎯 **Checks, not diffs**          | The chooser turns a change into a short checklist for the right people: "open Battles, the label reads _On the line_". Text changes come with before/after tables in every locale.                                                              |
+| ⚙️ **Deterministic engine**       | Scheduling, state transitions, leases, budgets, retries and recovery are plain code. Models run only inside stage agents and return typed contracts the engine validates.                                                                       |
+| 🔐 **No keys to steal**           | Production holds no Anthropic API key: the Fly machine proves its identity with OIDC and gets a short-lived token. GitHub tokens are scoped to one repository and the permissions a role needs.                                                 |
+| 🐙 **GitHub stays the authority** | Officina opens branches and pull requests through its GitHub App and respects your CI and branch rules. Reviews left on GitHub flow back to the builder; approvals can be submitted as the verifier.                                            |
+| 🧪 **It learns from every merge** | After each task the learner looks at what slowed it down and proposes an exact edit to the project docs or an agent prompt. People accept it, and it lands as a pull request.                                                                   |
+| 💸 **Budgets per lane**           | Each lane caps work in progress, diff size and spend per step. Every task shows what its runs cost.                                                                                                                                             |
 
 ---
 
@@ -77,7 +77,7 @@ A maintainer can **claim the build** from the agent, before it starts or while i
   <img src="./docs/assets/task-check.png" alt="A task in Check: the chooser's checklist for the requester and a maintainer, with a before and after table of the changed strings in en, it and de" width="880" />
 </div>
 
-The chooser decided this text change needs the requester and one maintainer, at a glance. They tick the checklist and press **Looks good**; the engine approves the pull request as them and turns on auto-merge.
+The chooser decided this text change needs the requester and one maintainer, at a glance. They tick the checklist and press **Looks good**; the engine approves the pull request on GitHub as them, and a person merges it there. Nothing merges by itself.
 
 ### Approve the plan before anything is built
 
