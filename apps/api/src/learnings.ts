@@ -1,4 +1,4 @@
-import { hasRole, type Role } from '@officina/core';
+import { editsProject, hasRole, type Role } from '@officina/core';
 import { decideLearning, loadLearning, type LearningRow } from '@officina/db';
 import type { GitHubClient } from '@officina/github';
 import type { Pool } from 'pg';
@@ -33,13 +33,15 @@ export const applyEdit = (
   return { ok: true, text: current.replace(learning.find, learning.text) };
 };
 
+/** Agent docs learnings say so in their scope, so they read as changes to `docs/ai` in the history. */
 const titleFor = (learning: LearningRow) => {
   const summary = learning.title.charAt(0).toLowerCase() + learning.title.slice(1);
-  return `docs(learning): ${summary}`.slice(0, 120);
+  const scope = learning.target === 'docs' ? 'ai' : 'learning';
+  return `docs(${scope}): ${summary}`.slice(0, 120);
 };
 
 /**
- * Accepting a project learning opens a pull request with exactly the edit people saw; an agent
+ * Accepting a learning for the project's docs or agent docs opens a pull request with exactly the edit people saw; an agent
  * learning is recorded for Officina's maintainers, whose repository Officina does not write to.
  * Either way people merge, never Officina.
  */
@@ -57,7 +59,7 @@ export const decide = async (
     throw new TaskCommandError('this learning was already decided');
 
   let pr: { number: number; url: string } | undefined;
-  if (input.decision === 'accept' && learning.target === 'project') {
+  if (input.decision === 'accept' && editsProject(learning.target)) {
     if (!github) throw new TaskCommandError('the GitHub App is not configured');
     const { rows } = await pool.query<{
       github_repo: string;

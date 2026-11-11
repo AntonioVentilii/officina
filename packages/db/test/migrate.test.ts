@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { Client } from 'pg';
-import { LANES, ROLES, STAGES } from '@officina/core';
+import { LANES, LEARNING_TARGETS, ROLES, STAGES } from '@officina/core';
 import { migrate } from '../src';
 
 const url = process.env.TEST_DATABASE_URL;
@@ -27,7 +27,8 @@ describe.skipIf(!url)('migrations', () => {
       '0005_board.sql',
       '0006_approval_plans.sql',
       '0007_learnings.sql',
-      '0008_github_accounts.sql'
+      '0008_github_accounts.sql',
+      '0010_learning_docs.sql'
     ]);
     expect(await migrate(client)).toEqual([]);
   });
@@ -45,6 +46,9 @@ describe.skipIf(!url)('migrations', () => {
     expect(quoted(await definition('tasks_stage_check'))).toEqual([...STAGES].sort());
     expect(quoted(await definition('tasks_lane_check'))).toEqual([...LANES].sort());
     expect(quoted(await definition('project_roles_role_check'))).toEqual([...ROLES].sort());
+    expect(quoted(await definition('learnings_target_check'))).toEqual(
+      [...LEARNING_TARGETS].sort()
+    );
   });
 
   test('task events are append-only', async () => {
