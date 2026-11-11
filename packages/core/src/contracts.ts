@@ -100,6 +100,17 @@ export const chooserOutputSchema = z.strictObject({
 });
 
 /**
+ * Where a learning's edit goes: the project's agent docs (its entry document and the pages of its
+ * `docs.standards` folder), another Markdown doc of the project, or an Officina role prompt
+ * (`agents/<role>.md`).
+ */
+export const LEARNING_TARGETS = ['docs', 'project', 'agent'] as const;
+export type LearningTarget = (typeof LEARNING_TARGETS)[number];
+
+/** Edits to the project land in its repository as a pull request; agent edits stay with Officina. */
+export const editsProject = (target: LearningTarget): boolean => target !== 'agent';
+
+/**
  * A learning is a lesson from one finished task plus the exact edit that would make it stick: an
  * addition to the project's docs, or to an Officina agent prompt. People accept or reject it.
  */
@@ -111,7 +122,7 @@ export const learnerOutputSchema = z.strictObject({
         lesson: text.max(1500),
         /** What in this task's history shows it: rounds, questions, overrides, time, cost. */
         evidence: text.max(2000),
-        target: z.enum(['project', 'agent']),
+        target: z.enum(LEARNING_TARGETS),
         edit: z.strictObject({
           file: text.max(300),
           /** Exact text to replace, found once in the file; without it the text is appended. */

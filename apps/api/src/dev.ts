@@ -440,7 +440,7 @@ const seedDemo = async (pool: Pool) => {
           'Anything that shows a date must use the shared locale formatter; hand-built strings keep the US format.',
         evidence:
           'The code reviewer sent the first build back: two components built dates by hand and kept the US format.',
-        target: 'project',
+        target: 'docs',
         edit: {
           file: 'AGENTS.md',
           find: '## Conventions\n',
