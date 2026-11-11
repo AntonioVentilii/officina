@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
+import type { LearningTarget } from '@officina/core';
 import { insertLearnings, listLearnings } from '@officina/db';
 import { Pool } from 'pg';
 import { createTaskInMerging, resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
@@ -69,7 +70,7 @@ describe.skipIf(!url)('learning decisions', () => {
     return { port, calls };
   };
 
-  const propose = async (target: 'project' | 'agent') => {
+  const propose = async (target: LearningTarget) => {
     const taskId = await createTaskInMerging(pool, seeded);
     const run = await pool.query<{ id: string }>(
       `insert into runs (task_id, stage, runner, agent_role, agent_version, status)
@@ -87,9 +88,9 @@ describe.skipIf(!url)('learning decisions', () => {
           evidence: 'Italian was missing in round one.',
           target,
           edit:
-            target === 'project'
+            target !== 'agent'
               ? {
-                  file: 'AGENTS.md',
+                  file: target === 'docs' ? 'AGENTS.md' : 'docs/copy.md',
                   find: '## Copy\n',
                   text: '## Copy\n\nUpdate every live locale.\n'
                 }
@@ -107,8 +108,8 @@ describe.skipIf(!url)('learning decisions', () => {
     publicUrl: 'https://o.example'
   });
 
-  test('accepting a project learning opens a pull request with exactly the proposed edit', async () => {
-    const learning = await propose('project');
+  test('accepting an agent docs learning opens a pull request with exactly the proposed edit', async () => {
+    const learning = await propose('docs');
     const github = fakeGitHub();
     const decided = await decide(pool, github.port, owner(), {
       id: learning.id,
@@ -128,7 +129,7 @@ describe.skipIf(!url)('learning decisions', () => {
       branch,
       sha: 'blob1',
       text: '# Agents\n\n## Copy\n\nUpdate every live locale.\n',
-      message: 'docs(learning): update every live locale'
+      message: 'docs(ai): update every live locale'
     });
     const body = String(github.calls[3]!.args.body);
     expect(body).toContain('[Officina task 1](https://o.example/tasks/1)');
@@ -144,6 +145,16 @@ describe.skipIf(!url)('learning decisions', () => {
       prNumber: 77
     });
     expect((await listLearnings(pool, seeded.projectId))[0]!.status).toBe('applied');
+  });
+
+  test('a learning for another project doc lands as a learning pull request', async () => {
+    const learning = await propose('project');
+    const github = fakeGitHub();
+    await decide(pool, github.port, owner(), { id: learning.id, decision: 'accept' });
+    expect(github.calls[2]!.args).toMatchObject({
+      path: 'docs/copy.md',
+      message: 'docs(learning): update every live locale'
+    });
   });
 
   test('agent learnings are recorded without touching the repository; contributors cannot decide', async () => {
