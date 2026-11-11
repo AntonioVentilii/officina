@@ -95,6 +95,13 @@
     background: none;
   }
 
+  /* A square ruled inside a square, like the frame a page of docs sits in. */
+  .frame {
+    border: calc(var(--s) * 0.16) solid currentColor;
+    background: currentColor content-box;
+    padding: calc(var(--s) * 0.14);
+  }
+
   /* A role this board does not know yet still shows, as an outline. */
   .unknown {
     border: 2px solid currentColor;

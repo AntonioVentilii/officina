@@ -48,9 +48,13 @@
       case 'review_recorded':
         return p.verdict === 'approve' ? 'approved the change' : 'asked for changes';
       case 'guardrail_tripped':
-        return `stopped it: ${p.details ?? String(p.guardrail).replaceAll('_', ' ')}`;
+        return p.guardrail === 'unlisted_files'
+          ? 'sent it back: new files its catalog does not list'
+          : `stopped it: ${p.details ?? String(p.guardrail).replaceAll('_', ' ')}`;
       case 'ci_failed':
         return 'reported failing checks';
+      case 'pull_request_closed':
+        return `found pull request #${p.pullRequest} closed without a merge`;
       case 'blocked':
         return 'asked a question';
       case 'unblocked':
@@ -64,9 +68,11 @@
       case 'spec_status_set':
         return `set the spec status to ${p.status}`;
       case 'github_approved':
-        return p.merge === 'merged'
-          ? `approved and merged the pull request on GitHub as @${p.login}`
-          : `approved the pull request on GitHub as @${p.login} and turned on auto-merge`;
+        return `approved the pull request on GitHub as @${p.login}`;
+      case 'awaiting_merge':
+        return `left pull request #${p.pullRequest} for a person to merge on GitHub`;
+      case 'merge_held':
+        return `found commits nobody verified on pull request #${p.pullRequest}: do not merge it until they are reviewed`;
       case 'github_approval_failed':
         return p.error
           ? `could not approve on GitHub as @${p.login}: ${p.error}`

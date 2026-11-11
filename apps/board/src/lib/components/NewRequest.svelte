@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { goto } from '$app/navigation';
   import { post } from '$lib/api';
   import { board } from '$lib/state/board.svelte';
@@ -8,12 +9,15 @@
 
   interface Props {
     onclose: () => void;
+    /** A starting point, such as one of the guide's examples, for the person to fill in. */
+    draft?: { readonly title: string; readonly request: string };
   }
 
-  let { onclose }: Props = $props();
+  let { onclose, draft }: Props = $props();
 
-  let title = $state('');
-  let request = $state('');
+  // Copied once: the person edits it from here, and a later draft opens a new form.
+  let title = $state(untrack(() => draft?.title ?? ''));
+  let request = $state(untrack(() => draft?.request ?? ''));
   let busy = $state(false);
   let interview = $state(true);
 

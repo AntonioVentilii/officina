@@ -27,6 +27,11 @@
       role: 'chooser',
       label: 'Approval chooser',
       does: 'Decides who approves and how closely; can only raise the bar'
+    },
+    {
+      role: 'onboarder',
+      label: 'Onboarder',
+      does: "Writes a new project's agent docs before anything else is built"
     }
   ];
 

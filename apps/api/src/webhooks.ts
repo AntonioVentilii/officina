@@ -5,6 +5,7 @@ import {
   findProjectsByRepo,
   findTasksByPullRequest,
   markLearningsApplied,
+  unlinkPullRequest,
   updateProjectConfig
 } from '@officina/db';
 import type { GitHubClient, WebhookAction } from '@officina/github';
@@ -111,6 +112,39 @@ const reviewedHead = async (pool: Pool, taskId: string, commitId: string): Promi
   return row?.head_sha ?? commitId;
 };
 
+/**
+ * Turns auto-merge off when a task just left `merging`, whatever moved it (a review, failing
+ * checks): Officina never turns it on, but a person may have on GitHub, and the work must be
+ * checked again before anything lands. A failure is left to `cancelStaleAutoMerges`, which retries
+ * while the task's trail records auto-merge as on.
+ */
+const stopAutoMerge = async (
+  pool: Pool,
+  github: ConfigReader | undefined,
+  input: { taskId: string; installationId: number; repo: string; prNumber: number },
+  result: Awaited<ReturnType<typeof applyCommand>>
+) => {
+  const leftMerging =
+    result.ok &&
+    result.events.some((event) => event.type === 'stage_changed' && event.from === 'merging');
+  if (!leftMerging || !github?.cancelAutoMerge) return;
+  try {
+    await github.cancelAutoMerge({
+      installationId: input.installationId,
+      repo: input.repo,
+      pullRequest: input.prNumber
+    });
+    await appendTaskEvent(pool, {
+      taskId: input.taskId,
+      actor: ENGINE,
+      type: 'github_auto_merge_cancelled',
+      payload: { pullRequest: input.prNumber }
+    });
+  } catch {
+    // Left to `cancelStaleAutoMerges`.
+  }
+};
+
 const handleReview = async (
   pool: Pool,
   github: ConfigReader | undefined,
@@ -139,28 +173,41 @@ const handleReview = async (
       actor: ENGINE
     });
     outcomes.push(result.ok ? { taskId, ok: true } : { taskId, ok: false, error: result.error });
-    const leftMerging =
-      result.ok &&
-      result.events.some((event) => event.type === 'stage_changed' && event.from === 'merging');
-    // Auto-merge may already be on; the fix must be reviewed again before anything lands. A
-    // failure here is retried by the scheduler until GitHub confirms it is off.
-    if (leftMerging && github.cancelAutoMerge) {
-      try {
-        await github.cancelAutoMerge({
-          installationId: project.installationId,
-          repo: action.repo,
-          pullRequest: action.prNumber
-        });
-        await appendTaskEvent(pool, {
-          taskId,
-          actor: ENGINE,
-          type: 'github_auto_merge_cancelled',
-          payload: { pullRequest: action.prNumber }
-        });
-      } catch {
-        // Left to `cancelStaleAutoMerges`.
-      }
-    }
+    await stopAutoMerge(
+      pool,
+      github,
+      {
+        taskId,
+        installationId: project.installationId,
+        repo: action.repo,
+        prNumber: action.prNumber
+      },
+      result
+    );
+  }
+  return outcomes;
+};
+
+/**
+ * A pull request closed without merging sends its tasks back to the start of the build, held for
+ * a maintainer, and forgets the pull request so a rebuild opens a new one. Nothing on GitHub tells
+ * Officina otherwise, so without this an onboarding task would hold its project forever.
+ */
+const handleClosed = async (
+  pool: Pool,
+  action: Extract<WebhookAction, { kind: 'pull_request_closed' }>
+): Promise<WebhookOutcome[]> => {
+  const outcomes: WebhookOutcome[] = [];
+  for (const taskId of await findTasksByPullRequest(pool, action.repo, action.prNumber)) {
+    // The link is cleared in the same transaction as the move, so a crash between the two can
+    // never leave a rebuilt task pointing at the closed pull request.
+    const result = await applyCommand(pool, {
+      taskId,
+      command: { type: 'pull_request_closed', pullRequest: action.prNumber },
+      actor: ENGINE,
+      onApplied: (client) => unlinkPullRequest(client, taskId)
+    });
+    outcomes.push(result.ok ? { taskId, ok: true } : { taskId, ok: false, error: result.error });
   }
   return outcomes;
 };
@@ -176,6 +223,7 @@ export const handleWebhookAction = async (
 ): Promise<WebhookOutcome[]> => {
   if (action.kind === 'push') return refreshConfigs(pool, github, action);
   if (action.kind === 'pull_request_reviewed') return handleReview(pool, github, action);
+  if (action.kind === 'pull_request_closed') return handleClosed(pool, action);
 
   const targets: { prNumber: number; command: Command }[] =
     action.kind === 'pull_request_merged'
@@ -186,6 +234,9 @@ export const handleWebhookAction = async (
         }));
 
   const outcomes: WebhookOutcome[] = [];
+  const installationId = (await findProjectsByRepo(pool, action.repo)).find(
+    (candidate) => candidate.installationId !== null
+  )?.installationId;
   // A merged learning pull request is not a task; it marks its learning applied.
   if (action.kind === 'pull_request_merged')
     await markLearningsApplied(pool, action.repo, action.prNumber);
@@ -193,6 +244,13 @@ export const handleWebhookAction = async (
     for (const taskId of await findTasksByPullRequest(pool, action.repo, prNumber)) {
       const result = await applyCommand(pool, { taskId, command, actor: ENGINE });
       outcomes.push(result.ok ? { taskId, ok: true } : { taskId, ok: false, error: result.error });
+      if (installationId)
+        await stopAutoMerge(
+          pool,
+          github,
+          { taskId, installationId, repo: action.repo, prNumber },
+          result
+        );
     }
   }
   return outcomes;

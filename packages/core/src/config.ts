@@ -5,6 +5,35 @@ import { compileLaneMatcher, type Lane, type LaneMatcher } from './lanes';
 export const BOARD_LOOKS = ['modernista', 'tecnica'] as const;
 export type BoardLook = (typeof BOARD_LOOKS)[number];
 
+/** Where a project keeps the agent docs the code standard asks for, unless its config says otherwise. */
+export const DEFAULT_STANDARDS_DIR = 'docs/ai';
+
+/**
+ * The pages the agent docs folder holds unless a project lists its own: an index, the governance
+ * and meta-update map, the folder taxonomy, the patterns in use, the catalog of shared code, how
+ * tests are written, and the pull request conventions.
+ */
+export const DEFAULT_STANDARDS_PAGES = [
+  'README.md',
+  'governance.md',
+  'structure.md',
+  'patterns.md',
+  'reusability.md',
+  'testing.md',
+  'pr-and-ci.md'
+] as const;
+
+/** A path inside the repository: relative, without `..`, so it cannot point outside it. */
+const repoPath = z
+  .string()
+  .min(1)
+  .refine(
+    (path) => !path.startsWith('/') && !path.split('/').includes('..'),
+    'must be a relative path inside the repository'
+  );
+
+const markdownPage = repoPath.refine((path) => path.endsWith('.md'), 'must be a Markdown page');
+
 const requirementSchema = z.union([
   z.strictObject({ role: z.enum(['maintainer', 'owner']) }),
   z.strictObject({ domain: z.string().min(1), when: z.literal('user_visible').optional() }),
@@ -32,10 +61,20 @@ const projectConfigSchema = z
   .strictObject({
     version: z.literal(1),
     docs: z.strictObject({
-      entry: z.string().min(1),
+      /** What every agent reads first. A path from the repository root, like every other doc. */
+      entry: markdownPage,
       spec_template: z.string().min(1).optional(),
       spec_dir: z.string().min(1).optional(),
-      pr_template: z.string().min(1).optional()
+      pr_template: z.string().min(1).optional(),
+      /** The folder of agent docs every project must hold; `docs/ai` unless set. */
+      standards: repoPath.optional(),
+      /** The pages that folder must hold, relative to it. Left out, the default set. */
+      pages: z.array(markdownPage).min(1).optional(),
+      /**
+       * Path glob of new files to the catalog page, relative to the docs folder, that must list them:
+       * a file added under the glob without the page changing is a finding the builder must address.
+       */
+      catalogs: z.record(z.string().min(1), markdownPage).optional()
     }),
     setup: z.array(z.string().min(1)).optional(),
     intake: z
@@ -108,12 +147,26 @@ export interface LaneSettings {
   readonly approvals: Readonly<Record<Gate, Policy>>;
 }
 
+/** New files under `pattern` must be listed on `page`, a path from the repository root. */
+export interface Catalog {
+  readonly pattern: string;
+  readonly page: string;
+}
+
+export interface StandardsDocs {
+  readonly dir: string;
+  /** Every page the folder must hold, as paths from the repository root. */
+  readonly pages: readonly string[];
+  readonly catalogs: readonly Catalog[];
+}
+
 export interface ProjectConfig {
   readonly docs: {
     readonly entry: string;
     readonly specTemplate: string | null;
     readonly specDir: string | null;
     readonly prTemplate: string | null;
+    readonly standards: StandardsDocs;
   };
   readonly setup: readonly string[];
   readonly intake: { readonly interview: boolean };
@@ -174,6 +227,44 @@ const normalizeLane = (lane: Lane, raw: RawLane | undefined): LaneSettings => {
   };
 };
 
+type RawDocs = z.infer<typeof projectConfigSchema>['docs'];
+
+const normalizeStandards = (raw: RawDocs): StandardsDocs => {
+  const dir = (raw.standards ?? DEFAULT_STANDARDS_DIR).replace(/\/+$/, '');
+  const inDir = (page: string) => `${dir}/${page}`;
+  return {
+    dir,
+    pages: (raw.pages ?? DEFAULT_STANDARDS_PAGES).map(inDir),
+    catalogs: Object.entries(raw.catalogs ?? {}).map(([pattern, page]) => ({
+      pattern,
+      page: inDir(page)
+    }))
+  };
+};
+
+/** Tool layers the onboarder turns into thin pointers to the entry document. */
+export const TOOL_LAYER_DOCS = ['CLAUDE.md'] as const;
+
+/** Whether a path is a page agents learn from: the entry document or a file in the docs folder. */
+export const isStandardsPage = (config: Pick<ProjectConfig, 'docs'>, path: string): boolean =>
+  path === config.docs.entry || path.startsWith(`${config.docs.standards.dir}/`);
+
+/** Whether a path is part of the agent docs: the entry document, a tool layer or the docs folder. */
+export const isAgentDocsPath = (config: Pick<ProjectConfig, 'docs'>, path: string): boolean =>
+  isStandardsPage(config, path) || (TOOL_LAYER_DOCS as readonly string[]).includes(path);
+
+/**
+ * Every file a project must hold before agents build in it: the entry document, the agent docs
+ * pages and every catalog page, each once.
+ */
+export const requiredDocs = (config: Pick<ProjectConfig, 'docs'>): string[] => [
+  ...new Set([
+    config.docs.entry,
+    ...config.docs.standards.pages,
+    ...config.docs.standards.catalogs.map((catalog) => catalog.page)
+  ])
+];
+
 export type ConfigResult =
   | { readonly ok: true; readonly config: ProjectConfig }
   | { readonly ok: false; readonly errors: readonly string[] };
@@ -198,7 +289,8 @@ export const parseProjectConfig = (input: unknown): ConfigResult => {
         entry: raw.docs.entry,
         specTemplate: raw.docs.spec_template ?? null,
         specDir: raw.docs.spec_dir ?? null,
-        prTemplate: raw.docs.pr_template ?? null
+        prTemplate: raw.docs.pr_template ?? null,
+        standards: normalizeStandards(raw.docs)
       },
       setup: raw.setup ?? [],
       intake: { interview: raw.intake?.interview ?? true },

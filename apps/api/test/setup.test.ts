@@ -3,15 +3,18 @@ import { join } from 'node:path';
 import { loadAgentVersions, migrate } from '@officina/db';
 import { Pool } from 'pg';
 import { CONFIG_YAML } from '../../../packages/core/test/fixtures';
+import { RUNNER_ROLES } from '@officina/runner';
 import { createFakePort } from '../../../packages/runner/test/fake-port';
 import { SetupError, addProject, environmentNameFor, setupAgents, type SetupGitHub } from '../src';
 
 const url = process.env.TEST_DATABASE_URL;
 
-const fakeGitHub = (config: string | null): SetupGitHub => ({
+/** Serves the config at its path and every other file unless it is listed as missing. */
+const fakeGitHub = (config: string | null, missing: readonly string[] = []): SetupGitHub => ({
   repoInstallationId: async () => 99,
   defaultBranch: async () => 'main',
-  fileContent: async () => config
+  fileContent: async ({ path }) =>
+    path === '.github/officina.yml' ? config : missing.includes(path) ? null : '# page'
 });
 
 const input = {
@@ -41,7 +44,12 @@ describe.skipIf(!url)('setup', () => {
     const agents = createFakePort(() => []);
     const yaml = `${CONFIG_YAML}\nruntime:\n  allowed_hosts: ['registry.example.com']\n`;
     const first = await addProject(pool, { github: fakeGitHub(yaml), agents }, input);
-    expect(first).toMatchObject({ installationId: 99, environmentId: 'env_1' });
+    expect(first).toMatchObject({
+      installationId: 99,
+      environmentId: 'env_1',
+      missingDocs: [],
+      onboardingTask: null
+    });
 
     const project = await pool.query(
       `select github_repo, github_installation_id::int as installation, default_branch, agent_environment_id,
@@ -71,6 +79,33 @@ describe.skipIf(!url)('setup', () => {
     expect((await pool.query('select 1 from members')).rowCount).toBe(1);
   });
 
+  test('reports the required agent docs the repository does not hold yet', async () => {
+    const agents = createFakePort(() => []);
+    const missing = ['AGENTS.md', 'docs/ai/reusability.md', 'docs/ai/testing.md'];
+    const result = await addProject(
+      pool,
+      { github: fakeGitHub(CONFIG_YAML, [...missing, 'docs/ai/unrelated.md']), agents },
+      input
+    );
+    expect(result.missingDocs).toEqual(missing);
+    expect(result.onboardingTask).toBe(1);
+    const tasks = await pool.query('select kind, stage from tasks');
+    expect(tasks.rows).toEqual([{ kind: 'onboarding', stage: 'spec_review' }]);
+
+    const again = await addProject(
+      pool,
+      { github: fakeGitHub(CONFIG_YAML, missing), agents },
+      input
+    );
+    expect(again.onboardingTask).toBe(1);
+    expect((await pool.query('select 1 from tasks')).rowCount).toBe(1);
+
+    // People wrote the pages themselves: registering again closes the task that would have.
+    const complete = await addProject(pool, { github: fakeGitHub(CONFIG_YAML), agents }, input);
+    expect(complete).toMatchObject({ missingDocs: [], onboardingTask: null });
+    expect((await pool.query('select stage from tasks')).rows).toEqual([{ stage: 'cancelled' }]);
+  });
+
   test('a missing or invalid config writes nothing', async () => {
     const agents = createFakePort(() => []);
     await expect(addProject(pool, { github: fakeGitHub(null), agents }, input)).rejects.toThrow(
@@ -97,9 +132,9 @@ describe.skipIf(!url)('setup', () => {
     const agents = createFakePort(() => []);
     const promptsDir = join(import.meta.dir, '..', '..', '..', 'agents');
     expect((await setupAgents(pool, agents, promptsDir, 'claude-opus-5-5')).changed).toHaveLength(
-      7
+      RUNNER_ROLES.length
     );
-    expect(await loadAgentVersions(pool)).toHaveLength(7);
+    expect(await loadAgentVersions(pool)).toHaveLength(RUNNER_ROLES.length);
     expect((await setupAgents(pool, agents, promptsDir, 'claude-opus-5-5')).changed).toEqual([]);
   });
 });
