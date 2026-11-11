@@ -97,11 +97,11 @@ To stop a task at any time: `scripts/officina task cancel --number 1 --reason "W
   through review. Officina resolves those threads once the fix is verified.
 - **Low-risk changes.** In a green lane with `auto_verify: true`, a result that the chooser only asks
   to glance at skips the verification step, unless merging deploys to production
-  (`release.on_merge: production`, the default). The spec is always approved by a person, and a
-  person always merges.
-- **Nothing merges by itself.** Officina approves the pull request as the verifier when they have
-  GitHub connected, then shows it as waiting for a person to merge. It never merges and never turns
-  on auto-merge.
+  (`release.on_merge: production`, the default). The spec is always approved by a person.
+- **Who merges.** By default a person: Officina approves the pull request as the verifier when they
+  have GitHub connected, then shows it as waiting for a person to merge. A project that sets
+  `pull_request.auto_merge: true` lets the chooser decide, result by result, that GitHub may merge
+  it once its checks pass; the task's plan says which it chose.
 
 ## When something goes wrong
 

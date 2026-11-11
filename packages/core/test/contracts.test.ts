@@ -108,7 +108,13 @@ describe('agent output contracts', () => {
     if (!chosen.ok) throw new Error(chosen.errors.join());
     expect(chosen.output).toEqual({
       userVisible: false,
-      approval: { depth: 'glance', rationale: 'Copy only.', extraApprovals: [], verifiers: [] },
+      approval: {
+        depth: 'glance',
+        rationale: 'Copy only.',
+        extraApprovals: [],
+        verifiers: [],
+        merge: 'person'
+      },
       checklist: [],
       beforeAfter: []
     });
@@ -135,7 +141,8 @@ describe('agent output contracts', () => {
           depth: 'test',
           rationale: 'Changes terms.',
           extra: [{ requirement: { domain: 'legal' }, reason: 'Terms text.' }],
-          verifiers: []
+          verifiers: [],
+          merge: 'person'
         }
       }
     });

@@ -38,6 +38,10 @@ describe.skipIf(!url)('approving on GitHub for the verifier', () => {
           calls.push({ method: 'approve', args });
           if (options.fail) throw new Error('Review cannot be requested from the author');
           return {};
+        },
+        mergeWhenReady: async (...args) => {
+          calls.push({ method: 'mergeWhenReady', args });
+          return 'auto_merge' as const;
         }
       }
     };
