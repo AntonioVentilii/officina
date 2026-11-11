@@ -170,7 +170,7 @@ export interface Learning {
   readonly title: string;
   readonly lesson: string;
   readonly evidence: string;
-  readonly target: 'project' | 'agent';
+  readonly target: 'docs' | 'project' | 'agent';
   readonly file: string;
   readonly find: string | null;
   readonly text: string;

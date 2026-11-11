@@ -1,5 +1,6 @@
 <script lang="ts">
   import {
+    BookOpen,
     Bot,
     GitMerge,
     GraduationCap,
@@ -12,6 +13,7 @@
   } from '@lucide/svelte';
   import { page } from '$app/state';
   import { board } from '$lib/state/board.svelte';
+  import { guide } from '$lib/state/guide.svelte';
   import { live } from '$lib/state/live.svelte';
   import { LOOKS, look } from '$lib/state/look.svelte';
   import { session } from '$lib/state/session.svelte';
@@ -80,6 +82,9 @@
         </a>
       </li>
     {/if}
+    <li>
+      <button onclick={() => (guide.open = true)}><BookOpen size={16} />Guide</button>
+    </li>
   </ul>
 
   <div class="bottom">
@@ -197,7 +202,8 @@
     list-style: none;
   }
 
-  .nav a {
+  .nav a,
+  .nav button {
     display: flex;
     align-items: center;
     gap: 12px;
@@ -208,7 +214,20 @@
     font-weight: 500;
   }
 
-  .nav a:hover {
+  .nav button {
+    width: 100%;
+    border-top: 0;
+    border-right: 0;
+    border-bottom: 0;
+    background: none;
+    font: inherit;
+    font-size: 15px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+
+  .nav a:hover,
+  .nav button:hover {
     color: var(--nav-text);
   }
 
@@ -492,7 +511,8 @@
       justify-content: space-around;
     }
 
-    .nav a {
+    .nav a,
+    .nav button {
       position: relative;
       flex-direction: column;
       gap: 2px;
