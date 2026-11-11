@@ -134,7 +134,10 @@ const PUBLIC_FIELDS: Readonly<Record<string, readonly string[]>> = {
   closed: ['stage', 'reason'],
   pull_request_closed: ['pullRequest'],
   spec_status_set: ['status'],
-  github_approved: ['login'],
+  github_approved: ['login', 'merge'],
+  github_auto_merge: ['merge'],
+  github_auto_merge_failed: [],
+  github_auto_merge_cancelled: [],
   github_approval_failed: ['login'],
   awaiting_merge: ['pullRequest'],
   merge_held: ['pullRequest'],
@@ -317,7 +320,9 @@ const waitingOn = (
     case 'choosing':
       return { kind: 'agent', label: 'Preparing what to check', me: false };
     case 'merging':
-      return { kind: 'github', label: 'Merge on GitHub', me: hasRole(member, 'maintainer') };
+      return row.autoMergeOn
+        ? { kind: 'github', label: 'Merging once GitHub checks pass', me: false }
+        : { kind: 'github', label: 'Merge on GitHub', me: hasRole(member, 'maintainer') };
     default:
       return { kind: 'nobody', label: row.stage, me: false };
   }
@@ -393,6 +398,7 @@ const cardView = (
   updatedAt: row.updatedAt,
   stageSince: row.stageSince,
   autoVerified: row.autoVerified,
+  autoMergeOn: row.autoMergeOn,
   waitingOn: waitingOn(row, viewer, approval, facts.onboarding)
 });
 
@@ -408,9 +414,17 @@ const planView = (row: BoardTaskRow, facts: ProjectFacts) => {
     row.stage === 'spec_review' ? 'spec_review' : row.approvalPlans.verifying ? 'verifying' : null;
   const plan = gate ? row.approvalPlans[gate] : undefined;
   if (!gate || !plan) return null;
+  const config = parseProjectConfig(facts.rawConfig);
   return {
     gate,
     current: plan.subject === gateSubject(row, gate),
+    // Who will merge the result: the chooser's choice, which the project may not allow.
+    merge:
+      gate === 'verifying'
+        ? plan.merge === 'auto' && config.ok && config.config.pullRequest.autoMerge
+          ? ('auto' as const)
+          : ('person' as const)
+        : null,
     depth: plan.depth,
     depthLabel: DEPTH_LABELS[plan.depth],
     rationale: plan.rationale,

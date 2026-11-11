@@ -444,7 +444,13 @@ describe('approval chooser', () => {
 
   test('a domain nobody holds is waived, never a dead end', () => {
     const driver = createDriver([owner]);
-    let task = toSpecReview(driver);
+    let task = driver.step(newTask('t1', owner.id), { type: 'submit_request' }, asMember(owner));
+    task = driver.step(task, { type: 'accept' }, asMember(owner));
+    task = driver.step(
+      task,
+      { type: 'post_spec', predictedPaths: PAGE_PATHS, userVisible: false },
+      asAgent('spec')
+    );
     task = driver.step(
       task,
       {
@@ -586,6 +592,68 @@ describe('auto-verify', () => {
       asAgent('chooser')
     );
     expect(task.stage).toBe('verifying');
+  });
+});
+
+describe('who merges', () => {
+  test('the chooser decides per result, and a later plan cannot hand the merge back', () => {
+    const driver = createDriver([owner]);
+    let task = driver.step(newTask('t1', owner.id), { type: 'submit_request' }, asMember(owner));
+    task = driver.step(task, { type: 'accept' }, asMember(owner));
+    task = driver.step(
+      task,
+      { type: 'post_spec', predictedPaths: PAGE_PATHS, userVisible: false },
+      asAgent('spec')
+    );
+    task = driver.step(
+      task,
+      { type: 'plan_approval', userVisible: false, plan: { ...PLAN, merge: 'auto' } },
+      asAgent('chooser')
+    );
+    // The spec gate has nothing to merge.
+    expect(task.approvalPlans.spec_review?.merge).toBe('person');
+
+    const choosing = () =>
+      buildAndReview(driver, dispatchAgent(driver, toReady(driver, PAGE_PATHS)), 'abc', PAGE_PATHS);
+    const auto = driver.step(
+      choosing(),
+      { type: 'choose', userVisible: true, plan: { ...PLAN, merge: 'auto' } },
+      asAgent('chooser')
+    );
+    expect(auto.approvalPlans.verifying?.merge).toBe('auto');
+
+    task = driver.step(
+      choosing(),
+      { type: 'choose', userVisible: true, plan: { ...PLAN, merge: 'person' } },
+      asAgent('chooser')
+    );
+    task = driver.step(task, { type: 'request_changes', note: 'wrong colour' }, asMember(owner));
+    task = buildAndReview(driver, task, 'def', PAGE_PATHS);
+    task = driver.step(
+      task,
+      { type: 'choose', userVisible: true, plan: { ...PLAN, merge: 'auto' } },
+      asAgent('chooser')
+    );
+    expect(task.approvalPlans.verifying).toMatchObject({ subject: 'sha:def', merge: 'person' });
+    // A plan recorded before the choice existed has no `merge`, which counts as a person.
+    const legacy = driver.step(
+      choosing(),
+      { type: 'choose', userVisible: true, plan: PLAN },
+      asAgent('chooser')
+    );
+    const { merge: _dropped, ...older } = legacy.approvalPlans.verifying!;
+    let migrated: Task = {
+      ...legacy,
+      approvalPlans: { ...legacy.approvalPlans, verifying: older }
+    };
+    migrated = driver.step(migrated, { type: 'request_changes', note: 'again' }, asMember(owner));
+    migrated = buildAndReview(driver, migrated, 'ghi', PAGE_PATHS);
+    migrated = driver.step(
+      migrated,
+      { type: 'choose', userVisible: true, plan: { ...PLAN, merge: 'auto' } },
+      asAgent('chooser')
+    );
+    expect(migrated.approvalPlans.verifying?.merge).toBe('person');
   });
 });
 

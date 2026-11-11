@@ -107,6 +107,17 @@ describe('project config', () => {
     expect(result.ok && result.config.lanes.green.autoVerify).toBe(false);
   });
 
+  test('auto-merge is off unless the project turns it on', () => {
+    const off = parseProjectConfig({ version: 1, docs: { entry: 'AGENTS.md' } });
+    expect(off.ok && off.config.pullRequest.autoMerge).toBe(false);
+    const on = parseProjectConfig({
+      version: 1,
+      docs: { entry: 'AGENTS.md' },
+      pull_request: { auto_merge: true }
+    });
+    expect(on.ok && on.config.pullRequest.autoMerge).toBe(true);
+  });
+
   test('auto_verify is a green-lane setting only', () => {
     const green = parseProjectConfig({
       version: 1,
