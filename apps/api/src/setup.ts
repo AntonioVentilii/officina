@@ -1,4 +1,4 @@
-import { parseProjectConfigYaml, type Role } from '@officina/core';
+import { parseProjectConfigYaml, requiredDocs, type Role } from '@officina/core';
 import {
   loadAgentVersions,
   saveAgentVersion,
@@ -8,6 +8,7 @@ import {
   upsertProject,
   upsertWorkspace
 } from '@officina/db';
+import { ensureOnboarding, openOnboardingIn } from '@officina/engine';
 import type { GitHubClient } from '@officina/github';
 import {
   ensureEnvironment,
@@ -59,7 +60,9 @@ export interface AddProjectInput {
 /**
  * Registers a repository as a project: finds the app installation and default branch, validates the
  * project config, records workspace, owner and project, and prepares the project's agent environment.
- * Nothing is written when the config is missing or invalid.
+ * Nothing is written when the config is missing or invalid. When the agent docs the config requires
+ * are not all on the default branch, it opens the onboarding task that writes them, which holds every
+ * other build in the project until it is done.
  */
 export const addProject = async (
   pool: Pool,
@@ -70,6 +73,10 @@ export const addProject = async (
   ownerId: string;
   environmentId: string;
   installationId: number;
+  /** Required agent docs (the entry document, `docs/ai` pages, catalog pages) the repository lacks. */
+  missingDocs: string[];
+  /** The open onboarding task's number, or `null` when the project holds every required page. */
+  onboardingTask: number | null;
 }> => {
   const installationId = await deps.github.repoInstallationId(input.repo);
   const ref = { installationId, repo: input.repo };
@@ -83,12 +90,20 @@ export const addProject = async (
   const parsed = parseProjectConfigYaml(configYaml);
   if (!parsed.ok) throw new SetupError(`invalid project config:\n${parsed.errors.join('\n')}`);
 
+  const missingDocs: string[] = [];
+  for (const path of requiredDocs(parsed.config)) {
+    if ((await deps.github.fileContent({ ...ref, path, branch: defaultBranch })) === null) {
+      missingDocs.push(path);
+    }
+  }
+
   const environment = await ensureEnvironment(deps.agents, {
     name: environmentNameFor(input.repo),
     allowedHosts: parsed.config.runtime.allowedHosts
   });
 
   const client = await pool.connect();
+  let registered: { projectId: string; ownerId: string; onboardingTask: number | null };
   try {
     await client.query('begin');
     const workspaceId = await upsertWorkspace(client, input.workspace);
@@ -108,12 +123,33 @@ export const addProject = async (
     const role: Role = 'owner';
     await setProjectRole(client, { projectId, memberId: ownerId, role });
     await setProjectEnvironment(client, projectId, environment.id);
+    // In the same transaction: the scheduler must never see the project ungated.
+    const onboardingTask = missingDocs.length
+      ? await openOnboardingIn(client, {
+          projectId,
+          requesterId: ownerId,
+          repo: input.repo,
+          config: parsed.config,
+          missing: missingDocs
+        })
+      : null;
     await client.query('commit');
-    return { projectId, ownerId, environmentId: environment.id, installationId };
+    registered = { projectId, ownerId, onboardingTask };
   } catch (error) {
     await client.query('rollback');
     throw error;
   } finally {
     client.release();
   }
+  // Lifting a gate is safe to do after the commit: it only lets builds start later than they could.
+  if (missingDocs.length === 0) {
+    await ensureOnboarding(pool, {
+      projectId: registered.projectId,
+      requesterId: registered.ownerId,
+      repo: input.repo,
+      config: parsed.config,
+      missing: []
+    });
+  }
+  return { ...registered, environmentId: environment.id, installationId, missingDocs };
 };

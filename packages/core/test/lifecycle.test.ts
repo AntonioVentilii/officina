@@ -35,7 +35,7 @@ const toReady = (driver: Driver, paths: readonly string[], userVisible = false):
 const buildAndReview = (driver: Driver, task: Task, headSha: string, paths: readonly string[]) => {
   let next = driver.step(
     task,
-    { type: 'push', headSha, changedPaths: paths, diffLines: 40 },
+    { type: 'push', headSha, changedPaths: paths, addedPaths: [], catalogPages: {}, diffLines: 40 },
     asAgent('builder')
   );
   next = driver.step(
@@ -53,7 +53,11 @@ const buildAndReview = (driver: Driver, task: Task, headSha: string, paths: read
 const dispatchAgent = (driver: Driver, task: Task, openInLane = 0): Task =>
   driver.step(
     task,
-    { type: 'dispatch', assignee: { kind: 'agent', role: 'builder' }, openInLane },
+    {
+      type: 'dispatch',
+      assignee: { kind: 'agent', role: 'builder' },
+      openInLane
+    },
     engine
   );
 
@@ -144,7 +148,14 @@ describe('collaboration', () => {
     expect(
       driver.attempt(
         task,
-        { type: 'push', headSha: 'x', changedPaths: PAGE_PATHS, diffLines: 1 },
+        {
+          type: 'push',
+          headSha: 'x',
+          changedPaths: PAGE_PATHS,
+          addedPaths: [],
+          catalogPages: {},
+          diffLines: 1
+        },
         asAgent('builder')
       ).ok
     ).toBe(false);
@@ -159,7 +170,14 @@ describe('guardrails', () => {
     let task = dispatchAgent(driver, toReady(driver, PAGE_PATHS));
     task = driver.step(
       task,
-      { type: 'push', headSha: 'abc', changedPaths: ['src/satellite/index.ts'], diffLines: 10 },
+      {
+        type: 'push',
+        headSha: 'abc',
+        changedPaths: ['src/satellite/index.ts'],
+        addedPaths: [],
+        catalogPages: {},
+        diffLines: 10
+      },
       asAgent('builder')
     );
     expect(task).toMatchObject({ stage: 'ready', lane: 'red', assignee: null });
@@ -173,7 +191,11 @@ describe('guardrails', () => {
     task = driver.step(task, { type: 'answer', text: 'I will do it' }, asMember(owner));
     const redispatch = driver.attempt(
       task,
-      { type: 'dispatch', assignee: { kind: 'agent', role: 'builder' }, openInLane: 0 },
+      {
+        type: 'dispatch',
+        assignee: { kind: 'agent', role: 'builder' },
+        openInLane: 0
+      },
       engine
     );
     expect(redispatch).toEqual({ ok: false, error: 'agents_cannot_build_lane' });
@@ -205,7 +227,14 @@ describe('guardrails', () => {
     let task = dispatchAgent(driver, toReady(driver, PAGE_PATHS));
     task = driver.step(
       task,
-      { type: 'push', headSha: 'abc', changedPaths: PAGE_PATHS, diffLines: 5000 },
+      {
+        type: 'push',
+        headSha: 'abc',
+        changedPaths: PAGE_PATHS,
+        addedPaths: [],
+        catalogPages: {},
+        diffLines: 5000
+      },
       asAgent('builder')
     );
     expect(task.stage).toBe('building');
@@ -218,7 +247,11 @@ describe('guardrails', () => {
     expect(
       driver.attempt(
         task,
-        { type: 'dispatch', assignee: { kind: 'agent', role: 'builder' }, openInLane: 3 },
+        {
+          type: 'dispatch',
+          assignee: { kind: 'agent', role: 'builder' },
+          openInLane: 3
+        },
         engine
       )
     ).toEqual({ ok: false, error: 'wip_limit' });
@@ -231,7 +264,14 @@ describe('guardrails', () => {
     for (const sha of ['a', 'b']) {
       task = driver.step(
         task,
-        { type: 'push', headSha: sha, changedPaths: PAGE_PATHS, diffLines: 5 },
+        {
+          type: 'push',
+          headSha: sha,
+          changedPaths: PAGE_PATHS,
+          addedPaths: [],
+          catalogPages: {},
+          diffLines: 5
+        },
         asAgent('builder')
       );
       task = driver.step(
@@ -243,7 +283,14 @@ describe('guardrails', () => {
     }
     task = driver.step(
       task,
-      { type: 'push', headSha: 'c', changedPaths: PAGE_PATHS, diffLines: 5 },
+      {
+        type: 'push',
+        headSha: 'c',
+        changedPaths: PAGE_PATHS,
+        addedPaths: [],
+        catalogPages: {},
+        diffLines: 5
+      },
       asAgent('builder')
     );
     task = driver.step(
@@ -584,5 +631,250 @@ describe('reviews on GitHub', () => {
       ok: false,
       error: 'not_allowed'
     });
+  });
+});
+
+describe('onboarding', () => {
+  const onboardingAt = (stage: Task['stage']): Task => ({
+    ...newTask('t9', owner.id, 'onboarding'),
+    stage,
+    lane: 'standard',
+    specVersion: 1
+  });
+  const dispatch = (role: 'builder' | 'onboarder') => ({
+    type: 'dispatch' as const,
+    assignee: { kind: 'agent' as const, role },
+    openInLane: 0
+  });
+  /** A driver for a project whose onboarding task is still open. */
+  const gated = () => createDriver([owner], loadConfig(), { onboardingOpen: true });
+
+  test('no request is dispatched while the project has an open onboarding task', () => {
+    const driver = gated();
+    const task = toReady(driver, PAGE_PATHS);
+    expect(driver.attempt(task, dispatch('builder'), engine)).toEqual({
+      ok: false,
+      error: 'awaiting_onboarding'
+    });
+    expect(createDriver([owner]).step(task, dispatch('builder'), engine).stage).toBe('building');
+    // People still decide: a maintainer can claim the work by hand.
+    expect(driver.step(task, { type: 'claim' }, asMember(owner)).stage).toBe('building');
+  });
+
+  test('the onboarding task goes to the onboarder, never to the builder', () => {
+    const driver = gated();
+    const task = onboardingAt('ready');
+    expect(driver.attempt(task, dispatch('builder'), engine)).toEqual({
+      ok: false,
+      error: 'not_allowed'
+    });
+    const building = driver.step(task, dispatch('onboarder'), engine);
+    expect(nextAgentRoles(building)).toEqual(['onboarder']);
+    expect(
+      driver.attempt(
+        building,
+        {
+          type: 'push',
+          headSha: 'abc',
+          changedPaths: ['AGENTS.md'],
+          addedPaths: [],
+          catalogPages: {},
+          diffLines: 10
+        },
+        asAgent('builder')
+      )
+    ).toEqual({ ok: false, error: 'not_allowed' });
+  });
+
+  test('the gate never holds the onboarding task itself, from dispatch to merge', () => {
+    const driver = gated();
+    const docs = ['AGENTS.md', 'docs/ai/README.md'];
+    let task = driver.step(onboardingAt('ready'), dispatch('onboarder'), engine);
+    task = driver.step(
+      task,
+      {
+        type: 'push',
+        headSha: 'abc',
+        changedPaths: docs,
+        addedPaths: [],
+        catalogPages: {},
+        diffLines: 120
+      },
+      asAgent('onboarder')
+    );
+    for (const role of ['reviewer_spec', 'reviewer_correctness'] as const)
+      task = driver.step(task, { type: 'review', verdict: 'approve', notes: '' }, asAgent(role));
+    // A review that asks for changes is a fix round for the onboarder, never a new dispatch.
+    const fixing = driver.step(
+      { ...task, stage: 'reviewing', reviews: {} },
+      { type: 'review', verdict: 'changes', notes: 'name the real paths' },
+      asAgent('reviewer_correctness')
+    );
+    expect(fixing).toMatchObject({ stage: 'building', assignee: { role: 'onboarder' } });
+    expect(nextAgentRoles(fixing)).toEqual(['onboarder']);
+    task = driver.step(
+      task,
+      { type: 'choose', userVisible: false, plan: PLAN },
+      asAgent('chooser')
+    );
+    expect(task.stage).toBe('verifying');
+    task = driver.step(task, { type: 'approve' }, asMember(owner));
+    expect(task.stage).toBe('merging');
+    task = driver.step(task, { type: 'merged' }, engine);
+    expect(task.stage).toBe('done');
+  });
+
+  test('a pull request closed without a merge sends the task back, held for a maintainer', () => {
+    const driver = gated();
+    const building = driver.step(onboardingAt('ready'), dispatch('onboarder'), engine);
+    // Before the first push there is no pull request to close.
+    expect(
+      driver.attempt(building, { type: 'pull_request_closed', pullRequest: 7 }, engine)
+    ).toEqual({ ok: false, error: 'wrong_stage' });
+    const reviewing = driver.step(
+      building,
+      {
+        type: 'push',
+        headSha: 'abc',
+        changedPaths: ['AGENTS.md'],
+        addedPaths: [],
+        catalogPages: {},
+        diffLines: 10
+      },
+      asAgent('onboarder')
+    );
+    expect(
+      driver.attempt(reviewing, { type: 'pull_request_closed', pullRequest: 7 }, asMember(owner))
+    ).toEqual({ ok: false, error: 'not_allowed' });
+    const held = driver.step(reviewing, { type: 'pull_request_closed', pullRequest: 7 }, engine);
+    expect(held).toMatchObject({ stage: 'ready', assignee: null, headSha: null, fixRounds: 0 });
+    expect(held.blocked?.question).toContain('#7');
+    expect(held.blocked?.askedOf).toEqual({ role: 'maintainer' });
+    expect(driver.events()).toContainEqual({ type: 'pull_request_closed', pullRequest: 7 });
+    // Answering lets the engine dispatch it again as a first round; cancelling lifts the gate.
+    const answered = driver.step(held, { type: 'answer', text: 'build it again' }, asMember(owner));
+    expect(driver.step(answered, dispatch('onboarder'), engine).stage).toBe('building');
+    expect(driver.step(held, { type: 'cancel', reason: 'not now' }, asMember(owner)).stage).toBe(
+      'cancelled'
+    );
+  });
+
+  test('the engine may close an onboarding task whose pages exist, never a request', () => {
+    const driver = gated();
+    const reason = 'every required agent docs page is on the default branch already';
+    expect(driver.step(onboardingAt('ready'), { type: 'cancel', reason }, engine).stage).toBe(
+      'cancelled'
+    );
+    const request = toReady(driver, PAGE_PATHS);
+    expect(driver.attempt(request, { type: 'cancel', reason }, engine)).toEqual({
+      ok: false,
+      error: 'not_allowed'
+    });
+  });
+
+  test('the onboarder may change the agent docs and nothing else', () => {
+    const driver = gated();
+    const building = driver.step(onboardingAt('ready'), dispatch('onboarder'), engine);
+    const docs = ['AGENTS.md', 'CLAUDE.md', 'docs/ai/README.md', 'docs/ai/workflows/add-a-page.md'];
+    const reviewed = driver.step(
+      building,
+      {
+        type: 'push',
+        headSha: 'abc',
+        changedPaths: docs,
+        addedPaths: [],
+        catalogPages: {},
+        diffLines: 300
+      },
+      asAgent('onboarder')
+    );
+    expect(reviewed.stage).toBe('reviewing');
+
+    const stopped = driver.step(
+      building,
+      {
+        type: 'push',
+        headSha: 'abc',
+        changedPaths: [...docs, 'src/app.ts'],
+        addedPaths: [],
+        catalogPages: {},
+        diffLines: 310
+      },
+      asAgent('onboarder')
+    );
+    expect(stopped).toMatchObject({ stage: 'ready', assignee: null });
+    expect(stopped.blocked?.question).toContain('src/app.ts');
+    expect(driver.events()).toContainEqual({
+      type: 'guardrail_tripped',
+      guardrail: 'outside_agent_docs',
+      details: 'src/app.ts'
+    });
+  });
+});
+
+describe('catalog check', () => {
+  const withCatalog = loadConfig(
+    CONFIG_YAML.replace(
+      'docs: { entry: AGENTS.md }',
+      "docs: { entry: AGENTS.md, catalogs: { 'src/lib/components/**': reusability.md } }"
+    )
+  );
+  const NEW_COMPONENT = 'src/lib/components/Chip.svelte';
+
+  test('a new shared file the catalog does not name goes back to the builder, head kept', () => {
+    const driver = createDriver([owner], withCatalog);
+    let task = dispatchAgent(driver, toReady(driver, PAGE_PATHS));
+    // The page was edited in the same push, but still says nothing about the new file.
+    task = driver.step(
+      task,
+      {
+        type: 'push',
+        headSha: 'abc',
+        changedPaths: [...PAGE_PATHS, NEW_COMPONENT, 'docs/ai/reusability.md'],
+        addedPaths: [NEW_COMPONENT],
+        catalogPages: { 'docs/ai/reusability.md': '# Reusability\n\n- `$lib/Button.svelte`\n' },
+        diffLines: 40
+      },
+      asAgent('builder')
+    );
+    expect(task).toMatchObject({ stage: 'building', headSha: 'abc', fixRounds: 1, blocked: null });
+    expect(nextAgentRoles(task)).toEqual(['builder']);
+    const finding = driver.events().find((event) => event.type === 'guardrail_tripped');
+    expect(finding).toMatchObject({ guardrail: 'unlisted_files' });
+    expect(JSON.stringify(finding)).toContain('docs/ai/reusability.md');
+
+    task = driver.step(
+      task,
+      {
+        type: 'push',
+        headSha: 'def',
+        changedPaths: [...PAGE_PATHS, NEW_COMPONENT, 'docs/ai/reusability.md'],
+        addedPaths: [NEW_COMPONENT],
+        catalogPages: {
+          'docs/ai/reusability.md': '# Reusability\n\n- `$lib/components/Chip.svelte`: a chip\n'
+        },
+        diffLines: 44
+      },
+      asAgent('builder')
+    );
+    expect(task.stage).toBe('reviewing');
+  });
+
+  test('past the fix rounds the finding holds the task for a maintainer', () => {
+    const driver = createDriver([owner], withCatalog);
+    let task = dispatchAgent(driver, toReady(driver, PAGE_PATHS));
+    const push = {
+      type: 'push' as const,
+      headSha: 'abc',
+      changedPaths: [NEW_COMPONENT],
+      addedPaths: [NEW_COMPONENT],
+      catalogPages: {},
+      diffLines: 10
+    };
+    task = driver.step(task, push, asAgent('builder'));
+    task = driver.step(task, push, asAgent('builder'));
+    task = driver.step(task, push, asAgent('builder'));
+    expect(task).toMatchObject({ stage: 'ready', assignee: null });
+    expect(task.blocked?.askedOf).toEqual({ role: 'maintainer' });
   });
 });

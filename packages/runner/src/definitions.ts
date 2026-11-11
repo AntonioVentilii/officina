@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-import { OUTPUT_SCHEMAS } from '@officina/core';
+import { AGENT_ROLES, OUTPUT_SCHEMAS, isBuildRole, type AgentRole } from '@officina/core';
 import type { AgentCreateParams } from '@anthropic-ai/sdk/resources/beta/agents/agents';
 import { z } from 'zod';
 import { PINNED_MODELS } from './models';
+import { loadStandard, withStandard } from './standard';
 
 export type AgentTools = NonNullable<AgentCreateParams['tools']>;
 type AgentToolConfig = NonNullable<
@@ -13,27 +14,9 @@ type AgentToolConfig = NonNullable<
 /** The single custom tool every role uses to hand its result back to the engine. */
 export const RESULT_TOOL = 'submit_result';
 
-export const RUNNER_ROLES = [
-  'interviewer',
-  'spec',
-  'builder',
-  'reviewer_spec',
-  'reviewer_correctness',
-  'chooser',
-  'learner'
-] as const;
-export type RunnerRole = (typeof RUNNER_ROLES)[number];
-
-/** Only the builder changes files. The others also get read-only repository tokens. */
-const CAN_WRITE: Record<RunnerRole, boolean> = {
-  interviewer: false,
-  spec: false,
-  builder: true,
-  reviewer_spec: false,
-  reviewer_correctness: false,
-  chooser: false,
-  learner: false
-};
+/** Every agent role runs on the runner; the list lives in core with the lifecycle. */
+export const RUNNER_ROLES = AGENT_ROLES;
+export type RunnerRole = AgentRole;
 
 const WRITE_TOOLS_OFF: AgentToolConfig[] = [
   { name: 'write', type: 'write', enabled: false },
@@ -82,7 +65,8 @@ export const buildDefinition = (
     // Web access is off for every role: task text is untrusted, and nothing here needs the web.
     { name: 'web_search', type: 'web_search', enabled: false },
     { name: 'web_fetch', type: 'web_fetch', enabled: false },
-    ...(CAN_WRITE[role] ? [] : WRITE_TOOLS_OFF)
+    // Only the build roles change files; the engine holds each to its own task branch.
+    ...(isBuildRole(role) ? [] : WRITE_TOOLS_OFF)
   ];
   const tools: AgentTools = [
     {
@@ -106,13 +90,22 @@ export const buildDefinition = (
   return { role, name, model, system, tools, hash };
 };
 
-/** Reads `agents/<role>.md` prompts from a directory and builds every runner role's definition. */
+/**
+ * Reads `agents/<role>.md` prompts from a directory and builds every runner role's definition, each
+ * prompt followed by the code standard.
+ */
 export const loadDefinitions = async (
   promptsDir: string,
   modelId: string = PINNED_MODELS.opus
-): Promise<AgentDefinition[]> =>
-  Promise.all(
+): Promise<AgentDefinition[]> => {
+  const standard = await loadStandard();
+  return Promise.all(
     RUNNER_ROLES.map(async (role) =>
-      buildDefinition(role, await Bun.file(join(promptsDir, `${role}.md`)).text(), modelId)
+      buildDefinition(
+        role,
+        withStandard(await Bun.file(join(promptsDir, `${role}.md`)).text(), standard),
+        modelId
+      )
     )
   );
+};

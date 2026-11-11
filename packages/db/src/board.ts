@@ -5,6 +5,7 @@ type Queryable = Pool | PoolClient;
 
 export interface BoardTaskRow {
   readonly id: string;
+  readonly kind: Task['kind'];
   readonly number: number;
   readonly title: string;
   readonly stage: Task['stage'];
@@ -30,7 +31,7 @@ export interface BoardTaskRow {
 }
 
 const BOARD_COLUMNS = `
-  t.id, t.number, t.title, t.stage, t.lane, t.blocked, t.paused,
+  t.id, t.kind, t.number, t.title, t.stage, t.lane, t.blocked, t.paused,
   t.user_visible as "userVisible", t.assignee, t.requester_id as "requesterId",
   m.display_name as "requesterName", t.spec_version as "specVersion", t.head_sha as "headSha",
   t.fix_rounds as "fixRounds", t.approval_plans as "approvalPlans", t.github_pr as "pullRequest",

@@ -1,3 +1,4 @@
+import type { LearningTarget } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
 
 type Queryable = Pool | PoolClient;
@@ -13,7 +14,7 @@ export interface LearningRow {
   readonly title: string;
   readonly lesson: string;
   readonly evidence: string;
-  readonly target: 'project' | 'agent';
+  readonly target: LearningTarget;
   readonly file: string;
   readonly find: string | null;
   readonly text: string;
@@ -37,7 +38,7 @@ export interface NewLearning {
   readonly title: string;
   readonly lesson: string;
   readonly evidence: string;
-  readonly target: 'project' | 'agent';
+  readonly target: LearningTarget;
   readonly edit: {
     readonly file: string;
     readonly find?: string | undefined;

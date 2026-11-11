@@ -68,6 +68,26 @@ describe.skipIf(!url)('api', () => {
     expect((await loadTask(pool, taskId))?.task.stage).toBe('merging');
   });
 
+  test('a pull request closed without a merge sends its task back, held for a maintainer', async () => {
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    const response = await deliver(app, {
+      event: 'pull_request',
+      payload: { action: 'closed', pull_request: { merged: false, number: 42 }, repository },
+      delivery: 'd-closed'
+    });
+    expect(await response.json()).toEqual({ status: 'applied', outcomes: [{ taskId, ok: true }] });
+    const task = (await loadTask(pool, taskId))?.task;
+    expect(task).toMatchObject({ stage: 'ready', assignee: null, headSha: null });
+    expect(task?.blocked?.question).toContain('#42');
+    // The next push opens a new pull request; the old number is kept only in the timeline.
+    const { rows } = await pool.query<{ github_pr: number | null }>(
+      'select github_pr from tasks where id = $1',
+      [taskId]
+    );
+    expect(rows[0]?.github_pr).toBeNull();
+  });
+
   test('a merged pull request completes its task, and a redelivery is ignored', async () => {
     const taskId = await createTaskInMerging(pool, seeded);
     await linkPullRequest(pool, taskId, 42);
@@ -90,10 +110,24 @@ describe.skipIf(!url)('api', () => {
     expect(await eventCount(taskId)).toBe(events);
   });
 
-  test('failed checks send a merging task back to building', async () => {
+  test('failed checks send a merging task back to building and stop auto-merge', async () => {
+    const calls: string[] = [];
+    const checking = createApp({
+      pool,
+      webhookSecret: SECRET,
+      github: {
+        fileContent: async () => null,
+        cancelAutoMerge: async () => {
+          calls.push('cancelAutoMerge');
+        }
+      }
+    });
+    await pool.query('update projects set github_installation_id = 99 where id = $1', [
+      seeded.projectId
+    ]);
     const taskId = await createTaskInMerging(pool, seeded);
     await linkPullRequest(pool, taskId, 42);
-    const response = await deliver(app, {
+    const response = await deliver(checking, {
       event: 'check_suite',
       delivery: 'd-2',
       payload: {
@@ -109,6 +143,7 @@ describe.skipIf(!url)('api', () => {
     expect(await response.json()).toEqual({ status: 'applied', outcomes: [{ taskId, ok: true }] });
     const stored = await loadTask(pool, taskId);
     expect(stored?.task).toMatchObject({ stage: 'building', fixRounds: 1 });
+    expect(calls).toEqual(['cancelAutoMerge']);
   });
 
   test('a Copilot review with comments sends the work back to the builder and stops auto-merge', async () => {

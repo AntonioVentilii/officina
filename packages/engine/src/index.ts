@@ -19,3 +19,10 @@ export {
 } from './step';
 export { collectDueSteps, tick, type DueStep, type TickReport } from './tick';
 export { learnerBrief, learningProblems, runLearnerStep } from './learner';
+export {
+  ONBOARDING_TITLE,
+  ensureOnboarding,
+  onboardingSpec,
+  openOnboardingIn,
+  type OnboardingInput
+} from './onboarding';

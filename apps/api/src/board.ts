@@ -28,6 +28,7 @@ import {
   listTaskRuns,
   loadBoardTask,
   loadTaskContext,
+  openOnboardingTask,
   memberNames,
   type BoardTaskRow,
   type RunEventRow,
@@ -61,7 +62,8 @@ const ROLE_LABELS: Record<string, string> = {
   reviewer_spec: 'Spec reviewer',
   reviewer_correctness: 'Code reviewer',
   chooser: 'Approval chooser',
-  learner: 'Learner'
+  learner: 'Learner',
+  onboarder: 'Onboarder'
 };
 
 export const roleLabel = (role: string) => ROLE_LABELS[role] ?? role;
@@ -130,10 +132,12 @@ const PUBLIC_FIELDS: Readonly<Record<string, readonly string[]>> = {
   blocked: ['blocked'],
   unblocked: ['answer'],
   closed: ['stage', 'reason'],
+  pull_request_closed: ['pullRequest'],
   spec_status_set: ['status'],
-  github_approved: ['login', 'merge'],
+  github_approved: ['login'],
   github_approval_failed: ['login'],
-  github_auto_merge: ['merge'],
+  awaiting_merge: ['pullRequest'],
+  merge_held: ['pullRequest'],
   checklist_posted: ['pullRequest']
 };
 
@@ -182,6 +186,8 @@ interface ProjectFacts {
   readonly members: Awaited<ReturnType<typeof listProjectMembers>>;
   readonly names: ReadonlyMap<string, string>;
   readonly rawConfig: unknown;
+  /** The open onboarding task's number: until it is done, no other task is built. */
+  readonly onboarding: number | null;
 }
 
 const approvalState = async (
@@ -230,7 +236,8 @@ const canAnswer = (row: BoardTaskRow, viewer: BoardViewer) => {
 const waitingOn = (
   row: BoardTaskRow,
   viewer: BoardViewer,
-  approval: ApprovalState | null
+  approval: ApprovalState | null,
+  onboarding: number | null
 ): WaitingOn => {
   const member = viewerMember(viewer);
   if (TERMINAL_STAGES.has(row.stage)) return { kind: 'nobody', label: row.stage, me: false };
@@ -282,7 +289,13 @@ const waitingOn = (
       };
     }
     case 'ready':
-      return { kind: 'agent', label: 'Waiting for a build slot', me: false };
+      return row.kind === 'request' && onboarding !== null
+        ? {
+            kind: 'agent',
+            label: `Builds once the agent docs of task ${onboarding} are merged`,
+            me: false
+          }
+        : { kind: 'agent', label: 'Waiting for a build slot', me: false };
     case 'building':
       return row.assignee?.kind === 'member'
         ? {
@@ -304,9 +317,7 @@ const waitingOn = (
     case 'choosing':
       return { kind: 'agent', label: 'Preparing what to check', me: false };
     case 'merging':
-      return row.autoVerified
-        ? { kind: 'github', label: 'Merging once GitHub checks pass', me: false }
-        : { kind: 'github', label: 'Merge on GitHub', me: hasRole(member, 'maintainer') };
+      return { kind: 'github', label: 'Merge on GitHub', me: hasRole(member, 'maintainer') };
     default:
       return { kind: 'nobody', label: row.stage, me: false };
   }
@@ -343,15 +354,28 @@ const actionsFor = (row: BoardTaskRow, viewer: BoardViewer): BoardAction[] => {
 };
 
 const projectFacts = async (pool: Pool, viewer: BoardViewer): Promise<ProjectFacts> => {
-  const [members, names, config] = await Promise.all([
+  const [members, names, config, onboarding] = await Promise.all([
     listProjectMembers(pool, viewer.projectId),
     memberNames(pool, viewer.workspaceId),
-    pool.query<{ config: unknown }>('select config from projects where id = $1', [viewer.projectId])
+    pool.query<{ config: unknown }>('select config from projects where id = $1', [
+      viewer.projectId
+    ]),
+    openOnboardingTask(pool, viewer.projectId)
   ]);
-  return { members, names, rawConfig: config.rows[0]?.config };
+  return {
+    members,
+    names,
+    rawConfig: config.rows[0]?.config,
+    onboarding: onboarding?.number ?? null
+  };
 };
 
-const cardView = (row: BoardTaskRow, viewer: BoardViewer, approval: ApprovalState | null) => ({
+const cardView = (
+  row: BoardTaskRow,
+  viewer: BoardViewer,
+  approval: ApprovalState | null,
+  facts: ProjectFacts
+) => ({
   number: row.number,
   title: row.title,
   stage: row.stage,
@@ -369,7 +393,7 @@ const cardView = (row: BoardTaskRow, viewer: BoardViewer, approval: ApprovalStat
   updatedAt: row.updatedAt,
   stageSince: row.stageSince,
   autoVerified: row.autoVerified,
-  waitingOn: waitingOn(row, viewer, approval)
+  waitingOn: waitingOn(row, viewer, approval, facts.onboarding)
 });
 
 const DEPTH_LABELS = {
@@ -407,7 +431,7 @@ export const boardView = async (pool: Pool, viewer: BoardViewer) => {
   const facts = await projectFacts(pool, viewer);
   const rows = await listBoardTasks(pool, viewer.projectId);
   return Promise.all(
-    rows.map(async (row) => cardView(row, viewer, await approvalState(pool, row, facts)))
+    rows.map(async (row) => cardView(row, viewer, await approvalState(pool, row, facts), facts))
   );
 };
 
@@ -457,7 +481,7 @@ export const taskView = async (
   const label = (actor: Actor) => actorLabel(actor, facts.names);
   const [request, ...thread] = comments;
   return {
-    ...cardView(row, viewer, approval),
+    ...cardView(row, viewer, approval, facts),
     blocked: row.blocked
       ? {
           question: questionFor(viewer, row.blocked),

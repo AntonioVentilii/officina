@@ -1,4 +1,4 @@
-import { nextAgentRoles, parseProjectConfig, type Actor } from '@officina/core';
+import { buildRoleFor, nextAgentRoles, parseProjectConfig, type Actor } from '@officina/core';
 import {
   applyCommand,
   countOpenAgentWork,
@@ -51,7 +51,7 @@ export const collectDueSteps = async (
           taskId,
           command: {
             type: 'dispatch',
-            assignee: { kind: 'agent', role: 'builder' },
+            assignee: { kind: 'agent', role: buildRoleFor(task.kind) },
             openInLane: await countOpenAgentWork(deps.pool, projectId, task.lane)
           },
           actor: ENGINE
