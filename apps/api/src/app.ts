@@ -3,6 +3,7 @@ import { parseWebhookEvent, verifyWebhookSignature } from '@officina/github';
 import { Elysia } from 'elysia';
 import type { Pool } from 'pg';
 import { createBoardApi, type BoardApiDependencies } from './api';
+import { createConnector } from './connector';
 import { createBoardServer } from './static';
 import { handleWebhookAction, type ConfigReader } from './webhooks';
 
@@ -42,6 +43,7 @@ export const createApp = ({ pool, webhookSecret, github, board, boardDir }: AppD
         return { error: 'internal' };
       })
       .use(board ? createBoardApi({ pool, ...board }) : new Elysia())
+      .use(board ? createConnector({ pool, publicUrl: board.publicUrl }) : new Elysia())
       .get('/health', () => ({ ok: true }))
       .post(
         '/github/webhook',

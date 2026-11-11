@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { Pool } from 'pg';
 import { z } from 'zod';
 import { createApp } from './app';
+import { LOOPBACK_HOSTS } from './connector';
 import { createAgentsPort, startEngine } from './engine';
 import { createGitHubAccounts } from './github-accounts';
 import { startRealtime } from './realtime';
@@ -27,7 +28,15 @@ const env = z
     // Pins the agents' model; unset, they run the newest Opus the Models API lists.
     ANTHROPIC_MODEL: z.string().min(1).optional(),
     SCHEDULER_INTERVAL_MS: z.coerce.number().int().positive().default(15_000),
-    OFFICINA_PUBLIC_URL: z.url().default('http://localhost:8080'),
+    // Sign-in cookies, OAuth codes and the connector's tokens travel to this address, so anything
+    // but the local machine must be https.
+    OFFICINA_PUBLIC_URL: z
+      .url()
+      .default('http://localhost:8080')
+      .refine(
+        (value) => value.startsWith('https://') || LOOPBACK_HOSTS.has(new URL(value).hostname),
+        'OFFICINA_PUBLIC_URL must be https unless it is localhost'
+      ),
     // GitHub user authorization: members link their account, and a verification can approve and
     // merge as them. Off unless both the client secret and the token encryption key are set.
     GITHUB_APP_CLIENT_ID: z.string().min(1).optional(),

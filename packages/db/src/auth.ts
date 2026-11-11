@@ -4,8 +4,8 @@ import type { Pool, PoolClient } from 'pg';
 
 type Queryable = Pool | PoolClient;
 
-const newToken = () => randomBytes(32).toString('base64url');
-const hashToken = (token: string) => createHash('sha256').update(token).digest('hex');
+export const newToken = () => randomBytes(32).toString('base64url');
+export const hashToken = (token: string) => createHash('sha256').update(token).digest('hex');
 
 export const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -71,6 +71,19 @@ export const memberForSession = async (
   );
   return rows[0] ?? null;
 };
+
+/** A member by id, for credentials other than a session cookie (the connector's tokens). */
+export const loadSessionMember = async (
+  db: Queryable,
+  memberId: string
+): Promise<SessionMember | null> =>
+  (
+    await db.query<SessionMember>(
+      `select id, display_name as "displayName", email, workspace_id as "workspaceId"
+       from members where id = $1`,
+      [memberId]
+    )
+  ).rows[0] ?? null;
 
 export const endSession = async (db: Queryable, sessionToken: string) => {
   await db.query('delete from sessions where token_hash = $1', [hashToken(sessionToken)]);

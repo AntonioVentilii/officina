@@ -21,6 +21,16 @@ To bring someone in, give them a role and send them the link it prints (valid 7 
 scripts/officina invite --email gio@example.com --name "Gio" --role contributor --domains product
 ```
 
+## From Claude
+
+Add Officina to Claude once and do everything below from a chat, in plain words.
+
+1. In claude.ai open **Settings > Connectors**, choose **Add custom connector**, name it Officina and paste `<public URL>/mcp`. The desktop app picks it up from the same account. In Claude Code: `claude mcp add --transport http officina <public URL>/mcp`, then `/mcp` to sign in.
+2. Claude opens the board's **Connect an app** page. Sign in if asked, check the name, and press **Allow**.
+3. Ask things like "what is waiting on me in Officina?", "open a request in vici-app: the Wager button should say Prediction", or "show task 12 and help me check it". Claude asks what it needs, then calls Officina as you, with your role.
+
+To stop it, remove the connector in Claude.
+
 ## The flow at a glance
 
 | You run                            | Then what happens                                                                                                                   |
