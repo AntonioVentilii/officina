@@ -15,6 +15,8 @@ export interface ChooserContext {
   }[];
   readonly requesterName: string;
   readonly changedPaths: readonly string[];
+  /** The project's `pull_request.auto_merge`: whether `approval.merge: auto` can take effect. */
+  readonly autoMergeAllowed: boolean;
 }
 
 export interface BriefInput {
@@ -58,6 +60,11 @@ const chooserSections = (context: ChooserContext): string[] => [
     `The lane already requires: ${context.lanePolicy.map(describe).join(', ') || 'a maintainer'}, and every gate needs at least one maintainer or owner.`,
     context.previousPlan
       ? `An earlier plan for this gate already added: ${context.previousPlan.extra.map((item) => describe(item.requirement)).join(', ') || 'nothing'}. Those stay whatever you decide.`
+      : null,
+    context.gate === 'verifying'
+      ? context.autoMergeAllowed
+        ? 'This project lets GitHub merge a result on its own once the branch rules pass. Set `approval.merge` to `auto` only when nobody needs to choose the moment it lands: low risk, nothing to coordinate with it (a release, an announcement, a data migration) and easy to undo. Otherwise leave it `person`.'
+        : 'In this project a person always merges: leave `approval.merge` as `person`.'
       : null,
     context.changedPaths.length ? `Files the change touches:\n${list(context.changedPaths)}` : null
   ]

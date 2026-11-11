@@ -25,7 +25,7 @@
   const lastEvent = (type: string) =>
     [...task.events].reverse().find((event) => event.type === type);
   const githubApproved = $derived(
-    lastEvent('github_approved')?.payload as { login: string } | undefined
+    lastEvent('github_approved')?.payload as { login: string; merge?: string } | undefined
   );
   const githubFailed = $derived(
     lastEvent('github_approval_failed')?.payload as { login: string; error?: string } | undefined
@@ -159,13 +159,19 @@
           </div>
         {:else if task.autoVerified}
           <div class="label">
-            Agents and GitHub's checks reviewed it; no person needs to check a change like this. It
-            waits for a person to merge it on GitHub.
+            Agents and GitHub's checks reviewed it; no person needs to check a change like this.
+            {task.autoMergeOn
+              ? 'GitHub merges it once its rules are met.'
+              : 'It waits for a person to merge it on GitHub.'}
           </div>
         {:else if githubApproved}
           <div class="label">
-            Approved on GitHub as @{githubApproved.login}. It waits for a person to merge it there;
-            the task closes itself.
+            Approved on GitHub as @{githubApproved.login}.
+            {githubApproved.merge === 'merged'
+              ? 'Merged; the task closes itself.'
+              : task.autoMergeOn
+                ? 'Auto-merge is on: GitHub merges once checks pass and threads are resolved.'
+                : 'It waits for a person to merge it there; the task closes itself.'}
           </div>
         {:else if githubFailed}
           <div class="label">

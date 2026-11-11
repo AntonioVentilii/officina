@@ -41,6 +41,53 @@ describe('approving as a person', () => {
   });
 });
 
+describe('merging as a person', () => {
+  const fake = (graphqlErrors: string | null) => {
+    const calls: string[] = [];
+    const bodies: unknown[] = [];
+    const fetchFake = (async (input: string | URL | Request, init?: RequestInit) => {
+      const path = String(input).replace('https://api.github.com', '');
+      calls.push(`${init?.method ?? 'GET'} ${path}`);
+      if (init?.body) bodies.push(JSON.parse(String(init.body)));
+      if (path.endsWith('/pulls/5'))
+        return Response.json({
+          node_id: 'PR_1',
+          state: 'open',
+          merged: false,
+          head: { sha: 'abc' }
+        });
+      if (path === '/graphql')
+        return Response.json(
+          graphqlErrors ? { errors: [{ message: graphqlErrors }] } : { data: {} }
+        );
+      return Response.json({});
+    }) as typeof fetch;
+    return { asUser: createGitHubAsUser({ fetch: fetchFake }), calls, bodies };
+  };
+
+  test('turns on auto-merge, or merges straight away when GitHub says the pull request is ready', async () => {
+    const pending = fake(null);
+    expect(await pending.asUser.mergeWhenReady('t', 'o/r', 5, 'abc')).toBe('auto_merge');
+    expect(pending.calls).toEqual(['GET /repos/o/r/pulls/5', 'POST /graphql']);
+
+    const clean = fake('Pull request is in clean status');
+    expect(await clean.asUser.mergeWhenReady('t', 'o/r', 5, 'abc')).toBe('merged');
+    expect(clean.calls.at(-1)).toBe('PUT /repos/o/r/pulls/5/merge');
+
+    // Pinned to the verified commit, never the head GitHub reports now.
+    const pinned = fake('Pull request is in clean status');
+    await pinned.asUser.mergeWhenReady('t', 'o/r', 5, 'verified');
+    expect(pinned.bodies).toEqual([
+      expect.objectContaining({ variables: { id: 'PR_1', head: 'verified' } }),
+      { merge_method: 'squash', sha: 'verified' }
+    ]);
+
+    await expect(
+      fake('Resource not accessible').asUser.mergeWhenReady('t', 'o/r', 5, 'abc')
+    ).rejects.toThrow('Resource not accessible');
+  });
+});
+
 describe.skipIf(!url)('GitHub sign-in', () => {
   const pool = new Pool({ connectionString: url });
   let seeded: Seeded;

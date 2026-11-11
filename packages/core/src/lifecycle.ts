@@ -72,6 +72,12 @@ export interface Task {
 /** How closely people should check: a read, a hands-on test, or a test on a real device. */
 export type CheckDepth = 'glance' | 'test' | 'device';
 
+/**
+ * Who merges a verified result: a person on GitHub, or GitHub's auto-merge once the branch rules
+ * pass. The chooser decides per result; `auto` only takes effect when the project allows it.
+ */
+export type MergeMode = 'person' | 'auto';
+
 /** An approval the chooser adds to a gate on top of the lane policy. It can only add, never remove. */
 export type ExtraRequirement =
   { readonly domain: string } | { readonly role: 'maintainer' | 'owner' };
@@ -84,6 +90,8 @@ export interface ApprovalPlan {
   readonly extra: readonly { readonly requirement: ExtraRequirement; readonly reason: string }[];
   /** People the chooser asks to verify; a request, not a requirement. */
   readonly verifiers: readonly { readonly memberId: string; readonly reason: string }[];
+  /** Absent in plans made before the chooser decided it, which means `person`. */
+  readonly merge?: MergeMode;
 }
 
 export type PlanInput = Omit<ApprovalPlan, 'subject'>;
@@ -303,7 +311,13 @@ const withPlan = (
     const member = context.members.find((candidate) => candidate.id === verifier.memberId);
     return member !== undefined && hasRole(member, 'contributor');
   });
-  const plan: ApprovalPlan = { ...input, subject, extra, verifiers };
+  // Like approvals, the merge only gets stricter: once a plan for this gate asked for a person, a
+  // later plan cannot hand the merge back to GitHub. The spec gate has nothing to merge.
+  const merge: MergeMode =
+    gate === 'verifying' && task.approvalPlans[gate]?.merge !== 'person' && input.merge === 'auto'
+      ? 'auto'
+      : 'person';
+  const plan: ApprovalPlan = { ...input, subject, extra, verifiers, merge };
   return [
     { approvalPlans: { ...task.approvalPlans, [gate]: plan } },
     { type: 'approval_planned', gate, plan, added }

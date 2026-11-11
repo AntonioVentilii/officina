@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Eye, Hand, ShieldPlus, Smartphone, UserCheck } from '@lucide/svelte';
+  import { Eye, GitMerge, Hand, ShieldPlus, Smartphone, UserCheck } from '@lucide/svelte';
   import type { TaskDetail } from '$lib/types';
   import AgentAvatar from './AgentAvatar.svelte';
   import MemberAvatar from './MemberAvatar.svelte';
@@ -29,8 +29,20 @@
     </span>
   </div>
 
-  {#if plan.extra.length || plan.verifiers.length}
+  {#if plan.extra.length || plan.verifiers.length || plan.merge}
     <ul>
+      {#if plan.merge}
+        <li>
+          <span class="icon"><GitMerge size={14} /></span>
+          <span
+            ><strong
+              >{plan.merge === 'auto'
+                ? 'GitHub merges it once its checks pass'
+                : 'A person merges it on GitHub'}</strong
+            ></span
+          >
+        </li>
+      {/if}
       {#each plan.extra as item (item.label)}
         <li>
           <span class="icon added"><ShieldPlus size={14} /></span>

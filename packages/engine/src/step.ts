@@ -236,7 +236,8 @@ export const runAgentStep = async (
             requesterName:
               members.find((member) => member.id === context.task.requesterId)?.name ??
               'a former member',
-            changedPaths: gate === 'verifying' ? await latestPushedPaths(pool, taskId) : []
+            changedPaths: gate === 'verifying' ? await latestPushedPaths(pool, taskId) : [],
+            autoMergeAllowed: config.pullRequest.autoMerge
           }
         : undefined;
     const brief = buildBrief({

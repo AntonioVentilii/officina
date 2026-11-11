@@ -114,6 +114,10 @@ const fakeGitHub = (
       calls.push({ method: 'resolveReviewThreads', args });
       return 1;
     },
+    mergeWhenReady: async (...args: unknown[]) => {
+      calls.push({ method: 'mergeWhenReady', args });
+      return 'auto_merge';
+    },
     cancelAutoMerge: async (...args: unknown[]) => {
       calls.push({ method: 'cancelAutoMerge', args });
     }
@@ -588,6 +592,97 @@ describe.skipIf(!url)('engine', () => {
       expect.objectContaining({ commitSha: null, unverified: 'status1' }),
       expect.objectContaining({ commitSha: 'status2' })
     ]);
+  });
+
+  test('GitHub merges on its own only when the project allows it and the chooser chose it', async () => {
+    const setAutoMerge = async (allowed: boolean) => {
+      const config = Bun.YAML.parse(CONFIG_YAML) as Record<string, unknown>;
+      await pool.query('update projects set config = $2 where id = $1', [
+        seeded.projectId,
+        JSON.stringify({ ...config, pull_request: { auto_merge: allowed } })
+      ]);
+    };
+    const chooseMerge = (taskId: string, merge: 'auto' | 'person') =>
+      pool.query(
+        `update tasks set approval_plans = jsonb_set(approval_plans, '{verifying,merge}', $2::jsonb)
+         where id = $1`,
+        [taskId, JSON.stringify(merge)]
+      );
+    const userCalls: string[] = [];
+    const onBehalf = {
+      publicUrl: PUBLIC_URL,
+      tokenFor: async () => ({ token: 't', login: 'antonio' }),
+      asUser: {
+        pullRequest: async () => ({
+          node_id: 'PR',
+          state: 'open',
+          merged: false,
+          head: { sha: 'abc' }
+        }),
+        approve: async () => {
+          userCalls.push('approve');
+          return {};
+        },
+        mergeWhenReady: async () => {
+          userCalls.push('mergeWhenReady');
+          return 'auto_merge' as const;
+        }
+      }
+    };
+    const types = async (taskId: string) =>
+      (
+        await pool.query<{ type: string }>(
+          `select type from task_events where task_id = $1
+             and type in ('github_approved', 'github_auto_merge', 'awaiting_merge') order by id`,
+          [taskId]
+        )
+      ).rows.map((row) => row.type);
+    const clean = () =>
+      fakeGitHub({ branchHead: 'abc', written: { commitSha: 'abc2', parentSha: 'abc' } });
+
+    // Allowed by the project but the chooser wants a person: approved, then left to a person.
+    await setAutoMerge(true);
+    const person = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, person, 42);
+    await finishVerifiedSpecs(pool, clean().port, [person], onBehalf);
+    expect(userCalls).toEqual(['approve']);
+    expect(await types(person)).toEqual(['github_approved', 'awaiting_merge']);
+
+    // The chooser chose auto and the project allows it: auto-merge on as the verifier.
+    userCalls.length = 0;
+    const auto = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, auto, 43);
+    await chooseMerge(auto, 'auto');
+    await finishVerifiedSpecs(pool, clean().port, [auto], onBehalf);
+    await finishVerifiedSpecs(pool, clean().port, [auto], onBehalf);
+    expect(userCalls).toEqual(['approve', 'mergeWhenReady']);
+    expect(await types(auto)).toEqual(['github_approved']);
+
+    // An auto-verified result: the app turns auto-merge on, once.
+    const unchecked = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, unchecked, 44);
+    await chooseMerge(unchecked, 'auto');
+    await appendTaskEvent(pool, {
+      taskId: unchecked,
+      actor: { kind: 'engine' },
+      type: 'auto_verified',
+      payload: { subject: 'sha:abc' }
+    });
+    const app = clean();
+    await finishVerifiedSpecs(pool, app.port, [unchecked]);
+    await finishVerifiedSpecs(pool, app.port, [unchecked]);
+    expect(app.calls.filter((call) => call.method === 'mergeWhenReady')).toHaveLength(1);
+    expect(await types(unchecked)).toEqual(['github_auto_merge']);
+
+    // The chooser chose auto but the project does not allow it: a person merges.
+    await setAutoMerge(false);
+    userCalls.length = 0;
+    const off = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, off, 45);
+    await chooseMerge(off, 'auto');
+    await finishVerifiedSpecs(pool, clean().port, [off], onBehalf);
+    expect(userCalls).toEqual(['approve']);
+    expect(await types(off)).toEqual(['github_approved', 'awaiting_merge']);
   });
 
   test('a branch holding commits nobody verified is held from merging, not left to merge', async () => {

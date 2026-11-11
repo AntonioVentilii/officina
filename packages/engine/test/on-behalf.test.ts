@@ -38,6 +38,10 @@ describe.skipIf(!url)('approving on GitHub for the verifier', () => {
           calls.push({ method: 'approve', args });
           if (options.fail) throw new Error('Review cannot be requested from the author');
           return {};
+        },
+        mergeWhenReady: async (...args) => {
+          calls.push({ method: 'mergeWhenReady', args });
+          return 'auto_merge' as const;
         }
       }
     };
@@ -53,11 +57,12 @@ describe.skipIf(!url)('approving on GitHub for the verifier', () => {
       )
     ).rows;
 
-  const input = (taskId: string) => ({
+  const input = (taskId: string, autoMerge = false) => ({
     taskId,
     taskNumber: 1,
     repo: 'ViciApp/vici-app',
-    pullRequest: 42
+    pullRequest: 42,
+    autoMerge
   });
 
   test('approves the verified head as the verifier, once, and never merges', async () => {
@@ -78,6 +83,21 @@ describe.skipIf(!url)('approving on GitHub for the verifier', () => {
       {
         type: 'github_approved',
         payload: { login: 'antonio', headSha: 'abc' },
+        member: seeded.ownerId
+      }
+    ]);
+  });
+
+  test('turns on auto-merge as the verifier only when the result may merge on its own', async () => {
+    const taskId = await createTaskInMerging(pool, seeded);
+    const { onBehalf, calls } = fake();
+    await approveOnGitHub(pool, onBehalf, input(taskId, true));
+    expect(calls.map((call) => call.method)).toEqual(['pullRequest', 'approve', 'mergeWhenReady']);
+    expect(calls[2]!.args).toEqual([`token-${seeded.ownerId}`, 'ViciApp/vici-app', 42, 'abc']);
+    expect(await events(taskId)).toEqual([
+      {
+        type: 'github_approved',
+        payload: { login: 'antonio', headSha: 'abc', merge: 'auto_merge' },
         member: seeded.ownerId
       }
     ]);

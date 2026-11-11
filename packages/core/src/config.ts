@@ -21,7 +21,7 @@ const laneSchema = z.strictObject({
   diff_lines: z.number().int().positive().optional(),
   budget_usd: z.number().positive().optional(),
   fix_rounds: z.number().int().nonnegative().optional(),
-  /** Green only: a result merges without a person's check when nothing about it calls for one. */
+  /** Green only: a result skips a person's check when nothing about it calls for one. */
   auto_verify: z.boolean().optional(),
   approvals: z
     .strictObject({ spec_review: policySchema.optional(), verifying: policySchema.optional() })
@@ -65,7 +65,12 @@ const projectConfigSchema = z
               return false;
             }
           }, 'must be a valid regular expression')
-          .optional()
+          .optional(),
+        /**
+         * Once a result is verified (or auto-verified), turn on GitHub's auto-merge so the branch
+         * rules decide when it lands. Left out, it is off and a person merges on GitHub.
+         */
+        auto_merge: z.boolean().optional()
       })
       .optional(),
     runtime: z
@@ -120,7 +125,7 @@ export interface ProjectConfig {
   readonly verify: readonly string[];
   readonly release: { readonly onMerge: ReleaseOnMerge };
   readonly runtime: { readonly allowedHosts: readonly string[] };
-  readonly pullRequest: { readonly titlePattern: string | null };
+  readonly pullRequest: { readonly titlePattern: string | null; readonly autoMerge: boolean };
   readonly board: { readonly look: BoardLook };
   readonly lanes: Readonly<Record<Lane, LaneSettings>>;
   readonly laneMatcher: LaneMatcher;
@@ -205,7 +210,10 @@ export const parseProjectConfig = (input: unknown): ConfigResult => {
       verify: raw.verify ?? [],
       release: { onMerge: raw.release?.on_merge ?? 'production' },
       runtime: { allowedHosts: raw.runtime?.allowed_hosts ?? [] },
-      pullRequest: { titlePattern: raw.pull_request?.title_pattern ?? null },
+      pullRequest: {
+        titlePattern: raw.pull_request?.title_pattern ?? null,
+        autoMerge: raw.pull_request?.auto_merge ?? false
+      },
       board: { look: raw.board?.look ?? 'modernista' },
       lanes: {
         green: normalizeLane('green', raw.lanes?.green),

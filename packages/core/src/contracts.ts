@@ -87,7 +87,9 @@ export const chooserOutputSchema = z.strictObject({
     verifiers: z
       .array(z.strictObject({ memberId: z.uuid(), reason: text.max(300) }))
       .max(3)
-      .default([])
+      .default([]),
+    /** At verification: may GitHub merge it on its own once the branch rules pass? */
+    merge: z.enum(['person', 'auto']).default('person')
   }),
   /** Required at verification, where the engine checks it is not empty. */
   checklist: z.array(text).default([]),
@@ -249,7 +251,8 @@ export const commandForOutput = (task: Task, result: RoleOutput): CommandResult 
           requirement,
           reason
         })),
-        verifiers: approval.verifiers
+        verifiers: approval.verifiers,
+        merge: approval.merge
       };
       return {
         ok: true,

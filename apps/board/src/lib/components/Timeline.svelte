@@ -64,7 +64,13 @@
       case 'spec_status_set':
         return `set the spec status to ${p.status}`;
       case 'github_approved':
-        return `approved the pull request on GitHub as @${p.login}`;
+        return p.merge === 'merged'
+          ? `approved and merged the pull request on GitHub as @${p.login}`
+          : p.merge === 'auto_merge'
+            ? `approved the pull request on GitHub as @${p.login} and turned on auto-merge`
+            : `approved the pull request on GitHub as @${p.login}`;
+      case 'github_auto_merge':
+        return p.merge === 'merged' ? 'merged the pull request' : 'turned on auto-merge';
       case 'awaiting_merge':
         return `left pull request #${p.pullRequest} for a person to merge on GitHub`;
       case 'merge_held':

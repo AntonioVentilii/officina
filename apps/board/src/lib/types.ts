@@ -67,6 +67,8 @@ export interface Card {
   readonly stageSince: string;
   /** The result skipped people's check (a low-risk change); GitHub's rules merge it. */
   readonly autoVerified: boolean;
+  /** GitHub's auto-merge is on: it merges once checks pass, no person needs to press merge. */
+  readonly autoMergeOn: boolean;
   readonly waitingOn: WaitingOn;
 }
 
@@ -131,6 +133,8 @@ export interface TaskDetail extends Card {
     readonly current: boolean;
     readonly depth: 'glance' | 'test' | 'device';
     readonly depthLabel: string;
+    /** At the result: whether a person merges or GitHub does once its checks pass. */
+    readonly merge: 'person' | 'auto' | null;
     readonly rationale: string;
     readonly extra: readonly { readonly label: string; readonly reason: string }[];
     readonly verifiers: readonly { readonly name: string; readonly reason: string }[];
