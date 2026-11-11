@@ -169,7 +169,14 @@ describe.skipIf(!url)('onboarding', () => {
     await applyOrThrow(
       pool,
       onboardingId,
-      { type: 'push', headSha: 'abc', changedPaths: DOCS, diffLines: 200 },
+      {
+        type: 'push',
+        headSha: 'abc',
+        changedPaths: DOCS,
+        addedPaths: [],
+        catalogPages: {},
+        diffLines: 200
+      },
       { kind: 'agent', role: 'onboarder', version: 1 }
     );
     for (const role of ['reviewer_spec', 'reviewer_correctness'] as const)
@@ -205,7 +212,14 @@ describe.skipIf(!url)('onboarding', () => {
     await applyOrThrow(
       pool,
       requestId,
-      { type: 'push', headSha: 'abc', changedPaths: ['src/routes/+page.svelte'], diffLines: 20 },
+      {
+        type: 'push',
+        headSha: 'abc',
+        changedPaths: ['src/routes/+page.svelte'],
+        addedPaths: [],
+        catalogPages: {},
+        diffLines: 20
+      },
       { kind: 'agent', role: 'builder', version: 1 }
     );
     expect((await loadTask(pool, requestId))?.task.stage).toBe('reviewing');

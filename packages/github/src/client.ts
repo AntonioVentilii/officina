@@ -6,6 +6,9 @@ const API = 'https://api.github.com';
 /** GitHub's compare endpoint lists at most this many files; a full page means the list may be cut. */
 export const COMPARE_FILE_LIMIT = 300;
 
+/** Compare statuses of a file that is new at its path on the branch. */
+const ADDED_STATUSES: ReadonlySet<string> = new Set(['added', 'copied', 'renamed']);
+
 export class GitHubError extends Error {
   constructor(
     readonly status: number,
@@ -130,18 +133,21 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     );
     const headSha = branch.commit.sha;
     const comparison = await request<{
-      files?: { filename: string; previous_filename?: string; changes: number }[];
+      files?: { filename: string; previous_filename?: string; status: string; changes: number }[];
     }>(`/repos/${ref.repo}/compare/${encodeURIComponent(ref.base)}...${headSha}`, { token });
 
     const files = comparison.files ?? [];
     const changedPaths = [
       ...new Set(files.flatMap((file) => [file.filename, file.previous_filename ?? []].flat()))
     ];
+    const addedPaths = files
+      .filter((file) => ADDED_STATUSES.has(file.status))
+      .map((file) => file.filename);
     const truncated = comparison.files === undefined || files.length >= COMPARE_FILE_LIMIT;
     const diffLines = truncated
       ? Number.MAX_SAFE_INTEGER
       : files.reduce((total, file) => total + file.changes, 0);
-    return { headSha, changedPaths, diffLines };
+    return { headSha, changedPaths, addedPaths, diffLines };
   };
 
   /**
