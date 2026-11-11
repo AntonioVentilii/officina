@@ -1,6 +1,6 @@
 <div align="center">
 
-# <img src="./docs/assets/logo.svg" alt="" width="34" align="center" /> Officina
+# <img src="./apps/board/static/favicon.svg" alt="" width="34" align="center" /> Officina
 
 ### From a plain-language request to a merged pull request.
 
