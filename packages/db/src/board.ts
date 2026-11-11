@@ -59,6 +59,8 @@ const BOARD_COLUMNS = `
         or (e.type = 'github_approved' and e.payload->>'merge' = 'auto_merge'))
       and e.id > coalesce((select max(m.id) from task_events m where m.task_id = t.id
         and m.type = 'stage_changed' and m.payload->>'to' = 'merging'), 0)
+      and not exists (select 1 from task_events c where c.task_id = t.id
+        and c.type = 'github_auto_merge_cancelled' and c.id > e.id)
   ) as "autoMergeOn"`;
 
 export const listBoardTasks = async (db: Queryable, projectId: string): Promise<BoardTaskRow[]> =>

@@ -372,6 +372,10 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
       )
     );
 
+  /** The commit the pull request's head branch points at now. */
+  const pullRequestHead = async (ref: RepoRef & { readonly pullRequest: number }) =>
+    (await pullRequestNode(ref)).head.sha;
+
   /**
    * Turns on auto-merge as the app, for a result that needed no person's check, so the branch
    * rules (checks, resolved threads, any required review) still decide when it lands. A pull request
@@ -478,6 +482,7 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     commentOnIssue,
     reviewComments,
     mergeWhenReady,
+    pullRequestHead,
     cancelAutoMerge,
     resolveReviewThreads
   };

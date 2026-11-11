@@ -136,6 +136,8 @@ const PUBLIC_FIELDS: Readonly<Record<string, readonly string[]>> = {
   spec_status_set: ['status'],
   github_approved: ['login', 'merge'],
   github_auto_merge: ['merge'],
+  github_auto_merge_failed: [],
+  github_auto_merge_cancelled: [],
   github_approval_failed: ['login'],
   awaiting_merge: ['pullRequest'],
   merge_held: ['pullRequest'],

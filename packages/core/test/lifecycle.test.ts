@@ -635,6 +635,25 @@ describe('who merges', () => {
       asAgent('chooser')
     );
     expect(task.approvalPlans.verifying).toMatchObject({ subject: 'sha:def', merge: 'person' });
+    // A plan recorded before the choice existed has no `merge`, which counts as a person.
+    const legacy = driver.step(
+      choosing(),
+      { type: 'choose', userVisible: true, plan: PLAN },
+      asAgent('chooser')
+    );
+    const { merge: _dropped, ...older } = legacy.approvalPlans.verifying!;
+    let migrated: Task = {
+      ...legacy,
+      approvalPlans: { ...legacy.approvalPlans, verifying: older }
+    };
+    migrated = driver.step(migrated, { type: 'request_changes', note: 'again' }, asMember(owner));
+    migrated = buildAndReview(driver, migrated, 'ghi', PAGE_PATHS);
+    migrated = driver.step(
+      migrated,
+      { type: 'choose', userVisible: true, plan: { ...PLAN, merge: 'auto' } },
+      asAgent('chooser')
+    );
+    expect(migrated.approvalPlans.verifying?.merge).toBe('person');
   });
 });
 

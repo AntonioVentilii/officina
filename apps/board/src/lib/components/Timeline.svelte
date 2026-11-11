@@ -75,6 +75,10 @@
             : `approved the pull request on GitHub as @${p.login}`;
       case 'github_auto_merge':
         return p.merge === 'merged' ? 'merged the pull request' : 'turned on auto-merge';
+      case 'github_auto_merge_failed':
+        return 'could not turn on auto-merge, so a person merges it';
+      case 'github_auto_merge_cancelled':
+        return 'turned auto-merge off';
       case 'awaiting_merge':
         return `left pull request #${p.pullRequest} for a person to merge on GitHub`;
       case 'merge_held':

@@ -57,12 +57,11 @@ describe.skipIf(!url)('approving on GitHub for the verifier', () => {
       )
     ).rows;
 
-  const input = (taskId: string, autoMerge = false) => ({
+  const input = (taskId: string) => ({
     taskId,
     taskNumber: 1,
     repo: 'ViciApp/vici-app',
-    pullRequest: 42,
-    autoMerge
+    pullRequest: 42
   });
 
   test('approves the verified head as the verifier, once, and never merges', async () => {
@@ -83,21 +82,6 @@ describe.skipIf(!url)('approving on GitHub for the verifier', () => {
       {
         type: 'github_approved',
         payload: { login: 'antonio', headSha: 'abc' },
-        member: seeded.ownerId
-      }
-    ]);
-  });
-
-  test('turns on auto-merge as the verifier only when the result may merge on its own', async () => {
-    const taskId = await createTaskInMerging(pool, seeded);
-    const { onBehalf, calls } = fake();
-    await approveOnGitHub(pool, onBehalf, input(taskId, true));
-    expect(calls.map((call) => call.method)).toEqual(['pullRequest', 'approve', 'mergeWhenReady']);
-    expect(calls[2]!.args).toEqual([`token-${seeded.ownerId}`, 'ViciApp/vici-app', 42, 'abc']);
-    expect(await events(taskId)).toEqual([
-      {
-        type: 'github_approved',
-        payload: { login: 'antonio', headSha: 'abc', merge: 'auto_merge' },
         member: seeded.ownerId
       }
     ]);

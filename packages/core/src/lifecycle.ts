@@ -358,8 +358,10 @@ const withPlan = (
   });
   // Like approvals, the merge only gets stricter: once a plan for this gate asked for a person, a
   // later plan cannot hand the merge back to GitHub. The spec gate has nothing to merge.
+  // A plan without the field predates the choice and counts as `person`.
+  const earlier = task.approvalPlans[gate];
   const merge: MergeMode =
-    gate === 'verifying' && task.approvalPlans[gate]?.merge !== 'person' && input.merge === 'auto'
+    gate === 'verifying' && input.merge === 'auto' && (!earlier || earlier.merge === 'auto')
       ? 'auto'
       : 'person';
   const plan: ApprovalPlan = { ...input, subject, extra, verifiers, merge };
