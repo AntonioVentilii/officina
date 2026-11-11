@@ -1,6 +1,6 @@
 <div align="center">
 
-# <img src="./docs/assets/logo.svg" alt="" width="34" align="center" /> Officina
+# <img src="./apps/board/static/favicon.svg" alt="" width="34" align="center" /> Officina
 
 ### From a plain-language request to a merged pull request.
 
@@ -8,7 +8,7 @@
 
 Anyone on the team describes what they need. Agents **interview, spec, build and review** it; the right people **approve, verify and merge**. Developers and non-developers share one board, one thread per task and one audit trail.
 
-[Architecture](./docs/architecture.md) · [Running a task](./docs/running-a-task.md) · [Deployment](./docs/deployment.md) · [AGENTS.md](./AGENTS.md) · [Security](./SECURITY.md)
+[Architecture](./docs/architecture.md) · [Code standard](./standards/code.md) · [Running a task](./docs/running-a-task.md) · [Deployment](./docs/deployment.md) · [AGENTS.md](./AGENTS.md) · [Security](./SECURITY.md)
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-3fb950.svg)](./LICENSE)
 [![CI](https://github.com/AntonioVentilii/officina/actions/workflows/ci.yml/badge.svg)](https://github.com/AntonioVentilii/officina/actions/workflows/ci.yml)
