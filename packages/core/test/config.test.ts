@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { parseProjectConfig, parseProjectConfigYaml } from '../src';
+import {
+  DEFAULT_STANDARDS_PAGES,
+  isAgentDocsPath,
+  parseProjectConfig,
+  parseProjectConfigYaml,
+  requiredDocs
+} from '../src';
 import { loadConfig } from './fixtures';
 
 describe('project config', () => {
@@ -11,6 +17,81 @@ describe('project config', () => {
     expect(result.config.lanes.standard.approvals.spec_review).toEqual([{ role: 'maintainer' }]);
     expect(result.config.docs.specTemplate).toBeNull();
     expect(result.config.runtime.allowedHosts).toEqual([]);
+  });
+
+  test('asks for the default agent docs pages in docs/ai unless told otherwise', () => {
+    const result = parseProjectConfig({ version: 1, docs: { entry: 'AGENTS.md' } });
+    if (!result.ok) throw new Error(result.errors.join('\n'));
+    expect(result.config.docs.standards).toEqual({
+      dir: 'docs/ai',
+      pages: DEFAULT_STANDARDS_PAGES.map((page) => `docs/ai/${page}`),
+      catalogs: []
+    });
+    expect(requiredDocs(result.config)).toEqual([
+      'AGENTS.md',
+      ...DEFAULT_STANDARDS_PAGES.map((page) => `docs/ai/${page}`)
+    ]);
+  });
+
+  test('a project names its own docs folder, pages and catalogs, each page required once', () => {
+    const result = parseProjectConfig({
+      version: 1,
+      docs: {
+        entry: 'AGENTS.md',
+        standards: 'docs/agents/',
+        pages: ['README.md', 'frontend/reusability.md'],
+        catalogs: {
+          'src/lib/components/**': 'frontend/reusability.md',
+          'src/lib/utils/**': 'utils.md'
+        }
+      }
+    });
+    if (!result.ok) throw new Error(result.errors.join('\n'));
+    expect(result.config.docs.standards.catalogs).toEqual([
+      { pattern: 'src/lib/components/**', page: 'docs/agents/frontend/reusability.md' },
+      { pattern: 'src/lib/utils/**', page: 'docs/agents/utils.md' }
+    ]);
+    expect(requiredDocs(result.config)).toEqual([
+      'AGENTS.md',
+      'docs/agents/README.md',
+      'docs/agents/frontend/reusability.md',
+      'docs/agents/utils.md'
+    ]);
+  });
+
+  test('the agent docs are the entry document, the tool layers and the docs folder', () => {
+    const result = parseProjectConfig({ version: 1, docs: { entry: 'AGENTS.md' } });
+    if (!result.ok) throw new Error(result.errors.join('\n'));
+    const docs = ['AGENTS.md', 'CLAUDE.md', 'docs/ai/patterns.md', 'docs/ai/workflows/x.md'];
+    expect(docs.every((path) => isAgentDocsPath(result.config, path))).toBe(true);
+    expect(
+      ['docs/aide.md', 'src/AGENTS.md', 'docs/ai'].some((path) =>
+        isAgentDocsPath(result.config, path)
+      )
+    ).toBe(false);
+  });
+
+  test('agent docs pages are Markdown inside the repository', () => {
+    const result = parseProjectConfig({
+      version: 1,
+      docs: { entry: 'AGENTS.md', standards: '../elsewhere', pages: ['notes.txt'] }
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors).toEqual([
+      'docs.standards: must be a relative path inside the repository',
+      'docs.pages.0: must be a Markdown page'
+    ]);
+  });
+
+  test('the entry document is a repository path too, so pushed paths can match it', () => {
+    // Push facts name paths from the repository root; an entry written with a leading slash
+    // would never be recognised as part of the agent docs.
+    const result = parseProjectConfig({ version: 1, docs: { entry: '/AGENTS.md' } });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors).toEqual(['docs.entry: must be a relative path inside the repository']);
+    expect(parseProjectConfig({ version: 1, docs: { entry: 'AGENTS' } }).ok).toBe(false);
   });
 
   test('assumes a merge deploys to production, and nothing verifies itself, unless told', () => {

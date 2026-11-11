@@ -215,16 +215,19 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
   const contentsPath = (repo: string, path: string) =>
     `/repos/${repo}/contents/${path.split('/').map(encodeURIComponent).join('/')}`;
 
-  /** A file's text and blob sha at a branch, or `null` when it does not exist there. */
+  /**
+   * A file's text and blob sha at a branch, or `null` when no file exists there. A directory (or a
+   * symlink or submodule) at that path is not a file, so it reads as missing instead of failing.
+   */
   const readFile = async (
     ref: RepoRef & { readonly path: string; readonly branch: string }
   ): Promise<{ text: string; sha: string } | null> => {
     const token = await installationToken(ref, { contents: 'read' });
     try {
-      const file = await request<{ content: string; encoding: string; sha: string }>(
-        `${contentsPath(ref.repo, ref.path)}?ref=${encodeURIComponent(ref.branch)}`,
-        { token }
-      );
+      const file = await request<
+        { type?: string; content: string; encoding: string; sha: string } | unknown[]
+      >(`${contentsPath(ref.repo, ref.path)}?ref=${encodeURIComponent(ref.branch)}`, { token });
+      if (Array.isArray(file) || file.type !== 'file') return null;
       return {
         text: Buffer.from(file.content, file.encoding === 'base64' ? 'base64' : 'utf8').toString(
           'utf8'
@@ -266,24 +269,10 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     };
   };
 
-  /** A file's text at a branch, or `null` when it does not exist there. */
+  /** A file's text at a branch, or `null` when no file exists there. */
   const fileContent = async (
     ref: RepoRef & { readonly path: string; readonly branch: string }
-  ): Promise<string | null> => {
-    const token = await installationToken(ref, { contents: 'read' });
-    try {
-      const file = await request<{ content: string; encoding: string }>(
-        `/repos/${ref.repo}/contents/${ref.path.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(ref.branch)}`,
-        { token }
-      );
-      return Buffer.from(file.content, file.encoding === 'base64' ? 'base64' : 'utf8').toString(
-        'utf8'
-      );
-    } catch (error) {
-      if (error instanceof GitHubError && error.status === 404) return null;
-      throw error;
-    }
-  };
+  ): Promise<string | null> => (await readFile(ref))?.text ?? null;
 
   /** Creates a branch pointing at the current head of another one. */
   const createBranch = async (
@@ -377,35 +366,6 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
       )
     );
 
-  /**
-   * Turns on auto-merge as the app, for a result that needed no person's check, so the branch
-   * rules (checks, resolved threads, any required review) still decide when it lands. A pull request
-   * that already meets them cannot take auto-merge and is merged straight away. Both are pinned to
-   * `expectedHead`, so a commit pushed after the result was accepted is never merged with it.
-   */
-  const mergeWhenReady = async (
-    ref: RepoRef & { readonly pullRequest: number; readonly expectedHead: string }
-  ): Promise<'auto_merge' | 'merged'> => {
-    const pr = await pullRequestNode(ref);
-    const response = await graphql(
-      ref,
-      'mutation($id: ID!, $head: GitObjectID!) { enablePullRequestAutoMerge(input: { pullRequestId: $id, mergeMethod: SQUASH, expectedHeadOid: $head }) { clientMutationId } }',
-      { id: pr.node_id, head: ref.expectedHead }
-    );
-    if (!response.errors?.length) return 'auto_merge';
-    const message = response.errors.map((error) => error.message).join('; ');
-    if (!/clean status|is in clean/i.test(message)) {
-      throw new GitHubError(422, '/graphql enablePullRequestAutoMerge', message);
-    }
-    const token = await installationToken(ref);
-    await request(`/repos/${ref.repo}/pulls/${ref.pullRequest}/merge`, {
-      method: 'PUT',
-      token,
-      body: { merge_method: 'squash', sha: ref.expectedHead }
-    });
-    return 'merged';
-  };
-
   /** Turns auto-merge off, so work sent back to building cannot land before it is checked again. */
   const cancelAutoMerge = async (ref: RepoRef & { readonly pullRequest: number }) => {
     const pr = await pullRequestNode(ref);
@@ -482,7 +442,6 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     openPullRequest,
     commentOnIssue,
     reviewComments,
-    mergeWhenReady,
     cancelAutoMerge,
     resolveReviewThreads
   };

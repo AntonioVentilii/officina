@@ -42,6 +42,7 @@
     border: 0;
     background: none;
     max-width: min(560px, calc(100vw - 32px));
+    max-height: calc(100dvh - 32px);
     width: 100%;
     color: var(--text);
   }
@@ -54,7 +55,11 @@
     animation: rise 0.22s var(--ease);
   }
 
+  /* Header and footer stay put; a body taller than the screen scrolls between them. */
   .box {
+    display: flex;
+    flex-direction: column;
+    max-height: calc(100dvh - 32px);
     background: var(--panel);
     border-top: 6px solid var(--rule);
   }
@@ -76,7 +81,9 @@
   }
 
   .body {
+    min-height: 0;
     padding: 20px 24px 22px;
+    overflow-y: auto;
   }
 
   :global([data-look='tecnica']) .box {

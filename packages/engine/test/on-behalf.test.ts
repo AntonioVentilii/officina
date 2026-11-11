@@ -38,10 +38,6 @@ describe.skipIf(!url)('approving on GitHub for the verifier', () => {
           calls.push({ method: 'approve', args });
           if (options.fail) throw new Error('Review cannot be requested from the author');
           return {};
-        },
-        mergeWhenReady: async (...args) => {
-          calls.push({ method: 'mergeWhenReady', args });
-          return 'auto_merge' as const;
         }
       }
     };
@@ -64,13 +60,13 @@ describe.skipIf(!url)('approving on GitHub for the verifier', () => {
     pullRequest: 42
   });
 
-  test('approves the verified head as the verifier and turns on auto-merge, once', async () => {
+  test('approves the verified head as the verifier, once, and never merges', async () => {
     const taskId = await createTaskInMerging(pool, seeded);
     const { onBehalf, calls } = fake();
     await approveOnGitHub(pool, onBehalf, input(taskId));
     await approveOnGitHub(pool, onBehalf, input(taskId));
 
-    expect(calls.map((call) => call.method)).toEqual(['pullRequest', 'approve', 'mergeWhenReady']);
+    expect(calls.map((call) => call.method)).toEqual(['pullRequest', 'approve']);
     expect(calls[1]!.args).toEqual([
       `token-${seeded.ownerId}`,
       'ViciApp/vici-app',
@@ -78,11 +74,10 @@ describe.skipIf(!url)('approving on GitHub for the verifier', () => {
       'abc',
       'Verified in [Officina task 1](https://o.example/tasks/1).'
     ]);
-    expect(calls[2]!.args).toEqual([`token-${seeded.ownerId}`, 'ViciApp/vici-app', 42, 'abc']);
     expect(await events(taskId)).toEqual([
       {
         type: 'github_approved',
-        payload: { login: 'antonio', headSha: 'abc', merge: 'auto_merge' },
+        payload: { login: 'antonio', headSha: 'abc' },
         member: seeded.ownerId
       }
     ]);
@@ -98,9 +93,8 @@ describe.skipIf(!url)('approving on GitHub for the verifier', () => {
     });
     const { onBehalf, calls } = fake({ head: 'status1' });
     await approveOnGitHub(pool, onBehalf, input(taskId));
-    expect(calls.map((call) => call.method)).toEqual(['pullRequest', 'approve', 'mergeWhenReady']);
+    expect(calls.map((call) => call.method)).toEqual(['pullRequest', 'approve']);
     expect(calls[1]!.args[3]).toBe('status1');
-    expect(calls[2]!.args[3]).toBe('status1');
   });
 
   test('a head pushed after the verification is recorded and never approved', async () => {
