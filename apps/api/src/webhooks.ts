@@ -5,6 +5,7 @@ import {
   findProjectsByRepo,
   findTasksByPullRequest,
   markLearningsApplied,
+  unlinkPullRequest,
   updateProjectConfig
 } from '@officina/db';
 import type { GitHubClient, WebhookAction } from '@officina/github';
@@ -188,6 +189,30 @@ const handleReview = async (
 };
 
 /**
+ * A pull request closed without merging sends its tasks back to the start of the build, held for
+ * a maintainer, and forgets the pull request so a rebuild opens a new one. Nothing on GitHub tells
+ * Officina otherwise, so without this an onboarding task would hold its project forever.
+ */
+const handleClosed = async (
+  pool: Pool,
+  action: Extract<WebhookAction, { kind: 'pull_request_closed' }>
+): Promise<WebhookOutcome[]> => {
+  const outcomes: WebhookOutcome[] = [];
+  for (const taskId of await findTasksByPullRequest(pool, action.repo, action.prNumber)) {
+    // The link is cleared in the same transaction as the move, so a crash between the two can
+    // never leave a rebuilt task pointing at the closed pull request.
+    const result = await applyCommand(pool, {
+      taskId,
+      command: { type: 'pull_request_closed', pullRequest: action.prNumber },
+      actor: ENGINE,
+      onApplied: (client) => unlinkPullRequest(client, taskId)
+    });
+    outcomes.push(result.ok ? { taskId, ok: true } : { taskId, ok: false, error: result.error });
+  }
+  return outcomes;
+};
+
+/**
  * Applies a GitHub fact. Pull request outcomes go to every linked task; a rejection such as
  * `wrong_stage` (CI failing while a task is still in review) is reported rather than raised.
  */
@@ -198,6 +223,7 @@ export const handleWebhookAction = async (
 ): Promise<WebhookOutcome[]> => {
   if (action.kind === 'push') return refreshConfigs(pool, github, action);
   if (action.kind === 'pull_request_reviewed') return handleReview(pool, github, action);
+  if (action.kind === 'pull_request_closed') return handleClosed(pool, action);
 
   const targets: { prNumber: number; command: Command }[] =
     action.kind === 'pull_request_merged'

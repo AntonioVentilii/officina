@@ -111,15 +111,16 @@ Pick one in the sidebar footer, or set a project default with `board.look` in `.
 
 Each role is a versioned prompt in [`agents/`](./agents), synced to Claude Managed Agents on boot. Changing a prompt creates a new agent version; every run records the version it used.
 
-| Role                                                        | Does                                                                               | Can write? |
-| ----------------------------------------------------------- | ---------------------------------------------------------------------------------- | :--------: |
-| 🎤 [Interviewer](./agents/interviewer.md)                   | Asks the requester up to four questions until the request is specific              |     no     |
-| 📝 [Spec](./agents/spec.md)                                 | Reads the repo and writes a spec with file scope and a predicted lane              |     no     |
-| 🔨 [Builder](./agents/builder.md)                           | Implements the approved spec on the task branch and runs the project's checks      | its branch |
-| 📏 [Spec reviewer](./agents/reviewer_spec.md)               | Checks the diff does what the spec says, no more                                   |     no     |
-| 🔍 [Correctness reviewer](./agents/reviewer_correctness.md) | Checks correctness and project conventions, independent of how the change was made |     no     |
-| 🧭 [Chooser](./agents/chooser.md)                           | Decides who approves and how closely; it can only raise the bar                    |     no     |
-| 🎓 [Learner](./agents/learner.md)                           | Looks back at a merged task and proposes what the project should learn             |     no     |
+| Role                                                        | Does                                                                                        |       Can write?        |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------- | :---------------------: |
+| 🎤 [Interviewer](./agents/interviewer.md)                   | Asks the requester up to four questions until the request is specific                       |           no            |
+| 📝 [Spec](./agents/spec.md)                                 | Reads the repo and writes a spec with file scope and a predicted lane                       |           no            |
+| 🔨 [Builder](./agents/builder.md)                           | Implements the approved spec on the task branch and runs the project's checks               |       its branch        |
+| 📏 [Spec reviewer](./agents/reviewer_spec.md)               | Checks the diff does what the spec says, no more                                            |           no            |
+| 🔍 [Correctness reviewer](./agents/reviewer_correctness.md) | Checks correctness and project conventions, independent of how the change was made          |           no            |
+| 🧭 [Chooser](./agents/chooser.md)                           | Decides who approves and how closely; it can only raise the bar                             |           no            |
+| 🎓 [Learner](./agents/learner.md)                           | Looks back at a merged task and proposes what the project should learn                      |           no            |
+| 🗂️ [Onboarder](./agents/onboarder.md)                       | Writes a new project's agent docs (`AGENTS.md`, `docs/ai/**`) before anything else is built | the docs, on its branch |
 
 ---
 
