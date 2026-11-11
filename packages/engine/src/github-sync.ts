@@ -13,14 +13,14 @@ export const taskLink = (publicUrl: string, taskNumber: number) =>
 export interface OnBehalf {
   readonly publicUrl: string;
   tokenFor(memberId: string): Promise<{ token: string; login: string } | null>;
-  readonly asUser: Pick<GitHubAsUser, 'pullRequest' | 'approve' | 'mergeWhenReady'>;
+  readonly asUser: Pick<GitHubAsUser, 'pullRequest' | 'approve'>;
 }
 
 /**
  * Once a task is verified and its spec marked Implemented, approves the pull request on GitHub as
- * the member whose approval passed the gate, and asks GitHub to merge it when its rules are met.
- * Officina never merges on its own: without that member's linked account nothing happens and they
- * merge on GitHub as before. It is tried once; a failure is recorded for people to see.
+ * the member whose approval passed the gate, so their check counts as a review there. Officina
+ * never merges and never turns on auto-merge: a person merges on GitHub. Without that member's
+ * linked account nothing happens. It is tried once; a failure is recorded for people to see.
  */
 export const approveOnGitHub = async (
   pool: Pool,
@@ -74,17 +74,11 @@ export const approveOnGitHub = async (
       expected,
       `Verified in ${taskLink(onBehalf.publicUrl, input.taskNumber)}.`
     );
-    const merge = await onBehalf.asUser.mergeWhenReady(
-      account.token,
-      input.repo,
-      input.pullRequest,
-      expected
-    );
     await appendTaskEvent(pool, {
       taskId: input.taskId,
       actor,
       type: 'github_approved',
-      payload: { login: account.login, headSha: expected, merge }
+      payload: { login: account.login, headSha: expected }
     });
   } catch (error) {
     await appendTaskEvent(pool, {
@@ -102,7 +96,6 @@ export type SyncGitHubPort = Pick<
   | 'updateFile'
   | 'pushFacts'
   | 'commentOnIssue'
-  | 'mergeWhenReady'
   | 'cancelAutoMerge'
   | 'resolveReviewThreads'
 >;
@@ -173,50 +166,55 @@ const resolveForwardedThreads = async (
 };
 
 /**
- * A result that skipped people's verification is merged by GitHub's own rules: the app turns on
- * auto-merge, so checks, resolved threads and any required review still decide. Tried once per
- * time the task reaches merging.
+ * The commit on the task branch that nobody verified, as the spec status step found it: the branch
+ * had moved past the verified head, or a push raced Officina's own status commit. `null` when the
+ * branch held only verified work.
  */
-const autoMergeOnGitHub = async (
+const unverifiedHead = async (pool: Pool, taskId: string, status: string): Promise<string | null> =>
+  (
+    await pool.query<{ sha: string | null }>(
+      `select coalesce(payload->>'branchMoved', payload->>'unverified') as sha from task_events
+       where task_id = $1 and type = 'spec_status_set' and payload->>'status' = $2
+         and id > coalesce((select max(p.id) from task_events p
+           where p.task_id = $1 and p.type = 'pushed'), 0)
+       order by id desc limit 1`,
+      [taskId, status]
+    )
+  ).rows[0]?.sha ?? null;
+
+/**
+ * Records, once per time the task reaches merging, that the engine's part is over: the pull request
+ * waits for a person to merge it (`awaiting_merge`), or, when the branch holds commits nobody
+ * verified, that it must not be merged until they are reviewed (`merge_held`). The board and the
+ * timeline say whose turn it is from these.
+ */
+const recordMergeState = async (
   pool: Pool,
-  github: SyncGitHubPort,
-  input: { taskId: string; ref: RepoRef; pullRequest: number }
+  input: { taskId: string; pullRequest: number; unverified: string | null }
 ) => {
-  const tried = await pool.query(
-    `select 1 from task_events where task_id = $1
-       and type in ('github_auto_merge', 'github_auto_merge_failed') and id > ${SINCE_MERGING}`,
+  const recorded = await pool.query(
+    `select 1 from task_events where task_id = $1 and type in ('awaiting_merge', 'merge_held')
+       and id > ${SINCE_MERGING}`,
     [input.taskId]
   );
-  if (tried.rowCount) return;
-  try {
-    const expected = await expectedHead(pool, input.taskId);
-    if (!expected) throw new Error('the task has no verified head');
-    const merge = await github.mergeWhenReady({
-      ...input.ref,
-      pullRequest: input.pullRequest,
-      expectedHead: expected
-    });
-    await appendTaskEvent(pool, {
-      taskId: input.taskId,
-      actor: ENGINE,
-      type: 'github_auto_merge',
-      payload: { merge }
-    });
-  } catch (error) {
-    await appendTaskEvent(pool, {
-      taskId: input.taskId,
-      actor: ENGINE,
-      type: 'github_auto_merge_failed',
-      payload: { error: (error as Error).message.slice(0, 500) }
-    });
-  }
+  if (recorded.rowCount) return;
+  await appendTaskEvent(pool, {
+    taskId: input.taskId,
+    actor: ENGINE,
+    ...(input.unverified
+      ? {
+          type: 'merge_held',
+          payload: { pullRequest: input.pullRequest, headSha: input.unverified }
+        }
+      : { type: 'awaiting_merge', payload: { pullRequest: input.pullRequest } })
+  });
 };
 
 /**
  * Turns auto-merge off on every task of a project that left merging (sent back to building, or
- * cancelled) after auto-merge was turned on, until GitHub confirms it. The webhook that moved the
- * task already tried once; this is what makes it stick when that call failed, or when auto-merge
- * was turned on in the moment between a review arriving and the task moving.
+ * cancelled) while its trail records auto-merge as on, until GitHub confirms it. Officina never
+ * turns it on, but tasks recorded before it stopped doing so may still carry it. The webhook that
+ * moved the task already tried once; this is what makes it stick when that call failed.
  */
 export const cancelStaleAutoMerges = async (
   pool: Pool,
@@ -399,8 +397,8 @@ export const postChecklist = async (
 
 /**
  * Marks the spec Implemented once the result is verified, by people or, in a green lane that opts
- * in, automatically: the final commit before merge,
- * as the spec workflow asks.
+ * in, automatically: the final commit before merge, as the spec workflow asks. Then approves as the
+ * verifier and leaves the merge to a person.
  */
 export const finishVerifiedSpecs = async (
   pool: Pool,
@@ -420,13 +418,14 @@ export const finishVerifiedSpecs = async (
     const config = parseProjectConfig(context.rawConfig);
     if (!config.ok) continue;
     const ref: RepoRef = { installationId: context.installationId, repo: context.repo };
+    const status = `Implemented (#${context.pullRequest})`;
     await syncSpecStatus(pool, github, {
       taskId,
       ref,
       branch: branchForTask(context.number),
       base: context.defaultBranch,
       specDir: config.config.docs.specDir,
-      status: `Implemented (#${context.pullRequest})`
+      status
     });
     await resolveForwardedThreads(pool, github, {
       taskId,
@@ -434,14 +433,13 @@ export const finishVerifiedSpecs = async (
       pullRequest: context.pullRequest
     }).catch(() => undefined);
     // A review may have sent the task back while the GitHub calls above ran; acting on the
-    // context loaded before them would approve or auto-merge a head that is no longer accepted.
+    // context loaded before them would approve a head that is no longer accepted.
     const current = await loadTask(pool, taskId);
     if (current?.task.stage !== 'merging' || current.task.headSha !== context.task.headSha)
       continue;
-    // After the status commit, so the approval covers the final head.
-    if (await autoVerified(pool, taskId)) {
-      await autoMergeOnGitHub(pool, github, { taskId, ref, pullRequest: context.pullRequest });
-    } else if (onBehalf) {
+    // After the status commit, so the approval covers the final head. A result that skipped
+    // people's verification has no verifier to approve as.
+    if (onBehalf && !(await autoVerified(pool, taskId))) {
       await approveOnGitHub(pool, onBehalf, {
         taskId,
         taskNumber: context.number,
@@ -449,5 +447,10 @@ export const finishVerifiedSpecs = async (
         pullRequest: context.pullRequest
       });
     }
+    await recordMergeState(pool, {
+      taskId,
+      pullRequest: context.pullRequest,
+      unverified: await unverifiedHead(pool, taskId, status)
+    });
   }
 };

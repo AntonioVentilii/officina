@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import type { AgentRole } from '@officina/core';
 import {
+  appendTaskEvent,
   applyCommand,
   createTask,
   feedbackSinceLastPush,
@@ -119,10 +120,6 @@ const fakeGitHub = (
     resolveReviewThreads: async (...args: unknown[]) => {
       calls.push({ method: 'resolveReviewThreads', args });
       return 1;
-    },
-    mergeWhenReady: async (...args: unknown[]) => {
-      calls.push({ method: 'mergeWhenReady', args });
-      return 'auto_merge';
     },
     cancelAutoMerge: async (...args: unknown[]) => {
       calls.push({ method: 'cancelAutoMerge', args });
@@ -301,7 +298,7 @@ describe.skipIf(!url)('engine', () => {
     expect((updates[1]!.args[0] as { text: string }).text).toContain('Status: Implemented (#42)');
   });
 
-  test('an auto-verified result resolves the forwarded review threads and auto-merges as the app, once', async () => {
+  test('an auto-verified result resolves the forwarded review threads and waits for a person to merge, once', async () => {
     const config = Bun.YAML.parse(
       CONFIG_YAML.replace('version: 1', 'version: 1\nrelease: { on_merge: staging }').replace(
         '  green:\n',
@@ -380,23 +377,39 @@ describe.skipIf(!url)('engine', () => {
     );
     expect((await loadTask(pool, id))?.task.stage).toBe('merging');
 
-    const github = fakeGitHub();
+    const github = fakeGitHub({
+      branchHead: 'def',
+      written: { commitSha: 'status1', parentSha: 'def' }
+    });
     await finishVerifiedSpecs(pool, github.port, [id]);
     await finishVerifiedSpecs(pool, github.port, [id]);
     const resolved = github.calls.filter((call) => call.method === 'resolveReviewThreads');
     expect(resolved).toHaveLength(1);
     expect(resolved[0]!.args[0]).toMatchObject({ pullRequest: 42, reviewIds: [5] });
-    const merges = github.calls.filter((call) => call.method === 'mergeWhenReady');
-    expect(merges).toHaveLength(1);
-    expect(merges[0]!.args[0]).toMatchObject({ pullRequest: 42, expectedHead: 'def' });
+    expect(github.calls.map((call) => call.method)).not.toContain('cancelAutoMerge');
+    const waiting = await pool.query(
+      `select payload from task_events where task_id = $1 and type = 'awaiting_merge'`,
+      [id]
+    );
+    expect(waiting.rows).toEqual([{ payload: { pullRequest: 42 } }]);
 
-    // A later review sends it back: auto-merge is turned off until GitHub confirms, once.
+    // A later review sends it back. Nothing turned auto-merge on, so there is nothing to cancel.
     await applyOrThrow(
       pool,
       id,
       { type: 'github_review', headSha: 'def', by: 'copilot', reviewId: 6, notes: 'Again.' },
       engine
     );
+    await cancelStaleAutoMerges(pool, github.port, seeded.projectId);
+    expect(github.calls.map((call) => call.method)).not.toContain('cancelAutoMerge');
+
+    // A trail that records auto-merge as on is turned off until GitHub confirms, once.
+    await appendTaskEvent(pool, {
+      taskId: id,
+      actor: engine,
+      type: 'github_auto_merge',
+      payload: { merge: 'auto_merge' }
+    });
     await cancelStaleAutoMerges(pool, github.port, seeded.projectId);
     await cancelStaleAutoMerges(pool, github.port, seeded.projectId);
     const cancels = github.calls.filter((call) => call.method === 'cancelAutoMerge');
@@ -624,6 +637,44 @@ describe.skipIf(!url)('engine', () => {
       expect.objectContaining({ commitSha: null, unverified: 'status1' }),
       expect.objectContaining({ commitSha: 'status2' })
     ]);
+  });
+
+  test('a branch holding commits nobody verified is held from merging, not left to merge', async () => {
+    const mergeEvents = async (taskId: string) =>
+      (
+        await pool.query<{ type: string }>(
+          `select type from task_events where task_id = $1
+             and type in ('awaiting_merge', 'merge_held') order by id`,
+          [taskId]
+        )
+      ).rows.map((row) => row.type);
+
+    const moved = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, moved, 42);
+    const foreign = fakeGitHub({ branchHead: 'foreign' });
+    await finishVerifiedSpecs(pool, foreign.port, [moved]);
+    await finishVerifiedSpecs(pool, foreign.port, [moved]);
+    expect(await mergeEvents(moved)).toEqual(['merge_held']);
+
+    // A push raced Officina's own status commit: the branch still holds an unverified commit.
+    const raced = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, raced, 43);
+    await finishVerifiedSpecs(
+      pool,
+      fakeGitHub({ branchHead: 'abc', written: { commitSha: 'status1', parentSha: 'foreign' } })
+        .port,
+      [raced]
+    );
+    expect(await mergeEvents(raced)).toEqual(['merge_held']);
+
+    const clean = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, clean, 44);
+    await finishVerifiedSpecs(
+      pool,
+      fakeGitHub({ branchHead: 'abc', written: { commitSha: 'status2', parentSha: 'abc' } }).port,
+      [clean]
+    );
+    expect(await mergeEvents(clean)).toEqual(['awaiting_merge']);
   });
 
   test('repeated invalid results fail the run and ask a maintainer', async () => {
