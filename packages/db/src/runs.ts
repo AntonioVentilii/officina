@@ -163,7 +163,8 @@ export const feedbackSinceLastPush = async (pool: Pool, taskId: string): Promise
        where task_id = $1
          and id > coalesce((select max(id) from task_events where task_id = $1 and type = 'pushed'), 0)
          and (type in ('changes_requested', 'ci_failed')
-              or (type = 'review_recorded' and payload->>'verdict' = 'changes'))
+              or (type = 'review_recorded' and payload->>'verdict' = 'changes')
+              or (type = 'guardrail_tripped' and payload->>'guardrail' = 'unlisted_files'))
        order by id`,
       [taskId]
     )

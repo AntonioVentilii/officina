@@ -293,6 +293,8 @@ const seed = async (
           type: 'push',
           headSha: 'cbefa7769acd0115833fa190d22ab6d92c4ff612',
           changedPaths: input.paths,
+          addedPaths: [],
+          catalogPages: {},
           diffLines: 48
         },
         agent('builder')

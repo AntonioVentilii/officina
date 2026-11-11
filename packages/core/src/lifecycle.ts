@@ -1,3 +1,4 @@
+import { describeUnlisted, unlistedFiles, type CatalogPages } from './catalogs';
 import type { Gate, Policy, ProjectConfig, Requirement } from './config';
 import { computeLane, redPaths, stricterLane, type Lane } from './lanes';
 import { evaluatePolicy, type Approval } from './policies';
@@ -122,6 +123,9 @@ export type Command =
       readonly type: 'push';
       readonly headSha: string;
       readonly changedPaths: readonly string[];
+      readonly addedPaths: readonly string[];
+      /** The catalog pages the added files fall under, as pushed, for the catalog check. */
+      readonly catalogPages: CatalogPages;
       readonly diffLines: number;
     }
   | { readonly type: 'review'; readonly verdict: 'approve' | 'changes'; readonly notes: string }
@@ -142,7 +146,8 @@ export type Command =
   | { readonly type: 'resume' }
   | { readonly type: 'cancel'; readonly reason: string };
 
-export type Guardrail = 'red_paths' | 'diff_too_large' | 'fix_rounds_exhausted';
+/** `unlisted_files` sends the work back to its builder; the others hold it for a person. */
+export type Guardrail = 'red_paths' | 'diff_too_large' | 'unlisted_files' | 'fix_rounds_exhausted';
 
 export type DomainEvent =
   | { readonly type: 'stage_changed'; readonly from: Stage; readonly to: Stage }
@@ -314,7 +319,7 @@ const withPlan = (
  * Sends work back to building. Once the lane's fix rounds are used up the task returns to `ready`
  * unassigned and asks a maintainer to decide, instead of looping between agents forever.
  */
-const backToBuilding = (task: Task, context: DecideContext, why: DomainEvent): Decision => {
+const backToBuilding = (task: Task, context: DecideContext, ...why: DomainEvent[]): Decision => {
   const lane = task.lane ?? 'standard';
   const limit = context.config.lanes[lane].fixRounds;
   if (task.fixRounds >= limit) {
@@ -329,7 +334,7 @@ const backToBuilding = (task: Task, context: DecideContext, why: DomainEvent): D
       blocked
     });
     return ok(moved, [
-      why,
+      ...why,
       {
         type: 'guardrail_tripped',
         guardrail: 'fix_rounds_exhausted',
@@ -344,7 +349,7 @@ const backToBuilding = (task: Task, context: DecideContext, why: DomainEvent): D
     fixRounds: task.fixRounds + 1,
     reviews: {}
   });
-  return ok(moved, [why, stageEvent]);
+  return ok(moved, [...why, stageEvent]);
 };
 
 /** Stages where the pull request exists and a review left on it can still change the outcome. */
@@ -578,6 +583,26 @@ export const decide = (
           },
           { type: 'blocked', blocked }
         ]);
+      }
+
+      // A new shared file nobody listed is the duplication of tomorrow: the builder lists it first.
+      const unlisted = unlistedFiles(
+        context.config.docs.standards.catalogs,
+        command.addedPaths,
+        command.catalogPages
+      );
+      if (unlisted.length) {
+        return backToBuilding(
+          { ...task, lane, headSha: command.headSha },
+          context,
+          pushed,
+          ...laneEvents,
+          {
+            type: 'guardrail_tripped',
+            guardrail: 'unlisted_files',
+            details: describeUnlisted(unlisted)
+          }
+        );
       }
 
       const [moved, stageEvent] = moveTo(task, 'reviewing', {

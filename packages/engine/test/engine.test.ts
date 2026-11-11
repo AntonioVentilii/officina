@@ -4,6 +4,7 @@ import {
   appendTaskEvent,
   applyCommand,
   createTask,
+  feedbackSinceLastPush,
   linkPullRequest,
   loadTask,
   saveAgentVersion,
@@ -73,6 +74,7 @@ const fakeGitHub = (
     refs?: RefSnapshot[];
     merges?: string[];
     branchHead?: string;
+    addedPaths?: string[];
     written?: { commitSha: string; parentSha: string };
   } = {}
 ) => {
@@ -93,7 +95,12 @@ const fakeGitHub = (
     },
     pushFacts: async (...args: unknown[]) => {
       calls.push({ method: 'pushFacts', args });
-      return { headSha: options.branchHead ?? 'sha1', changedPaths: [COPY, SPEC], diffLines: 3 };
+      return {
+        headSha: options.branchHead ?? 'sha1',
+        changedPaths: [COPY, SPEC],
+        addedPaths: options.addedPaths ?? [],
+        diffLines: 3
+      };
     },
     readFile: async (...args: unknown[]) => {
       calls.push({ method: 'readFile', args });
@@ -314,7 +321,14 @@ describe.skipIf(!url)('engine', () => {
       await applyOrThrow(
         pool,
         id,
-        { type: 'push', headSha, changedPaths: [COPY], diffLines: 4 },
+        {
+          type: 'push',
+          headSha,
+          changedPaths: [COPY],
+          addedPaths: [],
+          catalogPages: {},
+          diffLines: 4
+        },
         agent('builder')
       );
       for (const role of ['reviewer_spec', 'reviewer_correctness'] as const)
@@ -487,6 +501,41 @@ describe.skipIf(!url)('engine', () => {
     expect(await runAgentStep(deps, taskId, 'chooser')).toEqual({
       status: 'skipped',
       reason: 'not_due'
+    });
+  });
+
+  test('a new file the catalog does not list sends the build back with the finding', async () => {
+    await pool.query(
+      `update projects set config = jsonb_set(config, '{docs,catalogs}',
+         '{"src/lib/constants/**": "messages.md"}') where id = $1`,
+      [seeded.projectId]
+    );
+    const github = fakeGitHub({ addedPaths: [COPY] });
+    const agents = createFakePort(succeed);
+    const taskId = await taskInReady(github, agents);
+    await tick({ pool, github: github.port, agents, publicUrl: PUBLIC_URL }, seeded.projectId);
+
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({
+      stage: 'building',
+      headSha: 'sha1',
+      fixRounds: 1,
+      blocked: null
+    });
+    const [finding] = await feedbackSinceLastPush(pool, taskId);
+    expect(finding).toContain(`\`${COPY}\``);
+    expect(finding).toContain('`docs/ai/messages.md`');
+    expect(github.calls.some((call) => call.method === 'openPullRequest')).toBe(false);
+    // The page is read at the head the diff came from, not taken from the agent's word.
+    expect(github.calls).toContainEqual({
+      method: 'readFile',
+      args: [
+        {
+          installationId: 99,
+          repo: 'ViciApp/vici-app',
+          path: 'docs/ai/messages.md',
+          branch: 'sha1'
+        }
+      ]
     });
   });
 
