@@ -1,4 +1,11 @@
-import type { Gate, Policy, ProjectConfig, Requirement } from './config';
+import { describeUnlisted, unlistedFiles, type CatalogPages } from './catalogs';
+import {
+  isAgentDocsPath,
+  type Gate,
+  type Policy,
+  type ProjectConfig,
+  type Requirement
+} from './config';
 import { computeLane, redPaths, stricterLane, type Lane } from './lanes';
 import { evaluatePolicy, type Approval } from './policies';
 import { hasRole, type Member, type Role } from './roles';
@@ -29,9 +36,27 @@ export const AGENT_ROLES = [
   'reviewer_spec',
   'reviewer_correctness',
   'chooser',
-  'learner'
+  'learner',
+  'onboarder'
 ] as const;
 export type AgentRole = (typeof AGENT_ROLES)[number];
+
+/**
+ * A request people made, or the task that writes a project's agent docs. A project with an open
+ * onboarding task gets no other build dispatched until it is done.
+ */
+export const TASK_KINDS = ['request', 'onboarding'] as const;
+export type TaskKind = (typeof TASK_KINDS)[number];
+
+/** The agent roles that change files on a task branch, one per kind of task. */
+export const BUILD_ROLES = ['builder', 'onboarder'] as const;
+export type BuildRole = (typeof BUILD_ROLES)[number];
+
+export const isBuildRole = (role: string): role is BuildRole =>
+  (BUILD_ROLES as readonly string[]).includes(role);
+
+export const buildRoleFor = (kind: TaskKind): BuildRole =>
+  kind === 'onboarding' ? 'onboarder' : 'builder';
 
 /** Every one of these must approve the same head commit before a task leaves review. */
 export const REVIEWER_ROLES = ['reviewer_spec', 'reviewer_correctness'] as const;
@@ -44,7 +69,7 @@ export type Actor =
 
 export type Assignee =
   | { readonly kind: 'member'; readonly memberId: string }
-  | { readonly kind: 'agent'; readonly role: 'builder' };
+  | { readonly kind: 'agent'; readonly role: BuildRole };
 
 export interface Blocked {
   readonly question: string;
@@ -53,6 +78,7 @@ export interface Blocked {
 
 export interface Task {
   readonly id: string;
+  readonly kind: TaskKind;
   readonly requesterId: string;
   readonly stage: Stage;
   readonly lane: Lane | null;
@@ -96,8 +122,9 @@ export interface ApprovalPlan {
 
 export type PlanInput = Omit<ApprovalPlan, 'subject'>;
 
-export const newTask = (id: string, requesterId: string): Task => ({
+export const newTask = (id: string, requesterId: string, kind: TaskKind = 'request'): Task => ({
   id,
+  kind,
   requesterId,
   stage: 'request',
   lane: null,
@@ -123,13 +150,20 @@ export type Command =
     }
   | { readonly type: 'approve' }
   | { readonly type: 'request_changes'; readonly note: string }
-  | { readonly type: 'dispatch'; readonly assignee: Assignee; readonly openInLane: number }
+  | {
+      readonly type: 'dispatch';
+      readonly assignee: Assignee;
+      readonly openInLane: number;
+    }
   | { readonly type: 'claim' }
   | { readonly type: 'release' }
   | {
       readonly type: 'push';
       readonly headSha: string;
       readonly changedPaths: readonly string[];
+      readonly addedPaths: readonly string[];
+      /** The catalog pages the added files fall under, as pushed, for the catalog check. */
+      readonly catalogPages: CatalogPages;
       readonly diffLines: number;
     }
   | { readonly type: 'review'; readonly verdict: 'approve' | 'changes'; readonly notes: string }
@@ -137,6 +171,8 @@ export type Command =
   | { readonly type: 'choose'; readonly userVisible: boolean; readonly plan: PlanInput }
   | { readonly type: 'merged' }
   | { readonly type: 'ci_failed'; readonly details: string }
+  /** The task's pull request was closed on GitHub without being merged. */
+  | { readonly type: 'pull_request_closed'; readonly pullRequest: number }
   | {
       readonly type: 'github_review';
       readonly headSha: string;
@@ -150,7 +186,9 @@ export type Command =
   | { readonly type: 'resume' }
   | { readonly type: 'cancel'; readonly reason: string };
 
-export type Guardrail = 'red_paths' | 'diff_too_large' | 'fix_rounds_exhausted';
+/** `unlisted_files` sends the work back to its builder; the others hold it for a person. */
+export type Guardrail =
+  'red_paths' | 'outside_agent_docs' | 'diff_too_large' | 'unlisted_files' | 'fix_rounds_exhausted';
 
 export type DomainEvent =
   | { readonly type: 'stage_changed'; readonly from: Stage; readonly to: Stage }
@@ -185,6 +223,7 @@ export type DomainEvent =
     }
   | { readonly type: 'guardrail_tripped'; readonly guardrail: Guardrail; readonly details: string }
   | { readonly type: 'ci_failed'; readonly details: string }
+  | { readonly type: 'pull_request_closed'; readonly pullRequest: number }
   | { readonly type: 'blocked'; readonly blocked: Blocked }
   | { readonly type: 'unblocked'; readonly answer: string }
   | { readonly type: 'paused' }
@@ -216,7 +255,8 @@ export type DecisionError =
   | 'wip_limit'
   | 'agents_cannot_build_lane'
   | 'not_planned'
-  | 'stale_head';
+  | 'stale_head'
+  | 'awaiting_onboarding';
 
 export type Decision =
   | { readonly ok: true; readonly task: Task; readonly events: readonly DomainEvent[] }
@@ -227,6 +267,11 @@ export interface DecideContext {
   readonly members: readonly Member[];
   /** Every approval already recorded on this task, for any subject. */
   readonly approvals: readonly Approval[];
+  /**
+   * The project has an onboarding task that is not done yet. The store reads it under the project
+   * lock that opening one takes, so a dispatch and a new gate can never cross.
+   */
+  readonly onboardingOpen: boolean;
 }
 
 const fail = (error: DecisionError): Decision => ({ ok: false, error });
@@ -328,7 +373,7 @@ const withPlan = (
  * Sends work back to building. Once the lane's fix rounds are used up the task returns to `ready`
  * unassigned and asks a maintainer to decide, instead of looping between agents forever.
  */
-const backToBuilding = (task: Task, context: DecideContext, why: DomainEvent): Decision => {
+const backToBuilding = (task: Task, context: DecideContext, ...why: DomainEvent[]): Decision => {
   const lane = task.lane ?? 'standard';
   const limit = context.config.lanes[lane].fixRounds;
   if (task.fixRounds >= limit) {
@@ -343,7 +388,7 @@ const backToBuilding = (task: Task, context: DecideContext, why: DomainEvent): D
       blocked
     });
     return ok(moved, [
-      why,
+      ...why,
       {
         type: 'guardrail_tripped',
         guardrail: 'fix_rounds_exhausted',
@@ -358,7 +403,7 @@ const backToBuilding = (task: Task, context: DecideContext, why: DomainEvent): D
     fixRounds: task.fixRounds + 1,
     reviews: {}
   });
-  return ok(moved, [why, stageEvent]);
+  return ok(moved, [...why, stageEvent]);
 };
 
 /** Stages where the pull request exists and a review left on it can still change the outcome. */
@@ -369,13 +414,17 @@ const GITHUB_REVIEWABLE: ReadonlySet<Stage> = new Set([
   'merging'
 ]);
 
+/** Stages where the task's pull request may exist: from the first push until it is merged. */
+const WITH_PULL_REQUEST: ReadonlySet<Stage> = new Set(['building', ...GITHUB_REVIEWABLE]);
+
 const ALLOWED_WHILE_HELD: ReadonlySet<Command['type']> = new Set([
   'submit_request',
   'answer',
   'resume',
   'cancel',
   'block',
-  'pause'
+  'pause',
+  'pull_request_closed'
 ]);
 
 export const decide = (
@@ -496,8 +545,11 @@ export const decide = (
       if (task.stage !== 'ready') return fail('wrong_stage');
       if (actor.kind !== 'engine') return fail('not_allowed');
       if (task.lane === null) return fail('no_lane');
+      // Agents build in a project only once its agent docs exist, so they reuse what is there.
+      if (task.kind === 'request' && context.onboardingOpen) return fail('awaiting_onboarding');
       const settings = context.config.lanes[task.lane];
       if (command.assignee.kind === 'agent') {
+        if (command.assignee.role !== buildRoleFor(task.kind)) return fail('not_allowed');
         if (!settings.agentsBuild) return fail('agents_cannot_build_lane');
         if (command.openInLane >= settings.wip) return fail('wip_limit');
       } else {
@@ -542,7 +594,7 @@ export const decide = (
       const assignee = task.assignee;
       const isAssignee =
         assignee !== null &&
-        ((assignee.kind === 'agent' && actor.kind === 'agent' && actor.role === 'builder') ||
+        ((assignee.kind === 'agent' && actor.kind === 'agent' && actor.role === assignee.role) ||
           (assignee.kind === 'member' &&
             actor.kind === 'member' &&
             actor.memberId === assignee.memberId));
@@ -576,6 +628,31 @@ export const decide = (
         ]);
       }
 
+      if (assignee.kind === 'agent' && task.kind === 'onboarding') {
+        const outside = command.changedPaths.filter(
+          (path) => !isAgentDocsPath(context.config, path)
+        );
+        if (outside.length) {
+          const blocked: Blocked = {
+            question: `The onboarder changed files outside the agent docs: ${outside.join(', ')}. Re-dispatch, claim the task, or cancel it.`,
+            askedOf: { role: 'maintainer' }
+          };
+          const [moved, stageEvent] = moveTo(task, 'ready', { lane, assignee: null, blocked });
+          return ok(moved, [
+            pushed,
+            ...laneEvents,
+            {
+              type: 'guardrail_tripped',
+              guardrail: 'outside_agent_docs',
+              details: outside.join(', ')
+            },
+            stageEvent,
+            { type: 'assigned', assignee: null },
+            { type: 'blocked', blocked }
+          ]);
+        }
+      }
+
       const maxLines = context.config.lanes[lane].diffLines;
       if (command.diffLines > maxLines) {
         const blocked: Blocked = {
@@ -592,6 +669,26 @@ export const decide = (
           },
           { type: 'blocked', blocked }
         ]);
+      }
+
+      // A new shared file nobody listed is the duplication of tomorrow: the builder lists it first.
+      const unlisted = unlistedFiles(
+        context.config.docs.standards.catalogs,
+        command.addedPaths,
+        command.catalogPages
+      );
+      if (unlisted.length) {
+        return backToBuilding(
+          { ...task, lane, headSha: command.headSha },
+          context,
+          pushed,
+          ...laneEvents,
+          {
+            type: 'guardrail_tripped',
+            guardrail: 'unlisted_files',
+            details: describeUnlisted(unlisted)
+          }
+        );
       }
 
       const [moved, stageEvent] = moveTo(task, 'reviewing', {
@@ -681,6 +778,31 @@ export const decide = (
       return backToBuilding(task, context, { type: 'ci_failed', details: command.details });
     }
 
+    case 'pull_request_closed': {
+      if (actor.kind !== 'engine') return fail('not_allowed');
+      if (task.headSha === null || !WITH_PULL_REQUEST.has(task.stage)) return fail('wrong_stage');
+      // The work on GitHub is gone, so the task cannot wait for it: it goes back to the start of
+      // the build, held for a person, who rebuilds it (a new pull request opens on the next push)
+      // or cancels it. An onboarding task left here would otherwise hold the project forever.
+      const blocked: Blocked = {
+        question: `Pull request #${command.pullRequest} was closed without being merged. Answer to build the change again on a new pull request, or cancel the task.`,
+        askedOf: { role: 'maintainer' }
+      };
+      const [moved, stageEvent] = moveTo(task, 'ready', {
+        assignee: null,
+        headSha: null,
+        fixRounds: 0,
+        reviews: {},
+        blocked
+      });
+      return ok(moved, [
+        { type: 'pull_request_closed', pullRequest: command.pullRequest },
+        stageEvent,
+        { type: 'assigned', assignee: null },
+        { type: 'blocked', blocked }
+      ]);
+    }
+
     case 'github_review': {
       if (!GITHUB_REVIEWABLE.has(task.stage)) return fail('wrong_stage');
       if (actor.kind !== 'engine') return fail('not_allowed');
@@ -730,10 +852,13 @@ export const decide = (
 
     case 'cancel': {
       const member = memberFor(actor, context);
+      // The engine closes an onboarding task itself once every page it would write is on the
+      // default branch; every other cancellation is a person's decision.
       const allowed =
-        member !== undefined &&
-        (hasRole(member, 'maintainer') ||
-          (member.id === task.requesterId && hasRole(member, 'contributor')));
+        (actor.kind === 'engine' && task.kind === 'onboarding') ||
+        (member !== undefined &&
+          (hasRole(member, 'maintainer') ||
+            (member.id === task.requesterId && hasRole(member, 'contributor'))));
       if (!allowed) return fail('not_allowed');
       const [moved, event] = moveTo(task, 'cancelled', { assignee: null, blocked: null });
       return ok(moved, [event, { type: 'closed', stage: 'cancelled', reason: command.reason }]);

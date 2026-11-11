@@ -89,7 +89,7 @@ describe('GitHub client', () => {
     expect(calls).toHaveLength(3);
   });
 
-  test('push facts come from the branch head and the compare, counting renames under both names', async () => {
+  test('push facts come from the branch head and the compare, counting renames under both names and as added', async () => {
     const { fetchImpl, calls } = fakeGitHub({
       'POST /app/installations/99/access_tokens': tokenRoute('2099-01-01T00:00:00Z'),
       'GET /repos/ViciApp/vici-app/branches/officina%2F12-copy': () =>
@@ -97,12 +97,15 @@ describe('GitHub client', () => {
       'GET /repos/ViciApp/vici-app/compare/main...headsha': () =>
         json({
           files: [
-            { filename: 'src/lib/constants/messages/en.ts', changes: 4 },
+            { filename: 'src/lib/constants/messages/en.ts', status: 'modified', changes: 4 },
             {
               filename: 'src/lib/moved.ts',
               previous_filename: 'src/satellite/moved.ts',
+              status: 'renamed',
               changes: 0
-            }
+            },
+            { filename: 'src/lib/new.ts', status: 'added', changes: 0 },
+            { filename: 'src/lib/gone.ts', status: 'removed', changes: 0 }
           ]
         })
     });
@@ -113,8 +116,11 @@ describe('GitHub client', () => {
       changedPaths: [
         'src/lib/constants/messages/en.ts',
         'src/lib/moved.ts',
-        'src/satellite/moved.ts'
+        'src/satellite/moved.ts',
+        'src/lib/new.ts',
+        'src/lib/gone.ts'
       ],
+      addedPaths: ['src/lib/moved.ts', 'src/lib/new.ts'],
       diffLines: 4
     });
     const reads = calls.filter((call) => call.method === 'GET');

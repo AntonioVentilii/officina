@@ -1,4 +1,11 @@
-import type { ApprovalPlan, Gate, Requirement } from '@officina/core';
+import {
+  TOOL_LAYER_DOCS,
+  isBuildRole,
+  type ApprovalPlan,
+  type Gate,
+  type Requirement,
+  type StandardsDocs
+} from '@officina/core';
 import type { RunnerRole } from '@officina/runner';
 
 export interface ChooserContext {
@@ -39,6 +46,8 @@ export interface BriefInput {
   readonly chooser?: ChooserContext | undefined;
   /** Follow-up questions the interviewer has already asked on this request. */
   readonly questionsAsked?: number | undefined;
+  /** The agent docs the project must hold, for the onboarder that writes them. */
+  readonly standards?: StandardsDocs | undefined;
 }
 
 export const MAX_INTERVIEW_QUESTIONS = 4;
@@ -80,8 +89,22 @@ const fence = (text: string): string => {
   return `${marks}text\n${text}\n${marks}`;
 };
 
-const list = (items: readonly string[]): string =>
+/** A bullet list of code paths, or `- none`. */
+export const list = (items: readonly string[]): string =>
   items.length ? items.map((item) => `- \`${item}\``).join('\n') : '- none';
+
+const onboardingSection = (entry: string, standards: StandardsDocs): string =>
+  [
+    '## Agent docs this project must hold',
+    `Every page below must exist when you push, read off the code and the git history. A page with nothing true to say is still required: keep it short.`,
+    `Pages:\n${list([entry, ...standards.pages])}`,
+    standards.catalogs.length
+      ? `Catalogs: a file added under the glob must be listed on the page.\n${standards.catalogs.map((catalog) => `- \`${catalog.pattern}\` on \`${catalog.page}\``).join('\n')}`
+      : null,
+    `Change nothing but \`${entry}\`, ${TOOL_LAYER_DOCS.map((path) => `\`${path}\``).join(', ')} and files under \`${standards.dir}/\`: the engine stops the task if any other file changes.`
+  ]
+    .filter(Boolean)
+    .join('\n\n');
 
 /**
  * The brief an agent receives for one step. Content written by people or other agents is fenced and
@@ -114,7 +137,7 @@ export const buildBrief = (input: BriefInput): string => {
     );
   }
 
-  if (input.role === 'builder') {
+  if (isBuildRole(input.role)) {
     sections.push(
       `## Round\n\n${input.firstRound ? 'First round: create the task branch from the default branch.' : 'Fix round: the task branch is checked out. Address every note below.'}`,
       `## Verify commands\n\n${list(input.verify)}`,
@@ -124,6 +147,10 @@ export const buildBrief = (input: BriefInput): string => {
     if (input.feedback.length) {
       sections.push(`## Notes to address\n\n${input.feedback.map(fence).join('\n\n')}`);
     }
+  }
+
+  if (input.role === 'onboarder' && input.standards) {
+    sections.push(onboardingSection(input.docsEntry, input.standards));
   }
 
   if (input.role === 'interviewer') {

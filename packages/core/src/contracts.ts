@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { CatalogPages } from './catalogs';
 import type { Blocked, Command, Task } from './lifecycle';
 
 /*
@@ -50,6 +51,23 @@ export const builderOutputSchema = z.discriminatedUnion('outcome', [
   blockedSchema
 ]);
 
+/**
+ * The onboarder pushes the agent docs like a builder pushes code, and also hands back the worst
+ * smells it found (duplicates, god files, misplaced code) as follow-ups for the pull request body.
+ */
+export const onboarderOutputSchema = z.discriminatedUnion('outcome', [
+  z.strictObject({
+    outcome: z.literal('pushed'),
+    branch: text.regex(/^officina\//, 'branch must start with officina/'),
+    prTitle: text.max(120),
+    verified: z.array(text),
+    notVerified: z.array(text),
+    followUps: z.array(text.max(500)).max(15)
+  }),
+  z.strictObject({ outcome: z.literal('failed'), why: text }),
+  blockedSchema
+]);
+
 export const reviewerOutputSchema = z.discriminatedUnion('outcome', [
   z.strictObject({ outcome: z.literal('approve'), summary: text }),
   z.strictObject({
@@ -59,6 +77,8 @@ export const reviewerOutputSchema = z.discriminatedUnion('outcome', [
         z.strictObject({
           file: text,
           line: z.number().int().positive().optional(),
+          /** The rule the change breaks: a numbered rule of the code standard or a project docs page. */
+          rule: text.max(200).optional(),
           issue: text
         })
       )
@@ -140,7 +160,8 @@ export const OUTPUT_SCHEMAS = {
   reviewer_spec: reviewerOutputSchema,
   reviewer_correctness: reviewerOutputSchema,
   chooser: chooserOutputSchema,
-  learner: learnerOutputSchema
+  learner: learnerOutputSchema,
+  onboarder: onboarderOutputSchema
 } as const;
 
 export type ContractRole = keyof typeof OUTPUT_SCHEMAS;
@@ -166,10 +187,12 @@ export const parseAgentOutput = <R extends ContractRole>(
   };
 };
 
-/** Facts the engine establishes itself after a builder reports a push. */
+/** Facts the engine establishes itself after a builder reports a push, read from GitHub. */
 export interface PushFacts {
   readonly headSha: string;
   readonly changedPaths: readonly string[];
+  /** Files the branch adds (new, copied, or renamed to a new path), for the catalog check. */
+  readonly addedPaths: readonly string[];
   readonly diffLines: number;
 }
 
@@ -189,7 +212,14 @@ export type RoleOutput =
   | {
       readonly role: 'builder';
       readonly output: AgentOutput<'builder'>;
-      readonly facts?: PushFacts;
+      /** The push facts plus the catalog pages the engine read at the pushed head. */
+      readonly facts?: PushFacts & { readonly catalogPages: CatalogPages };
+    }
+  | {
+      readonly role: 'onboarder';
+      readonly output: AgentOutput<'onboarder'>;
+      /** The push facts plus the catalog pages the engine read at the pushed head. */
+      readonly facts?: PushFacts & { readonly catalogPages: CatalogPages };
     }
   | {
       readonly role: 'reviewer_spec' | 'reviewer_correctness';
@@ -225,7 +255,8 @@ export const commandForOutput = (task: Task, result: RoleOutput): CommandResult 
         }
       };
     }
-    case 'builder': {
+    case 'builder':
+    case 'onboarder': {
       const output = result.output;
       if (output.outcome === 'blocked') {
         return { ok: true, command: blockCommand(task, output.question, output.askedOf) };
@@ -248,7 +279,7 @@ export const commandForOutput = (task: Task, result: RoleOutput): CommandResult 
       const notes = output.items
         .map(
           (item, index) =>
-            `${index + 1}. ${item.file}${item.line ? `:${item.line}` : ''} ${item.issue}`
+            `${index + 1}. ${item.file}${item.line ? `:${item.line}` : ''}${item.rule ? ` [${item.rule}]` : ''} ${item.issue}`
         )
         .join('\n');
       return { ok: true, command: { type: 'review', verdict: 'changes', notes } };

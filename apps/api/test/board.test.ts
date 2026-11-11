@@ -3,9 +3,11 @@ import {
   appendRunEvent,
   appendTaskEvent,
   applyCommand,
+  createOnboardingTask,
   findTaskIdByNumber,
   startRun
 } from '@officina/db';
+import { parseProjectConfig } from '@officina/core';
 import { Pool } from 'pg';
 import { resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
 import { createApp } from '../src/app';
@@ -108,6 +110,34 @@ describe.skipIf(!url)('board api', () => {
         ...(body === undefined ? {} : { body: JSON.stringify(body) })
       })
     );
+
+  test('a task ready to build says it waits for the agent docs while onboarding is open', async () => {
+    const cookie = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    await createRequest(pool, { title: 'Rename settings', request: 'Call it Preferences.' });
+    await pool.query("update tasks set stage = 'ready', lane = 'standard'");
+    const board = async () =>
+      (await json(await call(cookie, `/api/projects/${seeded.projectId}/board`))).tasks;
+    expect((await board())[0].waitingOn.label).toBe('Waiting for a build slot');
+
+    const { rows } = await pool.query<{ config: unknown }>('select config from projects');
+    const config = parseProjectConfig(rows[0]!.config);
+    if (!config.ok) throw new Error(config.errors.join('\n'));
+    await createOnboardingTask(pool, {
+      projectId: seeded.projectId,
+      requesterId: seeded.ownerId,
+      title: 'Write the agent docs',
+      spec: '# Agent docs',
+      paths: ['AGENTS.md'],
+      config: config.config
+    });
+    const tasks = await board();
+    const request = tasks.find((task: { number: number }) => task.number === 1);
+    expect(request.waitingOn).toEqual({
+      kind: 'agent',
+      label: 'Builds once the agent docs of task 2 are merged',
+      me: false
+    });
+  });
 
   test('a sign-in link works once and opens a session', async () => {
     const link = await loginLink(pool, { publicUrl: PUBLIC_URL });

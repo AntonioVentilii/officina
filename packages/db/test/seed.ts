@@ -83,13 +83,24 @@ export const createTaskInMerging = async (pool: Pool, seeded: Seeded): Promise<s
   await applyOrThrow(
     pool,
     id,
-    { type: 'dispatch', assignee: { kind: 'agent', role: 'builder' }, openInLane: 0 },
+    {
+      type: 'dispatch',
+      assignee: { kind: 'agent', role: 'builder' },
+      openInLane: 0
+    },
     engine
   );
   await applyOrThrow(
     pool,
     id,
-    { type: 'push', headSha: 'abc', changedPaths: paths, diffLines: 4 },
+    {
+      type: 'push',
+      headSha: 'abc',
+      changedPaths: paths,
+      addedPaths: [],
+      catalogPages: {},
+      diffLines: 4
+    },
     agent('builder')
   );
   await applyOrThrow(

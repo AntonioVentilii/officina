@@ -5,6 +5,7 @@ import {
   type AgentRole,
   type Approval,
   type Command,
+  type DecideContext,
   type Decision,
   type DomainEvent,
   type Member,
@@ -53,12 +54,21 @@ export const PLAN: PlanInput = {
 };
 
 /** Applies commands like the engine will: approvals recorded by earlier decisions feed later ones. */
-export const createDriver = (members: readonly Member[], config = loadConfig()) => {
+export const createDriver = (
+  members: readonly Member[],
+  config = loadConfig(),
+  facts: Partial<Pick<DecideContext, 'onboardingOpen'>> = {}
+) => {
   const approvals: Approval[] = [];
   let lastEvents: readonly DomainEvent[] = [];
 
   const attempt = (task: Task, command: Command, actor: Actor): Decision =>
-    decide(task, command, actor, { config, members, approvals });
+    decide(task, command, actor, {
+      config,
+      members,
+      approvals,
+      onboardingOpen: facts.onboardingOpen ?? false
+    });
 
   const step = (task: Task, command: Command, actor: Actor): Task => {
     const decision = attempt(task, command, actor);

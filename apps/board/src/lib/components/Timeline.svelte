@@ -48,9 +48,13 @@
       case 'review_recorded':
         return p.verdict === 'approve' ? 'approved the change' : 'asked for changes';
       case 'guardrail_tripped':
-        return `stopped it: ${p.details ?? String(p.guardrail).replaceAll('_', ' ')}`;
+        return p.guardrail === 'unlisted_files'
+          ? 'sent it back: new files its catalog does not list'
+          : `stopped it: ${p.details ?? String(p.guardrail).replaceAll('_', ' ')}`;
       case 'ci_failed':
         return 'reported failing checks';
+      case 'pull_request_closed':
+        return `found pull request #${p.pullRequest} closed without a merge`;
       case 'blocked':
         return 'asked a question';
       case 'unblocked':

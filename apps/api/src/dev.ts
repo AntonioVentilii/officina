@@ -281,7 +281,11 @@ const seed = async (
       await apply(
         demo,
         task.id,
-        { type: 'dispatch', assignee: { kind: 'agent', role: 'builder' }, openInLane: 0 },
+        {
+          type: 'dispatch',
+          assignee: { kind: 'agent', role: 'builder' },
+          openInLane: 0
+        },
         engine
       );
       if (running) return run(demo, task.id, 'building', 'builder', { events: 9, running: true });
@@ -293,6 +297,8 @@ const seed = async (
           type: 'push',
           headSha: 'cbefa7769acd0115833fa190d22ab6d92c4ff612',
           changedPaths: input.paths,
+          addedPaths: [],
+          catalogPages: {},
           diffLines: 48
         },
         agent('builder')
@@ -523,7 +529,11 @@ const seedDemo = async (pool: Pool) => {
   await apply(
     demo,
     blocked.id,
-    { type: 'dispatch', assignee: { kind: 'agent', role: 'builder' }, openInLane: 0 },
+    {
+      type: 'dispatch',
+      assignee: { kind: 'agent', role: 'builder' },
+      openInLane: 0
+    },
     engine
   );
   await apply(
