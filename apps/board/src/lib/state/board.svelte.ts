@@ -1,4 +1,4 @@
-import { get } from '$lib/api';
+import { ApiError, get } from '$lib/api';
 import type { AgentRoleInfo, Card, Learning, Run } from '$lib/types';
 import { coalesce, live } from './live.svelte';
 import { session } from './session.svelte';
@@ -10,6 +10,8 @@ class Board {
   roleLabels = $state<Record<string, string>>({});
   learnings = $state<Learning[]>([]);
   loaded = $state(false);
+  /** Why the last load failed; cleared by the next one that succeeds. */
+  error = $state<string | null>(null);
   #projectId: string | null = null;
   #unsubscribe: (() => void) | null = null;
 
@@ -30,6 +32,7 @@ class Board {
     this.roleLabels = {};
     this.learnings = [];
     this.loaded = false;
+    this.error = null;
     this.#unsubscribe?.();
     this.#unsubscribe = live.subscribe((event) => {
       if (event.projectId === '*' || event.projectId === this.#projectId) this.#refreshSoon();
@@ -42,24 +45,32 @@ class Board {
     if (!projectId) return;
     // Runs and learnings are for maintainers and owners; the API refuses them to anyone else.
     const technical = session.technical;
-    const [board, runs, learnings] = await Promise.all([
-      get<{ tasks: Card[]; roleLabels: Record<string, string> }>(
-        `/api/projects/${projectId}/board`
-      ),
-      technical
-        ? get<{ runs: Run[]; agents: AgentRoleInfo[] }>(`/api/projects/${projectId}/runs`)
-        : { runs: [], agents: [] },
-      technical
-        ? get<{ learnings: Learning[] }>(`/api/projects/${projectId}/learnings`)
-        : { learnings: [] }
-    ]);
-    if (projectId !== this.#projectId) return;
-    this.tasks = board.tasks;
-    this.roleLabels = board.roleLabels;
-    this.runs = runs.runs;
-    this.agents = runs.agents;
-    this.learnings = learnings.learnings;
-    this.loaded = true;
+    try {
+      const [board, runs, learnings] = await Promise.all([
+        get<{ tasks: Card[]; roleLabels: Record<string, string> }>(
+          `/api/projects/${projectId}/board`
+        ),
+        technical
+          ? get<{ runs: Run[]; agents: AgentRoleInfo[] }>(`/api/projects/${projectId}/runs`)
+          : { runs: [], agents: [] },
+        technical
+          ? get<{ learnings: Learning[] }>(`/api/projects/${projectId}/learnings`)
+          : { learnings: [] }
+      ]);
+      if (projectId !== this.#projectId) return;
+      this.tasks = board.tasks;
+      this.roleLabels = board.roleLabels;
+      this.runs = runs.runs;
+      this.agents = runs.agents;
+      this.learnings = learnings.learnings;
+      this.error = null;
+      this.loaded = true;
+    } catch (error) {
+      if (projectId !== this.#projectId) return;
+      // An expired session sends the person to sign in; anything else is shown with a retry.
+      if (error instanceof ApiError && error.status === 401) session.status = 'signed-out';
+      else this.error = (error as Error).message;
+    }
   }
 
   /** An agent role's name as the API gives it, or the role itself until the board has loaded. */

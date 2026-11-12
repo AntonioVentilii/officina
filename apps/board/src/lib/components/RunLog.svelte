@@ -16,6 +16,10 @@
   let entries = $state<LogEntry[]>([]);
   let cursor = $state('0');
   let loaded = $state(false);
+  let loadError = $state<string | null>(null);
+  // One read of the log at a time, so two reads never append the same page twice.
+  let reading = false;
+  let readAgain = false;
   let scroller: HTMLDivElement | undefined = $state();
   let follow = $state(true);
 
@@ -77,13 +81,14 @@
     return out;
   });
 
-  const load = async () => {
+  const readPage = async () => {
     const page = await get<{ entries: LogEntry[]; cursor: string }>(
       `/api/runs/${run.id}/log?after=${cursor}`
     );
     if (page.entries.length) entries = [...entries, ...page.entries];
     cursor = page.cursor;
     loaded = true;
+    loadError = null;
     if (follow) {
       await tick();
       scroller?.scrollTo({
@@ -92,7 +97,28 @@
       });
     }
     // A page is capped server-side; keep reading until caught up.
-    if (page.entries.length >= 400) void load();
+    return page.entries.length >= 400;
+  };
+
+  const load = async (): Promise<void> => {
+    if (reading) {
+      readAgain = true;
+      return;
+    }
+    reading = true;
+    let more = false;
+    try {
+      more = await readPage();
+    } catch (error) {
+      loaded = true;
+      loadError = (error as Error).message;
+    } finally {
+      reading = false;
+    }
+    if (more || readAgain) {
+      readAgain = false;
+      return load();
+    }
   };
 
   const loadSoon = coalesce(() => void load(), 300);
@@ -119,7 +145,13 @@
     <div class="skeleton"></div>
     <div class="skeleton short"></div>
   {:else if blocks.length === 0}
-    <p class="faint empty">{running ? 'Starting the session…' : 'No log for this run.'}</p>
+    <p class="faint empty">
+      {loadError
+        ? `Could not load the log: ${loadError}`
+        : running
+          ? 'Starting the session…'
+          : 'No log for this run.'}
+    </p>
   {/if}
 
   {#each blocks as block (block.id)}
