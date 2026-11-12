@@ -1,8 +1,9 @@
-import { addComment, findTaskIdByNumber, type MemberProject } from '@officina/db';
+import { taskUrl } from '@officina/core';
+import type { MemberProject } from '@officina/db';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import { boardView, taskView, type BoardViewer, type CardView } from '../board';
-import { TaskCommandError, actOnTaskAs, createRequestAs } from '../tasks';
+import { TaskCommandError, actOnTaskAs, commentAs, createRequestAs } from '../tasks';
 
 /**
  * The connector's tools. Each one is a thin call into what the board's API already does
@@ -28,13 +29,9 @@ const PROJECT = z
   .min(1)
   .optional()
   .describe(
-    'The project by name or repository (for example "vici-app"). Leave it out when the person belongs to one project; otherwise call list_projects and ask which one.'
+    'The project by name or repository (for example "web-app" or "acme/web-app"). Leave it out when the person belongs to one project; otherwise call list_projects and ask which one.'
   );
 const NUMBER = z.number().int().min(1).describe('The task number, as in "task 12".');
-
-/** Task numbers are per project, so the link names the project the board must open. */
-const taskUrl = (context: ToolContext, project: MemberProject, number: number) =>
-  `${context.publicUrl.replace(/\/$/, '')}/tasks/${number}?project=${project.id}`;
 
 const viewerFor = (context: ToolContext, project: MemberProject): BoardViewer => ({
   memberId: context.memberId,
@@ -78,7 +75,7 @@ const ROLE_CAN: Record<MemberProject['role'], string> = {
 };
 
 const cardLine = (context: ToolContext, project: MemberProject, card: CardView) =>
-  `- Task ${card.number}: ${card.title}. Now: ${card.waitingOn.label}. ${taskUrl(context, project, card.number)}`;
+  `- Task ${card.number}: ${card.title}. Now: ${card.waitingOn.label}. ${taskUrl(context.publicUrl, project.id, card.number)}`;
 
 const truncate = (text: string, max: number) =>
   text.length > max ? `${text.slice(0, max)}\n\n(cut here; the full text is on the board)` : text;
@@ -151,9 +148,9 @@ Before calling, make sure you know, in the person's own words:
 Ask for what is missing, one short question at a time, then write the request in plain language. Do not invent technical details or file names.
 
 Examples:
-- Change a text: title "Rename the Wager button to Prediction", request "On the battle screen the button says Wager. It should say Prediction, in every language. Nothing else on the screen changes."
+- Change a text: title "Rename the Submit button to Send", request "On the contact form the button says Submit. It should say Send, in every language. Nothing else on the form changes."
 - Report a bug: title "Profile photo does not save", request "I pick a new photo in Settings > Profile and press Save. The old photo is still there after reloading. Expected: the new photo stays."
-- Ask for a feature: title "Remind people of unfinished predictions", request "People forget predictions they started. Send a reminder the next morning if one is unfinished. Only once per prediction."
+- Ask for a feature: title "Remind people of unfinished orders", request "People forget orders they started. Send a reminder the next morning if one is unfinished. Only once per order."
 
 After it is opened, tell the person the task link and that an agent may ask them questions there or here (whats_waiting_on_me).`,
     input: z.object({
@@ -163,7 +160,7 @@ After it is opened, tell the person the task link and that an agent may ask them
         .trim()
         .min(3)
         .max(200)
-        .describe('A short imperative title, for example "Rename the Wager button to Prediction".'),
+        .describe('A short imperative title, for example "Rename the Submit button to Send".'),
       request: z
         .string()
         .trim()
@@ -180,10 +177,6 @@ After it is opened, tell the person the task link and that an agent may ask them
     readOnly: false,
     run: async (context, input) => {
       const project = projectFor(context, input.project);
-      if (project.role === 'watcher')
-        throw new ToolError(
-          `You can read ${project.name} but not open requests there; ask an owner for the contributor role.`
-        );
       const created = await createRequestAs(context.pool, {
         projectId: project.id,
         memberId: context.memberId,
@@ -195,7 +188,7 @@ After it is opened, tell the person the task link and that an agent may ask them
         created.stage === 'request'
           ? 'An agent reads it now and may ask a few questions; they show up in whats_waiting_on_me and on the board.'
           : 'It waits for a maintainer to accept it; then an agent writes the plan.';
-      return `Opened task ${created.number} in ${project.name}: ${taskUrl(context, project, created.number)}\n${next}`;
+      return `Opened task ${created.number} in ${project.name}: ${taskUrl(context.publicUrl, project.id, created.number)}\n${next}`;
     }
   }),
   tool({
@@ -237,7 +230,7 @@ After it is opened, tell the person the task link and that an agent may ask them
       if (!task) throw new ToolError(`There is no task ${input.number} in ${project.name}.`);
       const lines = [
         `Task ${task.number} in ${project.name}: ${task.title}`,
-        `Link: ${taskUrl(context, project, task.number)}`,
+        `Link: ${taskUrl(context.publicUrl, project.id, task.number)}`,
         `Requested by ${task.requester}. Now: ${task.waitingOn.label}${task.waitingOn.me ? ' (your turn)' : ''}.`
       ];
       if (task.pullRequestUrl) lines.push(`Pull request: ${task.pullRequestUrl}`);
@@ -283,7 +276,7 @@ After it is opened, tell the person the task link and that an agent may ask them
         number: input.number,
         action: { type: 'answer', text: input.answer }
       });
-      return `Answered; the work on task ${input.number} continues: ${taskUrl(context, project, input.number)}`;
+      return `Answered; the work on task ${input.number} continues: ${taskUrl(context.publicUrl, project.id, input.number)}`;
     }
   }),
   tool({
@@ -299,17 +292,13 @@ After it is opened, tell the person the task link and that an agent may ask them
     readOnly: false,
     run: async (context, input) => {
       const project = projectFor(context, input.project);
-      if (project.role === 'watcher')
-        throw new ToolError(`You can read ${project.name} but not comment there.`);
-      const taskId = await findTaskIdByNumber(context.pool, project.id, input.number);
-      if (!taskId) throw new ToolError(`There is no task ${input.number} in ${project.name}.`);
-      await addComment(
-        context.pool,
-        taskId,
-        { kind: 'member', memberId: context.memberId },
-        input.text
-      );
-      return `Comment added to task ${input.number}: ${taskUrl(context, project, input.number)}`;
+      await commentAs(context.pool, {
+        projectId: project.id,
+        memberId: context.memberId,
+        number: input.number,
+        text: input.text
+      });
+      return `Comment added to task ${input.number}: ${taskUrl(context.publicUrl, project.id, input.number)}`;
     }
   }),
   tool({
@@ -352,7 +341,7 @@ Always call show_task first, show the person the plan or the list of what to che
           : result.satisfied === false
             ? 'Your approval is recorded; more approvals are still needed.'
             : 'Approved.';
-      return `${outcome} Task ${input.number}: ${taskUrl(context, project, input.number)}`;
+      return `${outcome} Task ${input.number}: ${taskUrl(context.publicUrl, project.id, input.number)}`;
     }
   })
 ] as const;

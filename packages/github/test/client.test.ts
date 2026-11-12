@@ -315,6 +315,106 @@ describe('GitHub client', () => {
     const creating = client.createBranch({ ...ref, branch: 'officina/learning-1', from: 'main' });
     await expect(creating).rejects.toThrow('GitHub 422');
   });
+
+  test('resolves the open threads of the given reviews on every page of a pull request', async () => {
+    const thread = (id: string, reviewId: number, isResolved = false) => ({
+      id,
+      isResolved,
+      comments: { nodes: [{ pullRequestReview: { databaseId: reviewId } }] }
+    });
+    const page = (nodes: unknown[], endCursor: string | null) =>
+      json({
+        data: {
+          repository: {
+            pullRequest: {
+              reviewThreads: { pageInfo: { hasNextPage: endCursor !== null, endCursor }, nodes }
+            }
+          }
+        }
+      });
+    const answers = [
+      page([thread('T1', 7), thread('T2', 8), thread('T3', 7, true)], 'c1'),
+      page([thread('T4', 7)], null),
+      json({ data: {} }),
+      json({ data: {} })
+    ];
+    const { fetchImpl, calls } = fakeGitHub({
+      'POST /app/installations/99/access_tokens': tokenRoute('2099-01-01T00:00:00Z'),
+      'POST /graphql': () => answers.shift()!
+    });
+    const client = createGitHubClient({ appId: '1', privateKeyPem, fetch: fetchImpl });
+
+    expect(await client.resolveReviewThreads({ ...ref, pullRequest: 42, reviewIds: [7] })).toBe(2);
+    const graphqlCalls = calls.filter((call) => call.url === '/graphql');
+    const variables = graphqlCalls.map(
+      (call) => (call.body as { variables: Record<string, unknown> }).variables
+    );
+    expect(variables).toEqual([
+      { owner: 'ViciApp', name: 'vici-app', number: 42, after: null },
+      { owner: 'ViciApp', name: 'vici-app', number: 42, after: 'c1' },
+      { id: 'T1' },
+      { id: 'T4' }
+    ]);
+  });
+});
+
+describe('merge when ready', () => {
+  const ref = {
+    installationId: 99,
+    repo: 'ViciApp/vici-app',
+    pullRequest: 42,
+    expectedHead: 'abc'
+  };
+  const routes = (graphql: () => Response) => ({
+    'POST /app/installations/99/access_tokens': tokenRoute('2099-01-01T00:00:00Z'),
+    'GET /repos/ViciApp/vici-app/pulls/42': () => json({ node_id: 'PR_42', head: { sha: 'abc' } }),
+    'POST /graphql': graphql,
+    'PUT /repos/ViciApp/vici-app/pulls/42/merge': () => json({ merged: true })
+  });
+
+  test('as the App, turns auto-merge on pinned to the verified head', async () => {
+    const { fetchImpl, calls } = fakeGitHub(routes(() => json({ data: {} })));
+    const client = createGitHubClient({ appId: '1', privateKeyPem, fetch: fetchImpl });
+    expect(await client.mergeWhenReady(ref)).toBe('auto_merge');
+    const graphql = calls.find((call) => call.url === '/graphql')!;
+    expect(graphql.authorization).toStartWith('Bearer ghs_');
+    expect((graphql.body as { variables: unknown }).variables).toEqual({
+      id: 'PR_42',
+      head: 'abc'
+    });
+    expect(calls.some((call) => call.method === 'PUT')).toBe(false);
+  });
+
+  test('as the App, merges a pull request already clean with a squash pinned to the head', async () => {
+    const clean = () => json({ errors: [{ message: 'Pull request is in clean status' }] });
+    const { fetchImpl, calls } = fakeGitHub(routes(clean));
+    const client = createGitHubClient({ appId: '1', privateKeyPem, fetch: fetchImpl });
+    expect(await client.mergeWhenReady(ref)).toBe('merged');
+    const merge = calls.find((call) => call.method === 'PUT')!;
+    expect(merge.authorization).toStartWith('Bearer ghs_');
+    expect(merge.body).toEqual({ merge_method: 'squash', sha: 'abc' });
+  });
+
+  test('as the App, any other refusal is an error and nothing is merged', async () => {
+    const refused = () => json({ errors: [{ message: 'Auto merge is not allowed' }] });
+    const { fetchImpl, calls } = fakeGitHub(routes(refused));
+    const client = createGitHubClient({ appId: '1', privateKeyPem, fetch: fetchImpl });
+    await expect(client.mergeWhenReady(ref)).rejects.toThrow('Auto merge is not allowed');
+    expect(calls.some((call) => call.method === 'PUT')).toBe(false);
+  });
+
+  test('as a person, uses their token for both calls', async () => {
+    const clean = () => json({ errors: [{ message: 'Pull request is in clean status' }] });
+    const { fetchImpl, calls } = fakeGitHub(routes(clean));
+    const asUser = createGitHubAsUser({ fetch: fetchImpl });
+    expect(await asUser.mergeWhenReady('gho_person', 'ViciApp/vici-app', 42, 'abc')).toBe('merged');
+    expect(calls.map((call) => call.authorization)).toEqual([
+      'Bearer gho_person',
+      'Bearer gho_person',
+      'Bearer gho_person'
+    ]);
+    expect(calls.at(-1)!.body).toEqual({ merge_method: 'squash', sha: 'abc' });
+  });
 });
 
 describe('GitHub as a person', () => {

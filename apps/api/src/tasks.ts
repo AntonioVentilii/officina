@@ -5,8 +5,7 @@ import {
   parseProjectConfig,
   type Actor,
   type Command,
-  type Gate,
-  type Requirement
+  type Gate
 } from '@officina/core';
 import {
   addComment,
@@ -26,9 +25,17 @@ import {
   type StoreError
 } from '@officina/db';
 import { checklistMarkdown } from '@officina/engine';
+import { consoleUrl, describeRequirement } from './board';
 import type { Pool } from 'pg';
 
-export class TaskCommandError extends Error {}
+/** A refused task command, with the HTTP status the API answers it with. */
+export class TaskCommandError extends Error {
+  readonly status: number;
+  constructor(message: string, status = 409) {
+    super(message);
+    this.status = status;
+  }
+}
 
 const ERROR_TEXT: Record<StoreError, string> = {
   terminal: 'the task is closed',
@@ -114,7 +121,10 @@ export const createRequestAs = async (
   // A request starts paid agent runs, so reading the board is not enough to open one.
   const member = await loadProjectMember(pool, projectId, memberId);
   if (!member || !hasRole(member, 'contributor'))
-    throw new TaskCommandError('watchers can read but not open requests');
+    throw new TaskCommandError(
+      'watchers can read but not open requests; an owner can give the contributor role',
+      403
+    );
   // The task and the request it carries land together: a task never exists without its request.
   const { task } = await createTask(pool, {
     projectId,
@@ -133,6 +143,19 @@ export const createRequestAs = async (
   });
   if (!submitted.ok) throw new TaskCommandError(ERROR_TEXT[submitted.error]);
   return { number, stage: submitted.task.stage };
+};
+
+/** A member's comment on a task's conversation; watchers read but do not comment. */
+export const commentAs = async (
+  pool: Pool,
+  input: ProjectActor & { readonly number: number; readonly text: string }
+): Promise<void> => {
+  const member = await loadProjectMember(pool, input.projectId, input.memberId);
+  if (!member || !hasRole(member, 'contributor'))
+    throw new TaskCommandError('watchers can read but not comment', 403);
+  const taskId = await findTaskIdByNumber(pool, input.projectId, input.number);
+  if (!taskId) throw new TaskCommandError('task not found', 404);
+  await addComment(pool, taskId, { kind: 'member', memberId: input.memberId }, input.text);
 };
 
 export type TaskAction =
@@ -200,15 +223,6 @@ export const actOnTaskAs = async (
 
 const money = (cents: number | null) =>
   cents === null ? 'cost unknown' : `$${(cents / 100).toFixed(2)}`;
-
-const article = (word: string) => (/^[aeiou]/i.test(word) ? `an ${word}` : `a ${word}`);
-
-const describeRequirement = (requirement: Requirement): string =>
-  'role' in requirement
-    ? article(requirement.role)
-    : 'domain' in requirement
-      ? article(`${requirement.domain} approver`)
-      : 'the requester';
 
 const NEXT_STEP: Partial<Record<string, string>> = {
   request: 'the interviewer is reading the request; to skip it: task submit --number {n}',
@@ -309,10 +323,8 @@ export const describeTask = async (
   if (runs.length) {
     lines.push('', 'Agent runs:');
     for (const run of runs) {
-      const link =
-        run.sessionId && input.consoleWorkspace
-          ? `   https://platform.claude.com/workspaces/${input.consoleWorkspace}/sessions/${run.sessionId}`
-          : '';
+      const url = consoleUrl(input.consoleWorkspace, run.sessionId);
+      const link = url ? `   ${url}` : '';
       lines.push(
         `  ${run.role.padEnd(21)} ${run.status.padEnd(10)} ${money(run.costCents)}${link}`
       );

@@ -102,7 +102,7 @@ const readable = (pending: readonly Requirement[]) =>
       )
   );
 
-const describeRequirement = (requirement: Requirement): string =>
+export const describeRequirement = (requirement: Requirement): string =>
   'role' in requirement
     ? article(requirement.role)
     : 'domain' in requirement
@@ -468,7 +468,7 @@ export const boardView = async (pool: Pool, viewer: BoardViewer) => {
   );
 };
 
-const consoleUrl = (workspace: string | undefined, sessionId: string | null) =>
+export const consoleUrl = (workspace: string | undefined, sessionId: string | null) =>
   workspace && sessionId
     ? `https://platform.claude.com/workspaces/${workspace}/sessions/${sessionId}`
     : null;
