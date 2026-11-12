@@ -6,7 +6,6 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "0.126.0",
     "@officina/core": "workspace:*",
     "@officina/db": "workspace:*",
     "@officina/engine": "workspace:*",
