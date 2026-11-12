@@ -1,9 +1,9 @@
 import { taskUrl } from '@officina/core';
-import { addComment, findTaskIdByNumber, type MemberProject } from '@officina/db';
+import type { MemberProject } from '@officina/db';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import { boardView, taskView, type BoardViewer, type CardView } from '../board';
-import { TaskCommandError, actOnTaskAs, createRequestAs } from '../tasks';
+import { TaskCommandError, actOnTaskAs, commentAs, createRequestAs } from '../tasks';
 
 /**
  * The connector's tools. Each one is a thin call into what the board's API already does
@@ -177,10 +177,6 @@ After it is opened, tell the person the task link and that an agent may ask them
     readOnly: false,
     run: async (context, input) => {
       const project = projectFor(context, input.project);
-      if (project.role === 'watcher')
-        throw new ToolError(
-          `You can read ${project.name} but not open requests there; ask an owner for the contributor role.`
-        );
       const created = await createRequestAs(context.pool, {
         projectId: project.id,
         memberId: context.memberId,
@@ -296,16 +292,12 @@ After it is opened, tell the person the task link and that an agent may ask them
     readOnly: false,
     run: async (context, input) => {
       const project = projectFor(context, input.project);
-      if (project.role === 'watcher')
-        throw new ToolError(`You can read ${project.name} but not comment there.`);
-      const taskId = await findTaskIdByNumber(context.pool, project.id, input.number);
-      if (!taskId) throw new ToolError(`There is no task ${input.number} in ${project.name}.`);
-      await addComment(
-        context.pool,
-        taskId,
-        { kind: 'member', memberId: context.memberId },
-        input.text
-      );
+      await commentAs(context.pool, {
+        projectId: project.id,
+        memberId: context.memberId,
+        number: input.number,
+        text: input.text
+      });
       return `Comment added to task ${input.number}: ${taskUrl(context.publicUrl, project.id, input.number)}`;
     }
   }),
