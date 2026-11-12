@@ -6,6 +6,7 @@ export {
   cancelStaleAutoMerges,
   finishVerifiedSpecs,
   postChecklist,
+  requestCopilotReviews,
   specPathIn,
   syncSpecStatus,
   type OnBehalf,

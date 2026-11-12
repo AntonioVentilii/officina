@@ -103,7 +103,7 @@ export const approveOnGitHub = async (
 };
 
 /**
- * Asks Copilot to review a pull request Officina just opened, as the member who requested the task:
+ * Asks Copilot to review a pull request Officina opened, as the member who requested the task:
  * the App has no Copilot seat, so a branch rule asking for Copilot's review does not start it on the
  * App's pull requests. Tried once per pull request. Nothing here blocks the task: without the
  * member's linked account, or when GitHub refuses (no seat, no quota), the failure is recorded and
@@ -157,6 +157,31 @@ export const askCopilotToReview = async (
     });
   } catch (error) {
     await failed(requester, account.login, (error as Error).message);
+  }
+};
+
+/**
+ * Asks Copilot to review the linked pull request of each task whose project sets
+ * `pull_request.copilot_review`, when no attempt is recorded for it yet. Run on every scheduler
+ * pass rather than right after the pull request is opened, so one opened just before a crash is
+ * still asked for.
+ */
+export const requestCopilotReviews = async (
+  pool: Pool,
+  taskIds: readonly string[],
+  onBehalf?: OnBehalf
+) => {
+  for (const taskId of taskIds) {
+    const context = await loadTaskContext(pool, taskId);
+    if (!context?.pullRequest) continue;
+    const config = parseProjectConfig(context.rawConfig);
+    if (!config.ok || !config.config.pullRequest.copilotReview) continue;
+    await askCopilotToReview(pool, onBehalf, {
+      taskId,
+      requesterId: context.task.requesterId,
+      repo: context.repo,
+      pullRequest: context.pullRequest
+    });
   }
 };
 

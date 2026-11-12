@@ -31,21 +31,21 @@ Search here before writing a helper, a type, a component or a fake. When you add
 
 ## `packages/github`, `packages/runner`, `packages/engine`
 
-| Piece                                                                                           | Path                                 | What it is                                                           |
-| ----------------------------------------------------------------------------------------------- | ------------------------------------ | -------------------------------------------------------------------- |
-| `createGitHubClient`, `GitHubError`, `COMPARE_FILE_LIMIT`                                       | `packages/github/src/client.ts`      | Every call as the App: tokens, files, branches, pull requests        |
-| `createGitHubUserAuth`, `createGitHubAsUser`                                                    | `packages/github/src/user.ts`        | A member's own GitHub account: approve, merge, ask Copilot to review |
-| `verifyWebhookSignature`, `parseWebhookEvent`                                                   | `packages/github/src/webhooks.ts`    | Webhook intake                                                       |
-| `copilotVerdict`, `COPILOT_VERDICTS`, `COPILOT_REVIEWERS`                                       | `packages/github/src/copilot.ts`     | Who Copilot is and the verdict its review body states                |
-| `ManagedAgentsPort`                                                                             | `packages/runner/src/port.ts`        | The runner seam                                                      |
-| `executeRun`, `MAX_RESULT_ATTEMPTS`                                                             | `packages/runner/src/run.ts`         | One session from brief to validated result                           |
-| `RUNNER_ROLES`, `buildDefinition`, `loadDefinitions`, `RESULT_TOOL`                             | `packages/runner/src/definitions.ts` | Agent definitions                                                    |
-| `syncAgents`, `ensureEnvironment`                                                               | `packages/runner/src/sync.ts`        | Agents and environments kept in step                                 |
-| `createModelResolver`, `PINNED_MODELS`                                                          | `packages/runner/src/models.ts`      | The only place model ids live                                        |
-| `buildBrief`, `MAX_INTERVIEW_QUESTIONS`                                                         | `packages/engine/src/brief.ts`       | What an agent reads; `fence` and `list` for briefs                   |
-| `runAgentStep`, `taskLink`                                                                      | `packages/engine/src/step.ts`        | One step; a Markdown link to a task                                  |
-| `collectDueSteps`, `tick`                                                                       | `packages/engine/src/tick.ts`        | Dispatch and due work                                                |
-| `syncSpecStatus`, `postChecklist`, `approveOnGitHub`, `askCopilotToReview`, `checklistMarkdown` | `packages/engine/src/github-sync.ts` | Mirroring to GitHub, and acting there as a member (`OnBehalf`)       |
+| Piece                                                                                                                    | Path                                 | What it is                                                           |
+| ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------ | -------------------------------------------------------------------- |
+| `createGitHubClient`, `GitHubError`, `COMPARE_FILE_LIMIT`                                                                | `packages/github/src/client.ts`      | Every call as the App: tokens, files, branches, pull requests        |
+| `createGitHubUserAuth`, `createGitHubAsUser`                                                                             | `packages/github/src/user.ts`        | A member's own GitHub account: approve, merge, ask Copilot to review |
+| `verifyWebhookSignature`, `parseWebhookEvent`                                                                            | `packages/github/src/webhooks.ts`    | Webhook intake                                                       |
+| `copilotVerdict`, `COPILOT_VERDICTS`, `COPILOT_REVIEWERS`                                                                | `packages/github/src/copilot.ts`     | Who Copilot is and the verdict its review body states                |
+| `ManagedAgentsPort`                                                                                                      | `packages/runner/src/port.ts`        | The runner seam                                                      |
+| `executeRun`, `MAX_RESULT_ATTEMPTS`                                                                                      | `packages/runner/src/run.ts`         | One session from brief to validated result                           |
+| `RUNNER_ROLES`, `buildDefinition`, `loadDefinitions`, `RESULT_TOOL`                                                      | `packages/runner/src/definitions.ts` | Agent definitions                                                    |
+| `syncAgents`, `ensureEnvironment`                                                                                        | `packages/runner/src/sync.ts`        | Agents and environments kept in step                                 |
+| `createModelResolver`, `PINNED_MODELS`                                                                                   | `packages/runner/src/models.ts`      | The only place model ids live                                        |
+| `buildBrief`, `MAX_INTERVIEW_QUESTIONS`                                                                                  | `packages/engine/src/brief.ts`       | What an agent reads; `fence` and `list` for briefs                   |
+| `runAgentStep`, `taskLink`                                                                                               | `packages/engine/src/step.ts`        | One step; a Markdown link to a task                                  |
+| `collectDueSteps`, `tick`                                                                                                | `packages/engine/src/tick.ts`        | Dispatch and due work                                                |
+| `syncSpecStatus`, `postChecklist`, `approveOnGitHub`, `askCopilotToReview`, `requestCopilotReviews`, `checklistMarkdown` | `packages/engine/src/github-sync.ts` | Mirroring to GitHub, and acting there as a member (`OnBehalf`)       |
 
 ## `apps/api`
 

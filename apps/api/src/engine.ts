@@ -2,6 +2,7 @@ import {
   collectDueSteps,
   cancelStaleAutoMerges,
   finishVerifiedSpecs,
+  requestCopilotReviews,
   type OnBehalf,
   runAgentStep,
   type EngineDependencies
@@ -55,8 +56,7 @@ export const startEngine = async (input: {
     github: input.github,
     agents: input.agents,
     publicUrl: input.publicUrl,
-    promptsDir: input.promptsDir,
-    onBehalf: input.onBehalf
+    promptsDir: input.promptsDir
   };
 
   for (const run of await failOrphanedRuns(input.pool)) {
@@ -109,6 +109,13 @@ export const startEngine = async (input: {
           input.onBehalf
         ).catch((error: unknown) =>
           input.log('spec status update failed', { projectId, error: (error as Error).message })
+        );
+        await requestCopilotReviews(
+          input.pool,
+          await listActiveTaskIds(input.pool, projectId),
+          input.onBehalf
+        ).catch((error: unknown) =>
+          input.log('copilot review request failed', { projectId, error: (error as Error).message })
         );
         await cancelStaleAutoMerges(input.pool, input.github, projectId).catch((error: unknown) =>
           input.log('auto-merge cancel failed', { projectId, error: (error as Error).message })

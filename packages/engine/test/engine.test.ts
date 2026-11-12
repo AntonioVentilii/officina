@@ -25,6 +25,7 @@ import { createFakePort, idle, toolUse, type ScriptItem } from '../../runner/tes
 import {
   cancelStaleAutoMerges,
   finishVerifiedSpecs,
+  requestCopilotReviews,
   runAgentStep,
   type OnBehalf,
   syncSpecStatus,
@@ -334,32 +335,35 @@ describe.skipIf(!url)('engine', () => {
     return { onBehalf, requests };
   };
 
-  const buildWith = async (onBehalf: OnBehalf) => {
+  const builtWithPullRequest = async () => {
     const github = fakeGitHub();
     const agents = createFakePort(succeed);
     const taskId = await taskInReady(github, agents);
-    await tick(
-      { pool, github: github.port, agents, publicUrl: PUBLIC_URL, onBehalf },
-      seeded.projectId
-    );
+    await tick({ pool, github: github.port, agents, publicUrl: PUBLIC_URL }, seeded.projectId);
     expect((await loadTask(pool, taskId))?.task.stage).toBe('reviewing');
     return taskId;
   };
 
   test('a new pull request gets no Copilot request unless the project turns it on', async () => {
     const { onBehalf, requests } = copilotRequests();
-    await buildWith(onBehalf);
+    const taskId = await builtWithPullRequest();
+    await requestCopilotReviews(pool, [taskId], onBehalf);
     expect(requests).toEqual([]);
   });
 
-  test('the first push asks Copilot to review as the requester when the project turns it on', async () => {
+  test('every scheduler pass asks Copilot to review a linked pull request still never asked for, as the requester', async () => {
     await pool.query(
       `update projects set config = jsonb_set(config, '{pull_request,copilot_review}', 'true')
        where id = $1`,
       [seeded.projectId]
     );
     const { onBehalf, requests } = copilotRequests();
-    const taskId = await buildWith(onBehalf);
+    // The pull request is opened and linked by the build step; a crash right after it loses
+    // nothing, since the request is made by the passes that follow.
+    const taskId = await builtWithPullRequest();
+    expect(requests).toEqual([]);
+    await requestCopilotReviews(pool, [taskId], onBehalf);
+    await requestCopilotReviews(pool, [taskId], onBehalf);
     expect(requests).toEqual([[`token-${seeded.ownerId}`, 'ViciApp/vici-app', 42]]);
     const recorded = await pool.query(
       `select payload, actor->>'memberId' as member from task_events
