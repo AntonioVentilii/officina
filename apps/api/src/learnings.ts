@@ -1,5 +1,5 @@
 import { editsProject, hasRole, type Role } from '@officina/core';
-import { decideLearning, loadLearning, type LearningRow } from '@officina/db';
+import { decideLearning, loadLearning, loadProject, type LearningRow } from '@officina/db';
 import type { GitHubClient } from '@officina/github';
 import type { Pool } from 'pg';
 import { TaskCommandError } from './tasks';
@@ -61,31 +61,21 @@ export const decide = async (
   let pr: { number: number; url: string } | undefined;
   if (input.decision === 'accept' && editsProject(learning.target)) {
     if (!github) throw new TaskCommandError('the GitHub App is not configured');
-    const { rows } = await pool.query<{
-      github_repo: string;
-      github_installation_id: number | null;
-      default_branch: string;
-    }>('select github_repo, github_installation_id, default_branch from projects where id = $1', [
-      target.projectId
-    ]);
-    const project = rows[0]!;
-    if (project.github_installation_id === null)
+    const project = (await loadProject(pool, target.projectId))!;
+    if (project.installationId === null)
       throw new TaskCommandError('the GitHub App is not installed on this repository');
-    const ref = {
-      installationId: Number(project.github_installation_id),
-      repo: project.github_repo
-    };
+    const ref = { installationId: project.installationId, repo: project.repo };
     const current = await github.readFile({
       ...ref,
       path: learning.file,
-      branch: project.default_branch
+      branch: project.defaultBranch
     });
     const edited = applyEdit(current?.text ?? null, learning);
     if (!edited.ok)
       throw new TaskCommandError(`the edit no longer applies (${edited.why}); reject it instead`);
     const branch = `officina/learning-${learning.id.slice(0, 8)}`;
     const title = titleFor(learning);
-    await github.createBranch({ ...ref, branch, from: project.default_branch });
+    await github.createBranch({ ...ref, branch, from: project.defaultBranch });
     // A branch an earlier attempt left may already hold the edit; writing it again is skipped.
     const onBranch = await github.readFile({ ...ref, path: learning.file, branch });
     if (onBranch?.text !== edited.text) {
@@ -103,7 +93,7 @@ export const decide = async (
       : 'an Officina task';
     pr = await github.openPullRequest({
       ...ref,
-      base: project.default_branch,
+      base: project.defaultBranch,
       branch,
       title,
       body: [
