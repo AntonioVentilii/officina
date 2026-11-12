@@ -1,4 +1,4 @@
-import { branchForTask, parseProjectConfig, type Actor } from '@officina/core';
+import { branchForTask, ENGINE, parseProjectConfig, type Actor } from '@officina/core';
 import { appendTaskEvent, hasTaskEvent, loadTask, loadTaskContext } from '@officina/db';
 import type { GitHubAsUser, GitHubClient, RepoRef } from '@officina/github';
 import type { Pool } from 'pg';
@@ -9,11 +9,14 @@ import type { Pool } from 'pg';
 export const taskLink = (publicUrl: string, taskNumber: number) =>
   `[Officina task ${taskNumber}](${publicUrl.replace(/\/$/, '')}/tasks/${taskNumber})`;
 
-/** Acting on GitHub as the member who verified a task, with their own linked account. */
+/** Acting on GitHub as a member (the verifier, the requester), with their own linked account. */
 export interface OnBehalf {
   readonly publicUrl: string;
   tokenFor(memberId: string): Promise<{ token: string; login: string } | null>;
-  readonly asUser: Pick<GitHubAsUser, 'pullRequest' | 'approve' | 'mergeWhenReady'>;
+  readonly asUser: Pick<
+    GitHubAsUser,
+    'pullRequest' | 'approve' | 'mergeWhenReady' | 'requestCopilotReview'
+  >;
 }
 
 /** The member whose approval passed the verification, with a usable token of their own. */
@@ -95,6 +98,89 @@ export const approveOnGitHub = async (
       actor,
       type: 'github_approval_failed',
       payload: { login: account.login, error: (error as Error).message.slice(0, 500) }
+    });
+  }
+};
+
+/**
+ * Asks Copilot to review a pull request Officina opened, as the member who requested the task:
+ * the App has no Copilot seat, so a branch rule asking for Copilot's review does not start it on the
+ * App's pull requests. Tried once per pull request. Nothing here blocks the task: without the
+ * member's linked account, or when GitHub refuses (no seat, no quota), the failure is recorded and
+ * the task goes on.
+ */
+export const askCopilotToReview = async (
+  pool: Pool,
+  onBehalf: OnBehalf | undefined,
+  input: { taskId: string; requesterId: string; repo: string; pullRequest: number }
+) => {
+  const ofThisPullRequest = { pullRequest: input.pullRequest };
+  for (const type of ['github_copilot_review_requested', 'github_copilot_review_failed']) {
+    if (await hasTaskEvent(pool, input.taskId, type, ofThisPullRequest)) return;
+  }
+  const requester: Actor = { kind: 'member', memberId: input.requesterId };
+  const failed = (actor: Actor, login: string | null, error: string) =>
+    appendTaskEvent(pool, {
+      taskId: input.taskId,
+      actor,
+      type: 'github_copilot_review_failed',
+      payload: { pullRequest: input.pullRequest, login, error: error.slice(0, 500) }
+    });
+  let account: { token: string; login: string } | null = null;
+  try {
+    account = onBehalf ? await onBehalf.tokenFor(input.requesterId) : null;
+  } catch (error) {
+    await failed(ENGINE, null, (error as Error).message);
+    return;
+  }
+  if (!onBehalf || !account) {
+    await failed(
+      ENGINE,
+      null,
+      onBehalf
+        ? 'the requester has not connected GitHub, or their GitHub authorization expired'
+        : 'connecting GitHub accounts is not set up on this server'
+    );
+    return;
+  }
+  try {
+    const outcome = await onBehalf.asUser.requestCopilotReview(
+      account.token,
+      input.repo,
+      input.pullRequest
+    );
+    await appendTaskEvent(pool, {
+      taskId: input.taskId,
+      actor: requester,
+      type: 'github_copilot_review_requested',
+      payload: { pullRequest: input.pullRequest, login: account.login, outcome }
+    });
+  } catch (error) {
+    await failed(requester, account.login, (error as Error).message);
+  }
+};
+
+/**
+ * Asks Copilot to review the linked pull request of each task whose project sets
+ * `pull_request.copilot_review`, when no attempt is recorded for it yet. Run on every scheduler
+ * pass rather than right after the pull request is opened, so one opened just before a crash is
+ * still asked for.
+ */
+export const requestCopilotReviews = async (
+  pool: Pool,
+  taskIds: readonly string[],
+  onBehalf?: OnBehalf
+) => {
+  for (const taskId of taskIds) {
+    const context = await loadTaskContext(pool, taskId);
+    if (!context?.pullRequest) continue;
+    const config = parseProjectConfig(context.rawConfig);
+    if (!config.ok || !config.config.pullRequest.copilotReview) continue;
+    await askCopilotToReview(pool, onBehalf, {
+      taskId,
+      requesterId: context.task.requesterId,
+      repo: context.repo,
+      pullRequest: context.pullRequest
     });
   }
 };
@@ -337,8 +423,6 @@ const autoVerified = async (pool: Pool, taskId: string): Promise<boolean> =>
       )
     ).rowCount
   );
-
-const ENGINE: Actor = { kind: 'engine' };
 
 /** The spec file a task's branch adds, found by the project's spec directory. */
 export const specPathIn = (

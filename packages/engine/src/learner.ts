@@ -26,11 +26,10 @@ import {
   type RunRow,
   type TaskEventRow
 } from '@officina/db';
-import { executeRun, RUNNER_ROLES, type RunnerRole } from '@officina/runner';
+import { executeRun, RUNNER, RUNNER_ROLES, type RunnerRole } from '@officina/runner';
 import { fence } from './brief';
 import type { EngineDependencies, StepResult } from './step';
 
-const RUNNER = 'managed_agents';
 /** Learning is cheap reading; a cap well below any build keeps it that way. */
 const LEARNER_BUDGET_CENTS = 300;
 
