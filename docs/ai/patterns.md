@@ -5,7 +5,7 @@ The patterns Officina really uses, each with one place to copy from. [`../archit
 ## Domain and state
 
 - **Every change to a task is a command through `decide()`.** A pure function takes the task, a command, the actor and a context, and returns the new task plus the domain events, or a typed error: `decide` in `packages/core/src/lifecycle.ts`. Nothing writes `tasks.stage` any other way.
-- **The store applies one command atomically.** `applyCommand` locks the row, decides on current state, writes the task and every event (and the approvals they imply) in one transaction, and runs `onApplied` inside it: `applyCommand` in `packages/db/src/store.ts`. Other multi-statement writes use `inTransaction`, in the same file.
+- **The store applies one command atomically.** `applyCommand` locks the row, decides on current state, writes the task and every event (and the approvals they imply) in one transaction, and runs `onApplied` inside it: `applyCommand` in `packages/db/src/store.ts`. Other multi-statement writes use `inTransaction`, exported from the same file; `addProject` (`apps/api/src/setup.ts`) registers a project with it.
 - **Agent results only apply to the work the agent saw.** Pass a `guard` to `applyCommand`, as `sameWork` does in `packages/engine/src/step.ts`.
 - **A GitHub write is safe to retry: it lands once.** `openPullRequest` returns the pull request an earlier attempt opened from the same branch, and `createBranch` keeps a branch an earlier attempt left, never moving it (`packages/github/src/client.ts`). Accepting a learning writes its file only when the branch does not hold the edit yet (`apps/api/src/learnings.ts`), so an accept that failed halfway can simply run again.
 - **Risk comes from the real diff.** Lanes, guardrails and diff size use the paths the GitHub client reads (`pushFacts`), never what an agent says it changed.
@@ -35,5 +35,5 @@ The patterns Officina really uses, each with one place to copy from. [`../archit
 
 Named so nobody copies them; each is a follow-up of its own.
 
-- SQL outside `packages/db`: the "already done since merging" checks and the pull request lookups in `packages/engine/src/github-sync.ts`, and project and role lookups in `apps/api/src` (`learnings.ts`, `tasks.ts`, `people.ts`, `board.ts`, `webhooks.ts`). Queries belong in the db module that owns the table.
+- SQL outside `packages/db`: project and role lookups in `apps/api/src` (`learnings.ts`, `tasks.ts`, `people.ts`, `board.ts`, `webhooks.ts`). Queries belong in the db module that owns the table.
 - Stage, lane and role types are mirrored by hand in `apps/board/src/lib/types.ts`.
