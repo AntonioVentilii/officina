@@ -5,7 +5,8 @@ import {
   resolveProjectId,
   resolveProjectMember,
   setProjectRole,
-  upsertMember
+  upsertMember,
+  loadProject
 } from '@officina/db';
 import type { Pool } from 'pg';
 import { TaskCommandError } from './tasks';
@@ -23,11 +24,7 @@ const projectFor = async (pool: Pool, repo: string | undefined) => {
     throw new TaskCommandError(
       repo ? `no project for ${repo}` : 'several projects exist; pass --repo'
     );
-  const { rows } = await pool.query<{ workspace_id: string }>(
-    'select workspace_id from projects where id = $1',
-    [projectId]
-  );
-  return { projectId, workspaceId: rows[0]!.workspace_id };
+  return { projectId, workspaceId: (await loadProject(pool, projectId))!.workspaceId };
 };
 
 /** A one-time sign-in link for an existing member (the project owner by default). */
