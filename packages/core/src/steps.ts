@@ -32,3 +32,7 @@ export const nextAgentRoles = (task: Task): AgentRole[] => {
 
 /** Agents may only push to this branch; the engine rejects a push anywhere else. */
 export const branchForTask = (taskNumber: number): string => `officina/task-${taskNumber}`;
+
+/** Where the board opens a task. Task numbers are per project, so the link names the project. */
+export const taskUrl = (publicUrl: string, projectId: string, taskNumber: number): string =>
+  `${publicUrl.replace(/\/$/, '')}/tasks/${taskNumber}?project=${projectId}`;

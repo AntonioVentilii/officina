@@ -109,14 +109,15 @@ export const startEngine = async (input: {
       const due = [];
       for (const projectId of await listSchedulableProjectIds(input.pool)) {
         due.push(...(await collectDueSteps(deps, projectId)).due);
-        await finishVerifiedSpecs(
+        const unfinished = await finishVerifiedSpecs(
           input.pool,
           input.github,
           await listActiveTaskIds(input.pool, projectId),
           input.onBehalf
-        ).catch((error: unknown) =>
-          input.log('spec status update failed', { projectId, error: (error as Error).message })
-        );
+        ).catch((error: unknown) => [{ error: (error as Error).message }]);
+        for (const failure of unfinished) {
+          input.log('spec status update failed', { projectId, ...failure });
+        }
         const unopened = await openMissingPullRequests(
           input.pool,
           input.github,
