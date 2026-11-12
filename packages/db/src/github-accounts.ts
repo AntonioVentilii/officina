@@ -9,7 +9,7 @@ const hash = (value: string) => createHash('sha256').update(value).digest('hex')
 export const createOAuthState = async (
   db: Queryable,
   state: string,
-  memberId: string | null,
+  memberId: string,
   ttlMs: number
 ) => {
   await db.query(
@@ -23,8 +23,8 @@ export const createOAuthState = async (
 export const consumeOAuthState = async (
   db: Queryable,
   state: string
-): Promise<{ memberId: string | null } | null> => {
-  const { rows } = await db.query<{ member_id: string | null }>(
+): Promise<{ memberId: string } | null> => {
+  const { rows } = await db.query<{ member_id: string }>(
     'delete from oauth_states where state_hash = $1 and expires_at > now() returning member_id',
     [hash(state)]
   );
