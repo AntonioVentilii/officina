@@ -1,4 +1,4 @@
-import { branchForTask, parseProjectConfig, type Actor } from '@officina/core';
+import { branchForTask, ENGINE, parseProjectConfig, type Actor } from '@officina/core';
 import { appendTaskEvent, hasTaskEvent, loadTask, loadTaskContext } from '@officina/db';
 import type { GitHubAsUser, GitHubClient, RepoRef } from '@officina/github';
 import type { Pool } from 'pg';
@@ -337,8 +337,6 @@ const autoVerified = async (pool: Pool, taskId: string): Promise<boolean> =>
       )
     ).rowCount
   );
-
-const ENGINE: Actor = { kind: 'engine' };
 
 /** The spec file a task's branch adds, found by the project's spec directory. */
 export const specPathIn = (

@@ -7,7 +7,7 @@ Search here before writing a helper, a type, a component or a fake. When you add
 | Piece                                                                          | Path               | What it is                                                                  |
 | ------------------------------------------------------------------------------ | ------------------ | --------------------------------------------------------------------------- |
 | `STAGES`, `TERMINAL_STAGES`, `AGENT_ROLES`, `REVIEWER_ROLES`                   | `src/lifecycle.ts` | The stage and agent role lists; the DB constraints mirror them              |
-| `decide`, `Command`, `DomainEvent`, `Task`, `newTask`                          | `src/lifecycle.ts` | The state machine                                                           |
+| `decide`, `Command`, `DomainEvent`, `Task`, `newTask`, `Actor`, `ENGINE`       | `src/lifecycle.ts` | The state machine; `ENGINE` is Officina itself acting                       |
 | `gateSubject`, `effectivePolicy`, `canAutoVerify`                              | `src/lifecycle.ts` | What a gate approves, the policy in force, whether a result may skip people |
 | `nextAgentRoles`, `branchForTask`                                              | `src/steps.ts`     | Which agents a task waits on; the only task branch name                     |
 | `LANES`, `computeLane`, `stricterLane`, `redPaths`, `compileLaneMatcher`       | `src/lanes.ts`     | Lanes from paths                                                            |
@@ -38,7 +38,7 @@ Search here before writing a helper, a type, a component or a fake. When you add
 | `verifyWebhookSignature`, `parseWebhookEvent`                             | `packages/github/src/webhooks.ts`    | Webhook intake                                                |
 | `copilotVerdict`, `COPILOT_VERDICTS`, `COPILOT_REVIEWERS`                 | `packages/github/src/copilot.ts`     | Who Copilot is and the verdict its review body states         |
 | `ManagedAgentsPort`                                                       | `packages/runner/src/port.ts`        | The runner seam                                               |
-| `executeRun`, `MAX_RESULT_ATTEMPTS`                                       | `packages/runner/src/run.ts`         | One session from brief to validated result                    |
+| `executeRun`, `MAX_RESULT_ATTEMPTS`, `RUNNER`                             | `packages/runner/src/run.ts`         | One session from brief to validated result; the runner name   |
 | `RUNNER_ROLES`, `buildDefinition`, `loadDefinitions`, `RESULT_TOOL`       | `packages/runner/src/definitions.ts` | Agent definitions                                             |
 | `syncAgents`, `ensureEnvironment`                                         | `packages/runner/src/sync.ts`        | Agents and environments kept in step                          |
 | `createModelResolver`, `PINNED_MODELS`                                    | `packages/runner/src/models.ts`      | The only place model ids live                                 |
