@@ -118,6 +118,17 @@ describe('project config', () => {
     expect(on.ok && on.config.pullRequest.autoMerge).toBe(true);
   });
 
+  test('asking Copilot to review is off unless the project turns it on', () => {
+    const off = parseProjectConfig({ version: 1, docs: { entry: 'AGENTS.md' } });
+    expect(off.ok && off.config.pullRequest.copilotReview).toBe(false);
+    const on = parseProjectConfig({
+      version: 1,
+      docs: { entry: 'AGENTS.md' },
+      pull_request: { copilot_review: true }
+    });
+    expect(on.ok && on.config.pullRequest.copilotReview).toBe(true);
+  });
+
   test('auto_verify is a green-lane setting only', () => {
     const green = parseProjectConfig({
       version: 1,

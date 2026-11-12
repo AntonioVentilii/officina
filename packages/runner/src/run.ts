@@ -4,6 +4,9 @@ import type { ManagedAgentsPort, SessionEvent, SessionRequest } from './port';
 
 export const MAX_RESULT_ATTEMPTS = 3;
 
+/** The runner every run records: Managed Agents is the only one. */
+export const RUNNER = 'managed_agents';
+
 export type RunOutcome =
   | { readonly kind: 'result'; readonly output: AgentOutput<RunnerRole> }
   | { readonly kind: 'invalid_result'; readonly errors: readonly string[] }

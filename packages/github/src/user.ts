@@ -150,7 +150,28 @@ export const createGitHubAsUser = (options: { fetch?: typeof fetch } = {}) => {
     return 'merged';
   };
 
-  return { user, pullRequest, approve, mergeWhenReady };
+  /**
+   * Asks Copilot to review the pull request as the person, so it is billed to their Copilot seat.
+   * GitHub refuses (422, with a `failure_reason`) when the person has no seat or quota left, and
+   * answers 409 when a Copilot review is already pending, which is the outcome asked for.
+   */
+  const requestCopilotReview = async (
+    token: string,
+    repo: string,
+    number: number
+  ): Promise<'requested' | 'already_pending'> => {
+    try {
+      await request(token, `/repos/${repo}/pulls/${number}/copilot-code-review`, {
+        method: 'POST'
+      });
+      return 'requested';
+    } catch (error) {
+      if (error instanceof GitHubError && error.status === 409) return 'already_pending';
+      throw error;
+    }
+  };
+
+  return { user, pullRequest, approve, mergeWhenReady, requestCopilotReview };
 };
 
 export type GitHubAsUser = ReturnType<typeof createGitHubAsUser>;

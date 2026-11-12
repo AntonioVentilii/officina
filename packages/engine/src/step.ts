@@ -2,6 +2,7 @@ import {
   branchForTask,
   catalogPagesToRead,
   commandForOutput,
+  ENGINE,
   isBuildRole,
   nextAgentRoles,
   parseProjectConfig,
@@ -37,6 +38,7 @@ import {
 } from '@officina/github';
 import {
   executeRun,
+  RUNNER,
   type ManagedAgentsPort,
   type RunnerRole,
   type RunOutcome
@@ -130,9 +132,6 @@ export type StepResult =
         | 'invalid_config'
         | 'already_running';
     };
-
-const RUNNER = 'managed_agents';
-const ENGINE: Actor = { kind: 'engine' };
 
 const describeOutcome = (outcome: Exclude<RunOutcome, { kind: 'result' }>): string => {
   switch (outcome.kind) {

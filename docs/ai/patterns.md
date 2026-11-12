@@ -7,6 +7,7 @@ The patterns Officina really uses, each with one place to copy from. [`../archit
 - **Every change to a task is a command through `decide()`.** A pure function takes the task, a command, the actor and a context, and returns the new task plus the domain events, or a typed error: `packages/core/src/lifecycle.ts:367`. Nothing writes `tasks.stage` any other way.
 - **The store applies one command atomically.** `applyCommand` locks the row, decides on current state, writes the task and every event (and the approvals they imply) in one transaction, and runs `onApplied` inside it: `packages/db/src/store.ts:141`. Other multi-statement writes use `inTransaction`: `packages/db/src/store.ts:60`.
 - **Agent results only apply to the work the agent saw.** Pass a `guard` to `applyCommand`, as `sameWork` does: `packages/engine/src/step.ts:119`.
+- **A GitHub write is safe to retry: it lands once.** `openPullRequest` returns the pull request an earlier attempt opened from the same branch, and `createBranch` keeps a branch an earlier attempt left, never moving it (`packages/github/src/client.ts`). Accepting a learning writes its file only when the branch does not hold the edit yet (`apps/api/src/learnings.ts`), so an accept that failed halfway can simply run again.
 - **Risk comes from the real diff.** Lanes, guardrails and diff size use the paths the GitHub client reads (`pushFacts`), never what an agent says it changed.
 
 ## Results and errors
@@ -33,7 +34,6 @@ The patterns Officina really uses, each with one place to copy from. [`../archit
 
 Named so nobody copies them; each is a follow-up of its own.
 
-- `const RUNNER = 'managed_agents'` and `const ENGINE: Actor = { kind: 'engine' }` are repeated in several engine and API modules. One owner should export each.
 - SQL outside `packages/db`: the "already done since merging" checks and the pull request lookups in `packages/engine/src/github-sync.ts`, and project and role lookups in `apps/api/src` (`learnings.ts`, `tasks.ts`, `people.ts`, `board.ts`, `webhooks.ts`). Queries belong in the db module that owns the table.
 - `runAgentStep` (`packages/engine/src/step.ts`) is one long function that prepares, runs, verifies and applies every role. New role-specific behaviour goes in a helper, not in another branch inside it.
 - Stage, lane and role types are mirrored by hand in `apps/board/src/lib/types.ts`.
