@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { BoardLook, Role } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
+import { inTransaction } from './store';
 
 type Queryable = Pool | PoolClient;
 
@@ -24,21 +25,25 @@ export const createLoginLink = async (
   return token;
 };
 
-/** Spends a sign-in link and opens a session. A link works once, and only before it expires. */
-export const redeemLoginLink = async (
-  db: Queryable,
+/**
+ * Spends a sign-in link and opens a session, both or neither: a failure after spending it would
+ * otherwise burn the link without signing anyone in. A link works once, and only before it expires.
+ */
+export const redeemLoginLink = (
+  pool: Pool,
   token: string
-): Promise<{ sessionToken: string; memberId: string } | null> => {
-  const { rows } = await db.query<{ member_id: string }>(
-    `update login_links set used_at = now()
-     where token_hash = $1 and used_at is null and expires_at > now()
-     returning member_id`,
-    [hashToken(token)]
-  );
-  const memberId = rows[0]?.member_id;
-  if (!memberId) return null;
-  return { sessionToken: await createSession(db, memberId), memberId };
-};
+): Promise<{ sessionToken: string; memberId: string } | null> =>
+  inTransaction(pool, async (client) => {
+    const { rows } = await client.query<{ member_id: string }>(
+      `update login_links set used_at = now()
+       where token_hash = $1 and used_at is null and expires_at > now()
+       returning member_id`,
+      [hashToken(token)]
+    );
+    const memberId = rows[0]?.member_id;
+    if (!memberId) return null;
+    return { sessionToken: await createSession(client, memberId), memberId };
+  });
 
 /** Opens a session for a member whose identity was just proven; returns its token. */
 export const createSession = async (db: Queryable, memberId: string): Promise<string> => {

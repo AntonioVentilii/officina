@@ -15,6 +15,7 @@ import {
   type Task
 } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
+import { addComment } from './tasks';
 
 export type StoreError = DecisionError | 'not_found' | 'conflict' | 'invalid_config';
 
@@ -94,7 +95,13 @@ const insertEvent = (client: PoolClient, taskId: string, actor: Actor, event: Do
 
 export const createTask = (
   pool: Pool,
-  input: { projectId: string; title: string; requesterId: string }
+  input: {
+    projectId: string;
+    title: string;
+    requesterId: string;
+    /** The requester's own words, recorded as the thread's first comment with the task. */
+    request?: string;
+  }
 ): Promise<StoredTask> =>
   inTransaction(pool, async (client) => {
     // Locking the project serializes task numbering per project.
@@ -115,6 +122,14 @@ export const createTask = (
         json({ title: input.title })
       ]
     );
+    if (input.request !== undefined) {
+      await addComment(
+        client,
+        row.id,
+        { kind: 'member', memberId: input.requesterId },
+        input.request
+      );
+    }
     return toStored(row);
   });
 

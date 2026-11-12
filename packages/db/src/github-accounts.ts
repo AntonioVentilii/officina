@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
+import { inTransaction } from './store';
 
 type Queryable = Pool | PoolClient;
 
@@ -61,36 +62,41 @@ const COLUMNS = `member_id as "memberId", github_user_id::float8 as "githubUserI
   access_token_enc as "accessTokenEnc", access_expires_at as "accessExpiresAt",
   refresh_token_enc as "refreshTokenEnc", refresh_expires_at as "refreshExpiresAt"`;
 
-export const saveGitHubAccount = async (db: Queryable, account: GitHubAccountRow) => {
-  // A GitHub account belongs to one member: linking it elsewhere moves it.
-  await db.query('delete from github_accounts where github_user_id = $1 and member_id <> $2', [
-    account.githubUserId,
-    account.memberId
-  ]);
-  await db.query(
-    `insert into github_accounts (member_id, github_user_id, login, access_token_enc, access_expires_at,
+/**
+ * Links a GitHub account to a member: moves it from any other member, stores its tokens and its
+ * identity, all or nothing.
+ */
+export const saveGitHubAccount = (pool: Pool, account: GitHubAccountRow) =>
+  inTransaction(pool, async (db) => {
+    // A GitHub account belongs to one member: linking it elsewhere moves it.
+    await db.query('delete from github_accounts where github_user_id = $1 and member_id <> $2', [
+      account.githubUserId,
+      account.memberId
+    ]);
+    await db.query(
+      `insert into github_accounts (member_id, github_user_id, login, access_token_enc, access_expires_at,
        refresh_token_enc, refresh_expires_at, updated_at)
      values ($1, $2, $3, $4, $5, $6, $7, now())
      on conflict (member_id) do update set github_user_id = excluded.github_user_id,
        login = excluded.login, access_token_enc = excluded.access_token_enc,
        access_expires_at = excluded.access_expires_at, refresh_token_enc = excluded.refresh_token_enc,
        refresh_expires_at = excluded.refresh_expires_at, updated_at = now()`,
-    [
-      account.memberId,
-      account.githubUserId,
-      account.login,
-      account.accessTokenEnc,
-      account.accessExpiresAt,
-      account.refreshTokenEnc,
-      account.refreshExpiresAt
-    ]
-  );
-  await db.query(
-    `insert into identities (provider, subject, member_id) values ('github', $1, $2)
+      [
+        account.memberId,
+        account.githubUserId,
+        account.login,
+        account.accessTokenEnc,
+        account.accessExpiresAt,
+        account.refreshTokenEnc,
+        account.refreshExpiresAt
+      ]
+    );
+    await db.query(
+      `insert into identities (provider, subject, member_id) values ('github', $1, $2)
      on conflict (provider, subject) do update set member_id = excluded.member_id`,
-    [String(account.githubUserId), account.memberId]
-  );
-};
+      [String(account.githubUserId), account.memberId]
+    );
+  });
 
 export const loadGitHubAccount = async (
   db: Queryable,
