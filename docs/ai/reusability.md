@@ -33,7 +33,8 @@ Search here before writing a helper, a type, a component or a fake. When you add
 
 | Piece                                                                                                                    | Path                                  | What it is                                                           |
 | ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------- | -------------------------------------------------------------------- |
-| `createGitHubClient`, `GitHubError`, `COMPARE_FILE_LIMIT`                                                                | `packages/github/src/client.ts`       | Every call as the App: tokens, files, branches, pull requests        |
+| `githubRequest`, `GitHubError`                                                                                           | `packages/github/src/http.ts`         | One call to GitHub as the App or a person, and its error             |
+| `createGitHubClient`, `COMPARE_FILE_LIMIT`                                                                               | `packages/github/src/client.ts`       | Every call as the App: tokens, files, branches, pull requests        |
 | `createGitHubUserAuth`, `createGitHubAsUser`                                                                             | `packages/github/src/user.ts`         | A member's own GitHub account: approve, merge, ask Copilot to review |
 | `verifyWebhookSignature`, `parseWebhookEvent`                                                                            | `packages/github/src/webhooks.ts`     | Webhook intake                                                       |
 | `copilotVerdict`, `COPILOT_VERDICTS`, `COPILOT_REVIEWERS`                                                                | `packages/github/src/copilot.ts`      | Who Copilot is and the verdict its review body states                |
