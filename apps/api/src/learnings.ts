@@ -1,5 +1,13 @@
 import { editsProject, hasRole, type Role } from '@officina/core';
-import { decideLearning, loadLearning, loadProject, type LearningRow } from '@officina/db';
+import {
+  decideLearning,
+  inTransaction,
+  loadLearning,
+  loadProject,
+  lockLearning,
+  type LearningRow,
+  type ProjectRecord
+} from '@officina/db';
 import type { GitHubClient } from '@officina/github';
 import type { Pool } from 'pg';
 import { TaskCommandError } from './tasks';
@@ -40,10 +48,64 @@ const titleFor = (learning: LearningRow) => {
   return `docs(${scope}): ${summary}`.slice(0, 120);
 };
 
+/** Opens the pull request with exactly the edit people saw; a branch an earlier attempt left is reused. */
+const openLearningPullRequest = async (
+  github: LearningGitHub,
+  project: ProjectRecord,
+  learning: LearningRow,
+  context: { readonly publicUrl: string; readonly note: string | undefined }
+): Promise<{ number: number; url: string }> => {
+  if (project.installationId === null)
+    throw new TaskCommandError('the GitHub App is not installed on this repository');
+  const ref = { installationId: project.installationId, repo: project.repo };
+  const current = await github.readFile({
+    ...ref,
+    path: learning.file,
+    branch: project.defaultBranch
+  });
+  const edited = applyEdit(current?.text ?? null, learning);
+  if (!edited.ok)
+    throw new TaskCommandError(`the edit no longer applies (${edited.why}); reject it instead`);
+  const branch = `officina/learning-${learning.id.slice(0, 8)}`;
+  const title = titleFor(learning);
+  await github.createBranch({ ...ref, branch, from: project.defaultBranch });
+  // A branch an earlier attempt left may already hold the edit; writing it again is skipped.
+  const onBranch = await github.readFile({ ...ref, path: learning.file, branch });
+  if (onBranch?.text !== edited.text) {
+    await github.updateFile({
+      ...ref,
+      path: learning.file,
+      branch,
+      text: edited.text,
+      sha: onBranch?.sha,
+      message: title
+    });
+  }
+  const link = learning.taskNumber
+    ? `[Officina task ${learning.taskNumber}](${context.publicUrl.replace(/\/$/, '')}/tasks/${learning.taskNumber})`
+    : 'an Officina task';
+  return github.openPullRequest({
+    ...ref,
+    base: project.defaultBranch,
+    branch,
+    title,
+    body: [
+      `A learning from ${link}, accepted on the board.`,
+      `**Lesson.** ${learning.lesson}`,
+      `**Evidence.** ${learning.evidence}`,
+      context.note ? `**Note from the reviewer.** ${context.note}` : null
+    ]
+      .filter(Boolean)
+      .join('\n\n')
+  });
+};
+
 /**
  * Accepting a learning for the project's docs or agent docs opens a pull request with exactly the edit people saw; an agent
  * learning is recorded for Officina's maintainers, whose repository Officina does not write to.
- * Either way people merge, never Officina.
+ * Either way people merge, never Officina. The learning stays locked from the first read to the
+ * decision, so a second decision made meanwhile waits and then finds this one, and never leaves a
+ * pull request for a learning it rejected.
  */
 export const decide = async (
   pool: Pool,
@@ -53,67 +115,28 @@ export const decide = async (
 ): Promise<LearningRow> => {
   if (!hasRole({ id: target.memberId, role: target.role, domains: [] }, 'maintainer'))
     throw new TaskCommandError('only maintainers and owners decide on learnings');
-  const learning = await loadLearning(pool, target.projectId, input.id);
-  if (!learning) throw new TaskCommandError('learning not found');
-  if (learning.status !== 'proposed')
-    throw new TaskCommandError('this learning was already decided');
-
-  let pr: { number: number; url: string } | undefined;
-  if (input.decision === 'accept' && editsProject(learning.target)) {
-    if (!github) throw new TaskCommandError('the GitHub App is not configured');
-    const project = (await loadProject(pool, target.projectId))!;
-    if (project.installationId === null)
-      throw new TaskCommandError('the GitHub App is not installed on this repository');
-    const ref = { installationId: project.installationId, repo: project.repo };
-    const current = await github.readFile({
-      ...ref,
-      path: learning.file,
-      branch: project.defaultBranch
-    });
-    const edited = applyEdit(current?.text ?? null, learning);
-    if (!edited.ok)
-      throw new TaskCommandError(`the edit no longer applies (${edited.why}); reject it instead`);
-    const branch = `officina/learning-${learning.id.slice(0, 8)}`;
-    const title = titleFor(learning);
-    await github.createBranch({ ...ref, branch, from: project.defaultBranch });
-    // A branch an earlier attempt left may already hold the edit; writing it again is skipped.
-    const onBranch = await github.readFile({ ...ref, path: learning.file, branch });
-    if (onBranch?.text !== edited.text) {
-      await github.updateFile({
-        ...ref,
-        path: learning.file,
-        branch,
-        text: edited.text,
-        sha: onBranch?.sha,
-        message: title
+  return inTransaction(pool, async (client) => {
+    await lockLearning(client, input.id);
+    const learning = await loadLearning(client, target.projectId, input.id);
+    if (!learning) throw new TaskCommandError('learning not found');
+    if (learning.status !== 'proposed')
+      throw new TaskCommandError('this learning was already decided');
+    let pr: { number: number; url: string } | undefined;
+    if (input.decision === 'accept' && editsProject(learning.target)) {
+      if (!github) throw new TaskCommandError('the GitHub App is not configured');
+      const project = (await loadProject(client, target.projectId))!;
+      pr = await openLearningPullRequest(github, project, learning, {
+        publicUrl: target.publicUrl,
+        note: input.note
       });
     }
-    const link = learning.taskNumber
-      ? `[Officina task ${learning.taskNumber}](${target.publicUrl.replace(/\/$/, '')}/tasks/${learning.taskNumber})`
-      : 'an Officina task';
-    pr = await github.openPullRequest({
-      ...ref,
-      base: project.defaultBranch,
-      branch,
-      title,
-      body: [
-        `A learning from ${link}, accepted on the board.`,
-        `**Lesson.** ${learning.lesson}`,
-        `**Evidence.** ${learning.evidence}`,
-        input.note ? `**Note from the reviewer.** ${input.note}` : null
-      ]
-        .filter(Boolean)
-        .join('\n\n')
+    await decideLearning(client, {
+      id: learning.id,
+      status: input.decision === 'accept' ? 'accepted' : 'rejected',
+      memberId: target.memberId,
+      note: input.note ?? null,
+      ...(pr ? { prNumber: pr.number, prUrl: pr.url } : {})
     });
-  }
-
-  const decided = await decideLearning(pool, {
-    id: learning.id,
-    status: input.decision === 'accept' ? 'accepted' : 'rejected',
-    memberId: target.memberId,
-    note: input.note ?? null,
-    ...(pr ? { prNumber: pr.number, prUrl: pr.url } : {})
+    return (await loadLearning(client, target.projectId, learning.id))!;
   });
-  if (!decided) throw new TaskCommandError('this learning was already decided');
-  return (await loadLearning(pool, target.projectId, learning.id))!;
 };

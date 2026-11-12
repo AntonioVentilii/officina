@@ -120,6 +120,28 @@ describe.skipIf(!url)('learning decisions', () => {
     publicUrl: 'https://o.example'
   });
 
+  test('a reject made while an accept is opening its pull request waits and finds it decided', async () => {
+    const learning = await propose('docs');
+    const github = fakeGitHub();
+    let release = () => {};
+    const opening = new Promise<void>((resolve) => (release = resolve));
+    const slow = {
+      ...github.port,
+      openPullRequest: async (input: Parameters<LearningGitHub['openPullRequest']>[0]) => {
+        await opening;
+        return github.port.openPullRequest(input);
+      }
+    };
+    const accepting = decide(pool, slow, owner(), { id: learning.id, decision: 'accept' });
+    while (!github.calls.some((call) => call.method === 'updateFile')) await Bun.sleep(5);
+    const rejecting = decide(pool, github.port, owner(), { id: learning.id, decision: 'reject' });
+    await Bun.sleep(50);
+    release();
+
+    expect(await accepting).toMatchObject({ status: 'accepted', prNumber: 77 });
+    await expect(rejecting).rejects.toThrow('already decided');
+  });
+
   test('accepting an agent docs learning opens a pull request with exactly the proposed edit', async () => {
     const learning = await propose('docs');
     const github = fakeGitHub();

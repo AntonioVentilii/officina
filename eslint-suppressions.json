@@ -51,11 +51,6 @@
       "count": 1
     }
   },
-  "apps/api/src/learnings.ts": {
-    "complexity": {
-      "count": 1
-    }
-  },
   "apps/api/src/main.ts": {
     "prefer-const": {
       "count": 1
