@@ -63,7 +63,8 @@ const toStored = (row: TaskRow): StoredTask => ({
   }
 });
 
-const inTransaction = async <T>(
+/** Runs several writes as one: all of them land, or none. */
+export const inTransaction = async <T>(
   pool: Pool,
   work: (client: PoolClient) => Promise<T>
 ): Promise<T> => {
