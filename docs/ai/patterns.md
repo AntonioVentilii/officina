@@ -5,7 +5,7 @@ The patterns Officina really uses, each with one place to copy from. [`../archit
 ## Domain and state
 
 - **Every change to a task is a command through `decide()`.** A pure function takes the task, a command, the actor and a context, and returns the new task plus the domain events, or a typed error: `packages/core/src/lifecycle.ts:367`. Nothing writes `tasks.stage` any other way.
-- **The store applies one command atomically.** `applyCommand` locks the row, decides on current state, writes the task and every event (and the approvals they imply) in one transaction, and runs `onApplied` inside it: `packages/db/src/store.ts:141`. Other multi-statement writes use `inTransaction`: `packages/db/src/store.ts:60`.
+- **The store applies one command atomically.** `applyCommand` locks the row, decides on current state, writes the task and every event (and the approvals they imply) in one transaction, and runs `onApplied` inside it: `packages/db/src/store.ts:141`. Other multi-statement writes use `inTransaction`, exported from `packages/db/src/store.ts`; `addProject` (`apps/api/src/setup.ts`) registers a project with it.
 - **Agent results only apply to the work the agent saw.** Pass a `guard` to `applyCommand`, as `sameWork` does: `packages/engine/src/step.ts:119`.
 - **Risk comes from the real diff.** Lanes, guardrails and diff size use the paths the GitHub client reads (`pushFacts`), never what an agent says it changed.
 

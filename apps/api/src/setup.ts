@@ -1,5 +1,6 @@
 import { parseProjectConfigYaml, requiredDocs, type Role } from '@officina/core';
 import {
+  inTransaction,
   loadAgentVersions,
   saveAgentVersion,
   setProjectEnvironment,
@@ -102,10 +103,7 @@ export const addProject = async (
     allowedHosts: parsed.config.runtime.allowedHosts
   });
 
-  const client = await pool.connect();
-  let registered: { projectId: string; ownerId: string; onboardingTask: number | null };
-  try {
-    await client.query('begin');
+  const registered = await inTransaction(pool, async (client) => {
     const workspaceId = await upsertWorkspace(client, input.workspace);
     const ownerId = await upsertMember(client, {
       workspaceId,
@@ -133,14 +131,8 @@ export const addProject = async (
           missing: missingDocs
         })
       : null;
-    await client.query('commit');
-    registered = { projectId, ownerId, onboardingTask };
-  } catch (error) {
-    await client.query('rollback');
-    throw error;
-  } finally {
-    client.release();
-  }
+    return { projectId, ownerId, onboardingTask };
+  });
   // Lifting a gate is safe to do after the commit: it only lets builds start later than they could.
   if (missingDocs.length === 0) {
     await ensureOnboarding(pool, {
