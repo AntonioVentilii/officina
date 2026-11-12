@@ -14,6 +14,7 @@ const privateKeyPem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toStri
 interface Call {
   method: string;
   url: string;
+  query: string;
   authorization: string | null;
   body: unknown;
 }
@@ -28,6 +29,7 @@ const fakeGitHub = (routes: Record<string, () => Response>) => {
     calls.push({
       method,
       url: url.pathname,
+      query: url.search,
       authorization: headers.get('authorization'),
       body: init?.body ? JSON.parse(init.body as string) : undefined
     });
@@ -240,6 +242,79 @@ describe('GitHub client', () => {
     await expect(failure).rejects.toBeInstanceOf(GitHubError);
     await expect(failure).rejects.toThrow('GitHub 403');
   });
+
+  test('opening a pull request again returns the one the first attempt opened', async () => {
+    const opened: { number: number; html_url: string }[] = [];
+    const { fetchImpl, calls } = fakeGitHub({
+      'POST /app/installations/99/access_tokens': tokenRoute('2099-01-01T00:00:00Z'),
+      'POST /repos/ViciApp/vici-app/pulls': () => {
+        if (opened.length)
+          return json(
+            { message: 'A pull request already exists for ViciApp:officina/12-copy.' },
+            422
+          );
+        opened.push({ number: 5, html_url: 'https://github.com/ViciApp/vici-app/pull/5' });
+        return json(opened[0], 201);
+      },
+      'GET /repos/ViciApp/vici-app/pulls': () => json(opened)
+    });
+    const client = createGitHubClient({ appId: '1', privateKeyPem, fetch: fetchImpl });
+    const input = { ...ref, base: 'main', branch: 'officina/12-copy', title: 't', body: 'b' };
+    const first = await client.openPullRequest(input);
+    expect(await client.openPullRequest(input)).toEqual(first);
+    expect(opened).toHaveLength(1);
+    expect(new URLSearchParams(calls.at(-1)!.query).get('head')).toBe('ViciApp:officina/12-copy');
+  });
+
+  test('a refused pull request with none open from its branch is still an error', async () => {
+    const { fetchImpl } = fakeGitHub({
+      'POST /app/installations/99/access_tokens': tokenRoute('2099-01-01T00:00:00Z'),
+      'POST /repos/ViciApp/vici-app/pulls': () => json({ message: 'No commits between' }, 422),
+      'GET /repos/ViciApp/vici-app/pulls': () => json([])
+    });
+    const client = createGitHubClient({ appId: '1', privateKeyPem, fetch: fetchImpl });
+    const opening = client.openPullRequest({
+      ...ref,
+      base: 'main',
+      branch: 'b',
+      title: 't',
+      body: 'b'
+    });
+    await expect(opening).rejects.toThrow('GitHub 422');
+  });
+
+  test('creating a branch again keeps the one the first attempt made, never moving it', async () => {
+    const refs = new Map<string, string>();
+    let head = 'abc';
+    const { fetchImpl, calls } = fakeGitHub({
+      'POST /app/installations/99/access_tokens': tokenRoute('2099-01-01T00:00:00Z'),
+      'GET /repos/ViciApp/vici-app/git/ref/heads/main': () => json({ object: { sha: head } }),
+      'POST /repos/ViciApp/vici-app/git/refs': () => {
+        const created = calls.at(-1)!.body as { ref: string; sha: string };
+        if (refs.has(created.ref)) return json({ message: 'Reference already exists' }, 422);
+        refs.set(created.ref, created.sha);
+        return json({ ref: created.ref }, 201);
+      }
+    });
+    const client = createGitHubClient({ appId: '1', privateKeyPem, fetch: fetchImpl });
+    const input = { ...ref, branch: 'officina/learning-1', from: 'main' };
+    await client.createBranch(input);
+    head = 'def';
+    await client.createBranch(input);
+    expect(refs.get('refs/heads/officina/learning-1')).toBe('abc');
+    expect(calls.some((call) => call.method === 'PATCH')).toBe(false);
+  });
+
+  test('any other refusal to create a branch is still an error', async () => {
+    const { fetchImpl } = fakeGitHub({
+      'POST /app/installations/99/access_tokens': tokenRoute('2099-01-01T00:00:00Z'),
+      'GET /repos/ViciApp/vici-app/git/ref/heads/main': () => json({ object: { sha: 'abc' } }),
+      'POST /repos/ViciApp/vici-app/git/refs': () => json({ message: 'Invalid request' }, 422)
+    });
+    const client = createGitHubClient({ appId: '1', privateKeyPem, fetch: fetchImpl });
+    const creating = client.createBranch({ ...ref, branch: 'officina/learning-1', from: 'main' });
+    await expect(creating).rejects.toThrow('GitHub 422');
+  });
 });
 
 describe('GitHub as a person', () => {
@@ -258,6 +333,7 @@ describe('GitHub as a person', () => {
     expect(calls[0]).toEqual({
       method: 'POST',
       url: `${path}/1/copilot-code-review`,
+      query: '',
       authorization: 'Bearer ghu_1',
       body: undefined
     });

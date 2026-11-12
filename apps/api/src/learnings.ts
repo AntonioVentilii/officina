@@ -86,14 +86,18 @@ export const decide = async (
     const branch = `officina/learning-${learning.id.slice(0, 8)}`;
     const title = titleFor(learning);
     await github.createBranch({ ...ref, branch, from: project.default_branch });
-    await github.updateFile({
-      ...ref,
-      path: learning.file,
-      branch,
-      text: edited.text,
-      sha: current?.sha,
-      message: title
-    });
+    // A branch an earlier attempt left may already hold the edit; writing it again is skipped.
+    const onBranch = await github.readFile({ ...ref, path: learning.file, branch });
+    if (onBranch?.text !== edited.text) {
+      await github.updateFile({
+        ...ref,
+        path: learning.file,
+        branch,
+        text: edited.text,
+        sha: onBranch?.sha,
+        message: title
+      });
+    }
     const link = learning.taskNumber
       ? `[Officina task ${learning.taskNumber}](${target.publicUrl.replace(/\/$/, '')}/tasks/${learning.taskNumber})`
       : 'an Officina task';
