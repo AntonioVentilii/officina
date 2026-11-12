@@ -1,5 +1,7 @@
 # Pull requests and CI
 
+Each pull request has one purpose and starts from `main`, in parallel with the others; stack one only when it needs another's code ([rules 2 and 3](https://github.com/AntonioVentilii/officina/blob/main/standards/code.md#2-scoped) of the code standard).
+
 ## Title and commits
 
 Pull requests are squash-merged, so the title becomes the commit on `main` and the release-please changelog. CI requires a Conventional Commit with a scope: `type(scope): description`, or `type(scope)!:` for a breaking change. Types: `feat`, `fix`, `perf`, `deps`, `revert`, `docs`, `style`, `chore`, `refactor`, `test`, `build`, `ci`. The scope is the package or app (`core`, `db`, `engine`, `runner`, `github`, `api`, `board`), several joined by commas (`engine,api`), or `ci`, `release`, `repo`, `standards`, `ai`. The description is lowercase and says what changes for the reader, as in the history: `feat(engine): learner agent proposes checked edits after each merged task`.
