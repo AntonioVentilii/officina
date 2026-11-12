@@ -109,6 +109,12 @@
       </button>
     {/if}
   </header>
+  {#if board.error}
+    <p class="load-error" role="alert">
+      The board could not load: {board.error}
+      <button class="btn ghost sm" onclick={() => void board.refresh()}>Try again</button>
+    </p>
+  {/if}
 
   <div class="columns">
     {#each columns as column, index (column.id)}
@@ -145,6 +151,14 @@
 {/if}
 
 <style>
+  .load-error {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 12px;
+    color: var(--danger);
+  }
+
   .board {
     display: flex;
     flex-direction: column;
