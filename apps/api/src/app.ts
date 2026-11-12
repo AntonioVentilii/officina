@@ -1,4 +1,4 @@
-import { claimDelivery, releaseDelivery } from '@officina/db';
+import { claimDelivery, markDeliveryHandled, releaseDelivery } from '@officina/db';
 import { parseWebhookEvent, verifyWebhookSignature } from '@officina/github';
 import { Elysia } from 'elysia';
 import type { Pool } from 'pg';
@@ -73,6 +73,7 @@ export const createApp = ({ pool, webhookSecret, github, board, boardDir }: AppD
           try {
             const action = parseWebhookEvent(event, payload);
             const outcomes = action ? await handleWebhookAction(pool, action, github) : [];
+            await markDeliveryHandled(pool, deliveryId);
             return { status: action ? 'applied' : 'ignored', outcomes };
           } catch (error) {
             // Released so GitHub's redelivery of a delivery that failed mid-way is processed.

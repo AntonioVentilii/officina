@@ -30,7 +30,8 @@ describe.skipIf(!url)('migrations', () => {
       '0008_github_accounts.sql',
       '0009_onboarding.sql',
       '0010_learning_docs.sql',
-      '0011_connector.sql'
+      '0011_connector.sql',
+      '0012_webhook_handled.sql'
     ]);
     expect(await migrate(client)).toEqual([]);
   });

@@ -108,6 +108,45 @@ describe.skipIf(!url)('api', () => {
     });
     expect(await again.json()).toEqual({ status: 'duplicate' });
     expect(await eventCount(taskId)).toBe(events);
+
+    // Handled stays handled, however late the redelivery comes.
+    await pool.query("update webhook_deliveries set received_at = now() - interval '1 day'");
+    const late = await deliver(app, {
+      event: 'pull_request',
+      payload: mergedPayload,
+      delivery: 'd-1'
+    });
+    expect(await late.json()).toEqual({ status: 'duplicate' });
+  });
+
+  test('a delivery whose handler died is processed when it comes again, once the claim is stale', async () => {
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    await pool.query(
+      "insert into webhook_deliveries (id, event) values ('d-lost', 'pull_request')"
+    );
+
+    const fresh = await deliver(app, {
+      event: 'pull_request',
+      payload: mergedPayload,
+      delivery: 'd-lost'
+    });
+    expect(await fresh.json()).toEqual({ status: 'duplicate' });
+    expect((await loadTask(pool, taskId))?.task.stage).toBe('merging');
+
+    await pool.query(
+      "update webhook_deliveries set received_at = now() - interval '11 minutes' where id = 'd-lost'"
+    );
+    const redelivered = await deliver(app, {
+      event: 'pull_request',
+      payload: mergedPayload,
+      delivery: 'd-lost'
+    });
+    expect(await redelivered.json()).toEqual({
+      status: 'applied',
+      outcomes: [{ taskId, ok: true }]
+    });
+    expect((await loadTask(pool, taskId))?.task.stage).toBe('done');
   });
 
   test('failed checks send a merging task back to building and stop auto-merge', async () => {
