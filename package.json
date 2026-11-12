@@ -1,6 +1,6 @@
 {
   "name": "officina",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "private": true,
   "type": "module",
   "workspaces": [
@@ -8,20 +8,27 @@
     "apps/*"
   ],
   "scripts": {
-    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "bun node_modules/@typescript/native/bin/tsc --noEmit -p tsconfig.json",
     "test": "bun test packages/core packages/github packages/runner apps/api",
     "test:db": "bun packages/db/test/with-postgres.ts",
     "format": "prettier --write .",
-    "lint": "prettier --check .",
+    "lint": "prettier --check . && eslint . && bun run sync:board && knip --no-progress && jscpd",
     "dev": "bun apps/api/src/dev.ts",
     "dev:board": "cd apps/board && bun run dev",
     "check:board": "cd apps/board && bun run check",
+    "sync:board": "cd apps/board && bun run sync",
     "build:board": "cd apps/board && bun run build"
   },
   "devDependencies": {
     "@types/bun": "^1.4.2",
+    "@typescript/native": "npm:typescript@^7.0.2",
+    "eslint": "10.13.0",
+    "eslint-plugin-svelte": "3.23.1",
+    "jscpd": "5.4.2",
+    "knip": "6.43.0",
     "prettier": "^3.9.7",
     "prettier-plugin-svelte": "^4.1.1",
-    "typescript": "^7.0.2"
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.1"
   }
 }

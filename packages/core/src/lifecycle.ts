@@ -67,6 +67,9 @@ export type Actor =
   | { readonly kind: 'agent'; readonly role: AgentRole; readonly version: number }
   | { readonly kind: 'engine' };
 
+/** Officina itself acting: dispatching, recording GitHub events, blocking a failed step. */
+export const ENGINE: Actor = { kind: 'engine' };
+
 export type Assignee =
   | { readonly kind: 'member'; readonly memberId: string }
   | { readonly kind: 'agent'; readonly role: BuildRole };

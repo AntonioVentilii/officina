@@ -109,7 +109,14 @@ const projectConfigSchema = z
          * Once a result is verified (or auto-verified), turn on GitHub's auto-merge so the branch
          * rules decide when it lands. Left out, it is off and a person merges on GitHub.
          */
-        auto_merge: z.boolean().optional()
+        auto_merge: z.boolean().optional(),
+        /**
+         * Once Officina opens a pull request, ask Copilot to review it as the member who requested
+         * the task, with their own GitHub account: the GitHub App has no Copilot seat, so a branch
+         * rule that asks for Copilot's review does not start it on the App's pull requests. Left
+         * out, it is off.
+         */
+        copilot_review: z.boolean().optional()
       })
       .optional(),
     runtime: z
@@ -180,7 +187,11 @@ export interface ProjectConfig {
   readonly verify: readonly string[];
   readonly release: { readonly onMerge: ReleaseOnMerge };
   readonly runtime: { readonly allowedHosts: readonly string[] };
-  readonly pullRequest: { readonly titlePattern: string | null; readonly autoMerge: boolean };
+  readonly pullRequest: {
+    readonly titlePattern: string | null;
+    readonly autoMerge: boolean;
+    readonly copilotReview: boolean;
+  };
   readonly board: { readonly look: BoardLook };
   readonly lanes: Readonly<Record<Lane, LaneSettings>>;
   readonly laneMatcher: LaneMatcher;
@@ -310,7 +321,8 @@ export const parseProjectConfig = (input: unknown): ConfigResult => {
       runtime: { allowedHosts: raw.runtime?.allowed_hosts ?? [] },
       pullRequest: {
         titlePattern: raw.pull_request?.title_pattern ?? null,
-        autoMerge: raw.pull_request?.auto_merge ?? false
+        autoMerge: raw.pull_request?.auto_merge ?? false,
+        copilotReview: raw.pull_request?.copilot_review ?? false
       },
       board: { look: raw.board?.look ?? 'modernista' },
       lanes,

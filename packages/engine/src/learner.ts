@@ -14,6 +14,7 @@ import {
   appendRunEvent,
   finishRun,
   insertLearnings,
+  learnerHasLooked,
   listProjectMemberProfiles,
   listRecentLearningTitles,
   listTaskComments,
@@ -26,11 +27,10 @@ import {
   type RunRow,
   type TaskEventRow
 } from '@officina/db';
-import { executeRun, RUNNER_ROLES, type RunnerRole } from '@officina/runner';
+import { executeRun, RUNNER, RUNNER_ROLES, type RunnerRole } from '@officina/runner';
 import { fence } from './brief';
 import type { EngineDependencies, StepResult } from './step';
 
-const RUNNER = 'managed_agents';
 /** Learning is cheap reading; a cap well below any build keeps it that way. */
 const LEARNER_BUDGET_CENTS = 300;
 
@@ -247,11 +247,7 @@ export const runLearnerStep = async (
   if (!context) return { status: 'skipped', reason: 'not_found' };
   if (context.task.stage !== 'done') return { status: 'skipped', reason: 'not_due' };
   // One look back per task: a finished or failed attempt is never repeated.
-  const looked = await pool.query(
-    "select 1 from runs where task_id = $1 and agent_role = 'learner' and status not in ('queued', 'running')",
-    [taskId]
-  );
-  if (looked.rowCount) return { status: 'skipped', reason: 'not_due' };
+  if (await learnerHasLooked(pool, taskId)) return { status: 'skipped', reason: 'not_due' };
   if (context.installationId === null) return { status: 'skipped', reason: 'not_installed' };
   if (context.environmentId === null) return { status: 'skipped', reason: 'no_environment' };
   const agent = (await loadAgentVersions(pool)).find((record) => record.role === 'learner');

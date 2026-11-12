@@ -1,4 +1,4 @@
-import { buildRoleFor, nextAgentRoles, parseProjectConfig, type Actor } from '@officina/core';
+import { buildRoleFor, ENGINE, nextAgentRoles, parseProjectConfig } from '@officina/core';
 import {
   applyCommand,
   countOpenAgentWork,
@@ -8,8 +8,6 @@ import {
 } from '@officina/db';
 import { RUNNER_ROLES, type RunnerRole } from '@officina/runner';
 import { runAgentStep, type EngineDependencies, type StepResult } from './step';
-
-const ENGINE: Actor = { kind: 'engine' };
 
 export interface DueStep {
   readonly taskId: string;

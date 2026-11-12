@@ -30,7 +30,8 @@ describe.skipIf(!url)('migrations', () => {
       '0008_github_accounts.sql',
       '0009_onboarding.sql',
       '0010_learning_docs.sql',
-      '0011_connector.sql'
+      '0011_connector.sql',
+      '0012_webhook_handled.sql'
     ]);
     expect(await migrate(client)).toEqual([]);
   });
@@ -82,5 +83,22 @@ describe.skipIf(!url)('migrations', () => {
     await expect(
       client.query(`update tasks set stage = 'shipped' where id = $1`, [taskId])
     ).rejects.toThrow('tasks_stage_check');
+  });
+
+  test('two processes migrating at once apply each migration once', async () => {
+    await client.query('drop schema public cascade; create schema public;');
+    const other = new Client({ connectionString: url });
+    await other.connect();
+    try {
+      const [first, second] = await Promise.all([migrate(client), migrate(other)]);
+      expect([...first, ...second].sort()).toEqual(
+        (await client.query<{ name: string }>('select name from schema_migrations')).rows
+          .map((row) => row.name)
+          .sort()
+      );
+      expect(first.length === 0 || second.length === 0).toBe(true);
+    } finally {
+      await other.end();
+    }
   });
 });

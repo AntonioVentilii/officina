@@ -2,6 +2,8 @@ import {
   collectDueSteps,
   cancelStaleAutoMerges,
   finishVerifiedSpecs,
+  openMissingPullRequests,
+  requestCopilotReviews,
   type OnBehalf,
   runAgentStep,
   type EngineDependencies
@@ -11,7 +13,8 @@ import {
   listActiveTaskIds,
   listSchedulableProjectIds,
   purgeConnectorCredentials,
-  purgeExpiredCredentials
+  purgeExpiredCredentials,
+  purgeOldDeliveries
 } from '@officina/db';
 import type { GitHubClient } from '@officina/github';
 import {
@@ -97,6 +100,11 @@ export const startEngine = async (input: {
           return 0;
         });
         if (connector > 0) input.log('expired connector credentials purged', { rows: connector });
+        const deliveries = await purgeOldDeliveries(input.pool).catch((error: unknown) => {
+          input.log('webhook delivery purge failed', { error: (error as Error).message });
+          return 0;
+        });
+        if (deliveries > 0) input.log('old webhook deliveries purged', { rows: deliveries });
       }
       const due = [];
       for (const projectId of await listSchedulableProjectIds(input.pool)) {
@@ -108,6 +116,22 @@ export const startEngine = async (input: {
           input.onBehalf
         ).catch((error: unknown) =>
           input.log('spec status update failed', { projectId, error: (error as Error).message })
+        );
+        const unopened = await openMissingPullRequests(
+          input.pool,
+          input.github,
+          await listActiveTaskIds(input.pool, projectId),
+          input.publicUrl
+        ).catch((error: unknown) => [{ error: (error as Error).message }]);
+        for (const failure of unopened) {
+          input.log('pull request catch-up failed', { projectId, ...failure });
+        }
+        await requestCopilotReviews(
+          input.pool,
+          await listActiveTaskIds(input.pool, projectId),
+          input.onBehalf
+        ).catch((error: unknown) =>
+          input.log('copilot review request failed', { projectId, error: (error as Error).message })
         );
         await cancelStaleAutoMerges(input.pool, input.github, projectId).catch((error: unknown) =>
           input.log('auto-merge cancel failed', { projectId, error: (error as Error).message })

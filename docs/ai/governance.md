@@ -2,17 +2,18 @@
 
 ## Paths with an owner
 
-| Path                                                                          | Rule                                                                                                                               |
-| ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `.github/workflows/**`, `.github/actions/**`                                  | CI and release. Ask before changing; never weaken a check or the `checks-pass` gate.                                               |
-| `Dockerfile`, `docker/**`, `fly.toml`, `scripts/officina`                     | The deployment ([`../deployment.md`](../deployment.md)). Ask before changing.                                                      |
-| `CHANGELOG.md`, `.release-please-manifest.json`, `release-please-config.json` | Owned by release-please. Never edit by hand.                                                                                       |
-| `packages/db/migrations/*.sql`                                                | Applied migrations never change. A schema change is a new numbered file ([workflow](./workflows/migration.md)).                    |
-| `bun.lock`                                                                    | Only through `bun install` / `bun add`, and only with a dependency the owner approved.                                             |
-| `apps/board/build/**`, `apps/board/.svelte-kit/**`                            | Generated. Never commit or edit.                                                                                                   |
-| `docs/assets/*.png`                                                           | Screenshots of the board; retake them, never edit them.                                                                            |
-| `agents/*.md`                                                                 | Role prompts. A change is a new agent version on the next sync; keep the output contract in `packages/core/src/contracts.ts` true. |
-| `standards/code.md`                                                           | The universal standard other repositories link. Keep the path and the rule numbers; renumbering breaks every citation.             |
+| Path                                                                          | Rule                                                                                                                                                            |
+| ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.github/workflows/**`, `.github/actions/**`                                  | CI and release. Ask before changing; never weaken a check or the `checks-pass` gate.                                                                            |
+| `Dockerfile`, `docker/**`, `fly.toml`, `scripts/officina`                     | The deployment ([`../deployment.md`](../deployment.md)). Ask before changing.                                                                                   |
+| `CHANGELOG.md`, `.release-please-manifest.json`, `release-please-config.json` | Owned by release-please. Never edit by hand.                                                                                                                    |
+| `packages/db/migrations/*.sql`                                                | Applied migrations never change. A schema change is a new numbered file ([workflow](./workflows/migration.md)).                                                 |
+| `eslint-suppressions.json`, `eslint.config.js`, `knip.jsonc`, `.jscpd.json`   | The quality gate ([pr-and-ci.md](./pr-and-ci.md#local-gates)). Limits and thresholds only tighten; the suppressions only shrink. Ask before loosening anything. |
+| `bun.lock`                                                                    | Only through `bun install` / `bun add`, and only with a dependency the owner approved.                                                                          |
+| `apps/board/build/**`, `apps/board/.svelte-kit/**`                            | Generated. Never commit or edit.                                                                                                                                |
+| `docs/assets/*.png`                                                           | Screenshots of the board; retake them, never edit them.                                                                                                         |
+| `agents/*.md`                                                                 | Role prompts. A change is a new agent version on the next sync; keep the output contract in `packages/core/src/contracts.ts` true.                              |
+| `standards/code.md`                                                           | The universal standard other repositories link. Keep the path and the rule numbers; renumbering breaks every citation.                                          |
 
 ## Without asking, and not
 

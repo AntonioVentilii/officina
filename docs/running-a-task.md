@@ -108,6 +108,14 @@ To stop a task at any time: `scripts/officina task cancel --number 1 --reason "W
   comment on the code but a verdict (green, blue or yellow) goes back to the builder too, once: it checks
   each point, changes what is right or finishes without a push, and answers on the pull request
   (always for a blue one).
+- **Asking Copilot for the review.** A pull request Officina opens is opened by the GitHub App,
+  which has no Copilot seat, so a branch rule asking for Copilot's review does not start it. A
+  project that sets `pull_request.copilot_review: true` in `.github/officina.yml` has Officina ask
+  Copilot itself, as the person who requested the task, on the scheduler's next pass after the
+  pull request is open (tasks already in flight get it too once the setting is on). That
+  person needs GitHub connected in Officina and a Copilot seat (or the organization's permission to
+  use Copilot review without one). When the request fails the task goes on and its timeline says
+  why; ask for the review on GitHub by hand.
 - **Low-risk changes.** In a green lane with `auto_verify: true`, a result that the chooser only asks
   to glance at skips the verification step, unless merging deploys to production
   (`release.on_merge: production`, the default). The spec is always approved by a person.

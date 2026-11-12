@@ -1,10 +1,12 @@
 export { buildBrief, type BriefInput } from './brief';
 export {
   approveOnGitHub,
+  askCopilotToReview,
   checklistMarkdown,
   cancelStaleAutoMerges,
   finishVerifiedSpecs,
   postChecklist,
+  requestCopilotReviews,
   specPathIn,
   syncSpecStatus,
   type OnBehalf,
@@ -17,6 +19,7 @@ export {
   type GitHubPort,
   type StepResult
 } from './step';
+export { openMissingPullRequests, openTaskPullRequest, type PullRequestPort } from './pull-request';
 export { collectDueSteps, tick, type DueStep, type TickReport } from './tick';
 export { learnerBrief, learningProblems, runLearnerStep } from './learner';
 export {

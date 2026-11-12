@@ -2,6 +2,7 @@ import {
   TERMINAL_STAGES,
   computeLane,
   decide,
+  ENGINE,
   parseProjectConfig,
   type Actor,
   type Approval,
@@ -163,21 +164,20 @@ export const insertOnboardingTask = async (
     [input.projectId, input.title, input.requesterId, lane]
   );
   const row = rows[0]!;
-  const engine: Actor = { kind: 'engine' };
   await client.query(
     'insert into task_events (task_id, actor, type, payload) values ($1, $2, $3, $4)',
-    [row.id, json(engine), 'created', json({ title: input.title, kind: 'onboarding' })]
+    [row.id, json(ENGINE), 'created', json({ title: input.title, kind: 'onboarding' })]
   );
   await client.query(
     'insert into spec_versions (task_id, version, body, created_by) values ($1, 1, $2, $3)',
-    [row.id, input.spec, json(engine)]
+    [row.id, input.spec, json(ENGINE)]
   );
   const events: DomainEvent[] = [
     { type: 'spec_versioned', version: 1 },
     { type: 'lane_changed', from: null, to: lane },
     { type: 'stage_changed', from: 'request', to: 'spec_review' }
   ];
-  for (const event of events) await insertEvent(client, row.id, engine, event);
+  for (const event of events) await insertEvent(client, row.id, ENGINE, event);
   return { created: true, id: row.id, number: row.number };
 };
 
@@ -187,6 +187,11 @@ export const createOnboardingTask = (
   input: NewOnboardingTask
 ): Promise<{ created: boolean; id: string; number: number }> =>
   inTransaction(pool, (client) => insertOnboardingTask(client, input));
+
+/** Renames a task; the interviewer names it when the request is complete. */
+export const setTaskTitle = async (client: PoolClient, taskId: string, title: string) => {
+  await client.query('update tasks set title = $2 where id = $1', [taskId, title]);
+};
 
 export const loadTask = async (pool: Pool, taskId: string): Promise<StoredTask | null> => {
   const { rows } = await pool.query<TaskRow>('select * from tasks where id = $1', [taskId]);
