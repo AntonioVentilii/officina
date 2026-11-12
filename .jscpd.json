@@ -2,7 +2,7 @@
   "path": ["packages", "apps"],
   "pattern": "**/src/**/*.{ts,svelte}",
   "ignore": ["**/node_modules/**", "**/.svelte-kit/**", "**/build/**"],
-  "threshold": 0.6,
+  "threshold": 0.56,
   "reporters": ["console"],
   "gitignore": true,
   "absolute": false

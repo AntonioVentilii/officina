@@ -1,23 +1,12 @@
 import { createSign } from 'node:crypto';
 import type { PushFacts } from '@officina/core';
-
-const API = 'https://api.github.com';
+import { GitHubError, githubRequest } from './http';
 
 /** GitHub's compare endpoint lists at most this many files; a full page means the list may be cut. */
 export const COMPARE_FILE_LIMIT = 300;
 
 /** Compare statuses of a file that is new at its path on the branch. */
 const ADDED_STATUSES: ReadonlySet<string> = new Set(['added', 'copied', 'renamed']);
-
-export class GitHubError extends Error {
-  constructor(
-    readonly status: number,
-    readonly path: string,
-    message: string
-  ) {
-    super(`GitHub ${status} on ${path}: ${message}`);
-  }
-}
 
 const base64url = (input: string | Buffer): string => Buffer.from(input).toString('base64url');
 
@@ -70,26 +59,8 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
   const now = options.now ?? Date.now;
   const tokens = new Map<string, CachedToken>();
 
-  const request = async <T>(
-    path: string,
-    init: { method?: string; token: string; body?: unknown }
-  ): Promise<T> => {
-    const response = await http(`${API}${path}`, {
-      method: init.method ?? 'GET',
-      headers: {
-        accept: 'application/vnd.github+json',
-        authorization: `Bearer ${init.token}`,
-        'x-github-api-version': '2022-11-28',
-        ...(init.body === undefined ? {} : { 'content-type': 'application/json' })
-      },
-      ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) })
-    });
-    if (!response.ok) {
-      const text = await response.text();
-      throw new GitHubError(response.status, path, text.slice(0, 300));
-    }
-    return (await response.json()) as T;
-  };
+  const request = <T>(path: string, init: { method?: string; token: string; body?: unknown }) =>
+    githubRequest<T>(http, init.token, path, init);
 
   /**
    * Installation tokens are scoped to the one repository being worked on, not everything the

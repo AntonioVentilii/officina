@@ -15,7 +15,7 @@ board (separate app: talks to api over HTTP only)
 - `packages/core` imports nothing of ours and does no I/O: no `pg`, no `fetch`, no SDK. Bun's `Glob` and `zod` are the only outside imports.
 - `packages/db` imports `core` for its types and `decide()`; it never imports `engine`, `runner` or `github`.
 - `packages/runner` imports `core` (contracts). Only `src/sdk.ts` calls the Managed Agents API; `credentials.ts` builds the authenticated SDK client and `definitions.ts` borrows a type. Everything else uses `ManagedAgentsPort`.
-- `packages/github` imports one `core` type (`PushFacts`); only it calls the GitHub REST and GraphQL APIs.
+- `packages/github` imports one `core` type (`PushFacts`); only it calls the GitHub REST and GraphQL APIs, every call through `githubRequest` (`src/http.ts`).
 - `packages/engine` composes `core`, `db`, `runner` and `github` through ports (`GitHubPort`, `ManagedAgentsPort`), never their concrete clients.
 - `apps/api` is the only place that wires real clients, reads the environment and starts the scheduler.
 - `apps/board` never imports a workspace package; it reads `/api/*`. Its types in `src/lib/types.ts` mirror what the API returns.
@@ -32,7 +32,7 @@ board (separate app: talks to api over HTTP only)
 | A query or a write                             | the `packages/db/src` module that owns that table (`store.ts` for tasks and events, `runs.ts`, `board.ts`, `learnings.ts`, `auth.ts`, `projects.ts`, `github-accounts.ts`) |
 | What an agent reads for a step                 | `packages/engine/src/brief.ts`                                                                                                                                             |
 | Running a step, applying its result            | `packages/engine/src/step.ts`; opening a task's pull request in `pull-request.ts`; GitHub mirroring in `github-sync.ts`; the learner in `learner.ts`                       |
-| A GitHub call                                  | `packages/github/src/client.ts` (as the App) or `user.ts` (as a member)                                                                                                    |
+| A GitHub call                                  | `packages/github/src/client.ts` (as the App) or `user.ts` (as a member), both through `githubRequest` in `http.ts`                                                         |
 | A Managed Agents call                          | `packages/runner/src/port.ts` (the port) and `sdk.ts` (its only implementation)                                                                                            |
 | An HTTP route                                  | `apps/api/src/api.ts`, with the view it returns in `board.ts`                                                                                                              |
 | A CLI command                                  | `apps/api/src/cli.ts`, logic in `tasks.ts` or `setup.ts`                                                                                                                   |
