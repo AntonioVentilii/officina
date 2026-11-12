@@ -127,9 +127,6 @@ export const saveSpecVersion = async (
 };
 
 /** Tasks in a lane whose work an agent currently holds, for the lane's WIP limit. */
-/** A run an agent still holds or is about to: the statuses a run leaves only when it ends. */
-export const RUN_IS_ACTIVE = "in ('queued', 'running')";
-
 export const countOpenAgentWork = async (pool: Pool, projectId: string, lane: string) =>
   Number(
     (

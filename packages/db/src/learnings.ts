@@ -1,6 +1,6 @@
 import type { LearningTarget } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
-import { RUN_IS_ACTIVE } from './runs';
+import { RUN_IS_ACTIVE } from './run-status';
 
 type Queryable = Pool | PoolClient;
 
