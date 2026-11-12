@@ -105,8 +105,7 @@ const runLine = (run: RunRow) =>
 export const learnerBrief = async (
   deps: Pick<EngineDependencies, 'pool'>,
   taskId: string,
-  config: ProjectConfig,
-  redPaths: readonly string[]
+  config: ProjectConfig
 ): Promise<string | null> => {
   const { pool } = deps;
   const context = await loadTaskContext(pool, taskId);
@@ -160,7 +159,7 @@ export const learnerBrief = async (
         .map((path) => `  - \`${path}\``)
         .join('\n'),
       `- \`project\`: any other Markdown file in this repository, read from \`${context.defaultBranch}\`. Never a protected path:`,
-      redPaths.map((path) => `  - \`${path}\``).join('\n') || '  - none',
+      config.lanes.red.paths.map((path) => `  - \`${path}\``).join('\n') || '  - none',
       `- \`agent\`: one of Officina's role prompts: ${RUNNER_ROLES.map((role) => `\`agents/${role}.md\``).join(', ')}.`
     ].join('\n'),
     'When you are done, call `submit_result` once.'
@@ -265,8 +264,6 @@ export const runLearnerStep = async (
   const parsedConfig = parseProjectConfig(context.rawConfig);
   if (!parsedConfig.ok) return { status: 'skipped', reason: 'invalid_config' };
   const config = parsedConfig.config;
-  const redPaths =
-    (context.rawConfig as { lanes?: { red?: { paths?: string[] } } }).lanes?.red?.paths ?? [];
 
   const claim = await startRun(pool, {
     taskId,
@@ -280,7 +277,7 @@ export const runLearnerStep = async (
   const repoRef = { installationId: context.installationId, repo: context.repo };
 
   try {
-    const brief = await learnerBrief(deps, taskId, config, redPaths);
+    const brief = await learnerBrief(deps, taskId, config);
     const token = await deps.github.installationToken(repoRef, { contents: 'read' });
     const report = await executeRun(deps.agents, {
       role: 'learner',
