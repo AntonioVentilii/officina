@@ -85,10 +85,13 @@ const fakeGitHub = (
     mergeFails?: boolean;
     /** How many times opening the pull request fails before it works. */
     openFails?: number;
+    /** How many times writing a file (the spec status) fails before it works. */
+    updateFails?: number;
   } = {}
 ) => {
   const calls: { method: string; args: unknown[] }[] = [];
   let openFails = options.openFails ?? 0;
+  let updateFails = options.updateFails ?? 0;
   let branch = options.branchHead ?? 'sha1';
   const refs = [...(options.refs ?? [REFS])];
   const port = {
@@ -119,6 +122,7 @@ const fakeGitHub = (
     },
     updateFile: async (...args: unknown[]) => {
       calls.push({ method: 'updateFile', args });
+      if (updateFails-- > 0) throw new Error('GitHub 502 on /contents');
       if (options.written) branch = options.written.commitSha;
       return options.written;
     },
@@ -293,6 +297,24 @@ describe.skipIf(!url)('engine', () => {
 
     await openMissingPullRequests(pool, github.port, [taskId], PUBLIC_URL);
     expect(github.calls.filter((call) => call.method === 'openPullRequest')).toHaveLength(2);
+  });
+
+  test('a spec status GitHub failed to write keeps the pull request unlinked until a pass completes it', async () => {
+    const github = fakeGitHub({ openFails: 1, updateFails: 1 });
+    const agents = createFakePort(succeed);
+    const deps = { pool, github: github.port, agents, publicUrl: PUBLIC_URL };
+    const taskId = await taskInReady(github, agents);
+    await tick(deps, seeded.projectId);
+
+    const failed = await openMissingPullRequests(pool, github.port, [taskId], PUBLIC_URL);
+    expect(failed).toEqual([{ taskId, error: 'GitHub 502 on /contents' }]);
+    expect(await linkedPullRequest(taskId)).toBeNull();
+
+    expect(await openMissingPullRequests(pool, github.port, [taskId], PUBLIC_URL)).toEqual([]);
+    expect(await linkedPullRequest(taskId)).toBe(42);
+    expect(
+      github.calls.filter((call) => call.method === 'updateFile').at(-1)!.args[0]
+    ).toMatchObject({ text: '# Settings title\n\nStatus: In progress (#42)\n' });
   });
 
   test('after a crash between the round and its pull request, the recorded result opens it', async () => {

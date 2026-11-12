@@ -59,9 +59,10 @@ const pullRequestBody = (link: string, built: PushedBuild, issue: number | null)
     .join('\n\n');
 
 /**
- * Opens a built task's pull request, links it and marks the spec in progress. Safe to run again:
- * `openPullRequest` returns the one already open from the task branch, and the spec status is
- * written once. `null` when the task has a pull request already or does not await one.
+ * Opens a built task's pull request, marks the spec in progress and links it, last: until the link
+ * is stored the task still awaits its pull request, so a failure anywhere is retried by the next
+ * catch-up. Safe to run again: `openPullRequest` returns the one already open from the task branch,
+ * and the spec status is written once. `null` when the task has one already or does not await one.
  */
 export const openTaskPullRequest = async (
   pool: Pool,
@@ -80,7 +81,6 @@ export const openTaskPullRequest = async (
     title: input.built.prTitle,
     body: pullRequestBody(taskLink(input.publicUrl, context.number), input.built, context.issue)
   });
-  await linkPullRequest(pool, input.taskId, pr.number);
   await syncSpecStatus(pool, github, {
     taskId: input.taskId,
     ref,
@@ -89,23 +89,31 @@ export const openTaskPullRequest = async (
     specDir: config.ok ? config.config.docs.specDir : null,
     status: `In progress (#${pr.number})`
   });
+  await linkPullRequest(pool, input.taskId, pr.number);
   return pr;
 };
 
 /**
  * The scheduler's catch-up for a pull request a build step failed to open after its round was
- * applied (GitHub down, the process dying). It opens it from the result the round recorded.
+ * applied (GitHub down, the process dying). It opens it from the result the round recorded. Each
+ * task is tried on its own, so one failing does not hold up the others; the failures are returned
+ * for the log and retried on the next pass.
  */
 export const openMissingPullRequests = async (
   pool: Pool,
   github: PullRequestPort,
   taskIds: readonly string[],
   publicUrl: string
-) => {
+): Promise<{ taskId: string; error: string }[]> => {
+  const failures: { taskId: string; error: string }[] = [];
   for (const taskId of taskIds) {
     if (!awaitsPullRequest(await loadTaskContext(pool, taskId))) continue;
     // A step still running opens its own pull request.
     const built = recordedPush(await latestBuildRun(pool, taskId, BUILD_ROLES));
-    if (built) await openTaskPullRequest(pool, github, { taskId, publicUrl, built });
+    if (!built) continue;
+    await openTaskPullRequest(pool, github, { taskId, publicUrl, built }).catch((error: unknown) =>
+      failures.push({ taskId, error: (error as Error).message })
+    );
   }
+  return failures;
 };

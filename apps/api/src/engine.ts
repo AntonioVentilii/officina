@@ -111,14 +111,15 @@ export const startEngine = async (input: {
         ).catch((error: unknown) =>
           input.log('spec status update failed', { projectId, error: (error as Error).message })
         );
-        await openMissingPullRequests(
+        const unopened = await openMissingPullRequests(
           input.pool,
           input.github,
           await listActiveTaskIds(input.pool, projectId),
           input.publicUrl
-        ).catch((error: unknown) =>
-          input.log('pull request catch-up failed', { projectId, error: (error as Error).message })
-        );
+        ).catch((error: unknown) => [{ error: (error as Error).message }]);
+        for (const failure of unopened) {
+          input.log('pull request catch-up failed', { projectId, ...failure });
+        }
         await requestCopilotReviews(
           input.pool,
           await listActiveTaskIds(input.pool, projectId),
