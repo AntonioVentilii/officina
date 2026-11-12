@@ -34,8 +34,9 @@
         interview
       });
       toasts.show('ok', `Request #${created.number} opened`);
-      await board.refresh();
+      // The request exists now: a failed refresh must not leave the form open to be sent twice.
       onclose();
+      void board.refresh();
       await goto(`/tasks/${created.number}`);
     } catch (error) {
       toasts.show('error', (error as Error).message);
