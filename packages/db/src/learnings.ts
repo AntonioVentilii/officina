@@ -92,12 +92,12 @@ export const loadLearning = async (
     )
   ).rows[0] ?? null;
 
-/** Records a decision once: a learning that is no longer proposed cannot be decided again. */
 /** Locks a learning until the transaction ends, so two decisions on it run one after the other. */
 export const lockLearning = async (db: Queryable, id: string) => {
   await db.query('select 1 from learnings where id = $1 for update', [id]);
 };
 
+/** Records a decision once: a learning that is no longer proposed cannot be decided again. */
 export const decideLearning = async (
   db: Queryable,
   input: {
