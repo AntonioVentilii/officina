@@ -177,6 +177,18 @@ export const feedbackSinceLastPush = async (pool: Pool, taskId: string): Promise
     )
   ).rows.map((row) => row.text);
 
+/** How many questions the interviewer has asked on a task so far. */
+export const countInterviewQuestions = async (pool: Pool, taskId: string): Promise<number> =>
+  Number(
+    (
+      await pool.query<{ count: string }>(
+        `select count(*) from task_events
+         where task_id = $1 and type = 'blocked' and actor->>'role' = 'interviewer'`,
+        [taskId]
+      )
+    ).rows[0]!.count
+  );
+
 /** The GitHub reviews the current build round answers, oldest first: who left each, and its notes. */
 export const githubReviewsSinceLastPush = async (
   pool: Pool,
