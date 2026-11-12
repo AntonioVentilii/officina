@@ -20,7 +20,7 @@ A project was registered without the agent docs the code standard asks for, and 
   - `patterns.md`: the patterns the repository really uses (state, data access, errors, services, components), each with a `path:line` example, and the anti-patterns found in the code, named so nobody copies them.
   - `reusability.md`: the catalog of the shared components, utils, services, constants and types that exist, with their path and one line each. This is the page that stops agents from rewriting what exists, so make it complete.
   - `testing.md`: where tests live, how they are written, the commands.
-  - `pr-and-ci.md`: the title convention, the body, the local gates to run before a pull request.
+  - `pr-and-ci.md`: a line that links rules 2 and 3 of the code standard (one purpose per pull request, parallel from the default branch rather than stacked), the title convention, the body, the local gates to run before a pull request.
 - **`workflows/*.md`** in the docs folder: two to five step-by-step recipes for the changes this repository sees most often, read off the git history.
 - With a clear frontend and backend split, put the pages that differ in `frontend/` and `backend/` subfolders, and keep every page the brief lists.
 

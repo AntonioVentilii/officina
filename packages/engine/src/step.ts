@@ -255,7 +255,6 @@ export const runAgentStep = async (
     // Taken before the session starts, so nothing the builder does can land before it.
     const refsBefore = builds ? await deps.github.refSnapshot(guardedRefs) : null;
     const lane = context.task.lane ?? 'standard';
-    const rawLanes = (context.rawConfig as { lanes?: { red?: { paths?: string[] } } }).lanes;
     const gate = context.task.stage === 'spec_review' ? 'spec_review' : 'verifying';
     const chooser: ChooserContext | undefined =
       role === 'chooser'
@@ -285,7 +284,7 @@ export const runAgentStep = async (
       specVersion: context.task.specVersion,
       spec: context.latestSpec,
       verify: config.verify,
-      protectedPaths: rawLanes?.red?.paths ?? [],
+      protectedPaths: config.lanes.red.paths,
       requestThread:
         role === 'spec' || role === 'interviewer' ? await listComments(pool, taskId) : [],
       feedback: builds ? await feedbackSinceLastPush(pool, taskId) : [],

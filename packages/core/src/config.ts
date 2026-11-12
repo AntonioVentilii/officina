@@ -150,6 +150,8 @@ export type Gate = 'spec_review' | 'verifying';
 export type ReleaseOnMerge = 'production' | 'staging' | 'nothing';
 
 export interface LaneSettings {
+  /** The globs that put a change in this lane; always empty for `standard`. */
+  readonly paths: readonly string[];
   readonly agentsBuild: boolean;
   readonly wip: number;
   readonly diffLines: number;
@@ -197,7 +199,7 @@ export interface ProjectConfig {
 
 const DEFAULT_POLICY: Policy = [{ role: 'maintainer' }];
 
-const LANE_DEFAULTS: Record<Lane, Omit<LaneSettings, 'approvals'>> = {
+const LANE_DEFAULTS: Record<Lane, Omit<LaneSettings, 'paths' | 'approvals'>> = {
   green: {
     agentsBuild: true,
     wip: 5,
@@ -229,6 +231,7 @@ type RawLane = z.infer<typeof laneSchema>;
 const normalizeLane = (lane: Lane, raw: RawLane | undefined): LaneSettings => {
   const defaults = LANE_DEFAULTS[lane];
   return {
+    paths: lane === 'standard' ? [] : (raw?.paths ?? []),
     // Red is the lane where agents never build; config cannot switch that off.
     agentsBuild: lane === 'red' ? false : (raw?.agents_build ?? defaults.agentsBuild),
     wip: raw?.wip ?? defaults.wip,
@@ -296,8 +299,11 @@ export const parseProjectConfig = (input: unknown): ConfigResult => {
     };
   }
   const raw = parsed.data;
-  const redGlobs = raw.lanes?.red?.paths ?? [];
-  const greenGlobs = raw.lanes?.green?.paths ?? [];
+  const lanes = {
+    green: normalizeLane('green', raw.lanes?.green),
+    standard: normalizeLane('standard', raw.lanes?.standard),
+    red: normalizeLane('red', raw.lanes?.red)
+  };
   return {
     ok: true,
     config: {
@@ -319,12 +325,8 @@ export const parseProjectConfig = (input: unknown): ConfigResult => {
         copilotReview: raw.pull_request?.copilot_review ?? false
       },
       board: { look: raw.board?.look ?? 'modernista' },
-      lanes: {
-        green: normalizeLane('green', raw.lanes?.green),
-        standard: normalizeLane('standard', raw.lanes?.standard),
-        red: normalizeLane('red', raw.lanes?.red)
-      },
-      laneMatcher: compileLaneMatcher({ red: redGlobs, green: greenGlobs })
+      lanes,
+      laneMatcher: compileLaneMatcher({ red: lanes.red.paths, green: lanes.green.paths })
     }
   };
 };
