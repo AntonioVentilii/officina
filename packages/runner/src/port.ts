@@ -57,6 +57,8 @@ export interface ManagedAgentsPort {
   openStream(sessionId: string): Promise<AsyncIterable<SessionEvent>>;
   send(sessionId: string, events: readonly OutboundEvent[]): Promise<void>;
   sessionCostCents(sessionId: string): Promise<number | null>;
+  /** An agent with this name, so one created but never recorded is reused rather than duplicated. */
+  findAgentByName(name: string): Promise<{ id: string } | null>;
   createAgent(agent: AgentWrite): Promise<{ id: string; version: number }>;
   updateAgent(agentId: string, agent: AgentWrite): Promise<{ id: string; version: number }>;
   listModels(): Promise<ListedModel[]>;
