@@ -664,7 +664,8 @@ describe('reviews on GitHub', () => {
       headSha,
       by: 'copilot-pull-request-reviewer[bot]',
       reviewId: 7,
-      notes: 'Rename the key.'
+      notes: 'Rename the key.',
+      overviewOnly: false
     }) as const;
 
   test('a review of the current head sends the work back to the builder', () => {
@@ -699,6 +700,37 @@ describe('reviews on GitHub', () => {
       ok: false,
       error: 'not_allowed'
     });
+  });
+
+  test('a fix round that finds nothing to change keeps the head and goes back to review', () => {
+    const driver = createDriver([owner]);
+    let task = buildAndReview(
+      driver,
+      dispatchAgent(driver, toReady(driver, PAGE_PATHS)),
+      'abc',
+      PAGE_PATHS
+    );
+    task = driver.step(task, { type: 'choose', userVisible: true, plan: PLAN }, asAgent('chooser'));
+    task = driver.step(task, review('abc'), engine);
+    expect(driver.attempt(task, { type: 'unchanged', note: 'Nothing applies.' }, engine)).toEqual({
+      ok: false,
+      error: 'not_allowed'
+    });
+    task = driver.step(task, { type: 'unchanged', note: 'Nothing applies.' }, asAgent('builder'));
+    expect(task).toMatchObject({ stage: 'reviewing', headSha: 'abc', reviews: {} });
+    expect(driver.events()[0]).toEqual({
+      type: 'build_unchanged',
+      headSha: 'abc',
+      note: 'Nothing applies.'
+    });
+  });
+
+  test('a first round cannot finish unchanged, since it has built nothing', () => {
+    const driver = createDriver([owner]);
+    const task = dispatchAgent(driver, toReady(driver, PAGE_PATHS));
+    expect(
+      driver.attempt(task, { type: 'unchanged', note: 'Nothing to do.' }, asAgent('builder'))
+    ).toEqual({ ok: false, error: 'wrong_stage' });
   });
 });
 

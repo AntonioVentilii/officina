@@ -16,6 +16,7 @@ import {
   applyCommand,
   feedbackSinceLastPush,
   finishRun,
+  githubReviewsSinceLastPush,
   latestPushedPaths,
   linkPullRequest,
   listProjectMemberProfiles,
@@ -26,7 +27,12 @@ import {
   setRunExternalId,
   startRun
 } from '@officina/db';
-import type { GitHubClient, RefSnapshot, RepoRef } from '@officina/github';
+import {
+  copilotVerdict,
+  type GitHubClient,
+  type RefSnapshot,
+  type RepoRef
+} from '@officina/github';
 import {
   executeRun,
   type ManagedAgentsPort,
@@ -84,6 +90,28 @@ const titleProblems = (pattern: string | null) => (output: AgentOutput<RunnerRol
   if (!pattern || built.outcome !== 'pushed' || new RegExp(pattern).test(built.prTitle)) return [];
   return [`prTitle "${built.prTitle}" does not match the required pattern ${pattern}`];
 };
+
+type GitHubReview = { readonly by: string; readonly notes: string };
+
+/**
+ * A build round may end `unchanged` only when it answers a GitHub review, and a round answering a
+ * Copilot review that asked for a closer look must say what it checked, even when nothing changed.
+ */
+const reviewProblems =
+  (reviews: readonly GitHubReview[]) =>
+  (output: AgentOutput<RunnerRole>): string[] => {
+    const built = output as AgentOutput<'builder' | 'onboarder'>;
+    const problems: string[] = [];
+    if (built.outcome === 'unchanged' && reviews.length === 0) {
+      problems.push('`unchanged` only answers a GitHub review, and this round has none');
+    }
+    const answers = built.outcome === 'pushed' || built.outcome === 'unchanged';
+    const closerLook = reviews.some((review) => copilotVerdict(review.notes) === 'closer_look');
+    if (answers && closerLook && !('reviewReply' in built && built.reviewReply)) {
+      problems.push('a review that asked for a closer look needs `reviewReply`');
+    }
+    return problems;
+  };
 
 export type StepResult =
   | { readonly status: 'applied' }
@@ -215,6 +243,7 @@ export const runAgentStep = async (
           ).rows[0]!.count
         )
       : 0;
+  const githubReviews = isBuildRole(role) ? await githubReviewsSinceLastPush(pool, taskId) : [];
 
   try {
     const builds = isBuildRole(role);
@@ -289,7 +318,11 @@ export const runAgentStep = async (
             : Math.round(config.lanes[lane].budgetUsd * 100)
       },
       validate: builds
-        ? titleProblems(config.pullRequest.titlePattern)
+        ? (output) => [
+            ...titleProblems(config.pullRequest.titlePattern)(output),
+            // The onboarder's contract has no review answer, so only the builder is held to one.
+            ...(role === 'builder' ? reviewProblems(githubReviews)(output) : [])
+          ]
         : role === 'chooser'
           ? planProblems(gate, new Set(members.map((member) => member.id)))
           : role === 'interviewer'
@@ -450,6 +483,23 @@ export const runAgentStep = async (
         specDir: config.docs.specDir,
         status: `In progress (#${pr.number})`
       });
+    }
+
+    const reply = builds && 'reviewReply' in output ? output.reviewReply : undefined;
+    if (reply && githubReviews.length > 0 && context.pullRequest !== null) {
+      const reviewers = [...new Set(githubReviews.map((review) => `\`${review.by}\``))];
+      try {
+        await deps.github.commentOnIssue({
+          ...repoRef,
+          issueNumber: context.pullRequest,
+          body: `Answer to the review by ${reviewers.join(', ')}.\n\n${reply}`
+        });
+      } catch (error) {
+        // The round is applied either way; a lost reply must not block the task.
+        await appendRunEvent(pool, runId, 'officina.review_reply_failed', {
+          error: (error as Error).message
+        });
+      }
     }
 
     if (role === 'chooser' && context.pullRequest !== null) {

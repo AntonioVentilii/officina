@@ -18,16 +18,16 @@ Search here before writing a helper, a type, a component or a fake. When you add
 
 ## `packages/db`
 
-| Piece                                                                                                                                               | Path               | What it is                                     |
-| --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ | ---------------------------------------------- |
-| `applyCommand`, `createTask`, `loadTask`                                                                                                            | `src/store.ts`     | The transactional task store                   |
-| `loadTaskContext`, `startRun`, `finishRun`, `appendRunEvent`, `appendTaskEvent`, `feedbackSinceLastPush`, `listActiveTaskIds`, `countOpenAgentWork` | `src/runs.ts`      | What the engine reads and records around a run |
-| `listBoardTasks`, `loadBoardTask`, `listTaskEvents`, `listTaskRuns`, `listSpecVersions`                                                             | `src/board.ts`     | Rows the board views are built from            |
-| `resolveProjectId`, `resolveProjectMember`, `findTaskIdByNumber`, `addComment`, `listProjectMembers`                                                | `src/tasks.ts`     | Lookups the API and CLI share                  |
-| `upsertWorkspace`, `upsertMember`, `upsertProject`, `setProjectRole`, `findProjectsByRepo`                                                          | `src/projects.ts`  | Registration                                   |
-| `createLoginLink`, `redeemLoginLink`, `createSession`, `memberForSession`, `purgeExpiredCredentials`                                                | `src/auth.ts`      | Sign-in links and sessions                     |
-| `insertLearnings`, `listLearnings`, `loadLearning`, `decideLearning`                                                                                | `src/learnings.ts` | Learnings                                      |
-| `migrate`                                                                                                                                           | `src/migrate.ts`   | Applies `migrations/*.sql` once each           |
+| Piece                                                                                                                                                                             | Path               | What it is                                     |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ | ---------------------------------------------- |
+| `applyCommand`, `createTask`, `loadTask`                                                                                                                                          | `src/store.ts`     | The transactional task store                   |
+| `loadTaskContext`, `startRun`, `finishRun`, `appendRunEvent`, `appendTaskEvent`, `feedbackSinceLastPush`, `githubReviewsSinceLastPush`, `listActiveTaskIds`, `countOpenAgentWork` | `src/runs.ts`      | What the engine reads and records around a run |
+| `listBoardTasks`, `loadBoardTask`, `listTaskEvents`, `listTaskRuns`, `listSpecVersions`                                                                                           | `src/board.ts`     | Rows the board views are built from            |
+| `resolveProjectId`, `resolveProjectMember`, `findTaskIdByNumber`, `addComment`, `listProjectMembers`                                                                              | `src/tasks.ts`     | Lookups the API and CLI share                  |
+| `upsertWorkspace`, `upsertMember`, `upsertProject`, `setProjectRole`, `findProjectsByRepo`                                                                                        | `src/projects.ts`  | Registration                                   |
+| `createLoginLink`, `redeemLoginLink`, `createSession`, `memberForSession`, `purgeExpiredCredentials`                                                                              | `src/auth.ts`      | Sign-in links and sessions                     |
+| `insertLearnings`, `listLearnings`, `loadLearning`, `decideLearning`                                                                                                              | `src/learnings.ts` | Learnings                                      |
+| `migrate`                                                                                                                                                                         | `src/migrate.ts`   | Applies `migrations/*.sql` once each           |
 
 ## `packages/github`, `packages/runner`, `packages/engine`
 
@@ -36,6 +36,7 @@ Search here before writing a helper, a type, a component or a fake. When you add
 | `createGitHubClient`, `GitHubError`, `COMPARE_FILE_LIMIT`                 | `packages/github/src/client.ts`      | Every call as the App: tokens, files, branches, pull requests |
 | `createGitHubUserAuth`, `createGitHubAsUser`                              | `packages/github/src/user.ts`        | A member's own GitHub account                                 |
 | `verifyWebhookSignature`, `parseWebhookEvent`                             | `packages/github/src/webhooks.ts`    | Webhook intake                                                |
+| `copilotVerdict`, `COPILOT_VERDICTS`, `COPILOT_REVIEWERS`                 | `packages/github/src/copilot.ts`     | Who Copilot is and the verdict its review body states         |
 | `ManagedAgentsPort`                                                       | `packages/runner/src/port.ts`        | The runner seam                                               |
 | `executeRun`, `MAX_RESULT_ATTEMPTS`                                       | `packages/runner/src/run.ts`         | One session from brief to validated result                    |
 | `RUNNER_ROLES`, `buildDefinition`, `loadDefinitions`, `RESULT_TOOL`       | `packages/runner/src/definitions.ts` | Agent definitions                                             |

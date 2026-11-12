@@ -383,7 +383,14 @@ describe.skipIf(!url)('engine', () => {
     await applyOrThrow(
       pool,
       id,
-      { type: 'github_review', headSha: 'abc', by: 'copilot', reviewId: 5, notes: 'Typo.' },
+      {
+        type: 'github_review',
+        headSha: 'abc',
+        by: 'copilot',
+        reviewId: 5,
+        notes: 'Typo.',
+        overviewOnly: false
+      },
       engine
     );
     await pushAndReview('def');
@@ -415,7 +422,14 @@ describe.skipIf(!url)('engine', () => {
     await applyOrThrow(
       pool,
       id,
-      { type: 'github_review', headSha: 'def', by: 'copilot', reviewId: 6, notes: 'Again.' },
+      {
+        type: 'github_review',
+        headSha: 'def',
+        by: 'copilot',
+        reviewId: 6,
+        notes: 'Again.',
+        overviewOnly: false
+      },
       engine
     );
     await cancelStaleAutoMerges(pool, github.port, seeded.projectId);
@@ -460,6 +474,79 @@ describe.skipIf(!url)('engine', () => {
       (github.calls.find((call) => call.method === 'openPullRequest')!.args[0] as { title: string })
         .title
     ).toBe('fix(settings): rename the settings title');
+  });
+
+  test('a fix round that answers a closer-look review keeps the head and replies on the pull request', async () => {
+    const github = fakeGitHub();
+    const unchanged = { outcome: 'unchanged', why: 'The functions build passes locally.' };
+    let builds = 0;
+    const agents = createFakePort((request) => {
+      if (request.metadata.role !== 'builder') return succeed(request);
+      builds += 1;
+      if (builds === 1) return succeed(request);
+      return [
+        toolUse(unchanged),
+        idle('requires_action'),
+        toolUse({ ...unchanged, reviewReply: 'Built the functions bundle: it loads. No change.' }),
+        idle('requires_action'),
+        idle('end_turn')
+      ];
+    });
+    const taskId = await taskInReady(github, agents);
+    const deps = { pool, github: github.port, agents, publicUrl: PUBLIC_URL };
+    await tick(deps, seeded.projectId);
+    const head = (await loadTask(pool, taskId))!.task.headSha!;
+    await applyOrThrow(
+      pool,
+      taskId,
+      {
+        type: 'github_review',
+        headSha: head,
+        by: 'copilot-pull-request-reviewer[bot]',
+        reviewId: 8,
+        notes: '### 🔵 Needs a closer look\n\nThe functions build was unavailable.',
+        overviewOnly: true
+      },
+      { kind: 'engine' }
+    );
+
+    expect(await runAgentStep(deps, taskId, 'builder')).toEqual({ status: 'applied' });
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({
+      stage: 'reviewing',
+      headSha: head
+    });
+    expect(
+      agents.sent.some((sent) =>
+        JSON.stringify(sent.events).includes('asked for a closer look needs `reviewReply`')
+      )
+    ).toBe(true);
+    const reply = github.calls.find((call) => call.method === 'commentOnIssue');
+    expect(reply?.args[0]).toMatchObject({
+      body: 'Answer to the review by `copilot-pull-request-reviewer[bot]`.\n\nBuilt the functions bundle: it loads. No change.'
+    });
+  });
+
+  test('a round with no GitHub review to answer cannot finish unchanged', async () => {
+    const github = fakeGitHub();
+    const agents = createFakePort((request) =>
+      request.metadata.role === 'builder'
+        ? [
+            toolUse({ outcome: 'unchanged', why: 'Nothing to do.' }),
+            idle('requires_action'),
+            toolUse(RESULTS.builder),
+            idle('requires_action'),
+            idle('end_turn')
+          ]
+        : succeed(request)
+    );
+    const taskId = await taskInReady(github, agents);
+    await tick({ pool, github: github.port, agents, publicUrl: PUBLIC_URL }, seeded.projectId);
+    expect((await loadTask(pool, taskId))?.task.stage).toBe('reviewing');
+    expect(
+      agents.sent.some((sent) =>
+        JSON.stringify(sent.events).includes('`unchanged` only answers a GitHub review')
+      )
+    ).toBe(true);
   });
 
   test('the approval chooser plans the spec gate on the default branch with the members in its brief', async () => {

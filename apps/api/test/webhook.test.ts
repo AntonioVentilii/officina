@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { createHmac } from 'node:crypto';
-import { linkPullRequest, loadTask } from '@officina/db';
+import { applyCommand, linkPullRequest, loadTask } from '@officina/db';
 import { Pool } from 'pg';
 import { createTaskInMerging, resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
 import { createApp } from '../src';
@@ -226,6 +226,83 @@ describe.skipIf(!url)('api', () => {
       [taskId]
     );
     expect(notes.rows[0]?.notes).toContain('`src/a.ts:3`: Typo in the key.');
+  });
+
+  test('a Copilot review with no comment on the code is read once per answer', async () => {
+    const reviewing = createApp({
+      pool,
+      webhookSecret: SECRET,
+      github: { fileContent: async () => null, reviewComments: async () => [] }
+    });
+    await pool.query('update projects set github_installation_id = 99 where id = $1', [
+      seeded.projectId
+    ]);
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    const review = async (
+      delivery: string,
+      id: number,
+      body: string,
+      login = 'copilot-pull-request-reviewer[bot]'
+    ) =>
+      (
+        await deliver(reviewing, {
+          event: 'pull_request_review',
+          delivery,
+          payload: {
+            action: 'submitted',
+            review: {
+              id,
+              state: 'commented',
+              body,
+              commit_id: 'abc',
+              author_association: 'NONE',
+              user: { login, type: 'Bot' }
+            },
+            pull_request: { number: 42 },
+            repository
+          }
+        })
+      ).json();
+    const closerLook =
+      '### 🔵 Needs a closer look\n\nThe functions build was unavailable, so bundling is unverified.';
+
+    // A review that reviewed nothing has no verdict and asks for nothing.
+    expect(await review('o-1', 7, "Copilot wasn't able to review any files.")).toEqual({
+      status: 'applied',
+      outcomes: []
+    });
+    // Another bot's verdict-shaped text with nothing inline is not Copilot's verdict.
+    expect(await review('o-4', 10, closerLook, 'other-reviewer[bot]')).toEqual({
+      status: 'applied',
+      outcomes: []
+    });
+    expect(await review('o-2', 8, closerLook)).toEqual({
+      status: 'applied',
+      outcomes: [{ taskId, ok: true }]
+    });
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({ stage: 'building', fixRounds: 1 });
+    const recorded = await pool.query<{ notes: string; overview: boolean }>(
+      `select payload->>'notes' as notes, (payload->>'overviewOnly')::boolean as overview
+       from task_events
+       where task_id = $1 and type = 'review_recorded' and payload->>'reviewer' = 'github'`,
+      [taskId]
+    );
+    expect(recorded.rows[0]?.overview).toBe(true);
+    expect(recorded.rows[0]?.notes).toContain('bundling is unverified');
+
+    // The builder found nothing to change; Copilot's overview of the same work is not sent back.
+    const unchanged = await applyCommand(pool, {
+      taskId,
+      command: { type: 'unchanged', note: 'The build passes locally.' },
+      actor: { kind: 'agent', role: 'builder', version: 1 }
+    });
+    expect(unchanged.ok).toBe(true);
+    expect(await review('o-3', 9, closerLook)).toEqual({
+      status: 'applied',
+      outcomes: [{ taskId, ok: false, error: 'overview_already_answered' }]
+    });
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({ stage: 'reviewing' });
   });
 
   test('concurrent deliveries of one id are applied once', async () => {
