@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { isActive } from '$lib/runs';
   import { ChevronRight, CircleAlert, CircleCheck, GitPullRequest, Undo2 } from '@lucide/svelte';
   import { tick } from 'svelte';
   import { get } from '$lib/api';
@@ -23,7 +24,7 @@
   let scroller: HTMLDivElement | undefined = $state();
   let follow = $state(true);
 
-  const running = $derived(run.status === 'running' || run.status === 'queued');
+  const running = $derived(isActive(run));
 
   type Block =
     | { kind: 'brief' | 'message' | 'feedback' | 'error'; id: string; text: string }
