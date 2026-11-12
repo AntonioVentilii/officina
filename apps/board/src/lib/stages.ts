@@ -1,4 +1,4 @@
-import type { Card, Stage } from './types';
+import type { Stage } from './types';
 
 /** Plain words for every stage, for people who never read a pull request. */
 export const STAGE_LABELS: Record<Stage, string> = {
@@ -55,6 +55,3 @@ export const TRACK: readonly { readonly label: string; readonly stages: readonly
 ];
 
 export const trackIndex = (stage: Stage) => TRACK.findIndex((step) => step.stages.includes(stage));
-
-export const isClosed = (card: Pick<Card, 'stage'>) =>
-  card.stage === 'done' || CLOSED.includes(card.stage);
