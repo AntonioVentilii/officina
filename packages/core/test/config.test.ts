@@ -147,6 +147,27 @@ describe('project config', () => {
     expect(result.ok && result.config.lanes.red.agentsBuild).toBe(false);
   });
 
+  test('keeps the red and green globs on their lanes, none on standard', () => {
+    const result = parseProjectConfig({
+      version: 1,
+      docs: { entry: 'AGENTS.md' },
+      lanes: {
+        red: { paths: ['infra/**'] },
+        standard: { paths: ['ignored/**'] },
+        green: { paths: ['copy/**'] }
+      }
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.config.lanes.red.paths).toEqual(['infra/**']);
+    expect(result.config.lanes.green.paths).toEqual(['copy/**']);
+    expect(result.config.lanes.standard.paths).toEqual([]);
+    expect(parseProjectConfig({ version: 1, docs: { entry: 'AGENTS.md' } })).toMatchObject({
+      ok: true,
+      config: { lanes: { red: { paths: [] }, green: { paths: [] } } }
+    });
+  });
+
   test('reports unknown keys and bad requirements with their path', () => {
     const result = parseProjectConfig({
       version: 1,
