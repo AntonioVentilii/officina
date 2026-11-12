@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
-import type { AgentRole } from '@officina/core';
+import { branchForTask, type AgentRole } from '@officina/core';
 import {
   appendTaskEvent,
   applyCommand,
@@ -395,6 +395,30 @@ describe.skipIf(!url)('engine', () => {
     const updates = github.calls.filter((call) => call.method === 'updateFile');
     expect(updates).toHaveLength(2);
     expect((updates[1]!.args[0] as { text: string }).text).toContain('Status: Implemented (#42)');
+  });
+
+  test('a checklist GitHub refuses is recorded on the run and neither fails it nor blocks the task', async () => {
+    const github = fakeGitHub();
+    const agents = createFakePort(succeed);
+    const port: GitHubPort = {
+      ...github.port,
+      commentOnIssue: () => Promise.reject(new Error('GitHub is down'))
+    };
+    const deps = { pool, github: port, agents, publicUrl: PUBLIC_URL };
+    const taskId = await taskInReady(github, agents);
+    await tick(deps, seeded.projectId);
+    await tick(deps, seeded.projectId);
+    await tick(deps, seeded.projectId);
+
+    const stored = await loadTask(pool, taskId);
+    expect(stored?.task).toMatchObject({ stage: 'verifying', blocked: null });
+    expect((await runStatuses(taskId)).every((run) => run.status === 'succeeded')).toBe(true);
+    const failed = await pool.query(
+      `select e.payload->>'error' as error from run_events e join runs r on r.id = e.run_id
+       where r.task_id = $1 and e.type = 'officina.checklist_failed'`,
+      [taskId]
+    );
+    expect(failed.rows).toEqual([{ error: 'GitHub is down' }]);
   });
 
   const copilotRequests = () => {
@@ -986,6 +1010,51 @@ describe.skipIf(!url)('engine', () => {
     await finishVerifiedSpecs(pool, clean().port, [off], onBehalf);
     expect(userCalls).toEqual(['approve']);
     expect(await types(off)).toEqual(['github_approved', 'awaiting_merge']);
+  });
+
+  test('a task that fails to finish does not stop the others, and a refused token is recorded once', async () => {
+    const broken = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, broken, 50);
+    const fine = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, fine, 51);
+    const { number } = (
+      await pool.query<{ number: number }>('select number from tasks where id = $1', [broken])
+    ).rows[0]!;
+    const github = fakeGitHub({
+      branchHead: 'abc',
+      written: { commitSha: 'abc2', parentSha: 'abc' }
+    });
+    const port: GitHubPort = {
+      ...github.port,
+      readFile: (input) =>
+        input.branch === branchForTask(number)
+          ? Promise.reject(new Error('GitHub is down'))
+          : github.port.readFile(input)
+    };
+    let refreshes = 0;
+    const onBehalf = {
+      publicUrl: PUBLIC_URL,
+      tokenFor: async () => {
+        refreshes += 1;
+        throw new Error('the refresh was refused');
+      },
+      asUser: {} as OnBehalf['asUser']
+    };
+
+    expect(await finishVerifiedSpecs(pool, port, [broken, fine], onBehalf)).toEqual([
+      { taskId: broken, error: 'GitHub is down' }
+    ]);
+    await finishVerifiedSpecs(pool, port, [fine], onBehalf);
+    expect(refreshes).toBe(1);
+    const events = await pool.query<{ type: string; error: string | null }>(
+      `select type, payload->>'error' as error from task_events
+       where task_id = $1 and type in ('github_approval_failed', 'awaiting_merge') order by id`,
+      [fine]
+    );
+    expect(events.rows).toEqual([
+      { type: 'github_approval_failed', error: 'the refresh was refused' },
+      { type: 'awaiting_merge', error: null }
+    ]);
   });
 
   test('an auto-merge that may or may not have been turned on is turned off before a person is asked', async () => {
