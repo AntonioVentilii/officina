@@ -4,8 +4,23 @@ import { Client, type ClientBase } from 'pg';
 
 const MIGRATIONS_DIR = join(import.meta.dir, '..', 'migrations');
 
-/** Applies pending migrations in filename order, each in its own transaction. Returns the applied names. */
+/** The advisory lock every migrating process takes, so two booting at once apply each file once. */
+const MIGRATION_LOCK = 4_242_001;
+
+/**
+ * Applies pending migrations in filename order, each in its own transaction, holding a session
+ * lock so a second process waits and then finds them applied. Returns the applied names.
+ */
 export const migrate = async (client: ClientBase): Promise<string[]> => {
+  await client.query('select pg_advisory_lock($1)', [MIGRATION_LOCK]);
+  try {
+    return await applyPending(client);
+  } finally {
+    await client.query('select pg_advisory_unlock($1)', [MIGRATION_LOCK]);
+  }
+};
+
+const applyPending = async (client: ClientBase): Promise<string[]> => {
   await client.query(
     `create table if not exists schema_migrations (
        name text primary key,

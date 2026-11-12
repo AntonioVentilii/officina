@@ -15,17 +15,19 @@ import {
   addComment,
   appendRunEvent,
   applyCommand,
+  countInterviewQuestions,
   feedbackSinceLastPush,
   finishRun,
   githubReviewsSinceLastPush,
   latestPushedPaths,
-  linkPullRequest,
   listProjectMemberProfiles,
   listComments,
   loadAgentVersions,
   loadTaskContext,
+  recordRunResult,
   saveSpecVersion,
   setRunExternalId,
+  setTaskTitle,
   startRun
 } from '@officina/db';
 import {
@@ -44,7 +46,8 @@ import {
 import type { Pool } from 'pg';
 import { MAX_INTERVIEW_QUESTIONS, buildBrief, type ChooserContext } from './brief';
 import { runLearnerStep } from './learner';
-import { postChecklist, syncSpecStatus, taskLink, type SyncGitHubPort } from './github-sync';
+import { postChecklist, taskLink, type SyncGitHubPort } from './github-sync';
+import { openTaskPullRequest, type PushedBuild } from './pull-request';
 
 export { taskLink };
 
@@ -230,18 +233,7 @@ export const runAgentStep = async (
   const firstRound = context.task.headSha === null;
   const members =
     role === 'chooser' ? await listProjectMemberProfiles(pool, context.projectId) : [];
-  const questionsAsked =
-    role === 'interviewer'
-      ? Number(
-          (
-            await pool.query<{ count: string }>(
-              `select count(*) from task_events
-               where task_id = $1 and type = 'blocked' and actor->>'role' = 'interviewer'`,
-              [taskId]
-            )
-          ).rows[0]!.count
-        )
-      : 0;
+  const questionsAsked = role === 'interviewer' ? await countInterviewQuestions(pool, taskId) : 0;
   const githubReviews = isBuildRole(role) ? await githubReviewsSinceLastPush(pool, taskId) : [];
 
   try {
@@ -405,6 +397,9 @@ export const runAgentStep = async (
 
     const mapped = commandForOutput(context.task, roleOutput);
     if (!mapped.ok) throw new Error(mapped.error);
+    // Recorded before it is applied, so a crash after the apply still leaves what to open the
+    // pull request from.
+    await recordRunResult(pool, runId, output);
 
     const applied = await applyCommand(pool, {
       taskId,
@@ -424,10 +419,7 @@ export const runAgentStep = async (
                 ].join('\n\n');
           await addComment(client, taskId, actor, body);
           if (interview.outcome === 'complete') {
-            await client.query('update tasks set title = $2 where id = $1', [
-              taskId,
-              interview.title
-            ]);
+            await setTaskTitle(client, taskId, interview.title);
           }
         }
         if (role === 'spec' && (output as AgentOutput<'spec'>).outcome === 'specced') {
@@ -450,37 +442,20 @@ export const runAgentStep = async (
     }
 
     if (builds && applied.task.stage === 'reviewing' && context.pullRequest === null) {
-      const built = output as Extract<AgentOutput<'builder' | 'onboarder'>, { outcome: 'pushed' }>;
-      const bullets = (items: readonly string[]) =>
-        items.map((item) => `- ${item}`).join('\n') || '- nothing reported';
-      const body = [
-        `Implements the approved spec of ${taskLink(deps.publicUrl, context.number)}.`,
-        `Verified:\n${bullets(built.verified)}`,
-        `Not verified:\n${bullets(built.notVerified)}`,
-        'followUps' in built
-          ? `Follow-ups, smells found while reading the code and left for their own changes:\n${bullets(built.followUps)}`
-          : null,
-        context.issue ? `Closes #${context.issue}` : null
-      ]
-        .filter(Boolean)
-        .join('\n\n');
-      const pr = await deps.github.openPullRequest({
-        ...repoRef,
-        base: context.defaultBranch,
-        branch: taskBranch,
-        title: built.prTitle,
-        body
-      });
-      await linkPullRequest(pool, taskId, pr.number);
-      await appendRunEvent(pool, runId, 'officina.pull_request_opened', pr);
-      await syncSpecStatus(pool, deps.github, {
-        taskId,
-        ref: repoRef,
-        branch: taskBranch,
-        base: context.defaultBranch,
-        specDir: config.docs.specDir,
-        status: `In progress (#${pr.number})`
-      });
+      const built = output as PushedBuild;
+      try {
+        const pr = await openTaskPullRequest(pool, deps.github, {
+          taskId,
+          publicUrl: deps.publicUrl,
+          built
+        });
+        if (pr) await appendRunEvent(pool, runId, 'officina.pull_request_opened', pr);
+      } catch (error) {
+        // The round is applied; the scheduler opens the pull request from the recorded result.
+        await appendRunEvent(pool, runId, 'officina.pull_request_failed', {
+          error: (error as Error).message
+        });
+      }
     }
 
     const reply = builds && 'reviewReply' in output ? output.reviewReply : undefined;

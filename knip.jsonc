@@ -1,0 +1,28 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  // An export used only in its own file is still used; the gate is after dead code.
+  "ignoreExportsUsedInFile": true,
+  "workspaces": {
+    ".": {
+      // TypeScript 7, run by path in `typecheck`; `typescript` itself is 6 for typescript-eslint.
+      "ignoreDependencies": ["@typescript/native"]
+    },
+    "packages/*": {
+      "entry": ["test/**/*.test.ts"],
+      "project": ["src/**/*.ts", "test/**/*.ts"]
+    },
+    "packages/db": {
+      "entry": ["test/**/*.test.ts", "test/with-postgres.ts"],
+      "project": ["src/**/*.ts", "test/**/*.ts"]
+    },
+    "apps/api": {
+      "entry": ["src/main.ts", "src/cli.ts", "src/dev.ts", "test/**/*.test.ts"],
+      "project": ["src/**/*.ts", "test/**/*.ts"]
+    },
+    "apps/board": {
+      "project": ["src/**/*.{ts,svelte}"],
+      // Imported from src/app.css, which knip does not read.
+      "ignoreDependencies": ["@fontsource-variable/.+", "@fontsource/.+"]
+    }
+  }
+}
