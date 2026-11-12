@@ -35,5 +35,5 @@ The patterns Officina really uses, each with one place to copy from. [`../archit
 
 Named so nobody copies them; each is a follow-up of its own.
 
-- SQL outside `packages/db`: project and role lookups in `apps/api/src` (`learnings.ts`, `tasks.ts`, `people.ts`, `board.ts`, `webhooks.ts`). Queries belong in the db module that owns the table.
+- SQL outside `packages/db`: project and role lookups in `apps/api/src` (`learnings.ts`, `people.ts`, `board.ts`, `webhooks.ts`). Queries belong in the db module that owns the table.
 - Stage, lane and role types are mirrored by hand in `apps/board/src/lib/types.ts`.
