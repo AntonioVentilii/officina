@@ -15,6 +15,7 @@ import {
   addComment,
   appendRunEvent,
   applyCommand,
+  countInterviewQuestions,
   feedbackSinceLastPush,
   finishRun,
   githubReviewsSinceLastPush,
@@ -26,6 +27,7 @@ import {
   recordRunResult,
   saveSpecVersion,
   setRunExternalId,
+  setTaskTitle,
   startRun
 } from '@officina/db';
 import {
@@ -231,18 +233,7 @@ export const runAgentStep = async (
   const firstRound = context.task.headSha === null;
   const members =
     role === 'chooser' ? await listProjectMemberProfiles(pool, context.projectId) : [];
-  const questionsAsked =
-    role === 'interviewer'
-      ? Number(
-          (
-            await pool.query<{ count: string }>(
-              `select count(*) from task_events
-               where task_id = $1 and type = 'blocked' and actor->>'role' = 'interviewer'`,
-              [taskId]
-            )
-          ).rows[0]!.count
-        )
-      : 0;
+  const questionsAsked = role === 'interviewer' ? await countInterviewQuestions(pool, taskId) : 0;
   const githubReviews = isBuildRole(role) ? await githubReviewsSinceLastPush(pool, taskId) : [];
 
   try {
@@ -428,10 +419,7 @@ export const runAgentStep = async (
                 ].join('\n\n');
           await addComment(client, taskId, actor, body);
           if (interview.outcome === 'complete') {
-            await client.query('update tasks set title = $2 where id = $1', [
-              taskId,
-              interview.title
-            ]);
+            await setTaskTitle(client, taskId, interview.title);
           }
         }
         if (role === 'spec' && (output as AgentOutput<'spec'>).outcome === 'specced') {

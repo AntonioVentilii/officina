@@ -147,6 +147,17 @@ export const listTasksAwaitingLearning = async (
     )
   ).rows.map((row) => row.id);
 
+/** Whether the learner already finished or failed a look at this task; it never looks twice. */
+export const learnerHasLooked = async (db: Queryable, taskId: string): Promise<boolean> =>
+  Boolean(
+    (
+      await db.query(
+        "select 1 from runs where task_id = $1 and agent_role = 'learner' and status not in ('queued', 'running')",
+        [taskId]
+      )
+    ).rowCount
+  );
+
 /** What the project has already learned or turned down, so the learner does not repeat it. */
 export const listRecentLearningTitles = async (db: Queryable, projectId: string) =>
   (
