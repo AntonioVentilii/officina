@@ -9,6 +9,7 @@ import {
   type ProjectRecord
 } from '@officina/db';
 import type { GitHubClient } from '@officina/github';
+import { taskLink } from '@officina/engine';
 import type { Pool } from 'pg';
 import { TaskCommandError } from './tasks';
 
@@ -82,7 +83,7 @@ const openLearningPullRequest = async (
     });
   }
   const link = learning.taskNumber
-    ? `[Officina task ${learning.taskNumber}](${context.publicUrl.replace(/\/$/, '')}/tasks/${learning.taskNumber})`
+    ? taskLink(context.publicUrl, project.id, learning.taskNumber)
     : 'an Officina task';
   return github.openPullRequest({
     ...ref,

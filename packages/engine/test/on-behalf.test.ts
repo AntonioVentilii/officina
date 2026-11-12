@@ -73,6 +73,7 @@ describe.skipIf(!url)('approving on GitHub for the verifier', () => {
 
   const input = (taskId: string) => ({
     taskId,
+    projectId: seeded.projectId,
     taskNumber: 1,
     repo: 'ViciApp/vici-app',
     pullRequest: 42
@@ -90,7 +91,7 @@ describe.skipIf(!url)('approving on GitHub for the verifier', () => {
       'ViciApp/vici-app',
       42,
       'abc',
-      'Verified in [Officina task 1](https://o.example/tasks/1).'
+      `Verified in [Officina task 1](https://o.example/tasks/1?project=${seeded.projectId}).`
     ]);
     expect(await events(taskId)).toEqual([
       {

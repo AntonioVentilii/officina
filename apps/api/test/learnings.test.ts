@@ -168,7 +168,9 @@ describe.skipIf(!url)('learning decisions', () => {
       message: 'docs(ai): update every live locale'
     });
     const body = String(github.calls[4]!.args.body);
-    expect(body).toContain('[Officina task 1](https://o.example/tasks/1)');
+    expect(body).toContain(
+      `[Officina task 1](https://o.example/tasks/1?project=${seeded.projectId})`
+    );
     expect(body).not.toMatch(/(^|\s)#1\b/);
 
     await expect(
