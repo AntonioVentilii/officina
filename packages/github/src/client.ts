@@ -1,6 +1,7 @@
 import { createSign } from 'node:crypto';
 import type { PushFacts } from '@officina/core';
 import { GitHubError, githubRequest } from './http';
+import { mergeWhenReadyWith } from './merge';
 
 /** GitHub's compare endpoint lists at most this many files; a full page means the list may be cut. */
 export const COMPARE_FILE_LIMIT = 300;
@@ -45,6 +46,23 @@ export interface RefSnapshot {
   readonly defaultHead: string;
   /** Tag name to the sha it points at. */
   readonly tags: Readonly<Record<string, string>>;
+}
+
+interface ReviewThread {
+  readonly id: string;
+  readonly isResolved: boolean;
+  readonly comments: { nodes: { pullRequestReview: { databaseId: number } | null }[] };
+}
+
+interface ReviewThreadsPage {
+  repository: {
+    pullRequest: {
+      reviewThreads: {
+        pageInfo: { hasNextPage: boolean; endCursor: string | null };
+        nodes: ReviewThread[];
+      };
+    };
+  };
 }
 
 interface CachedToken {
@@ -373,32 +391,24 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
 
   /**
    * Turns on auto-merge as the app, for a result that needed no person's check, so the branch
-   * rules (checks, resolved threads, any required review) still decide when it lands. A pull request
-   * that already meets them cannot take auto-merge and is merged straight away. Both are pinned to
-   * `expectedHead`, so a commit pushed after the result was accepted is never merged with it.
+   * rules (checks, resolved threads, any required review) still decide when it lands.
    */
   const mergeWhenReady = async (
     ref: RepoRef & { readonly pullRequest: number; readonly expectedHead: string }
-  ): Promise<'auto_merge' | 'merged'> => {
-    const pr = await pullRequestNode(ref);
-    const response = await graphql(
-      ref,
-      'mutation($id: ID!, $head: GitObjectID!) { enablePullRequestAutoMerge(input: { pullRequestId: $id, mergeMethod: SQUASH, expectedHeadOid: $head }) { clientMutationId } }',
-      { id: pr.node_id, head: ref.expectedHead }
+  ): Promise<'auto_merge' | 'merged'> =>
+    mergeWhenReadyWith(
+      {
+        graphql: (query, variables) => graphql(ref, query, variables),
+        merge: async (body) =>
+          request(`/repos/${ref.repo}/pulls/${ref.pullRequest}/merge`, {
+            method: 'PUT',
+            token: await installationToken(ref),
+            body
+          })
+      },
+      (await pullRequestNode(ref)).node_id,
+      ref.expectedHead
     );
-    if (!response.errors?.length) return 'auto_merge';
-    const message = response.errors.map((error) => error.message).join('; ');
-    if (!/clean status|is in clean/i.test(message)) {
-      throw new GitHubError(422, '/graphql enablePullRequestAutoMerge', message);
-    }
-    const token = await installationToken(ref);
-    await request(`/repos/${ref.repo}/pulls/${ref.pullRequest}/merge`, {
-      method: 'PUT',
-      token,
-      body: { merge_method: 'squash', sha: ref.expectedHead }
-    });
-    return 'merged';
-  };
 
   /** Turns auto-merge off, so work sent back to building cannot land before it is checked again. */
   const cancelAutoMerge = async (ref: RepoRef & { readonly pullRequest: number }) => {
@@ -415,6 +425,29 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     }
   };
 
+  /** Every review thread of a pull request, page by page, with the review its first comment is from. */
+  const listReviewThreads = async (ref: RepoRef & { readonly pullRequest: number }) => {
+    const [owner, name] = ref.repo.split('/');
+    const threads: ReviewThread[] = [];
+    let after: string | null = null;
+    do {
+      const response: { data?: ReviewThreadsPage; errors?: { message: string }[] } =
+        await graphql<ReviewThreadsPage>(
+          ref,
+          'query($owner: String!, $name: String!, $number: Int!, $after: String) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { reviewThreads(first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { id isResolved comments(first: 1) { nodes { pullRequestReview { databaseId } } } } } } } }',
+          { owner, name, number: ref.pullRequest, after }
+        );
+      if (response.errors?.length) {
+        throw new GitHubError(422, '/graphql reviewThreads', response.errors[0]!.message);
+      }
+      const page: ReviewThreadsPage['repository']['pullRequest']['reviewThreads'] | undefined =
+        response.data?.repository.pullRequest.reviewThreads;
+      threads.push(...(page?.nodes ?? []));
+      after = page?.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+    } while (after);
+    return threads;
+  };
+
   /**
    * Resolves the open threads started by the given reviews. Officina calls it once the fixes for
    * those reviews were reviewed again and verified, since the repository only merges with every
@@ -423,28 +456,7 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
   const resolveReviewThreads = async (
     ref: RepoRef & { readonly pullRequest: number; readonly reviewIds: readonly number[] }
   ): Promise<number> => {
-    const [owner, name] = ref.repo.split('/');
-    const response = await graphql<{
-      repository: {
-        pullRequest: {
-          reviewThreads: {
-            nodes: {
-              id: string;
-              isResolved: boolean;
-              comments: { nodes: { pullRequestReview: { databaseId: number } | null }[] };
-            }[];
-          };
-        };
-      };
-    }>(
-      ref,
-      'query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { reviewThreads(first: 100) { nodes { id isResolved comments(first: 1) { nodes { pullRequestReview { databaseId } } } } } } } }',
-      { owner, name, number: ref.pullRequest }
-    );
-    if (response.errors?.length) {
-      throw new GitHubError(422, '/graphql reviewThreads', response.errors[0]!.message);
-    }
-    const threads = response.data?.repository.pullRequest.reviewThreads.nodes ?? [];
+    const threads = await listReviewThreads(ref);
     const open = threads.filter((thread) => {
       const reviewId = thread.comments.nodes[0]?.pullRequestReview?.databaseId;
       return !thread.isResolved && reviewId !== undefined && ref.reviewIds.includes(reviewId);

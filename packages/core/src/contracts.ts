@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { CatalogPages } from './catalogs';
-import type { Blocked, Command, Task } from './lifecycle';
+import { CHECK_DEPTHS, MERGE_MODES, type Blocked, type Command, type Task } from './lifecycle';
+import { TASK_BRANCH_PREFIX } from './steps';
 
 /*
  * What each agent role must return. Agent output is untrusted: it is validated here, and anything
@@ -44,14 +45,23 @@ export const specOutputSchema = z.discriminatedUnion('outcome', [
   blockedSchema
 ]);
 
+/** What every push hands back, the builder's and the onboarder's alike. */
+const pushedFields = {
+  outcome: z.literal('pushed'),
+  // A pattern, not a refinement, so the agent's tool schema shows it too.
+  branch: text.regex(
+    new RegExp(`^${TASK_BRANCH_PREFIX}`),
+    `branch must start with ${TASK_BRANCH_PREFIX}`
+  ),
+  /** The pull request title, in the repository's required format. */
+  prTitle: text.max(120),
+  verified: z.array(text),
+  notVerified: z.array(text)
+};
+
 export const builderOutputSchema = z.discriminatedUnion('outcome', [
   z.strictObject({
-    outcome: z.literal('pushed'),
-    branch: text.regex(/^officina\//, 'branch must start with officina/'),
-    /** The pull request title, in the repository's required format. */
-    prTitle: text.max(120),
-    verified: z.array(text),
-    notVerified: z.array(text),
+    ...pushedFields,
     reviewReply: reviewReply.optional()
   }),
   /** A fix round answering a GitHub review whose points all turned out to need no change. */
@@ -70,11 +80,7 @@ export const builderOutputSchema = z.discriminatedUnion('outcome', [
  */
 export const onboarderOutputSchema = z.discriminatedUnion('outcome', [
   z.strictObject({
-    outcome: z.literal('pushed'),
-    branch: text.regex(/^officina\//, 'branch must start with officina/'),
-    prTitle: text.max(120),
-    verified: z.array(text),
-    notVerified: z.array(text),
+    ...pushedFields,
     followUps: z.array(text.max(500)).max(15)
   }),
   z.strictObject({ outcome: z.literal('failed'), why: text }),
@@ -114,7 +120,7 @@ const extraApprovalSchema = z.union([
 export const chooserOutputSchema = z.strictObject({
   userVisible: z.boolean(),
   approval: z.strictObject({
-    depth: z.enum(['glance', 'test', 'device']),
+    depth: z.enum(CHECK_DEPTHS),
     rationale: text.max(600),
     extraApprovals: z.array(extraApprovalSchema).max(4).default([]),
     verifiers: z
@@ -122,7 +128,7 @@ export const chooserOutputSchema = z.strictObject({
       .max(3)
       .default([]),
     /** At verification: may GitHub merge it on its own once the branch rules pass? */
-    merge: z.enum(['person', 'auto']).default('person')
+    merge: z.enum(MERGE_MODES).default('person')
   }),
   /** Required at verification, where the engine checks it is not empty. */
   checklist: z.array(text).default([]),

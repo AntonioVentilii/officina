@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import { hashToken, newToken } from './auth';
+import { inTransaction } from './store';
 
 type Queryable = Pool | PoolClient;
 
@@ -135,10 +136,8 @@ export const rotateConnectorRefreshToken = async (
   pool: Pool,
   token: string,
   input: { clientId: string; accessTtlMs: number; refreshTtlMs: number }
-): Promise<ConnectorTokens | null> => {
-  const client = await pool.connect();
-  try {
-    await client.query('begin');
+): Promise<ConnectorTokens | null> =>
+  inTransaction(pool, async (client) => {
     const found = (
       await client.query<{
         grantId: string;
@@ -154,19 +153,15 @@ export const rotateConnectorRefreshToken = async (
         [hashToken(token), input.clientId]
       )
     ).rows[0];
-    if (!found) {
-      await client.query('rollback');
-      return null;
-    }
+    if (!found) return null;
     if (found.spent) {
       await client.query('delete from connector_tokens where grant_id = $1', [found.grantId]);
-      await client.query('commit');
       return null;
     }
     await client.query('update connector_tokens set used_at = now() where token_hash = $1', [
       hashToken(token)
     ]);
-    const tokens = await issueConnectorTokens(client, {
+    return issueConnectorTokens(client, {
       clientId: input.clientId,
       memberId: found.memberId,
       resource: found.resource,
@@ -174,15 +169,7 @@ export const rotateConnectorRefreshToken = async (
       accessTtlMs: input.accessTtlMs,
       refreshTtlMs: input.refreshTtlMs
     });
-    await client.query('commit');
-    return tokens;
-  } catch (error) {
-    await client.query('rollback');
-    throw error;
-  } finally {
-    client.release();
-  }
-};
+  });
 
 /** The member an access token acts for, when it is live and was issued for `resource`. */
 export const memberForConnectorToken = async (
