@@ -72,6 +72,25 @@ describe('executeRun', () => {
     expect(port.sent.at(-1)!.events).toEqual([{ type: 'user.interrupt' }]);
   });
 
+  test('an accepted result stands whatever the agent submits after it', async () => {
+    const { port, report } = run([
+      toolUse(approve),
+      idle('requires_action'),
+      toolUse({ outcome: 'approve' }),
+      toolUse({ outcome: 'approve' }),
+      toolUse({ outcome: 'approve' }),
+      idle('requires_action'),
+      idle('end_turn')
+    ]);
+    expect((await report).outcome).toEqual({ kind: 'result', output: approve });
+    expect(toolResults(port.sent)).toMatchObject([
+      { isError: false },
+      { isError: true, text: 'A result was already accepted. Stop here.' },
+      { isError: true, text: 'A result was already accepted. Stop here.' },
+      { isError: true, text: 'A result was already accepted. Stop here.' }
+    ]);
+  });
+
   test('rejects unknown tools and reports a run without a result', async () => {
     const { port, report } = run([
       toolUse({}, 'deploy'),
