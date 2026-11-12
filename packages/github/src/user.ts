@@ -1,4 +1,4 @@
-import { GitHubError } from './client';
+import { GitHubError, githubRequest } from './http';
 
 /**
  * Acting as a person on GitHub, through the GitHub App's user authorization. Reviews and merges done
@@ -6,7 +6,6 @@ import { GitHubError } from './client';
  * them exactly as to a click in the GitHub UI.
  */
 
-const API = 'https://api.github.com';
 const WEB = 'https://github.com';
 
 export interface OAuthAppOptions {
@@ -83,25 +82,11 @@ export type GitHubUserAuth = ReturnType<typeof createGitHubUserAuth>;
 export const createGitHubAsUser = (options: { fetch?: typeof fetch } = {}) => {
   const http = options.fetch ?? fetch;
 
-  const request = async <T>(
+  const request = <T>(
     token: string,
     path: string,
     init: { method?: string; body?: unknown } = {}
-  ): Promise<T> => {
-    const response = await http(`${API}${path}`, {
-      method: init.method ?? 'GET',
-      headers: {
-        accept: 'application/vnd.github+json',
-        authorization: `Bearer ${token}`,
-        'x-github-api-version': '2022-11-28',
-        ...(init.body === undefined ? {} : { 'content-type': 'application/json' })
-      },
-      ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) })
-    });
-    const text = await response.text();
-    if (!response.ok) throw new GitHubError(response.status, path, text.slice(0, 300));
-    return (text ? JSON.parse(text) : {}) as T;
-  };
+  ) => githubRequest<T>(http, token, path, init);
 
   const user = (token: string) => request<GitHubUser>(token, '/user');
 
