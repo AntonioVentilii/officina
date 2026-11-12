@@ -82,6 +82,8 @@
     if (session.status !== 'ready' || !session.projectId) return;
     board.start(session.projectId);
     live.connect();
+    // Signed out (or gone): the stream closes and stops reopening itself.
+    return () => live.disconnect();
   });
 </script>
 

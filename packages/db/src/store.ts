@@ -1,21 +1,19 @@
 import {
   TERMINAL_STAGES,
   computeLane,
+  gateSubject,
   decide,
   ENGINE,
   parseProjectConfig,
   type Actor,
-  type Approval,
   type Command,
   type DecisionError,
   type DomainEvent,
-  type Gate,
-  type Member,
   type ProjectConfig,
   type Task
 } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
-import { addComment } from './tasks';
+import { addComment, listApprovedSubjects, listProjectMembers } from './tasks';
 
 export type StoreError = DecisionError | 'not_found' | 'conflict' | 'invalid_config';
 
@@ -213,9 +211,6 @@ export const loadTask = async (pool: Pool, taskId: string): Promise<StoredTask |
   return rows[0] ? toStored(rows[0]) : null;
 };
 
-const subjectFor = (task: Task, gate: Gate): string =>
-  gate === 'spec_review' ? `spec:${task.specVersion}` : `sha:${task.headSha}`;
-
 /**
  * Applies one command atomically: the task row is locked, the decision is made on current state,
  * and the new state plus every event lands in the same transaction or not at all.
@@ -250,19 +245,8 @@ export const applyCommand = (pool: Pool, input: ApplyInput): Promise<ApplyResult
     const parsedConfig = parseProjectConfig(row.config);
     if (!parsedConfig.ok) return { ok: false, error: 'invalid_config' };
 
-    const members = (
-      await client.query<Member>(
-        'select member_id as id, role, domains from project_roles where project_id = $1',
-        [row.project_id]
-      )
-    ).rows;
-    const approvals = (
-      await client.query<Approval>(
-        `select member_id as "memberId", subject from approvals
-         where task_id = $1 and decision = 'approve'`,
-        [input.taskId]
-      )
-    ).rows;
+    const members = await listProjectMembers(client, row.project_id);
+    const approvals = await listApprovedSubjects(client, input.taskId);
 
     const before = toStored(row).task;
     if (input.guard && !input.guard(before)) return { ok: false, error: 'conflict' };
@@ -320,7 +304,7 @@ export const applyCommand = (pool: Pool, input: ApplyInput): Promise<ApplyResult
         await client.query(
           `insert into approvals (task_id, member_id, gate, subject, decision, note)
            values ($1, $2, $3, $4, 'changes', $5)`,
-          [task.id, input.actor.memberId, event.stage, subjectFor(before, event.stage), event.note]
+          [task.id, input.actor.memberId, event.stage, gateSubject(before, event.stage), event.note]
         );
       }
     }
