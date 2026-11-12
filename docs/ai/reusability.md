@@ -4,18 +4,18 @@ Search here before writing a helper, a type, a component or a fake. When you add
 
 ## `packages/core`
 
-| Piece                                                                                                | Path               | What it is                                                                                    |
-| ---------------------------------------------------------------------------------------------------- | ------------------ | --------------------------------------------------------------------------------------------- |
-| `STAGES`, `TERMINAL_STAGES`, `AGENT_ROLES`, `REVIEWER_ROLES`                                         | `src/lifecycle.ts` | The stage and agent role lists; the DB constraints mirror them                                |
-| `decide`, `Command`, `DomainEvent`, `Task`, `newTask`, `Actor`, `ENGINE`                             | `src/lifecycle.ts` | The state machine; `ENGINE` is Officina itself acting                                         |
-| `gateSubject`, `effectivePolicy`, `canAutoVerify`                                                    | `src/lifecycle.ts` | What a gate approves, the policy in force, whether a result may skip people                   |
-| `nextAgentRoles`, `branchForTask`, `taskUrl`                                                         | `src/steps.ts`     | Which agents a task waits on; the only task branch name; the only link to a task on the board |
-| `LANES`, `computeLane`, `stricterLane`, `redPaths`, `compileLaneMatcher`                             | `src/lanes.ts`     | Lanes from paths                                                                              |
-| `ROLES`, `hasRole`, `Member`                                                                         | `src/roles.ts`     | Member roles and their order                                                                  |
-| `evaluatePolicy`, `isEligible`, `APPROVAL_FLOOR`                                                     | `src/policies.ts`  | Whether approvals satisfy a policy, with waivers                                              |
-| `parseProjectConfig`, `parseProjectConfigYaml`, `ProjectConfig`, `BOARD_LOOKS`, `DEFAULT_BOARD_LOOK` | `src/config.ts`    | The project config, validated and normalized                                                  |
-| `catalogPagesToRead`, `unlistedFiles`, `describeUnlisted`                                            | `src/catalogs.ts`  | Which catalog pages a push must list its new files in                                         |
-| `OUTPUT_SCHEMAS`, `parseAgentOutput`, `commandForOutput`, `PushFacts`                                | `src/contracts.ts` | Role contracts and the command each result maps to                                            |
+| Piece                                                                                                | Path               | What it is                                                                                              |
+| ---------------------------------------------------------------------------------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------- |
+| `STAGES`, `TERMINAL_STAGES`, `AGENT_ROLES`, `REVIEWER_ROLES`, `CHECK_DEPTHS`, `MERGE_MODES`          | `src/lifecycle.ts` | The stage, agent role, check depth and merge mode lists; the DB constraints mirror the stages and roles |
+| `decide`, `Command`, `DomainEvent`, `Task`, `newTask`, `Actor`, `ENGINE`                             | `src/lifecycle.ts` | The state machine; `ENGINE` is Officina itself acting                                                   |
+| `gateSubject`, `effectivePolicy`, `canAutoVerify`                                                    | `src/lifecycle.ts` | What a gate approves, the policy in force, whether a result may skip people                             |
+| `nextAgentRoles`, `branchForTask`, `TASK_BRANCH_PREFIX`, `taskUrl`                                   | `src/steps.ts`     | Which agents a task waits on; the only task branch name; the only link to a task on the board           |
+| `LANES`, `computeLane`, `stricterLane`, `redPaths`, `compileLaneMatcher`                             | `src/lanes.ts`     | Lanes from paths                                                                                        |
+| `ROLES`, `hasRole`, `Member`                                                                         | `src/roles.ts`     | Member roles and their order                                                                            |
+| `evaluatePolicy`, `isEligible`, `APPROVAL_FLOOR`                                                     | `src/policies.ts`  | Whether approvals satisfy a policy, with waivers                                                        |
+| `parseProjectConfig`, `parseProjectConfigYaml`, `ProjectConfig`, `BOARD_LOOKS`, `DEFAULT_BOARD_LOOK` | `src/config.ts`    | The project config, validated and normalized                                                            |
+| `catalogPagesToRead`, `unlistedFiles`, `describeUnlisted`                                            | `src/catalogs.ts`  | Which catalog pages a push must list its new files in                                                   |
+| `OUTPUT_SCHEMAS`, `parseAgentOutput`, `commandForOutput`, `PushFacts`                                | `src/contracts.ts` | Role contracts and the command each result maps to                                                      |
 
 ## `packages/db`
 
