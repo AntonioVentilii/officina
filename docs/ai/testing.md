@@ -8,7 +8,7 @@
 | `bun run test:db`     | `packages/db`, `packages/engine` and `apps/api` against a throwaway Postgres (`packages/db/test/with-postgres.ts`) | Docker  |
 | `bun run check:board` | svelte-check on the board, warnings fail it                                                                        | nothing |
 
-The board has no unit tests: what it shows is decided and tested in the API views (`apps/api/test/board.test.ts`).
+The board has no unit tests: what it shows is decided and tested in the API views (`apps/api/test/board.test.ts`). Its own logic (Markdown sanitizing, formatting, run log folding) is not covered yet.
 
 ## Where a test goes
 
