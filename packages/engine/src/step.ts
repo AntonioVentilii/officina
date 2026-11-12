@@ -42,7 +42,14 @@ import {
 import type { Pool } from 'pg';
 import { MAX_INTERVIEW_QUESTIONS, buildBrief, type ChooserContext } from './brief';
 import { runLearnerStep } from './learner';
-import { postChecklist, syncSpecStatus, taskLink, type SyncGitHubPort } from './github-sync';
+import {
+  askCopilotToReview,
+  postChecklist,
+  syncSpecStatus,
+  taskLink,
+  type OnBehalf,
+  type SyncGitHubPort
+} from './github-sync';
 
 export { taskLink };
 
@@ -60,6 +67,8 @@ export interface EngineDependencies {
   readonly publicUrl: string;
   /** Officina's own role prompts, so the learner's edits to them can be checked before people see them. */
   readonly promptsDir?: string | undefined;
+  /** Acting as a member with their linked GitHub account; without it nothing is done as them. */
+  readonly onBehalf?: OnBehalf | undefined;
 }
 
 /**
@@ -475,6 +484,14 @@ export const runAgentStep = async (
       });
       await linkPullRequest(pool, taskId, pr.number);
       await appendRunEvent(pool, runId, 'officina.pull_request_opened', pr);
+      if (config.pullRequest.copilotReview) {
+        await askCopilotToReview(pool, deps.onBehalf, {
+          taskId,
+          requesterId: context.task.requesterId,
+          repo: context.repo,
+          pullRequest: pr.number
+        });
+      }
       await syncSpecStatus(pool, deps.github, {
         taskId,
         ref: repoRef,

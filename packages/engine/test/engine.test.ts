@@ -26,6 +26,7 @@ import {
   cancelStaleAutoMerges,
   finishVerifiedSpecs,
   runAgentStep,
+  type OnBehalf,
   syncSpecStatus,
   tick,
   type GitHubPort
@@ -310,6 +311,67 @@ describe.skipIf(!url)('engine', () => {
     const updates = github.calls.filter((call) => call.method === 'updateFile');
     expect(updates).toHaveLength(2);
     expect((updates[1]!.args[0] as { text: string }).text).toContain('Status: Implemented (#42)');
+  });
+
+  const copilotRequests = () => {
+    const requests: unknown[][] = [];
+    const notExpected = async (): Promise<never> => {
+      throw new Error('not expected');
+    };
+    const onBehalf: OnBehalf = {
+      publicUrl: PUBLIC_URL,
+      tokenFor: async (memberId) => ({ token: `token-${memberId}`, login: 'antonio' }),
+      asUser: {
+        pullRequest: notExpected,
+        approve: notExpected,
+        mergeWhenReady: notExpected,
+        requestCopilotReview: async (...args) => {
+          requests.push(args);
+          return 'requested';
+        }
+      }
+    };
+    return { onBehalf, requests };
+  };
+
+  const buildWith = async (onBehalf: OnBehalf) => {
+    const github = fakeGitHub();
+    const agents = createFakePort(succeed);
+    const taskId = await taskInReady(github, agents);
+    await tick(
+      { pool, github: github.port, agents, publicUrl: PUBLIC_URL, onBehalf },
+      seeded.projectId
+    );
+    expect((await loadTask(pool, taskId))?.task.stage).toBe('reviewing');
+    return taskId;
+  };
+
+  test('a new pull request gets no Copilot request unless the project turns it on', async () => {
+    const { onBehalf, requests } = copilotRequests();
+    await buildWith(onBehalf);
+    expect(requests).toEqual([]);
+  });
+
+  test('the first push asks Copilot to review as the requester when the project turns it on', async () => {
+    await pool.query(
+      `update projects set config = jsonb_set(config, '{pull_request,copilot_review}', 'true')
+       where id = $1`,
+      [seeded.projectId]
+    );
+    const { onBehalf, requests } = copilotRequests();
+    const taskId = await buildWith(onBehalf);
+    expect(requests).toEqual([[`token-${seeded.ownerId}`, 'ViciApp/vici-app', 42]]);
+    const recorded = await pool.query(
+      `select payload, actor->>'memberId' as member from task_events
+       where task_id = $1 and type like 'github_copilot_review_%'`,
+      [taskId]
+    );
+    expect(recorded.rows).toEqual([
+      {
+        payload: { pullRequest: 42, login: 'antonio', outcome: 'requested' },
+        member: seeded.ownerId
+      }
+    ]);
   });
 
   test('an auto-verified result resolves the forwarded review threads and waits for a person to merge, once', async () => {
@@ -776,6 +838,10 @@ describe.skipIf(!url)('engine', () => {
         mergeWhenReady: async () => {
           userCalls.push('mergeWhenReady');
           return 'auto_merge' as const;
+        },
+        requestCopilotReview: async () => {
+          userCalls.push('requestCopilotReview');
+          return 'requested' as const;
         }
       }
     };

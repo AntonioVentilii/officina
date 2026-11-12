@@ -1,6 +1,7 @@
 export { buildBrief, type BriefInput } from './brief';
 export {
   approveOnGitHub,
+  askCopilotToReview,
   checklistMarkdown,
   cancelStaleAutoMerges,
   finishVerifiedSpecs,

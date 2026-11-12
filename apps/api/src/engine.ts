@@ -55,7 +55,8 @@ export const startEngine = async (input: {
     github: input.github,
     agents: input.agents,
     publicUrl: input.publicUrl,
-    promptsDir: input.promptsDir
+    promptsDir: input.promptsDir,
+    onBehalf: input.onBehalf
   };
 
   for (const run of await failOrphanedRuns(input.pool)) {
