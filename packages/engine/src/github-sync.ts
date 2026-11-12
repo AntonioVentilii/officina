@@ -1,5 +1,17 @@
 import { branchForTask, ENGINE, parseProjectConfig, type Actor } from '@officina/core';
-import { appendTaskEvent, hasTaskEvent, loadTask, loadTaskContext } from '@officina/db';
+import {
+  appendTaskEvent,
+  autoVerified,
+  expectedHead,
+  forwardedReviewIds,
+  handedToGitHub,
+  hasEventSinceMerging,
+  hasTaskEvent,
+  latestVerifier,
+  listStaleAutoMerges,
+  loadTask,
+  loadTaskContext
+} from '@officina/db';
 import type { GitHubAsUser, GitHubClient, RepoRef } from '@officina/github';
 import type { Pool } from 'pg';
 
@@ -25,15 +37,7 @@ const verifierAccount = async (
   onBehalf: OnBehalf,
   taskId: string
 ): Promise<{ actor: Actor; token: string; login: string } | null> => {
-  const verifier = (
-    await pool.query<{ member_id: string }>(
-      `select payload->>'memberId' as member_id from task_events
-       where task_id = $1 and type = 'approval_recorded' and payload->>'gate' = 'verifying'
-         and (payload->>'satisfied')::boolean
-       order by id desc limit 1`,
-      [taskId]
-    )
-  ).rows[0]?.member_id;
+  const verifier = await latestVerifier(pool, taskId);
   if (!verifier) return null;
   const account = await onBehalf.tokenFor(verifier);
   return account ? { actor: { kind: 'member', memberId: verifier }, ...account } : null;
@@ -50,12 +54,8 @@ export const approveOnGitHub = async (
   input: { taskId: string; taskNumber: number; repo: string; pullRequest: number }
 ) => {
   // Once per time the task reaches merging: a fix round after a GitHub review needs a new approval.
-  const tried = await pool.query(
-    `select 1 from task_events where task_id = $1 and type in ('github_approved', 'github_approval_failed')
-       and id > ${SINCE_MERGING}`,
-    [input.taskId]
-  );
-  if (tried.rowCount) return;
+  if (await hasEventSinceMerging(pool, input.taskId, ['github_approved', 'github_approval_failed']))
+    return;
   const account = await verifierAccount(pool, onBehalf, input.taskId);
   if (!account) return;
   const { actor } = account;
@@ -198,31 +198,6 @@ export type SyncGitHubPort = Pick<
 >;
 
 /**
- * The commit the pull request should have as its head: the task's verified head, or Officina's own
- * latest commit that only set the spec's status line on top of it. Anything else was pushed after
- * the result was accepted.
- */
-const expectedHead = async (pool: Pool, taskId: string): Promise<string | null> =>
-  (
-    await pool.query<{ sha: string | null }>(
-      `select coalesce(
-         (select e.payload->>'commitSha' from task_events e
-          where e.task_id = t.id and e.type = 'spec_status_set'
-            and e.payload->>'commitSha' is not null
-            and e.id > coalesce((select max(p.id) from task_events p
-              where p.task_id = t.id and p.type = 'pushed'), 0)
-          order by e.id desc limit 1),
-         t.head_sha) as sha
-       from tasks t where t.id = $1`,
-      [taskId]
-    )
-  ).rows[0]?.sha ?? null;
-
-/** The id of the event that last moved the task into `merging`, in SQL for a task id `$1`. */
-const SINCE_MERGING = `coalesce((select max(id) from task_events where task_id = $1
-  and type = 'stage_changed' and payload->>'to' = 'merging'), 0)`;
-
-/**
  * Resolves the pull request threads of the GitHub reviews that were sent back to the builder, once
  * per time the task reaches merging: by then the fixes were reviewed again and verified.
  */
@@ -231,23 +206,8 @@ const resolveForwardedThreads = async (
   github: SyncGitHubPort,
   input: { taskId: string; ref: RepoRef; pullRequest: number }
 ) => {
-  if (
-    (
-      await pool.query(
-        `select 1 from task_events where task_id = $1 and type = 'github_threads_resolved'
-           and id > ${SINCE_MERGING}`,
-        [input.taskId]
-      )
-    ).rowCount
-  )
-    return;
-  const reviewIds = (
-    await pool.query<{ review_id: string }>(
-      `select distinct payload->>'githubReviewId' as review_id from task_events
-       where task_id = $1 and type = 'review_recorded' and payload->>'reviewer' = 'github'`,
-      [input.taskId]
-    )
-  ).rows.map((row) => Number(row.review_id));
+  if (await hasEventSinceMerging(pool, input.taskId, ['github_threads_resolved'])) return;
+  const reviewIds = await forwardedReviewIds(pool, input.taskId);
   if (reviewIds.length === 0) return;
   const resolved = await github.resolveReviewThreads({
     ...input.ref,
@@ -261,25 +221,6 @@ const resolveForwardedThreads = async (
     payload: { reviewIds, resolved }
   });
 };
-
-/**
- * Whether GitHub may merge the pull request on its own since the task reached merging: auto-merge
- * was turned on, or an attempt failed in a way that may have turned it on anyway (a timeout after
- * GitHub accepted it) and was not yet confirmed off. Either way a person must not be told to merge.
- */
-const handedToGitHub = async (pool: Pool, taskId: string): Promise<boolean> =>
-  Boolean(
-    (
-      await pool.query(
-        `select 1 from task_events where task_id = $1 and id > ${SINCE_MERGING}
-           and (type = 'github_auto_merge'
-             or (type = 'github_auto_merge_failed' and not exists (
-               select 1 from task_events c where c.task_id = $1
-                 and c.type = 'github_auto_merge_cancelled' and c.id > task_events.id)))`,
-        [taskId]
-      )
-    ).rowCount
-  );
 
 /**
  * Records that the pull request holds a commit nobody verified, once per such head: it must not be
@@ -304,12 +245,7 @@ const holdMerge = async (
  * timeline say whose turn it is from this.
  */
 const awaitMerge = async (pool: Pool, input: { taskId: string; pullRequest: number }) => {
-  const recorded = await pool.query(
-    `select 1 from task_events where task_id = $1 and type = 'awaiting_merge'
-       and id > ${SINCE_MERGING}`,
-    [input.taskId]
-  );
-  if (recorded.rowCount) return;
+  if (await hasEventSinceMerging(pool, input.taskId, ['awaiting_merge'])) return;
   await appendTaskEvent(pool, {
     taskId: input.taskId,
     actor: ENGINE,
@@ -329,12 +265,13 @@ const autoMergeOnGitHub = async (
   pool: Pool,
   input: { taskId: string; actor: Actor; merge: () => Promise<'auto_merge' | 'merged'> }
 ) => {
-  const tried = await pool.query(
-    `select 1 from task_events where task_id = $1
-       and type in ('github_auto_merge', 'github_auto_merge_failed') and id > ${SINCE_MERGING}`,
-    [input.taskId]
-  );
-  if (tried.rowCount) return;
+  if (
+    await hasEventSinceMerging(pool, input.taskId, [
+      'github_auto_merge',
+      'github_auto_merge_failed'
+    ])
+  )
+    return;
   try {
     const merge = await input.merge();
     await appendTaskEvent(pool, {
@@ -365,64 +302,27 @@ export const cancelStaleAutoMerges = async (
   github: Pick<SyncGitHubPort, 'cancelAutoMerge'>,
   projectId: string
 ) => {
-  const stale = (
-    await pool.query<{ id: string; repo: string; installation_id: string; pr: number }>(
-      `select t.id, p.github_repo as repo, p.github_installation_id::text as installation_id,
-         t.github_pr as pr
-       from tasks t join projects p on p.id = t.project_id
-       cross join lateral (
-         select
-           coalesce((select max(e.id) from task_events e where e.task_id = t.id
-             and (e.type in ('github_auto_merge', 'github_auto_merge_failed')
-                  or (e.type = 'github_approved' and e.payload->>'merge' = 'auto_merge'))), 0)
-             as turned_on,
-           coalesce((select max(e.id) from task_events e where e.task_id = t.id
-             and e.type = 'github_auto_merge_cancelled'), 0) as cancelled
-       ) a
-       where t.project_id = $1 and t.stage <> 'done' and t.github_pr is not null
-         and p.github_installation_id is not null
-         and a.turned_on > a.cancelled
-         and (t.stage <> 'merging'
-           or exists (select 1 from task_events e where e.id = a.turned_on
-             and e.type = 'github_auto_merge_failed')
-           or exists (select 1 from task_events e where e.task_id = t.id
-             and e.type = 'merge_held' and e.id > a.cancelled))`,
-      [projectId]
-    )
-  ).rows;
+  const stale = await listStaleAutoMerges(pool, projectId);
   const failures: string[] = [];
   for (const task of stale) {
     try {
       await github.cancelAutoMerge({
-        installationId: Number(task.installation_id),
+        installationId: task.installationId,
         repo: task.repo,
-        pullRequest: task.pr
+        pullRequest: task.pullRequest
       });
       await appendTaskEvent(pool, {
         taskId: task.id,
         actor: ENGINE,
         type: 'github_auto_merge_cancelled',
-        payload: { pullRequest: task.pr }
+        payload: { pullRequest: task.pullRequest }
       });
     } catch (error) {
-      failures.push(`${task.repo}#${task.pr}: ${(error as Error).message}`);
+      failures.push(`${task.repo}#${task.pullRequest}: ${(error as Error).message}`);
     }
   }
   if (failures.length) throw new Error(`auto-merge still on: ${failures.join('; ')}`);
 };
-
-/** Whether the task's latest way into merging skipped people's verification. */
-const autoVerified = async (pool: Pool, taskId: string): Promise<boolean> =>
-  Boolean(
-    (
-      await pool.query(
-        `select 1 from task_events where task_id = $1 and type = 'auto_verified'
-           and id > coalesce((select max(id) from task_events where task_id = $1
-             and type = 'stage_changed' and payload->>'to' = 'choosing'), 0)`,
-        [taskId]
-      )
-    ).rowCount
-  );
 
 /** The spec file a task's branch adds, found by the project's spec directory. */
 export const specPathIn = (
