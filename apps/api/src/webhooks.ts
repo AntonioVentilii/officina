@@ -1,10 +1,12 @@
 import { ENGINE, parseProjectConfigYaml, type Command } from '@officina/core';
 import {
+  answeredOverviewLast,
   appendTaskEvent,
   applyCommand,
   findProjectsByRepo,
   findTasksByPullRequest,
   markLearningsApplied,
+  reviewedHead,
   unlinkPullRequest,
   updateProjectConfig
 } from '@officina/db';
@@ -102,46 +104,6 @@ const reviewNotes = async (
     .filter(Boolean)
     .join('\n\n');
   return { notes, overviewOnly };
-};
-
-/**
- * Whether the task's last request for changes was an overview-only review by the same bot. Copilot
- * may review every push, and its overview of the builder's answer would otherwise send the task
- * back again and again; a review asking for changes on the code, or any other reviewer's, still
- * counts.
- */
-const answeredOverviewLast = async (pool: Pool, taskId: string, by: string): Promise<boolean> =>
-  Boolean(
-    (
-      await pool.query<{ last: boolean }>(
-        `select (payload->>'reviewer' = 'github' and payload->>'by' = $2
-                 and (payload->>'overviewOnly')::boolean is true) as last
-         from task_events
-         where task_id = $1 and type = 'review_recorded' and payload->>'verdict' = 'changes'
-         order by id desc limit 1`,
-        [taskId, by]
-      )
-    ).rows[0]?.last
-  );
-
-/**
- * The head a review is about, in the task's terms. Officina's own commits that only set the spec's
- * status line sit on top of the reviewed work, so a review of one of them is a review of the task's
- * head; any other commit is passed through and judged by the lifecycle.
- */
-const reviewedHead = async (pool: Pool, taskId: string, commitId: string): Promise<string> => {
-  const row = (
-    await pool.query<{ head_sha: string | null }>(
-      `select t.head_sha from tasks t
-       where t.id = $1 and exists (
-         select 1 from task_events e where e.task_id = t.id and e.type = 'spec_status_set'
-           and e.payload->>'commitSha' = $2
-           and e.id > coalesce((select max(p.id) from task_events p
-             where p.task_id = t.id and p.type = 'pushed'), 0))`,
-      [taskId, commitId]
-    )
-  ).rows[0];
-  return row?.head_sha ?? commitId;
 };
 
 /**
