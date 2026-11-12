@@ -55,15 +55,15 @@ Search here before writing a helper, a type, a component or a fake. When you add
 
 ## `apps/api`
 
-| Piece                                                            | Path                                  | What it is                                                                      |
-| ---------------------------------------------------------------- | ------------------------------------- | ------------------------------------------------------------------------------- |
-| `createApp`                                                      | `src/app.ts`                          | The Elysia app, errors and routes wired                                         |
-| `createBoardApi`                                                 | `src/api.ts`                          | `/api/*` routes                                                                 |
-| `boardView`, `taskView`, `roleLabel`, `roleLabels`, `agentsView` | `src/board.ts`                        | What the board receives, filtered by role; the only place agent roles are named |
-| `createRequest`, `actOnTask`, `TaskCommandError`                 | `src/tasks.ts`                        | Task actions shared by the API and the CLI                                      |
-| `addProject`, `setupAgents`, `SetupError`                        | `src/setup.ts`                        | Registration and agent sync                                                     |
-| `startRealtime`, `startScheduler`                                | `src/realtime.ts`, `src/scheduler.ts` | Server-sent events, the engine loop                                             |
-| `createTokenBox`                                                 | `src/token-box.ts`                    | Encrypts stored GitHub tokens                                                   |
+| Piece                                                                                                 | Path                                  | What it is                                                                             |
+| ----------------------------------------------------------------------------------------------------- | ------------------------------------- | -------------------------------------------------------------------------------------- |
+| `createApp`                                                                                           | `src/app.ts`                          | The Elysia app, errors and routes wired                                                |
+| `createBoardApi`                                                                                      | `src/api.ts`                          | `/api/*` routes                                                                        |
+| `boardView`, `taskView`, `roleLabel`, `roleLabels`, `agentsView`, `describeRequirement`, `consoleUrl` | `src/board.ts`                        | What the board receives, filtered by role; the only place agent roles are named        |
+| `createRequest`, `createRequestAs`, `actOnTask`, `actOnTaskAs`, `commentAs`, `TaskCommandError`       | `src/tasks.ts`                        | Task actions shared by the API, the connector and the CLI, each deciding who may do it |
+| `addProject`, `setupAgents`, `SetupError`                                                             | `src/setup.ts`                        | Registration and agent sync                                                            |
+| `startRealtime`, `startScheduler`                                                                     | `src/realtime.ts`, `src/scheduler.ts` | Server-sent events, the engine loop                                                    |
+| `createTokenBox`                                                                                      | `src/token-box.ts`                    | Encrypts stored GitHub tokens                                                          |
 
 ## `apps/board`
 
