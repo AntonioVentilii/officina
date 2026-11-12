@@ -26,7 +26,7 @@ bun run check:board
 
 - **Prettier**'s check; `bun run format` fixes it.
 - **ESLint** (`eslint.config.js`): `typescript-eslint` and `eslint-plugin-svelte` recommended rules, the limits of rule 9 of the standard (complexity 10, depth 4, parameters 4, 300 lines per source file, blank lines and comments not counted), and the import boundaries of [structure.md](./structure.md). Code that was over a limit when the gate came in is listed in `eslint-suppressions.json`. That file only shrinks: after a change brings a file under a limit, run `bunx eslint . --prune-suppressions` and commit the smaller file. Never add to it (`--suppress-all`, `--suppress-rule`); fix the code instead.
-- **knip** (`knip.jsonc`): unused files, exports, dependencies. Its few ignores each say why in a comment.
+- **knip** (`knip.jsonc`): unused files, exports, dependencies. Its few ignores each say why in a comment. It reads the board's Vite config, which needs SvelteKit's generated files, so `bun run sync:board` runs first.
 - **jscpd** (`.jscpd.json`): duplicated source over 0.6% of lines fails. When a change brings the share down, lower the threshold in the same pull request; never raise it.
 
 `bun run typecheck` runs TypeScript 7 (`@typescript/native`). The `typescript` package itself is pinned to 6 because `typescript-eslint` does not support 7 yet; when it does, both become `typescript@7` again. `bun run test:db` needs Docker; when it is not available, say so in the body. Touching the board also means `bun run build:board`.

@@ -107,7 +107,6 @@ export default tseslint.config(
   boundary(
     ['apps/board/src/**'],
     ours('*'),
-    'The board reads /api/* over HTTP and never imports a workspace package.',
-    { sdk: false }
+    'The board reads /api/* over HTTP and never imports a workspace package.'
   )
 );
