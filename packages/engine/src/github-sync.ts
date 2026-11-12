@@ -7,6 +7,7 @@ import {
   handedToGitHub,
   hasEventSinceMerging,
   hasTaskEvent,
+  githubLoginOf,
   latestVerifier,
   listStaleAutoMerges,
   loadTask,
@@ -44,6 +45,31 @@ const verifierAccount = async (
 };
 
 /**
+ * The verifier's account to approve as. The verifier is read outside the failure path, so only a
+ * token refresh GitHub refuses is recorded (once, so it is not retried every pass) and gives none.
+ */
+const approvingAccount = async (pool: Pool, onBehalf: OnBehalf, taskId: string) => {
+  const verifier = await latestVerifier(pool, taskId);
+  if (!verifier) return null;
+  const actor: Actor = { kind: 'member', memberId: verifier };
+  try {
+    const linked = await onBehalf.tokenFor(verifier);
+    return linked ? { actor, ...linked } : null;
+  } catch (error) {
+    await appendTaskEvent(pool, {
+      taskId,
+      actor,
+      type: 'github_approval_failed',
+      payload: {
+        login: (await githubLoginOf(pool, verifier)) ?? 'unknown',
+        error: (error as Error).message.slice(0, 500)
+      }
+    });
+    return null;
+  }
+};
+
+/**
  * Once a task is verified and its spec marked Implemented, approves the pull request on GitHub as
  * the member whose approval passed the gate, so their check counts as a review there. Without that
  * member's linked account nothing happens. It is tried once; a failure is recorded.
@@ -56,19 +82,7 @@ export const approveOnGitHub = async (
   // Once per time the task reaches merging: a fix round after a GitHub review needs a new approval.
   if (await hasEventSinceMerging(pool, input.taskId, ['github_approved', 'github_approval_failed']))
     return;
-  let account: Awaited<ReturnType<typeof verifierAccount>>;
-  try {
-    account = await verifierAccount(pool, onBehalf, input.taskId);
-  } catch (error) {
-    // A refused token refresh is recorded like any other failure, so it is not retried each pass.
-    await appendTaskEvent(pool, {
-      taskId: input.taskId,
-      actor: ENGINE,
-      type: 'github_approval_failed',
-      payload: { login: null, error: (error as Error).message.slice(0, 500) }
-    });
-    return;
-  }
+  const account = await approvingAccount(pool, onBehalf, input.taskId);
   if (!account) return;
   const { actor } = account;
   try {
