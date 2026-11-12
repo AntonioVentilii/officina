@@ -198,6 +198,9 @@
       </a>
     {/if}
   {/each}
+  {#if loadError && blocks.length > 0}
+    <p class="faint empty">Could not load the rest of the log: {loadError}</p>
+  {/if}
 
   {#if running && loaded}
     <div class="working"><span class="bar"></span>Working</div>

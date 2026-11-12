@@ -14,6 +14,8 @@ class Board {
   error = $state<string | null>(null);
   #projectId: string | null = null;
   #unsubscribe: (() => void) | null = null;
+  // Refreshes can overlap; only the latest one may set what the board shows.
+  #generation = 0;
 
   waitingOnMe = $derived(this.tasks.filter((task) => task.waitingOn.me));
   proposedLearnings = $derived(this.learnings.filter((item) => item.status === 'proposed'));
@@ -43,6 +45,8 @@ class Board {
   async refresh() {
     const projectId = this.#projectId;
     if (!projectId) return;
+    const generation = ++this.#generation;
+    const stale = () => generation !== this.#generation || projectId !== this.#projectId;
     // Runs and learnings are for maintainers and owners; the API refuses them to anyone else.
     const technical = session.technical;
     try {
@@ -57,7 +61,7 @@ class Board {
           ? get<{ learnings: Learning[] }>(`/api/projects/${projectId}/learnings`)
           : { learnings: [] }
       ]);
-      if (projectId !== this.#projectId) return;
+      if (stale()) return;
       this.tasks = board.tasks;
       this.roleLabels = board.roleLabels;
       this.runs = runs.runs;
@@ -66,7 +70,7 @@ class Board {
       this.error = null;
       this.loaded = true;
     } catch (error) {
-      if (projectId !== this.#projectId) return;
+      if (stale()) return;
       // An expired session sends the person to sign in; anything else is shown with a retry.
       if (error instanceof ApiError && error.status === 401) session.status = 'signed-out';
       else this.error = (error as Error).message;
