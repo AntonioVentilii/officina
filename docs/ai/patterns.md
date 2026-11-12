@@ -33,8 +33,7 @@ The patterns Officina really uses, each with one place to copy from. [`../archit
 
 Named so nobody copies them; each is a follow-up of its own.
 
-- `fence` is written twice, privately, in `packages/engine/src/brief.ts:69` and `packages/engine/src/learner.ts:32`. Export one shared helper and use it in both.
 - `const RUNNER = 'managed_agents'` and `const ENGINE: Actor = { kind: 'engine' }` are repeated in several engine and API modules. One owner should export each.
 - SQL outside `packages/db`: the interviewer's question count (`packages/engine/src/step.ts:209`) and the learner's "looked once" check (`packages/engine/src/learner.ts:233`). Queries belong in the db module that owns the table.
 - `runAgentStep` (`packages/engine/src/step.ts`) is one long function that prepares, runs, verifies and applies every role. New role-specific behaviour goes in a helper, not in another branch inside it.
-- Role labels are written in `apps/api/src/board.ts:57` and again on the Agents page (`apps/board/src/routes/agents/+page.svelte`); stage, lane and role types are mirrored by hand in `apps/board/src/lib/types.ts`.
+- Stage, lane and role types are mirrored by hand in `apps/board/src/lib/types.ts`.

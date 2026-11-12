@@ -27,17 +27,12 @@ import {
   type TaskEventRow
 } from '@officina/db';
 import { executeRun, RUNNER_ROLES, type RunnerRole } from '@officina/runner';
+import { fence } from './brief';
 import type { EngineDependencies, StepResult } from './step';
 
 const RUNNER = 'managed_agents';
 /** Learning is cheap reading; a cap well below any build keeps it that way. */
 const LEARNER_BUDGET_CENTS = 300;
-
-const fence = (text: string): string => {
-  const longest = Math.max(2, ...[...text.matchAll(/`+/g)].map((match) => match[0].length));
-  const marks = '`'.repeat(longest + 1);
-  return `${marks}text\n${text}\n${marks}`;
-};
 
 const clip = (text: string, max: number) =>
   text.length > max ? `${text.slice(0, max)} … (${text.length - max} more characters)` : text;

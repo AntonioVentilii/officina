@@ -21,8 +21,10 @@ import { Elysia } from 'elysia';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import {
+  agentsView,
   boardView,
   learningsView,
+  roleLabels,
   runLog,
   runsView,
   seesTechnical,
@@ -393,11 +395,11 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
       .get('/api/stream', async ({ request }) => stream(await signedIn(request), request))
       .get('/api/projects/:projectId/board', async ({ request, params }) => {
         const viewer = viewerFor(await signedIn(request), params.projectId);
-        return { tasks: await boardView(pool, viewer) };
+        return { tasks: await boardView(pool, viewer), roleLabels: roleLabels() };
       })
       .get('/api/projects/:projectId/runs', async ({ request, params }) => {
         const viewer = technicalViewer(viewerFor(await signedIn(request), params.projectId));
-        return { runs: await runsView(pool, viewer, deps.consoleWorkspace) };
+        return { runs: await runsView(pool, viewer, deps.consoleWorkspace), agents: agentsView() };
       })
       .get('/api/projects/:projectId/tasks/:number', async ({ request, params }) => {
         const viewer = viewerFor(await signedIn(request), params.projectId);
