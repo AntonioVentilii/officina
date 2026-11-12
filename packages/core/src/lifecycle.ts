@@ -166,6 +166,8 @@ export type Command =
       readonly catalogPages: CatalogPages;
       readonly diffLines: number;
     }
+  /** The builder answered a GitHub review and found nothing to change, so the head stays. */
+  | { readonly type: 'unchanged'; readonly note: string }
   | { readonly type: 'review'; readonly verdict: 'approve' | 'changes'; readonly notes: string }
   | { readonly type: 'plan_approval'; readonly userVisible: boolean; readonly plan: PlanInput }
   | { readonly type: 'choose'; readonly userVisible: boolean; readonly plan: PlanInput }
@@ -179,6 +181,8 @@ export type Command =
       readonly by: string;
       readonly reviewId: number;
       readonly notes: string;
+      /** A bot review that left nothing on the code, only its verdict and overview. */
+      readonly overviewOnly: boolean;
     }
   | { readonly type: 'block'; readonly question: string; readonly askedOf: Blocked['askedOf'] }
   | { readonly type: 'answer'; readonly text: string }
@@ -212,6 +216,7 @@ export type DomainEvent =
       readonly changedPaths: readonly string[];
       readonly diffLines: number;
     }
+  | { readonly type: 'build_unchanged'; readonly headSha: string; readonly note: string }
   | {
       readonly type: 'review_recorded';
       /** `github` is a review left on the pull request, such as Copilot's, sent back to the builder. */
@@ -220,6 +225,7 @@ export type DomainEvent =
       readonly notes: string;
       readonly by?: string;
       readonly githubReviewId?: number;
+      readonly overviewOnly?: boolean;
     }
   | { readonly type: 'guardrail_tripped'; readonly guardrail: Guardrail; readonly details: string }
   | { readonly type: 'ci_failed'; readonly details: string }
@@ -370,6 +376,11 @@ const withPlan = (
     { type: 'approval_planned', gate, plan, added }
   ];
 };
+
+/** Whether the actor is the one the task is assigned to, so it may report the build. */
+const isAssignee = (assignee: Assignee, actor: Actor): boolean =>
+  (assignee.kind === 'agent' && actor.kind === 'agent' && actor.role === assignee.role) ||
+  (assignee.kind === 'member' && actor.kind === 'member' && actor.memberId === assignee.memberId);
 
 /**
  * Sends work back to building. Once the lane's fix rounds are used up the task returns to `ready`
@@ -594,13 +605,7 @@ export const decide = (
     case 'push': {
       if (task.stage !== 'building') return fail('wrong_stage');
       const assignee = task.assignee;
-      const isAssignee =
-        assignee !== null &&
-        ((assignee.kind === 'agent' && actor.kind === 'agent' && actor.role === assignee.role) ||
-          (assignee.kind === 'member' &&
-            actor.kind === 'member' &&
-            actor.memberId === assignee.memberId));
-      if (!isAssignee) return fail('not_allowed');
+      if (assignee === null || !isAssignee(assignee, actor)) return fail('not_allowed');
 
       const pushed: DomainEvent = {
         type: 'pushed',
@@ -699,6 +704,17 @@ export const decide = (
         reviews: {}
       });
       return ok(moved, [pushed, ...laneEvents, stageEvent]);
+    }
+
+    case 'unchanged': {
+      // Only a fix round has a head to keep; a first round that changes nothing has built nothing.
+      if (task.stage !== 'building' || task.headSha === null) return fail('wrong_stage');
+      if (task.assignee === null || !isAssignee(task.assignee, actor)) return fail('not_allowed');
+      const [moved, stageEvent] = moveTo(task, 'reviewing', { reviews: {} });
+      return ok(moved, [
+        { type: 'build_unchanged', headSha: task.headSha, note: command.note },
+        stageEvent
+      ]);
     }
 
     case 'review': {
@@ -816,7 +832,8 @@ export const decide = (
         verdict: 'changes',
         notes: command.notes,
         by: command.by,
-        githubReviewId: command.reviewId
+        githubReviewId: command.reviewId,
+        overviewOnly: command.overviewOnly
       });
     }
 

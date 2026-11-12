@@ -12,6 +12,12 @@ const text = z.string().trim().min(1);
 
 const askedOfSchema = z.enum(['requester', 'maintainer', 'owner']);
 
+/**
+ * The builder's answer to a GitHub review it was sent back for, posted on the pull request: what it
+ * checked, point by point, and what it changed or why not.
+ */
+const reviewReply = text.max(4000);
+
 const blockedSchema = z.strictObject({
   outcome: z.literal('blocked'),
   question: text,
@@ -45,7 +51,14 @@ export const builderOutputSchema = z.discriminatedUnion('outcome', [
     /** The pull request title, in the repository's required format. */
     prTitle: text.max(120),
     verified: z.array(text),
-    notVerified: z.array(text)
+    notVerified: z.array(text),
+    reviewReply: reviewReply.optional()
+  }),
+  /** A fix round answering a GitHub review whose points all turned out to need no change. */
+  z.strictObject({
+    outcome: z.literal('unchanged'),
+    why: text,
+    reviewReply: reviewReply.optional()
   }),
   z.strictObject({ outcome: z.literal('failed'), why: text }),
   blockedSchema
@@ -266,6 +279,9 @@ export const commandForOutput = (task: Task, result: RoleOutput): CommandResult 
           ok: true,
           command: blockCommand(task, `The build failed: ${output.why}`, 'maintainer')
         };
+      }
+      if (output.outcome === 'unchanged') {
+        return { ok: true, command: { type: 'unchanged', note: output.why } };
       }
       if (result.facts === undefined) return { ok: false, error: 'missing_push_facts' };
       return { ok: true, command: { type: 'push', ...result.facts } };

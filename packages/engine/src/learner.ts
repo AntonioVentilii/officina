@@ -71,6 +71,8 @@ const describeEvent = (event: TaskEventRow): string | null => {
       return `changes requested at ${p.stage}: ${clip(String(p.note), 1500)}`;
     case 'pushed':
       return `pushed ${(p.changedPaths as string[]).length} files, ${p.diffLines} lines`;
+    case 'build_unchanged':
+      return `kept the head, nothing to change: ${clip(String(p.note), 1500)}`;
     case 'review_recorded':
       return `review ${p.verdict} by ${p.reviewer}: ${clip(String(p.notes), 1500)}`;
     case 'guardrail_tripped':
