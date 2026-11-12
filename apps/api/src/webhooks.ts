@@ -1,4 +1,4 @@
-import { parseProjectConfigYaml, type Actor, type Command } from '@officina/core';
+import { ENGINE, parseProjectConfigYaml, type Command } from '@officina/core';
 import {
   appendTaskEvent,
   applyCommand,
@@ -29,8 +29,6 @@ export type WebhookOutcome =
 /** What webhooks need from GitHub: configs on push, and review comments and auto-merge on reviews. */
 export type ConfigReader = Pick<GitHubClient, 'fileContent'> &
   Partial<Pick<GitHubClient, 'reviewComments' | 'cancelAutoMerge'>>;
-
-const ENGINE: Actor = { kind: 'engine' };
 
 /**
  * A push to a project's default branch that touches its config refreshes the stored config. An

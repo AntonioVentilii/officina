@@ -6,7 +6,7 @@
  *   bun run dev:board    # the board with hot reload on :5173, proxied to this server
  */
 import { join } from 'node:path';
-import type { Actor, Command } from '@officina/core';
+import { ENGINE, type Actor, type Command } from '@officina/core';
 import {
   appendRunEvent,
   applyCommand,
@@ -22,6 +22,7 @@ import {
   upsertProject,
   upsertWorkspace
 } from '@officina/db';
+import { RUNNER } from '@officina/runner';
 import { Pool } from 'pg';
 import { createApp } from './app';
 import { startRealtime } from './realtime';
@@ -143,7 +144,6 @@ interface Demo {
 }
 
 const agent = (role: string): Actor => ({ kind: 'agent', role, version: 3 }) as Actor;
-const engine: Actor = { kind: 'engine' };
 
 const apply = async (demo: Demo, taskId: string, command: Command, actor: Actor) => {
   const result = await applyCommand(demo.pool, { taskId, command, actor });
@@ -163,7 +163,7 @@ const run = async (
     stage,
     role,
     agentVersion: 3,
-    runner: 'managed_agents'
+    runner: RUNNER
   });
   if (!claim.ok) throw new Error('run not started');
   await demo.pool.query(
@@ -286,7 +286,7 @@ const seed = async (
           assignee: { kind: 'agent', role: 'builder' },
           openInLane: 0
         },
-        engine
+        ENGINE
       );
       if (running) return run(demo, task.id, 'building', 'builder', { events: 9, running: true });
       await run(demo, task.id, 'building', 'builder', { cost: 212, result: { outcome: 'pushed' } });
@@ -431,7 +431,7 @@ const seedDemo = async (pool: Pool) => {
   await done.review();
   await done.choose();
   await done.approve([owner, giulia]);
-  await apply(demo, done.id, { type: 'merged' }, engine);
+  await apply(demo, done.id, { type: 'merged' }, ENGINE);
   const learnerRun = await run(demo, done.id, 'done', 'learner', { cost: 31, result: {} });
   await insertLearnings(pool, {
     projectId,
@@ -534,7 +534,7 @@ const seedDemo = async (pool: Pool) => {
       assignee: { kind: 'agent', role: 'builder' },
       openInLane: 0
     },
-    engine
+    ENGINE
   );
   await apply(
     demo,
