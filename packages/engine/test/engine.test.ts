@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
-import type { AgentRole } from '@officina/core';
+import { branchForTask, type AgentRole } from '@officina/core';
 import {
   appendTaskEvent,
   applyCommand,
@@ -988,6 +988,51 @@ describe.skipIf(!url)('engine', () => {
     await finishVerifiedSpecs(pool, clean().port, [off], onBehalf);
     expect(userCalls).toEqual(['approve']);
     expect(await types(off)).toEqual(['github_approved', 'awaiting_merge']);
+  });
+
+  test('a task that fails to finish does not stop the others, and a refused token is recorded once', async () => {
+    const broken = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, broken, 50);
+    const fine = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, fine, 51);
+    const { number } = (
+      await pool.query<{ number: number }>('select number from tasks where id = $1', [broken])
+    ).rows[0]!;
+    const github = fakeGitHub({
+      branchHead: 'abc',
+      written: { commitSha: 'abc2', parentSha: 'abc' }
+    });
+    const port: GitHubPort = {
+      ...github.port,
+      readFile: (input) =>
+        input.branch === branchForTask(number)
+          ? Promise.reject(new Error('GitHub is down'))
+          : github.port.readFile(input)
+    };
+    let refreshes = 0;
+    const onBehalf = {
+      publicUrl: PUBLIC_URL,
+      tokenFor: async () => {
+        refreshes += 1;
+        throw new Error('the refresh was refused');
+      },
+      asUser: {} as OnBehalf['asUser']
+    };
+
+    expect(await finishVerifiedSpecs(pool, port, [broken, fine], onBehalf)).toEqual([
+      { taskId: broken, error: 'GitHub is down' }
+    ]);
+    await finishVerifiedSpecs(pool, port, [fine], onBehalf);
+    expect(refreshes).toBe(1);
+    const events = await pool.query<{ type: string; error: string | null }>(
+      `select type, payload->>'error' as error from task_events
+       where task_id = $1 and type in ('github_approval_failed', 'awaiting_merge') order by id`,
+      [fine]
+    );
+    expect(events.rows).toEqual([
+      { type: 'github_approval_failed', error: 'the refresh was refused' },
+      { type: 'awaiting_merge', error: null }
+    ]);
   });
 
   test('an auto-merge that may or may not have been turned on is turned off before a person is asked', async () => {
