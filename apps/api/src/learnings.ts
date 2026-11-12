@@ -1,6 +1,7 @@
 import { editsProject, hasRole, type Role } from '@officina/core';
 import { decideLearning, loadLearning, loadProject, type LearningRow } from '@officina/db';
 import type { GitHubClient } from '@officina/github';
+import { taskLink } from '@officina/engine';
 import type { Pool } from 'pg';
 import { TaskCommandError } from './tasks';
 
@@ -89,7 +90,7 @@ export const decide = async (
       });
     }
     const link = learning.taskNumber
-      ? `[Officina task ${learning.taskNumber}](${target.publicUrl.replace(/\/$/, '')}/tasks/${learning.taskNumber})`
+      ? taskLink(target.publicUrl, target.projectId, learning.taskNumber)
       : 'an Officina task';
     pr = await github.openPullRequest({
       ...ref,

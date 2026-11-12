@@ -1,4 +1,4 @@
-import { branchForTask, ENGINE, parseProjectConfig, type Actor } from '@officina/core';
+import { branchForTask, ENGINE, parseProjectConfig, taskUrl, type Actor } from '@officina/core';
 import {
   appendTaskEvent,
   autoVerified,
@@ -18,8 +18,8 @@ import type { Pool } from 'pg';
 /**
  * A markdown link to a task. A bare `#N` would link the repository's issue or pull request N.
  */
-export const taskLink = (publicUrl: string, taskNumber: number) =>
-  `[Officina task ${taskNumber}](${publicUrl.replace(/\/$/, '')}/tasks/${taskNumber})`;
+export const taskLink = (publicUrl: string, projectId: string, taskNumber: number) =>
+  `[Officina task ${taskNumber}](${taskUrl(publicUrl, projectId, taskNumber)})`;
 
 /** Acting on GitHub as a member (the verifier, the requester), with their own linked account. */
 export interface OnBehalf {
@@ -51,7 +51,13 @@ const verifierAccount = async (
 export const approveOnGitHub = async (
   pool: Pool,
   onBehalf: OnBehalf,
-  input: { taskId: string; taskNumber: number; repo: string; pullRequest: number }
+  input: {
+    taskId: string;
+    projectId: string;
+    taskNumber: number;
+    repo: string;
+    pullRequest: number;
+  }
 ) => {
   // Once per time the task reaches merging: a fix round after a GitHub review needs a new approval.
   if (await hasEventSinceMerging(pool, input.taskId, ['github_approved', 'github_approval_failed']))
@@ -84,7 +90,7 @@ export const approveOnGitHub = async (
       input.repo,
       input.pullRequest,
       expected,
-      `Verified in ${taskLink(onBehalf.publicUrl, input.taskNumber)}.`
+      `Verified in ${taskLink(onBehalf.publicUrl, input.projectId, input.taskNumber)}.`
     );
     await appendTaskEvent(pool, {
       taskId: input.taskId,
@@ -514,6 +520,7 @@ export const finishVerifiedSpecs = async (
     } else if (onBehalf) {
       await approveOnGitHub(pool, onBehalf, {
         taskId,
+        projectId: context.projectId,
         taskNumber: context.number,
         repo: context.repo,
         pullRequest

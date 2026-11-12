@@ -133,7 +133,7 @@ const mirrorToGitHub = async (
       taskId: step.taskId,
       ref: step.repoRef,
       pullRequest: context.pullRequest,
-      taskLink: taskLink(step.deps.publicUrl, context.number),
+      taskLink: taskLink(step.deps.publicUrl, context.projectId, context.number),
       result: output
     });
   }
