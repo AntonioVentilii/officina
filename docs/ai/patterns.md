@@ -34,6 +34,6 @@ The patterns Officina really uses, each with one place to copy from. [`../archit
 
 Named so nobody copies them; each is a follow-up of its own.
 
-- SQL outside `packages/db`: the interviewer's question count (`packages/engine/src/step.ts:209`) and the learner's "looked once" check (`packages/engine/src/learner.ts:233`). Queries belong in the db module that owns the table.
+- SQL outside `packages/db`: the "already done since merging" checks and the pull request lookups in `packages/engine/src/github-sync.ts`, and project and role lookups in `apps/api/src` (`learnings.ts`, `tasks.ts`, `people.ts`, `board.ts`, `webhooks.ts`). Queries belong in the db module that owns the table.
 - `runAgentStep` (`packages/engine/src/step.ts`) is one long function that prepares, runs, verifies and applies every role. New role-specific behaviour goes in a helper, not in another branch inside it.
 - Stage, lane and role types are mirrored by hand in `apps/board/src/lib/types.ts`.
