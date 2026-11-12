@@ -7,6 +7,7 @@ import {
   handedToGitHub,
   hasEventSinceMerging,
   hasTaskEvent,
+  githubLoginOf,
   latestVerifier,
   listStaleAutoMerges,
   loadTask,
@@ -44,6 +45,31 @@ const verifierAccount = async (
 };
 
 /**
+ * The verifier's account to approve as. The verifier is read outside the failure path, so only a
+ * token refresh GitHub refuses is recorded (once, so it is not retried every pass) and gives none.
+ */
+const approvingAccount = async (pool: Pool, onBehalf: OnBehalf, taskId: string) => {
+  const verifier = await latestVerifier(pool, taskId);
+  if (!verifier) return null;
+  const actor: Actor = { kind: 'member', memberId: verifier };
+  try {
+    const linked = await onBehalf.tokenFor(verifier);
+    return linked ? { actor, ...linked } : null;
+  } catch (error) {
+    await appendTaskEvent(pool, {
+      taskId,
+      actor,
+      type: 'github_approval_failed',
+      payload: {
+        login: (await githubLoginOf(pool, verifier)) ?? 'unknown',
+        error: (error as Error).message.slice(0, 500)
+      }
+    });
+    return null;
+  }
+};
+
+/**
  * Once a task is verified and its spec marked Implemented, approves the pull request on GitHub as
  * the member whose approval passed the gate, so their check counts as a review there. Without that
  * member's linked account nothing happens. It is tried once; a failure is recorded.
@@ -56,7 +82,7 @@ export const approveOnGitHub = async (
   // Once per time the task reaches merging: a fix round after a GitHub review needs a new approval.
   if (await hasEventSinceMerging(pool, input.taskId, ['github_approved', 'github_approval_failed']))
     return;
-  const account = await verifierAccount(pool, onBehalf, input.taskId);
+  const account = await approvingAccount(pool, onBehalf, input.taskId);
   if (!account) return;
   const { actor } = account;
   try {
@@ -452,83 +478,96 @@ export const postChecklist = async (
  * in, automatically: the final commit before merge, as the spec workflow asks. Then approves as the
  * verifier and hands the merge to GitHub or to a person (`autoMergeOnGitHub`, `awaitMerge`).
  */
+const finishVerifiedSpec = async (
+  pool: Pool,
+  github: SyncGitHubPort,
+  taskId: string,
+  onBehalf?: OnBehalf
+) => {
+  const context = await loadTaskContext(pool, taskId);
+  if (
+    !context ||
+    context.task.stage !== 'merging' ||
+    !context.pullRequest ||
+    !context.installationId
+  )
+    return;
+  const config = parseProjectConfig(context.rawConfig);
+  if (!config.ok) return;
+  const ref: RepoRef = { installationId: context.installationId, repo: context.repo };
+  await syncSpecStatus(pool, github, {
+    taskId,
+    ref,
+    branch: branchForTask(context.number),
+    base: context.defaultBranch,
+    specDir: config.config.docs.specDir,
+    status: `Implemented (#${context.pullRequest})`
+  });
+  await resolveForwardedThreads(pool, github, {
+    taskId,
+    ref,
+    pullRequest: context.pullRequest
+  }).catch(() => undefined);
+  // A review may have sent the task back while the GitHub calls above ran; acting on the
+  // context loaded before them would approve a head that is no longer accepted.
+  const current = await loadTask(pool, taskId);
+  if (current?.task.stage !== 'merging' || current.task.headSha !== context.task.headSha) return;
+  const pullRequest = context.pullRequest;
+  // Checked on every pass, not once: a push after the verification (by anyone, at any time while
+  // the task waits to merge) holds the pull request and gets auto-merge turned off, since
+  // GitHub's auto-merge would land whatever the branch holds once its checks pass.
+  const expected = await expectedHead(pool, taskId);
+  const head = await github.pullRequestHead({ ...ref, pullRequest });
+  if (!expected || head !== expected) {
+    await holdMerge(pool, { taskId, pullRequest, head });
+    return;
+  }
+  // GitHub merges on its own only when the project allows it and the chooser chose it for this
+  // result; anything else is merged by a person.
+  const autoMerge =
+    config.config.pullRequest.autoMerge && current.task.approvalPlans.verifying?.merge === 'auto';
+  // After the status commit, so the approval covers the final head. A result that skipped
+  // people's verification has no verifier to approve as.
+  if (await autoVerified(pool, taskId)) {
+    if (autoMerge)
+      await autoMergeOnGitHub(pool, {
+        taskId,
+        actor: ENGINE,
+        merge: () => github.mergeWhenReady({ ...ref, pullRequest, expectedHead: expected })
+      });
+  } else if (onBehalf) {
+    await approveOnGitHub(pool, onBehalf, {
+      taskId,
+      taskNumber: context.number,
+      repo: context.repo,
+      pullRequest
+    });
+    // Only on top of the verifier's own approval, so it never stands in for a missing review.
+    const approved = await hasTaskEvent(pool, taskId, 'github_approved', { headSha: expected });
+    const account = autoMerge && approved ? await verifierAccount(pool, onBehalf, taskId) : null;
+    if (account)
+      await autoMergeOnGitHub(pool, {
+        taskId,
+        actor: account.actor,
+        merge: () =>
+          onBehalf.asUser.mergeWhenReady(account.token, context.repo, pullRequest, expected)
+      });
+  }
+  if (!(await handedToGitHub(pool, taskId))) await awaitMerge(pool, { taskId, pullRequest });
+};
+
+/** Finishes each task on its own: one that fails is reported and the others still go ahead. */
 export const finishVerifiedSpecs = async (
   pool: Pool,
   github: SyncGitHubPort,
   taskIds: readonly string[],
   onBehalf?: OnBehalf
-) => {
+): Promise<{ taskId: string; error: string }[]> => {
+  const failures: { taskId: string; error: string }[] = [];
   for (const taskId of taskIds) {
-    const context = await loadTaskContext(pool, taskId);
-    if (
-      !context ||
-      context.task.stage !== 'merging' ||
-      !context.pullRequest ||
-      !context.installationId
-    )
-      continue;
-    const config = parseProjectConfig(context.rawConfig);
-    if (!config.ok) continue;
-    const ref: RepoRef = { installationId: context.installationId, repo: context.repo };
-    await syncSpecStatus(pool, github, {
-      taskId,
-      ref,
-      branch: branchForTask(context.number),
-      base: context.defaultBranch,
-      specDir: config.config.docs.specDir,
-      status: `Implemented (#${context.pullRequest})`
-    });
-    await resolveForwardedThreads(pool, github, {
-      taskId,
-      ref,
-      pullRequest: context.pullRequest
-    }).catch(() => undefined);
-    // A review may have sent the task back while the GitHub calls above ran; acting on the
-    // context loaded before them would approve a head that is no longer accepted.
-    const current = await loadTask(pool, taskId);
-    if (current?.task.stage !== 'merging' || current.task.headSha !== context.task.headSha)
-      continue;
-    const pullRequest = context.pullRequest;
-    // Checked on every pass, not once: a push after the verification (by anyone, at any time while
-    // the task waits to merge) holds the pull request and gets auto-merge turned off, since
-    // GitHub's auto-merge would land whatever the branch holds once its checks pass.
-    const expected = await expectedHead(pool, taskId);
-    const head = await github.pullRequestHead({ ...ref, pullRequest });
-    if (!expected || head !== expected) {
-      await holdMerge(pool, { taskId, pullRequest, head });
-      continue;
-    }
-    // GitHub merges on its own only when the project allows it and the chooser chose it for this
-    // result; anything else is merged by a person.
-    const autoMerge =
-      config.config.pullRequest.autoMerge && current.task.approvalPlans.verifying?.merge === 'auto';
-    // After the status commit, so the approval covers the final head. A result that skipped
-    // people's verification has no verifier to approve as.
-    if (await autoVerified(pool, taskId)) {
-      if (autoMerge)
-        await autoMergeOnGitHub(pool, {
-          taskId,
-          actor: ENGINE,
-          merge: () => github.mergeWhenReady({ ...ref, pullRequest, expectedHead: expected })
-        });
-    } else if (onBehalf) {
-      await approveOnGitHub(pool, onBehalf, {
-        taskId,
-        taskNumber: context.number,
-        repo: context.repo,
-        pullRequest
-      });
-      // Only on top of the verifier's own approval, so it never stands in for a missing review.
-      const approved = await hasTaskEvent(pool, taskId, 'github_approved', { headSha: expected });
-      const account = autoMerge && approved ? await verifierAccount(pool, onBehalf, taskId) : null;
-      if (account)
-        await autoMergeOnGitHub(pool, {
-          taskId,
-          actor: account.actor,
-          merge: () =>
-            onBehalf.asUser.mergeWhenReady(account.token, context.repo, pullRequest, expected)
-        });
-    }
-    if (!(await handedToGitHub(pool, taskId))) await awaitMerge(pool, { taskId, pullRequest });
+    await finishVerifiedSpec(pool, github, taskId, onBehalf).catch((error: unknown) =>
+      failures.push({ taskId, error: (error as Error).message })
+    );
   }
+  return failures;
 };
