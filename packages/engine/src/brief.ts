@@ -82,7 +82,8 @@ const chooserSections = (context: ChooserContext): string[] => [
   `## Project members\n\n${context.members.map((member) => `- \`${member.id}\` ${member.name}, ${member.role}${member.domains.length ? `, domains: ${member.domains.join(', ')}` : ''}`).join('\n')}`
 ];
 
-const fence = (text: string): string => {
+/** Wraps text written by people or other agents in a code fence it cannot close. */
+export const fence = (text: string): string => {
   // A fence longer than any backtick run inside the text, so quoted content cannot close it.
   const longest = Math.max(2, ...[...text.matchAll(/`+/g)].map((match) => match[0].length));
   const marks = '`'.repeat(longest + 1);
