@@ -115,10 +115,14 @@ export const memberForGitHubUser = async (db: Queryable, githubUserId: number) =
     )
   ).rows[0]?.member_id ?? null;
 
-export const unlinkGitHubAccount = async (db: Queryable, memberId: string) => {
-  await db.query('delete from github_accounts where member_id = $1', [memberId]);
-  await db.query("delete from identities where provider = 'github' and member_id = $1", [memberId]);
-};
+/** Removes the linked account and the sign-in it gave, both or neither. */
+export const unlinkGitHubAccount = (pool: Pool, memberId: string) =>
+  inTransaction(pool, async (client) => {
+    await client.query('delete from github_accounts where member_id = $1', [memberId]);
+    await client.query("delete from identities where provider = 'github' and member_id = $1", [
+      memberId
+    ]);
+  });
 
 export const githubLoginOf = async (db: Queryable, memberId: string) =>
   (
