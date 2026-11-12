@@ -1,5 +1,6 @@
 import type { Role } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
+import { RUN_IS_ACTIVE } from './run-status';
 
 type Queryable = Pool | PoolClient;
 
@@ -167,6 +168,6 @@ export const failOrphanedRuns = async (
       `update runs set status = 'failed', finished_at = now(),
          result = coalesce(result, '{}'::jsonb)
            || '{"error": "the engine restarted while this run was in progress"}'::jsonb
-       where status in ('queued', 'running') returning id, external_id`
+       where status ${RUN_IS_ACTIVE} returning id, external_id`
     )
   ).rows.map((row) => ({ id: row.id, externalId: row.external_id }));

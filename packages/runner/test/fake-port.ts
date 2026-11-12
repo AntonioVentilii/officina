@@ -88,6 +88,12 @@ export const createFakePort = (
     async sessionCostCents() {
       return costCents;
     },
+    async findAgentByName(name) {
+      const index = agentWrites.findIndex(
+        (write) => write.id === null && write.agent.name === name
+      );
+      return index === -1 ? null : { id: `agent_${index + 1}` };
+    },
     async createAgent(agent) {
       agentWrites.push({ id: null, agent });
       return { id: `agent_${agentWrites.length}`, version: ++agentVersion };

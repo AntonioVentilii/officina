@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import type { BoardLook, Role } from '@officina/core';
+import { DEFAULT_BOARD_LOOK, type BoardLook, type Role } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
 import { inTransaction } from './store';
 
@@ -130,10 +130,10 @@ export const listMemberProjects = async (
   (
     await db.query<MemberProject>(
       `select p.id, p.name, p.github_repo as repo, r.role, r.domains,
-              coalesce(p.config #>> '{board,look}', 'modernista') as look
+              coalesce(p.config #>> '{board,look}', $2) as look
        from project_roles r join projects p on p.id = r.project_id
        where r.member_id = $1 order by p.name`,
-      [memberId]
+      [memberId, DEFAULT_BOARD_LOOK]
     )
   ).rows;
 
