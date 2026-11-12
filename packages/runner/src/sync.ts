@@ -11,11 +11,14 @@ export interface SyncedAgent {
 /**
  * Brings the runner's agents in line with the checked-in definitions: unchanged definitions are
  * left alone, changed ones become a new version of the same agent, missing ones are created.
+ * `save` records each agent as soon as it is written, so a sync that fails partway does not create
+ * the agents it already wrote a second time on the next run.
  */
 export const syncAgents = async (
   port: ManagedAgentsPort,
   definitions: readonly AgentDefinition[],
-  current: readonly SyncedAgent[]
+  current: readonly SyncedAgent[],
+  save: (agent: SyncedAgent) => Promise<void>
 ): Promise<{ agents: SyncedAgent[]; changed: string[] }> => {
   const byRole = new Map(current.map((agent) => [agent.role, agent]));
   const agents: SyncedAgent[] = [];
@@ -35,12 +38,14 @@ export const syncAgents = async (
     const saved = existing
       ? await port.updateAgent(existing.externalAgentId, write)
       : await port.createAgent(write);
-    agents.push({
+    const synced: SyncedAgent = {
       role: definition.role,
       externalAgentId: saved.id,
       version: saved.version,
       definitionHash: definition.hash
-    });
+    };
+    await save(synced);
+    agents.push(synced);
     changed.push(definition.role);
   }
   return { agents, changed };
