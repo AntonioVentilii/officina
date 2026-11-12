@@ -1,6 +1,7 @@
 import { createSign } from 'node:crypto';
 import type { PushFacts } from '@officina/core';
 import { GitHubError, githubRequest } from './http';
+import { mergeWhenReadyWith } from './merge';
 
 /** GitHub's compare endpoint lists at most this many files; a full page means the list may be cut. */
 export const COMPARE_FILE_LIMIT = 300;
@@ -390,32 +391,24 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
 
   /**
    * Turns on auto-merge as the app, for a result that needed no person's check, so the branch
-   * rules (checks, resolved threads, any required review) still decide when it lands. A pull request
-   * that already meets them cannot take auto-merge and is merged straight away. Both are pinned to
-   * `expectedHead`, so a commit pushed after the result was accepted is never merged with it.
+   * rules (checks, resolved threads, any required review) still decide when it lands.
    */
   const mergeWhenReady = async (
     ref: RepoRef & { readonly pullRequest: number; readonly expectedHead: string }
-  ): Promise<'auto_merge' | 'merged'> => {
-    const pr = await pullRequestNode(ref);
-    const response = await graphql(
-      ref,
-      'mutation($id: ID!, $head: GitObjectID!) { enablePullRequestAutoMerge(input: { pullRequestId: $id, mergeMethod: SQUASH, expectedHeadOid: $head }) { clientMutationId } }',
-      { id: pr.node_id, head: ref.expectedHead }
+  ): Promise<'auto_merge' | 'merged'> =>
+    mergeWhenReadyWith(
+      {
+        graphql: (query, variables) => graphql(ref, query, variables),
+        merge: async (body) =>
+          request(`/repos/${ref.repo}/pulls/${ref.pullRequest}/merge`, {
+            method: 'PUT',
+            token: await installationToken(ref),
+            body
+          })
+      },
+      (await pullRequestNode(ref)).node_id,
+      ref.expectedHead
     );
-    if (!response.errors?.length) return 'auto_merge';
-    const message = response.errors.map((error) => error.message).join('; ');
-    if (!/clean status|is in clean/i.test(message)) {
-      throw new GitHubError(422, '/graphql enablePullRequestAutoMerge', message);
-    }
-    const token = await installationToken(ref);
-    await request(`/repos/${ref.repo}/pulls/${ref.pullRequest}/merge`, {
-      method: 'PUT',
-      token,
-      body: { merge_method: 'squash', sha: ref.expectedHead }
-    });
-    return 'merged';
-  };
 
   /** Turns auto-merge off, so work sent back to building cannot land before it is checked again. */
   const cancelAutoMerge = async (ref: RepoRef & { readonly pullRequest: number }) => {
