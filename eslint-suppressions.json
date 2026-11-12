@@ -171,11 +171,6 @@
       "count": 3
     }
   },
-  "packages/engine/src/step.ts": {
-    "max-lines": {
-      "count": 1
-    }
-  },
   "packages/engine/src/tick.ts": {
     "complexity": {
       "count": 1
