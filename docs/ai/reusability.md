@@ -9,7 +9,7 @@ Search here before writing a helper, a type, a component or a fake. When you add
 | `STAGES`, `TERMINAL_STAGES`, `AGENT_ROLES`, `REVIEWER_ROLES`                   | `src/lifecycle.ts` | The stage and agent role lists; the DB constraints mirror them              |
 | `decide`, `Command`, `DomainEvent`, `Task`, `newTask`, `Actor`, `ENGINE`       | `src/lifecycle.ts` | The state machine; `ENGINE` is Officina itself acting                       |
 | `gateSubject`, `effectivePolicy`, `canAutoVerify`                              | `src/lifecycle.ts` | What a gate approves, the policy in force, whether a result may skip people |
-| `nextAgentRoles`, `branchForTask`                                              | `src/steps.ts`     | Which agents a task waits on; the only task branch name                     |
+| `nextAgentRoles`, `branchForTask`, `TASK_BRANCH_PREFIX`                        | `src/steps.ts`     | Which agents a task waits on; the only task branch name                     |
 | `LANES`, `computeLane`, `stricterLane`, `redPaths`, `compileLaneMatcher`       | `src/lanes.ts`     | Lanes from paths                                                            |
 | `ROLES`, `hasRole`, `Member`                                                   | `src/roles.ts`     | Member roles and their order                                                |
 | `evaluatePolicy`, `isEligible`, `APPROVAL_FLOOR`                               | `src/policies.ts`  | Whether approvals satisfy a policy, with waivers                            |

@@ -31,4 +31,8 @@ export const nextAgentRoles = (task: Task): AgentRole[] => {
 };
 
 /** Agents may only push to this branch; the engine rejects a push anywhere else. */
-export const branchForTask = (taskNumber: number): string => `officina/task-${taskNumber}`;
+/** Every branch an agent may push starts with this; the engine checks it is the task's own. */
+export const TASK_BRANCH_PREFIX = 'officina/';
+
+export const branchForTask = (taskNumber: number): string =>
+  `${TASK_BRANCH_PREFIX}task-${taskNumber}`;
