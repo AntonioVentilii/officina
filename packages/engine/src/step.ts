@@ -19,11 +19,11 @@ import {
   finishRun,
   githubReviewsSinceLastPush,
   latestPushedPaths,
-  linkPullRequest,
   listProjectMemberProfiles,
   listComments,
   loadAgentVersions,
   loadTaskContext,
+  recordRunResult,
   saveSpecVersion,
   setRunExternalId,
   startRun
@@ -44,7 +44,8 @@ import {
 import type { Pool } from 'pg';
 import { MAX_INTERVIEW_QUESTIONS, buildBrief, type ChooserContext } from './brief';
 import { runLearnerStep } from './learner';
-import { postChecklist, syncSpecStatus, taskLink, type SyncGitHubPort } from './github-sync';
+import { postChecklist, taskLink, type SyncGitHubPort } from './github-sync';
+import { openTaskPullRequest, type PushedBuild } from './pull-request';
 
 export { taskLink };
 
@@ -405,6 +406,9 @@ export const runAgentStep = async (
 
     const mapped = commandForOutput(context.task, roleOutput);
     if (!mapped.ok) throw new Error(mapped.error);
+    // Recorded before it is applied, so a crash after the apply still leaves what to open the
+    // pull request from.
+    await recordRunResult(pool, runId, output);
 
     const applied = await applyCommand(pool, {
       taskId,
@@ -450,37 +454,20 @@ export const runAgentStep = async (
     }
 
     if (builds && applied.task.stage === 'reviewing' && context.pullRequest === null) {
-      const built = output as Extract<AgentOutput<'builder' | 'onboarder'>, { outcome: 'pushed' }>;
-      const bullets = (items: readonly string[]) =>
-        items.map((item) => `- ${item}`).join('\n') || '- nothing reported';
-      const body = [
-        `Implements the approved spec of ${taskLink(deps.publicUrl, context.number)}.`,
-        `Verified:\n${bullets(built.verified)}`,
-        `Not verified:\n${bullets(built.notVerified)}`,
-        'followUps' in built
-          ? `Follow-ups, smells found while reading the code and left for their own changes:\n${bullets(built.followUps)}`
-          : null,
-        context.issue ? `Closes #${context.issue}` : null
-      ]
-        .filter(Boolean)
-        .join('\n\n');
-      const pr = await deps.github.openPullRequest({
-        ...repoRef,
-        base: context.defaultBranch,
-        branch: taskBranch,
-        title: built.prTitle,
-        body
-      });
-      await linkPullRequest(pool, taskId, pr.number);
-      await appendRunEvent(pool, runId, 'officina.pull_request_opened', pr);
-      await syncSpecStatus(pool, deps.github, {
-        taskId,
-        ref: repoRef,
-        branch: taskBranch,
-        base: context.defaultBranch,
-        specDir: config.docs.specDir,
-        status: `In progress (#${pr.number})`
-      });
+      const built = output as PushedBuild;
+      try {
+        const pr = await openTaskPullRequest(pool, deps.github, {
+          taskId,
+          publicUrl: deps.publicUrl,
+          built
+        });
+        if (pr) await appendRunEvent(pool, runId, 'officina.pull_request_opened', pr);
+      } catch (error) {
+        // The round is applied; the scheduler opens the pull request from the recorded result.
+        await appendRunEvent(pool, runId, 'officina.pull_request_failed', {
+          error: (error as Error).message
+        });
+      }
     }
 
     const reply = builds && 'reviewReply' in output ? output.reviewReply : undefined;

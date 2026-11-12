@@ -2,6 +2,7 @@ import {
   collectDueSteps,
   cancelStaleAutoMerges,
   finishVerifiedSpecs,
+  openMissingPullRequests,
   requestCopilotReviews,
   type OnBehalf,
   runAgentStep,
@@ -109,6 +110,14 @@ export const startEngine = async (input: {
           input.onBehalf
         ).catch((error: unknown) =>
           input.log('spec status update failed', { projectId, error: (error as Error).message })
+        );
+        await openMissingPullRequests(
+          input.pool,
+          input.github,
+          await listActiveTaskIds(input.pool, projectId),
+          input.publicUrl
+        ).catch((error: unknown) =>
+          input.log('pull request catch-up failed', { projectId, error: (error as Error).message })
         );
         await requestCopilotReviews(
           input.pool,
