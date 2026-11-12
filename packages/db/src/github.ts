@@ -37,6 +37,14 @@ export const markDeliveryHandled = async (
   );
 };
 
+/**
+ * Deletes deliveries older than GitHub lets anyone redeliver (three days), with margin: their ids
+ * can never come again, so they only take up space.
+ */
+export const purgeOldDeliveries = async (pool: Pool): Promise<number> =>
+  (await pool.query("delete from webhook_deliveries where received_at < now() - interval '7 days'"))
+    .rowCount ?? 0;
+
 /** Gives a claimed delivery back after it failed, so GitHub's redelivery is processed. */
 export const releaseDelivery = async (
   pool: Pool,
