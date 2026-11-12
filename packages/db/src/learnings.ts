@@ -1,5 +1,6 @@
 import type { LearningTarget } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
+import { RUN_IS_ACTIVE } from './runs';
 
 type Queryable = Pool | PoolClient;
 
@@ -153,7 +154,8 @@ export const learnerHasLooked = async (db: Queryable, taskId: string): Promise<b
   Boolean(
     (
       await db.query(
-        "select 1 from runs where task_id = $1 and agent_role = 'learner' and status not in ('queued', 'running')",
+        `select 1 from runs where task_id = $1 and agent_role = 'learner'
+           and not (status ${RUN_IS_ACTIVE})`,
         [taskId]
       )
     ).rowCount

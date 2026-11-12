@@ -1,3 +1,4 @@
+import { TERMINAL_STAGES } from '@officina/core';
 import type { Actor, StoredTaskContext } from './types';
 import type { Pool, PoolClient } from 'pg';
 import { loadTask } from './store';
@@ -126,6 +127,9 @@ export const saveSpecVersion = async (
 };
 
 /** Tasks in a lane whose work an agent currently holds, for the lane's WIP limit. */
+/** A run an agent still holds or is about to: the statuses a run leaves only when it ends. */
+export const RUN_IS_ACTIVE = "in ('queued', 'running')";
+
 export const countOpenAgentWork = async (pool: Pool, projectId: string, lane: string) =>
   Number(
     (
@@ -143,8 +147,8 @@ export const listActiveTaskIds = async (pool: Pool, projectId: string): Promise<
   (
     await pool.query<{ id: string }>(
       `select id from tasks where project_id = $1
-         and stage not in ('done', 'declined', 'cancelled') order by priority desc, number`,
-      [projectId]
+         and stage <> all($2) order by priority desc, number`,
+      [projectId, [...TERMINAL_STAGES]]
     )
   ).rows.map((row) => row.id);
 

@@ -1,5 +1,6 @@
 import type { Actor, Task } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
+import { RUN_IS_ACTIVE } from './runs';
 
 type Queryable = Pool | PoolClient;
 
@@ -40,7 +41,7 @@ const BOARD_COLUMNS = `
   coalesce((select sum(r.list_cost_cents) from runs r where r.task_id = t.id), 0)::int as "costCents",
   coalesce(
     (select array_agg(distinct r.agent_role) from runs r
-     where r.task_id = t.id and r.status in ('queued', 'running')),
+     where r.task_id = t.id and r.status ${RUN_IS_ACTIVE}),
     '{}'
   ) as "runningRoles",
   t.created_at as "createdAt", t.updated_at as "updatedAt",
@@ -181,7 +182,7 @@ export const listProjectRuns = async (
     await db.query<RunRow>(
       `select ${RUN_COLUMNS} from runs r join tasks t on t.id = r.task_id
        where t.project_id = $1
-       order by (r.status in ('queued', 'running')) desc, r.created_at desc
+       order by (r.status ${RUN_IS_ACTIVE}) desc, r.created_at desc
        limit $2`,
       [projectId, limit]
     )
