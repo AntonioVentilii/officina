@@ -187,6 +187,11 @@ export const createOnboardingTask = (
 ): Promise<{ created: boolean; id: string; number: number }> =>
   inTransaction(pool, (client) => insertOnboardingTask(client, input));
 
+/** Renames a task; the interviewer names it when the request is complete. */
+export const setTaskTitle = async (client: PoolClient, taskId: string, title: string) => {
+  await client.query('update tasks set title = $2 where id = $1', [taskId, title]);
+};
+
 export const loadTask = async (pool: Pool, taskId: string): Promise<StoredTask | null> => {
   const { rows } = await pool.query<TaskRow>('select * from tasks where id = $1', [taskId]);
   return rows[0] ? toStored(rows[0]) : null;
