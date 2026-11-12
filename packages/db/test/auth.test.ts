@@ -40,7 +40,7 @@ describe.skipIf(!url)('credentials', () => {
     await redeemLoginLink(pool, used);
     await createLoginLink(pool, seeded.ownerId, -1_000);
     const unused = await createLoginLink(pool, seeded.ownerId, 60_000);
-    await createOAuthState(pool, 'old', null, -1_000);
+    await createOAuthState(pool, 'old', seeded.ownerId, -1_000);
     await createOAuthState(pool, 'new', seeded.ownerId, 60_000);
 
     const sessionsBefore = await count('sessions');

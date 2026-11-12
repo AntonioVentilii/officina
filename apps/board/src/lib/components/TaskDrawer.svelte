@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { isActive } from '$lib/runs';
   import { ExternalLink, GitPullRequest, X } from '@lucide/svelte';
   import { goto } from '$app/navigation';
   import { ApiError, get, post } from '$lib/api';
@@ -42,8 +43,7 @@
       const next = await get<TaskDetail>(`/api/projects/${session.projectId}/tasks/${number}`);
       // Running sessions open themselves the first time they appear.
       for (const run of next.runs) {
-        if ((run.status === 'running' || run.status === 'queued') && !(run.id in openRuns))
-          openRuns[run.id] = true;
+        if (isActive(run) && !(run.id in openRuns)) openRuns[run.id] = true;
       }
       task = next;
     } catch (error) {

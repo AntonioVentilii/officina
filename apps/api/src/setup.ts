@@ -36,12 +36,12 @@ export const setupAgents = async (
   modelId: string
 ): Promise<{ changed: string[] }> => {
   const definitions = await loadDefinitions(promptsDir, modelId);
-  const { agents: synced, changed } = await syncAgents(
+  const { changed } = await syncAgents(
     agents,
     definitions,
-    await loadAgentVersions(pool)
+    await loadAgentVersions(pool),
+    (record) => saveAgentVersion(pool, record)
   );
-  for (const record of synced) await saveAgentVersion(pool, record);
   return { changed };
 };
 

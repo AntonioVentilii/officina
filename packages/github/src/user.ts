@@ -1,4 +1,5 @@
 import { GitHubError, githubRequest } from './http';
+import { mergeWhenReadyWith } from './merge';
 
 /**
  * Acting as a person on GitHub, through the GitHub App's user authorization. Reviews and merges done
@@ -103,37 +104,26 @@ export const createGitHubAsUser = (options: { fetch?: typeof fetch } = {}) => {
       body: { event: 'APPROVE', commit_id: commitId, body }
     });
 
-  /**
-   * Turns on auto-merge, so GitHub merges once every branch rule is met. A pull request that
-   * already meets them cannot take auto-merge; it is merged straight away, still as the person.
-   * Both are pinned to `expectedHead`, the commit the person verified, so a later push never lands.
-   */
+  /** Turns on auto-merge as the person they verified it as (see `mergeWhenReadyWith`). */
   const mergeWhenReady = async (
     token: string,
     repo: string,
     number: number,
     expectedHead: string
-  ): Promise<'auto_merge' | 'merged'> => {
-    const pr = await pullRequest(token, repo, number);
-    const response = await request<{ errors?: { message: string }[] }>(token, '/graphql', {
-      method: 'POST',
-      body: {
-        query:
-          'mutation($id: ID!, $head: GitObjectID!) { enablePullRequestAutoMerge(input: { pullRequestId: $id, mergeMethod: SQUASH, expectedHeadOid: $head }) { clientMutationId } }',
-        variables: { id: pr.node_id, head: expectedHead }
-      }
-    });
-    if (!response.errors?.length) return 'auto_merge';
-    const message = response.errors.map((error) => error.message).join('; ');
-    if (!/clean status|is in clean/i.test(message)) {
-      throw new GitHubError(422, '/graphql enablePullRequestAutoMerge', message);
-    }
-    await request(token, `/repos/${repo}/pulls/${number}/merge`, {
-      method: 'PUT',
-      body: { merge_method: 'squash', sha: expectedHead }
-    });
-    return 'merged';
-  };
+  ): Promise<'auto_merge' | 'merged'> =>
+    mergeWhenReadyWith(
+      {
+        graphql: (query, variables) =>
+          request<{ errors?: { message: string }[] }>(token, '/graphql', {
+            method: 'POST',
+            body: { query, variables }
+          }),
+        merge: (body) =>
+          request(token, `/repos/${repo}/pulls/${number}/merge`, { method: 'PUT', body })
+      },
+      (await pullRequest(token, repo, number)).node_id,
+      expectedHead
+    );
 
   /**
    * Asks Copilot to review the pull request as the person, so it is billed to their Copilot seat.
