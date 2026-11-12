@@ -399,6 +399,30 @@ describe.skipIf(!url)('engine', () => {
     expect((updates[1]!.args[0] as { text: string }).text).toContain('Status: Implemented (#42)');
   });
 
+  test('a checklist GitHub refuses is recorded on the run and neither fails it nor blocks the task', async () => {
+    const github = fakeGitHub();
+    const agents = createFakePort(succeed);
+    const port: GitHubPort = {
+      ...github.port,
+      commentOnIssue: () => Promise.reject(new Error('GitHub is down'))
+    };
+    const deps = { pool, github: port, agents, publicUrl: PUBLIC_URL };
+    const taskId = await taskInReady(github, agents);
+    await tick(deps, seeded.projectId);
+    await tick(deps, seeded.projectId);
+    await tick(deps, seeded.projectId);
+
+    const stored = await loadTask(pool, taskId);
+    expect(stored?.task).toMatchObject({ stage: 'verifying', blocked: null });
+    expect((await runStatuses(taskId)).every((run) => run.status === 'succeeded')).toBe(true);
+    const failed = await pool.query(
+      `select e.payload->>'error' as error from run_events e join runs r on r.id = e.run_id
+       where r.task_id = $1 and e.type = 'officina.checklist_failed'`,
+      [taskId]
+    );
+    expect(failed.rows).toEqual([{ error: 'GitHub is down' }]);
+  });
+
   const copilotRequests = () => {
     const requests: unknown[][] = [];
     const notExpected = async (): Promise<never> => {

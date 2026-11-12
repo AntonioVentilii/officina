@@ -78,41 +78,44 @@ const recordAlongside =
     }
   };
 
-/** The pull request of a round that just reached review; a failure is left to the scheduler. */
-const openPullRequestAfter = async (step: Step, built: PushedBuild) => {
-  const { pool } = step.deps;
+/**
+ * A GitHub write after the round is applied: a failure is recorded on the run and never thrown, so
+ * it neither fails the run nor blocks the task.
+ */
+const afterApplied = async (step: Step, failedEvent: string, write: () => Promise<void>) => {
   try {
+    await write();
+  } catch (error) {
+    await appendRunEvent(step.deps.pool, step.runId, failedEvent, {
+      error: (error as Error).message
+    });
+  }
+};
+
+/** The pull request of a round that just reached review; a failure is left to the scheduler. */
+const openPullRequestAfter = (step: Step, built: PushedBuild) =>
+  afterApplied(step, 'officina.pull_request_failed', async () => {
+    const { pool } = step.deps;
     const pr = await openTaskPullRequest(pool, step.deps.github, {
       taskId: step.taskId,
       publicUrl: step.deps.publicUrl,
       built
     });
     if (pr) await appendRunEvent(pool, step.runId, 'officina.pull_request_opened', pr);
-  } catch (error) {
-    // The round is applied; the scheduler opens the pull request from the recorded result.
-    await appendRunEvent(pool, step.runId, 'officina.pull_request_failed', {
-      error: (error as Error).message
-    });
-  }
-};
+  });
 
 /** The builder's answer to the GitHub reviews this round addressed, posted on the pull request. */
 const replyToReviews = async (step: Step, reply: string, reviews: readonly GitHubReview[]) => {
   const pullRequest = step.context.pullRequest;
   if (reviews.length === 0 || pullRequest === null) return;
   const reviewers = [...new Set(reviews.map((review) => `\`${review.by}\``))];
-  try {
+  await afterApplied(step, 'officina.review_reply_failed', async () => {
     await step.deps.github.commentOnIssue({
       ...step.repoRef,
       issueNumber: pullRequest,
       body: `Answer to the review by ${reviewers.join(', ')}.\n\n${reply}`
     });
-  } catch (error) {
-    // The round is applied either way; a lost reply must not block the task.
-    await appendRunEvent(step.deps.pool, step.runId, 'officina.review_reply_failed', {
-      error: (error as Error).message
-    });
-  }
+  });
 };
 
 /** What an applied result leaves on GitHub: the pull request, a review answer, the checklist. */
@@ -128,14 +131,17 @@ const mirrorToGitHub = async (
   }
   const reply = step.builds && 'reviewReply' in output ? output.reviewReply : undefined;
   if (reply) await replyToReviews(step, reply, inputs.githubReviews);
-  if (step.role === 'chooser' && context.pullRequest !== null) {
-    await postChecklist(step.deps.pool, step.deps.github, {
-      taskId: step.taskId,
-      ref: step.repoRef,
-      pullRequest: context.pullRequest,
-      taskLink: taskLink(step.deps.publicUrl, context.projectId, context.number),
-      result: output
-    });
+  const pullRequest = context.pullRequest;
+  if (step.role === 'chooser' && pullRequest !== null) {
+    await afterApplied(step, 'officina.checklist_failed', () =>
+      postChecklist(step.deps.pool, step.deps.github, {
+        taskId: step.taskId,
+        ref: step.repoRef,
+        pullRequest,
+        taskLink: taskLink(step.deps.publicUrl, context.projectId, context.number),
+        result: output
+      })
+    );
   }
 };
 
