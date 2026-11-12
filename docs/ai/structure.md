@@ -20,6 +20,8 @@ board (separate app: talks to api over HTTP only)
 - `apps/api` is the only place that wires real clients, reads the environment and starts the scheduler.
 - `apps/board` never imports a workspace package; it reads `/api/*`. Its types in `src/lib/types.ts` mirror what the API returns.
 
+`eslint.config.js` enforces these directions (`no-restricted-imports`), including that only `packages/runner/src/sdk.ts`, `credentials.ts` and `definitions.ts` import `@anthropic-ai/sdk`.
+
 ## Where new code goes
 
 | New code                                                    | Goes in                                                                                                                                                                    |
