@@ -438,6 +438,13 @@ describe.skipIf(!url)('board api', () => {
       close: async () => {}
     };
     const cookie = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    // A real project in the same workspace where the member has no role, so the filter is what drops it.
+    const other = await pool.query<{ id: string }>(
+      `insert into projects (workspace_id, name, github_repo, config)
+       select workspace_id, 'other-app', 'ViciApp/other-app', config from projects where id = $1
+       returning id`,
+      [seeded.projectId]
+    );
     const response = await createApp({
       pool,
       webhookSecret: 'x'.repeat(32),
@@ -448,7 +455,7 @@ describe.skipIf(!url)('board api', () => {
     let text = '';
     while (!text.includes(': connected')) text += decoder.decode((await reader.read()).value);
     for (const listener of listeners) {
-      listener({ kind: 'task', projectId: crypto.randomUUID(), number: 7 });
+      listener({ kind: 'task', projectId: other.rows[0]!.id, number: 7 });
       listener({ kind: 'task', projectId: seeded.projectId, number: 1 });
     }
     while (!text.includes('"number":1')) text += decoder.decode((await reader.read()).value);
