@@ -5,7 +5,6 @@ import {
   editsProject,
   isAgentDocsPath,
   isStandardsPage,
-  parseProjectConfig,
   requiredDocs,
   type AgentOutput,
   type ProjectConfig
@@ -20,15 +19,14 @@ import {
   listTaskComments,
   listTaskEvents,
   listTaskRuns,
-  loadAgentVersions,
   loadTaskContext,
   setRunExternalId,
-  startRun,
   type RunRow,
   type TaskEventRow
 } from '@officina/db';
-import { executeRun, RUNNER, RUNNER_ROLES, type RunnerRole } from '@officina/runner';
+import { executeRun, RUNNER_ROLES, type RunnerRole } from '@officina/runner';
 import { fence } from './brief';
+import { claimStep } from './claim';
 import type { EngineDependencies, StepResult } from './step';
 
 /** Learning is cheap reading; a cap well below any build keeps it that way. */
@@ -243,29 +241,15 @@ export const runLearnerStep = async (
   taskId: string
 ): Promise<StepResult> => {
   const { pool } = deps;
-  const context = await loadTaskContext(pool, taskId);
-  if (!context) return { status: 'skipped', reason: 'not_found' };
-  if (context.task.stage !== 'done') return { status: 'skipped', reason: 'not_due' };
-  // One look back per task: a finished or failed attempt is never repeated.
-  if (await learnerHasLooked(pool, taskId)) return { status: 'skipped', reason: 'not_due' };
-  if (context.installationId === null) return { status: 'skipped', reason: 'not_installed' };
-  if (context.environmentId === null) return { status: 'skipped', reason: 'no_environment' };
-  const agent = (await loadAgentVersions(pool)).find((record) => record.role === 'learner');
-  if (!agent) return { status: 'skipped', reason: 'agent_not_synced' };
-  const parsedConfig = parseProjectConfig(context.rawConfig);
-  if (!parsedConfig.ok) return { status: 'skipped', reason: 'invalid_config' };
-  const config = parsedConfig.config;
-
-  const claim = await startRun(pool, {
+  const claimed = await claimStep(pool, {
     taskId,
-    stage: 'done',
     role: 'learner',
-    agentVersion: agent.version,
-    runner: RUNNER
+    // One look back per task: a finished or failed attempt is never repeated.
+    isDue: async (context) =>
+      context.task.stage === 'done' && !(await learnerHasLooked(pool, taskId))
   });
-  if (!claim.ok) return { status: 'skipped', reason: 'already_running' };
-  const runId = claim.runId;
-  const repoRef = { installationId: context.installationId, repo: context.repo };
+  if (!claimed.ok) return { status: 'skipped', reason: claimed.reason };
+  const { context, config, agent, runId, repoRef, environmentId } = claimed.step;
 
   try {
     const brief = await learnerBrief(deps, taskId, config);
@@ -276,7 +260,7 @@ export const runLearnerStep = async (
       session: {
         agentId: agent.externalAgentId,
         agentVersion: agent.version,
-        environmentId: context.environmentId,
+        environmentId,
         title: `Officina #${context.number} learner`,
         metadata: { task_id: taskId, run_id: runId, role: 'learner' },
         repository: {

@@ -168,13 +168,10 @@
   },
   "packages/engine/src/learner.ts": {
     "complexity": {
-      "count": 4
+      "count": 3
     }
   },
   "packages/engine/src/step.ts": {
-    "complexity": {
-      "count": 1
-    },
     "max-lines": {
       "count": 1
     }
