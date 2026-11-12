@@ -30,6 +30,7 @@
   };
 </script>
 
+<!-- eslint-disable-next-line svelte/no-at-html-tags -- the one place agent text is rendered, sanitized by DOMPurify above -->
 <div class="md" use:external>{@html html}</div>
 
 <style>

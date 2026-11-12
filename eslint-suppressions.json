@@ -1,0 +1,207 @@
+{
+  "apps/api/src/api.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "apps/api/src/board.ts": {
+    "complexity": {
+      "count": 4
+    },
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "apps/api/src/cli.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/api/src/connector/index.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/api/src/connector/mcp.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/api/src/connector/oauth.ts": {
+    "complexity": {
+      "count": 2
+    }
+  },
+  "apps/api/src/connector/tools.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "apps/api/src/dev.ts": {
+    "max-lines": {
+      "count": 1
+    },
+    "max-params": {
+      "count": 1
+    }
+  },
+  "apps/api/src/learnings.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/api/src/main.ts": {
+    "prefer-const": {
+      "count": 1
+    }
+  },
+  "apps/api/src/tasks.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "apps/api/src/webhooks.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/api/test/board.test.ts": {
+    "@typescript-eslint/no-explicit-any": {
+      "count": 1
+    }
+  },
+  "apps/api/test/connector.test.ts": {
+    "@typescript-eslint/no-explicit-any": {
+      "count": 1
+    }
+  },
+  "apps/api/test/webhook.test.ts": {
+    "max-params": {
+      "count": 1
+    }
+  },
+  "apps/board/src/lib/components/ActionPanel.svelte": {
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "apps/board/src/lib/components/BoardView.svelte": {
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "apps/board/src/lib/components/RunLog.svelte": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "apps/board/src/lib/components/Sidebar.svelte": {
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "apps/board/src/lib/components/TaskDrawer.svelte": {
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "apps/board/src/lib/components/Timeline.svelte": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "packages/core/src/config.ts": {
+    "complexity": {
+      "count": 2
+    }
+  },
+  "packages/core/src/contracts.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "packages/core/src/lifecycle.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines": {
+      "count": 1
+    },
+    "max-params": {
+      "count": 1
+    }
+  },
+  "packages/core/src/steps.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "packages/db/src/store.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "packages/engine/src/brief.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "packages/engine/src/github-sync.ts": {
+    "complexity": {
+      "count": 2
+    },
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "packages/engine/src/learner.ts": {
+    "complexity": {
+      "count": 4
+    }
+  },
+  "packages/engine/src/step.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "packages/engine/src/tick.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "packages/github/src/client.ts": {
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "packages/github/src/user.ts": {
+    "max-params": {
+      "count": 1
+    }
+  },
+  "packages/github/src/webhooks.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "packages/runner/src/run.ts": {
+    "complexity": {
+      "count": 1
+    }
+  }
+}
