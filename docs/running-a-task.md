@@ -105,7 +105,7 @@ To stop a task at any time: `scripts/officina task cancel --number 1 --reason "W
 - **Copilot and people on GitHub.** When Copilot leaves inline comments on the pull request, or a person
   requests changes there, the task goes back to the builder with those comments, and comes back
   through review. Officina resolves those threads once the fix is verified. A Copilot review with no
-  comment on the code but a verdict (green or blue) goes back to the builder too, once: it checks
+  comment on the code but a verdict (green, blue or yellow) goes back to the builder too, once: it checks
   each point, changes what is right or finishes without a push, and answers on the pull request
   (always for a blue one).
 - **Low-risk changes.** In a green lane with `auto_verify: true`, a result that the chooser only asks

@@ -1,3 +1,9 @@
+/** The accounts Copilot code review submits as; other bots' reviews are not read as Copilot's. */
+export const COPILOT_REVIEWERS: ReadonlySet<string> = new Set([
+  'copilot-pull-request-reviewer[bot]',
+  'Copilot'
+]);
+
 /**
  * Copilot always submits a comment-state review and states its verdict as a heading in the body,
  * so the verdict is read from the text, not from the review's state.

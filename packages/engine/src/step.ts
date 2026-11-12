@@ -320,7 +320,8 @@ export const runAgentStep = async (
       validate: builds
         ? (output) => [
             ...titleProblems(config.pullRequest.titlePattern)(output),
-            ...reviewProblems(githubReviews)(output)
+            // The onboarder's contract has no review answer, so only the builder is held to one.
+            ...(role === 'builder' ? reviewProblems(githubReviews)(output) : [])
           ]
         : role === 'chooser'
           ? planProblems(gate, new Set(members.map((member) => member.id)))

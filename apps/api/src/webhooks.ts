@@ -8,7 +8,12 @@ import {
   unlinkPullRequest,
   updateProjectConfig
 } from '@officina/db';
-import { copilotVerdict, type GitHubClient, type WebhookAction } from '@officina/github';
+import {
+  COPILOT_REVIEWERS,
+  copilotVerdict,
+  type GitHubClient,
+  type WebhookAction
+} from '@officina/github';
 import type { Pool } from 'pg';
 
 export const CONFIG_PATH = '.github/officina.yml';
@@ -64,8 +69,8 @@ const refreshConfigs = async (
 type ReviewNotes = { readonly notes: string; readonly overviewOnly: boolean };
 
 /**
- * A review left on the pull request becomes notes for the builder. A bot (Copilot) counts when it
- * left inline comments, and also when it left none but gave a verdict: a green or blue one can
+ * A review left on the pull request becomes notes for the builder. A bot counts when it left inline
+ * comments, and Copilot also when it left none but gave a verdict: a green or blue one can
  * still name a risk in its overview, and the builder checks each point as it would an inline one.
  * A person counts when they asked for changes, because a plain comment may only be a question.
  */
@@ -84,7 +89,9 @@ const reviewNotes = async (
       })
     : [];
   const overviewOnly = action.bot && comments.length === 0;
-  if (overviewOnly && copilotVerdict(action.body) === null) return null;
+  // Only Copilot's verdict is read from the body; another bot with nothing inline asks for nothing.
+  if (overviewOnly && (!COPILOT_REVIEWERS.has(action.by) || copilotVerdict(action.body) === null))
+    return null;
   const notes = [
     overviewOnly
       ? `Review by @${action.by} on the pull request, with no comment on the code. Check each point of its verdict and overview against the code: change what is right, and say in \`reviewReply\` what you checked and why the rest needs no change. Finish \`unchanged\` when nothing does.`

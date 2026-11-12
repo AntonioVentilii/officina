@@ -239,7 +239,12 @@ describe.skipIf(!url)('api', () => {
     ]);
     const taskId = await createTaskInMerging(pool, seeded);
     await linkPullRequest(pool, taskId, 42);
-    const review = async (delivery: string, id: number, body: string) =>
+    const review = async (
+      delivery: string,
+      id: number,
+      body: string,
+      login = 'copilot-pull-request-reviewer[bot]'
+    ) =>
       (
         await deliver(reviewing, {
           event: 'pull_request_review',
@@ -252,7 +257,7 @@ describe.skipIf(!url)('api', () => {
               body,
               commit_id: 'abc',
               author_association: 'NONE',
-              user: { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' }
+              user: { login, type: 'Bot' }
             },
             pull_request: { number: 42 },
             repository
@@ -264,6 +269,11 @@ describe.skipIf(!url)('api', () => {
 
     // A review that reviewed nothing has no verdict and asks for nothing.
     expect(await review('o-1', 7, "Copilot wasn't able to review any files.")).toEqual({
+      status: 'applied',
+      outcomes: []
+    });
+    // Another bot's verdict-shaped text with nothing inline is not Copilot's verdict.
+    expect(await review('o-4', 10, closerLook, 'other-reviewer[bot]')).toEqual({
       status: 'applied',
       outcomes: []
     });
