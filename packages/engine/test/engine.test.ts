@@ -361,7 +361,9 @@ describe.skipIf(!url)('engine', () => {
       body: string;
     };
     expect(opened.title).toBe('fix(settings): rename the settings title');
-    expect(opened.body).toContain('[Officina task 1](https://officina.example/tasks/1)');
+    expect(opened.body).toContain(
+      `[Officina task 1](https://officina.example/tasks/1?project=${seeded.projectId})`
+    );
     expect(opened.body).not.toMatch(/(^|\s)#1\b/);
     expect(github.calls.find((call) => call.method === 'updateFile')!.args[0]).toMatchObject({
       path: SPEC,
