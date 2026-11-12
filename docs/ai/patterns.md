@@ -38,4 +38,4 @@ Named so nobody copies them; each is a follow-up of its own.
 - The red-lane paths are read from the raw config with a cast (`packages/engine/src/step.ts:225`, `packages/engine/src/learner.ts:245`) instead of from the normalized `ProjectConfig`.
 - SQL outside `packages/db`: the interviewer's question count (`packages/engine/src/step.ts:209`) and the learner's "looked once" check (`packages/engine/src/learner.ts:233`). Queries belong in the db module that owns the table.
 - `runAgentStep` (`packages/engine/src/step.ts`) is one long function that prepares, runs, verifies and applies every role. New role-specific behaviour goes in a helper, not in another branch inside it.
-- Role labels are written in `apps/api/src/board.ts:57` and again on the Agents page (`apps/board/src/routes/agents/+page.svelte`); stage, lane and role types are mirrored by hand in `apps/board/src/lib/types.ts`.
+- Stage, lane and role types are mirrored by hand in `apps/board/src/lib/types.ts`.

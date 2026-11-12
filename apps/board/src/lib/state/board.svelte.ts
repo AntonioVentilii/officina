@@ -1,11 +1,12 @@
 import { get } from '$lib/api';
-import type { Card, Learning, Run } from '$lib/types';
+import type { AgentRoleInfo, Card, Learning, Run } from '$lib/types';
 import { coalesce, live } from './live.svelte';
 import { session } from './session.svelte';
 
 class Board {
   tasks = $state<Card[]>([]);
   runs = $state<Run[]>([]);
+  agents = $state<AgentRoleInfo[]>([]);
   learnings = $state<Learning[]>([]);
   loaded = $state(false);
   #projectId: string | null = null;
@@ -24,6 +25,7 @@ class Board {
     this.#projectId = projectId;
     this.tasks = [];
     this.runs = [];
+    this.agents = [];
     this.learnings = [];
     this.loaded = false;
     this.#unsubscribe?.();
@@ -40,7 +42,9 @@ class Board {
     const technical = session.technical;
     const [board, runs, learnings] = await Promise.all([
       get<{ tasks: Card[] }>(`/api/projects/${projectId}/board`),
-      technical ? get<{ runs: Run[] }>(`/api/projects/${projectId}/runs`) : { runs: [] },
+      technical
+        ? get<{ runs: Run[]; agents: AgentRoleInfo[] }>(`/api/projects/${projectId}/runs`)
+        : { runs: [], agents: [] },
       technical
         ? get<{ learnings: Learning[] }>(`/api/projects/${projectId}/learnings`)
         : { learnings: [] }
@@ -48,6 +52,7 @@ class Board {
     if (projectId !== this.#projectId) return;
     this.tasks = board.tasks;
     this.runs = runs.runs;
+    this.agents = runs.agents;
     this.learnings = learnings.learnings;
     this.loaded = true;
   }

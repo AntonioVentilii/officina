@@ -332,7 +332,14 @@ describe.skipIf(!url)('board api', () => {
     const full = await json(await call(owner, `${project}/tasks/1`));
     expect(full.costCents).toBe(0);
     expect(full.runs).toHaveLength(1);
-    expect((await call(owner, `${project}/runs`)).status).toBe(200);
+    const runs = await call(owner, `${project}/runs`);
+    expect(runs.status).toBe(200);
+    // The Agents page takes each role's name and description from here, not its own copy.
+    expect((await json(runs)).agents).toContainEqual({
+      role: 'builder',
+      label: 'Builder',
+      does: 'Implements the approved spec on the task branch'
+    });
 
     // Technical detail in the trail: check output, GitHub errors, a failure asked of a maintainer.
     const engine = { kind: 'engine' } as const;

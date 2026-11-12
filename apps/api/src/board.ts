@@ -8,6 +8,7 @@ import {
   isEligible,
   parseProjectConfig,
   type Actor,
+  type AgentRole,
   type Blocked,
   type Gate,
   type Member,
@@ -55,7 +56,7 @@ export interface BoardViewer {
   readonly domains: readonly string[];
 }
 
-const ROLE_LABELS: Record<string, string> = {
+const ROLE_LABELS: Record<AgentRole, string> = {
   interviewer: 'Interviewer',
   spec: 'Spec writer',
   builder: 'Builder',
@@ -66,7 +67,20 @@ const ROLE_LABELS: Record<string, string> = {
   onboarder: 'Onboarder'
 };
 
-export const roleLabel = (role: string) => ROLE_LABELS[role] ?? role;
+export const roleLabel = (role: string) => ROLE_LABELS[role as AgentRole] ?? role;
+
+/** The roles the Agents page lists, in its order, with what each one does. */
+const AGENTS_PAGE: readonly { readonly role: AgentRole; readonly does: string }[] = [
+  { role: 'spec', does: 'Reads the repo and writes a spec in its template' },
+  { role: 'builder', does: 'Implements the approved spec on the task branch' },
+  { role: 'reviewer_spec', does: 'Checks the diff does what the spec says, no more' },
+  { role: 'reviewer_correctness', does: 'Checks correctness and project conventions' },
+  { role: 'chooser', does: 'Decides who approves and how closely; can only raise the bar' },
+  { role: 'onboarder', does: "Writes a new project's agent docs before anything else is built" }
+];
+
+export const agentsView = () =>
+  AGENTS_PAGE.map(({ role, does }) => ({ role, label: roleLabel(role), does }));
 
 const article = (word: string) => (/^[aeiou]/i.test(word) ? `an ${word}` : `a ${word}`);
 
