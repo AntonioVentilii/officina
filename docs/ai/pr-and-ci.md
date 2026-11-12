@@ -1,6 +1,6 @@
 # Pull requests and CI
 
-Each pull request has one purpose and starts from `main`, in parallel with the others; stack one only when it needs another's code ([rules 2 and 3](https://github.com/AntonioVentilii/officina/blob/main/standards/code.md#2-scoped) of the code standard).
+Each pull request has one purpose and starts from `main`, in parallel with the others; stack one only when it needs another's code (rules [2](https://github.com/AntonioVentilii/officina/blob/main/standards/code.md#2-scoped) and [3](https://github.com/AntonioVentilii/officina/blob/main/standards/code.md#3-parallel-not-stacked) of the code standard).
 
 ## Title and commits
 
