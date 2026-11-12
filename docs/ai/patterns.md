@@ -9,11 +9,12 @@ The patterns Officina really uses, each with one place to copy from. [`../archit
 - **Agent results only apply to the work the agent saw.** Pass a `guard` to `applyCommand`, as `sameWork` does in `packages/engine/src/step.ts`.
 - **A GitHub write is safe to retry: it lands once.** `openPullRequest` returns the pull request an earlier attempt opened from the same branch, and `createBranch` keeps a branch an earlier attempt left, never moving it (`packages/github/src/client.ts`). Accepting a learning writes its file only when the branch does not hold the edit yet (`apps/api/src/learnings.ts`), so an accept that failed halfway can simply run again.
 - **Risk comes from the real diff.** Lanes, guardrails and diff size use the paths the GitHub client reads (`pushFacts`), never what an agent says it changed.
+- **A step is a sequence of named phases.** `runAgentStep` (`packages/engine/src/step.ts`) claims the run (`claimStep` in `claim.ts`, shared with the learner), gathers its inputs, runs the session, guards the refs, applies the result and mirrors it to GitHub, each in its own function over one `Step`. New role-specific behaviour goes in the phase it belongs to, not in a new branch of `runAgentStep`.
 
 ## Results and errors
 
 - **Expected failures are values, not exceptions.** Discriminated unions with `ok`: `Decision` (`packages/core/src/lifecycle.ts`), `ConfigResult` (`packages/core/src/config.ts`), `CommandResult`, `RunOutcome`. Error names are a closed union (`DecisionError`, `StoreError`) and the API turns them into words in one table: `ERROR_TEXT` in `apps/api/src/tasks.ts`.
-- **Exceptions are for the unexpected**, and a few named classes the caller handles: `SetupError` (`apps/api/src/setup.ts`), `TaskCommandError` (`apps/api/src/tasks.ts`), `GitHubError` (`packages/github/src/client.ts`). An unexpected error reaches the client only as `{"error":"internal"}`: the `onError` handler in `apps/api/src/app.ts`.
+- **Exceptions are for the unexpected**, and a few named classes the caller handles: `SetupError` (`apps/api/src/setup.ts`), `TaskCommandError` (`apps/api/src/tasks.ts`), `GitHubError` (`packages/github/src/http.ts`). An unexpected error reaches the client only as `{"error":"internal"}`: the `onError` handler in `apps/api/src/app.ts`.
 - **Agent output is untrusted input.** Every role's result is parsed against its zod contract (`parseAgentOutput` in `packages/core/src/contracts.ts`), and project checks run through the `validate` hook of `executeRun` (`packages/runner/src/run.ts`), whose problems go back to the agent.
 
 ## Seams
@@ -35,5 +36,4 @@ The patterns Officina really uses, each with one place to copy from. [`../archit
 Named so nobody copies them; each is a follow-up of its own.
 
 - SQL outside `packages/db`: project and role lookups in `apps/api/src` (`learnings.ts`, `tasks.ts`, `people.ts`, `board.ts`, `webhooks.ts`). Queries belong in the db module that owns the table.
-- `runAgentStep` (`packages/engine/src/step.ts`) is one long function that prepares, runs, verifies and applies every role. New role-specific behaviour goes in a helper, not in another branch inside it.
 - Stage, lane and role types are mirrored by hand in `apps/board/src/lib/types.ts`.

@@ -161,6 +161,17 @@ describe.skipIf(!url)('learning decisions', () => {
     expect((await listLearnings(pool, seeded.projectId))[0]!.status).toBe('applied');
   });
 
+  test('a merged learning pull request is applied whatever the case of the repository name', async () => {
+    const learning = await propose('docs');
+    await decide(pool, fakeGitHub().port, owner(), { id: learning.id, decision: 'accept' });
+    await handleWebhookAction(pool, {
+      kind: 'pull_request_merged',
+      repo: 'viciapp/VICI-APP',
+      prNumber: 77
+    });
+    expect((await listLearnings(pool, seeded.projectId))[0]!.status).toBe('applied');
+  });
+
   test('a learning for another project doc lands as a learning pull request', async () => {
     const learning = await propose('project');
     const github = fakeGitHub();

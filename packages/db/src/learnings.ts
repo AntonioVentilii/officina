@@ -126,7 +126,8 @@ export const markLearningsApplied = async (db: Queryable, repo: string, prNumber
     await db.query<{ id: string }>(
       `update learnings l set status = 'applied'
        from projects p
-       where p.id = l.project_id and p.github_repo = $1 and l.pr_number = $2 and l.status = 'accepted'
+       where p.id = l.project_id and lower(p.github_repo) = lower($1) and l.pr_number = $2
+         and l.status = 'accepted'
        returning l.id`,
       [repo, prNumber]
     )
