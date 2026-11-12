@@ -2,7 +2,8 @@ import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { appendTaskEvent } from '@officina/db';
 import { Pool } from 'pg';
 import { createTaskInMerging, resetAndSeed, type Seeded } from '../../db/test/seed';
-import { approveOnGitHub, type OnBehalf } from '../src';
+import { GitHubError } from '@officina/github';
+import { approveOnGitHub, askCopilotToReview, type OnBehalf } from '../src';
 
 const url = process.env.TEST_DATABASE_URL;
 
@@ -18,7 +19,9 @@ describe.skipIf(!url)('approving on GitHub for the verifier', () => {
     await pool.end();
   });
 
-  const fake = (options: { linked?: boolean; fail?: boolean; head?: string } = {}) => {
+  const fake = (
+    options: { linked?: boolean; fail?: boolean; head?: string; noSeat?: boolean } = {}
+  ) => {
     const calls: { method: string; args: unknown[] }[] = [];
     const onBehalf: OnBehalf = {
       publicUrl: 'https://o.example',
@@ -42,6 +45,17 @@ describe.skipIf(!url)('approving on GitHub for the verifier', () => {
         mergeWhenReady: async (...args) => {
           calls.push({ method: 'mergeWhenReady', args });
           return 'auto_merge' as const;
+        },
+        requestCopilotReview: async (...args) => {
+          calls.push({ method: 'requestCopilotReview', args });
+          if (options.noSeat) {
+            throw new GitHubError(
+              422,
+              '/repos/ViciApp/vici-app/pulls/42/copilot-code-review',
+              '{"failure_reason":"ACTOR_NOT_ELIGIBLE"}'
+            );
+          }
+          return 'requested' as const;
         }
       }
     };
@@ -50,7 +64,7 @@ describe.skipIf(!url)('approving on GitHub for the verifier', () => {
 
   const events = async (taskId: string) =>
     (
-      await pool.query<{ type: string; payload: Record<string, unknown>; member: string }>(
+      await pool.query<{ type: string; payload: Record<string, unknown>; member: string | null }>(
         `select type, payload, actor->>'memberId' as member from task_events
          where task_id = $1 and type like 'github_%'`,
         [taskId]
@@ -133,5 +147,84 @@ describe.skipIf(!url)('approving on GitHub for the verifier', () => {
         payload: { login: 'antonio', error: 'Review cannot be requested from the author' }
       })
     ]);
+  });
+
+  describe('asking Copilot to review as the requester', () => {
+    const ask = (taskId: string) => ({
+      taskId,
+      requesterId: seeded.ownerId,
+      repo: 'ViciApp/vici-app',
+      pullRequest: 42
+    });
+
+    test('asks once per pull request with the requester own token', async () => {
+      const taskId = await createTaskInMerging(pool, seeded);
+      const { onBehalf, calls } = fake();
+      await askCopilotToReview(pool, onBehalf, ask(taskId));
+      await askCopilotToReview(pool, onBehalf, ask(taskId));
+
+      expect(calls).toEqual([
+        {
+          method: 'requestCopilotReview',
+          args: [`token-${seeded.ownerId}`, 'ViciApp/vici-app', 42]
+        }
+      ]);
+      expect(await events(taskId)).toEqual([
+        {
+          type: 'github_copilot_review_requested',
+          payload: { pullRequest: 42, login: 'antonio', outcome: 'requested' },
+          member: seeded.ownerId
+        }
+      ]);
+    });
+
+    test('a refusal from GitHub is recorded once and never thrown', async () => {
+      const taskId = await createTaskInMerging(pool, seeded);
+      const { onBehalf, calls } = fake({ noSeat: true });
+      await askCopilotToReview(pool, onBehalf, ask(taskId));
+      await askCopilotToReview(pool, onBehalf, ask(taskId));
+
+      expect(calls).toHaveLength(1);
+      expect(await events(taskId)).toEqual([
+        {
+          type: 'github_copilot_review_failed',
+          payload: {
+            pullRequest: 42,
+            login: 'antonio',
+            error: expect.stringContaining('ACTOR_NOT_ELIGIBLE')
+          },
+          member: seeded.ownerId
+        }
+      ]);
+    });
+
+    test('a requester without a usable GitHub account is recorded, and nothing is sent', async () => {
+      const unlinkedTask = await createTaskInMerging(pool, seeded);
+      const unlinked = fake({ linked: false });
+      await askCopilotToReview(pool, unlinked.onBehalf, ask(unlinkedTask));
+      expect(unlinked.calls).toEqual([]);
+      expect(await events(unlinkedTask)).toEqual([
+        {
+          type: 'github_copilot_review_failed',
+          payload: {
+            pullRequest: 42,
+            login: null,
+            error: 'the requester has not connected GitHub, or their GitHub authorization expired'
+          },
+          member: null
+        }
+      ]);
+
+      const unconfiguredTask = await createTaskInMerging(pool, seeded);
+      await askCopilotToReview(pool, undefined, ask(unconfiguredTask));
+      expect(await events(unconfiguredTask)).toEqual([
+        expect.objectContaining({
+          type: 'github_copilot_review_failed',
+          payload: expect.objectContaining({
+            error: 'connecting GitHub accounts is not set up on this server'
+          })
+        })
+      ]);
+    });
   });
 });

@@ -1,10 +1,12 @@
 export { buildBrief, type BriefInput } from './brief';
 export {
   approveOnGitHub,
+  askCopilotToReview,
   checklistMarkdown,
   cancelStaleAutoMerges,
   finishVerifiedSpecs,
   postChecklist,
+  requestCopilotReviews,
   specPathIn,
   syncSpecStatus,
   type OnBehalf,
