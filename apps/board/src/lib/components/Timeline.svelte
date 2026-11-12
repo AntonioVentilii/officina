@@ -89,6 +89,12 @@
         return p.error
           ? `could not approve on GitHub as @${p.login}: ${p.error}`
           : `could not approve on GitHub as @${p.login}`;
+      case 'github_copilot_review_requested':
+        return `asked Copilot to review pull request #${p.pullRequest} as @${p.login}`;
+      case 'github_copilot_review_failed':
+        return p.error
+          ? `could not ask Copilot to review pull request #${p.pullRequest}: ${p.error}`
+          : `could not ask Copilot to review pull request #${p.pullRequest}`;
       case 'checklist_posted':
         return `posted the checklist on pull request #${p.pullRequest}`;
       default:
