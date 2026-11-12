@@ -28,7 +28,7 @@ const PROJECT = z
   .min(1)
   .optional()
   .describe(
-    'The project by name or repository (for example "vici-app"). Leave it out when the person belongs to one project; otherwise call list_projects and ask which one.'
+    'The project by name or repository (for example "web-app" or "acme/web-app"). Leave it out when the person belongs to one project; otherwise call list_projects and ask which one.'
   );
 const NUMBER = z.number().int().min(1).describe('The task number, as in "task 12".');
 
@@ -151,9 +151,9 @@ Before calling, make sure you know, in the person's own words:
 Ask for what is missing, one short question at a time, then write the request in plain language. Do not invent technical details or file names.
 
 Examples:
-- Change a text: title "Rename the Wager button to Prediction", request "On the battle screen the button says Wager. It should say Prediction, in every language. Nothing else on the screen changes."
+- Change a text: title "Rename the Submit button to Send", request "On the contact form the button says Submit. It should say Send, in every language. Nothing else on the form changes."
 - Report a bug: title "Profile photo does not save", request "I pick a new photo in Settings > Profile and press Save. The old photo is still there after reloading. Expected: the new photo stays."
-- Ask for a feature: title "Remind people of unfinished predictions", request "People forget predictions they started. Send a reminder the next morning if one is unfinished. Only once per prediction."
+- Ask for a feature: title "Remind people of unfinished orders", request "People forget orders they started. Send a reminder the next morning if one is unfinished. Only once per order."
 
 After it is opened, tell the person the task link and that an agent may ask them questions there or here (whats_waiting_on_me).`,
     input: z.object({
@@ -163,7 +163,7 @@ After it is opened, tell the person the task link and that an agent may ask them
         .trim()
         .min(3)
         .max(200)
-        .describe('A short imperative title, for example "Rename the Wager button to Prediction".'),
+        .describe('A short imperative title, for example "Rename the Submit button to Send".'),
       request: z
         .string()
         .trim()
