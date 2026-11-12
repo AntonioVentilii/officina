@@ -315,6 +315,47 @@ describe('GitHub client', () => {
     const creating = client.createBranch({ ...ref, branch: 'officina/learning-1', from: 'main' });
     await expect(creating).rejects.toThrow('GitHub 422');
   });
+
+  test('resolves the open threads of the given reviews on every page of a pull request', async () => {
+    const thread = (id: string, reviewId: number, isResolved = false) => ({
+      id,
+      isResolved,
+      comments: { nodes: [{ pullRequestReview: { databaseId: reviewId } }] }
+    });
+    const page = (nodes: unknown[], endCursor: string | null) =>
+      json({
+        data: {
+          repository: {
+            pullRequest: {
+              reviewThreads: { pageInfo: { hasNextPage: endCursor !== null, endCursor }, nodes }
+            }
+          }
+        }
+      });
+    const answers = [
+      page([thread('T1', 7), thread('T2', 8), thread('T3', 7, true)], 'c1'),
+      page([thread('T4', 7)], null),
+      json({ data: {} }),
+      json({ data: {} })
+    ];
+    const { fetchImpl, calls } = fakeGitHub({
+      'POST /app/installations/99/access_tokens': tokenRoute('2099-01-01T00:00:00Z'),
+      'POST /graphql': () => answers.shift()!
+    });
+    const client = createGitHubClient({ appId: '1', privateKeyPem, fetch: fetchImpl });
+
+    expect(await client.resolveReviewThreads({ ...ref, pullRequest: 42, reviewIds: [7] })).toBe(2);
+    const graphqlCalls = calls.filter((call) => call.url === '/graphql');
+    const variables = graphqlCalls.map(
+      (call) => (call.body as { variables: Record<string, unknown> }).variables
+    );
+    expect(variables).toEqual([
+      { owner: 'ViciApp', name: 'vici-app', number: 42, after: null },
+      { owner: 'ViciApp', name: 'vici-app', number: 42, after: 'c1' },
+      { id: 'T1' },
+      { id: 'T4' }
+    ]);
+  });
 });
 
 describe('merge when ready', () => {

@@ -99,13 +99,15 @@ export interface Task {
 }
 
 /** How closely people should check: a read, a hands-on test, or a test on a real device. */
-export type CheckDepth = 'glance' | 'test' | 'device';
+export const CHECK_DEPTHS = ['glance', 'test', 'device'] as const;
+export type CheckDepth = (typeof CHECK_DEPTHS)[number];
 
 /**
  * Who merges a verified result: a person on GitHub, or GitHub's auto-merge once the branch rules
  * pass. The chooser decides per result; `auto` only takes effect when the project allows it.
  */
-export type MergeMode = 'person' | 'auto';
+export const MERGE_MODES = ['person', 'auto'] as const;
+export type MergeMode = (typeof MERGE_MODES)[number];
 
 /** An approval the chooser adds to a gate on top of the lane policy. It can only add, never remove. */
 export type ExtraRequirement =

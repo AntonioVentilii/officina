@@ -1,5 +1,6 @@
 import type { LearningTarget } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
+import { RUN_IS_ACTIVE } from './run-status';
 
 type Queryable = Pool | PoolClient;
 
@@ -92,6 +93,11 @@ export const loadLearning = async (
     )
   ).rows[0] ?? null;
 
+/** Locks a learning until the transaction ends, so two decisions on it run one after the other. */
+export const lockLearning = async (db: Queryable, id: string) => {
+  await db.query('select 1 from learnings where id = $1 for update', [id]);
+};
+
 /** Records a decision once: a learning that is no longer proposed cannot be decided again. */
 export const decideLearning = async (
   db: Queryable,
@@ -153,7 +159,8 @@ export const learnerHasLooked = async (db: Queryable, taskId: string): Promise<b
   Boolean(
     (
       await db.query(
-        "select 1 from runs where task_id = $1 and agent_role = 'learner' and status not in ('queued', 'running')",
+        `select 1 from runs where task_id = $1 and agent_role = 'learner'
+           and not (status ${RUN_IS_ACTIVE})`,
         [taskId]
       )
     ).rowCount

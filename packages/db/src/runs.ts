@@ -1,3 +1,4 @@
+import { TERMINAL_STAGES } from '@officina/core';
 import type { Actor, StoredTaskContext } from './types';
 import type { Pool, PoolClient } from 'pg';
 import { loadTask } from './store';
@@ -143,8 +144,8 @@ export const listActiveTaskIds = async (pool: Pool, projectId: string): Promise<
   (
     await pool.query<{ id: string }>(
       `select id from tasks where project_id = $1
-         and stage not in ('done', 'declined', 'cancelled') order by priority desc, number`,
-      [projectId]
+         and stage <> all($2) order by priority desc, number`,
+      [projectId, [...TERMINAL_STAGES]]
     )
   ).rows.map((row) => row.id);
 

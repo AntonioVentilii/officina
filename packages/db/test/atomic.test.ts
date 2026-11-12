@@ -1,6 +1,12 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { Pool } from 'pg';
-import { createLoginLink, createTask, redeemLoginLink, saveGitHubAccount } from '../src';
+import {
+  createLoginLink,
+  createTask,
+  redeemLoginLink,
+  saveGitHubAccount,
+  unlinkGitHubAccount
+} from '../src';
 import { resetAndSeed, type Seeded } from './seed';
 
 const url = process.env.TEST_DATABASE_URL;
@@ -40,6 +46,29 @@ describe.skipIf(!url)('writes in several steps', () => {
     await expect(redeemLoginLink(pool, link)).rejects.toThrow('insert into sessions failed');
     await healInsertsInto('sessions');
     expect(await redeemLoginLink(pool, link)).toMatchObject({ memberId: seeded.ownerId });
+  });
+
+  test('a GitHub account whose sign-in could not be removed stays linked', async () => {
+    await saveGitHubAccount(pool, {
+      memberId: seeded.ownerId,
+      githubUserId: 42,
+      login: 'antonio',
+      accessTokenEnc: 'sealed',
+      accessExpiresAt: null,
+      refreshTokenEnc: null,
+      refreshExpiresAt: null
+    });
+    await pool.query(
+      `create function fail_delete() returns trigger language plpgsql as
+         $$ begin raise exception 'delete from % failed', tg_table_name; end $$`
+    );
+    await pool.query(
+      'create trigger fail_delete before delete on identities for each row execute function fail_delete()'
+    );
+    await expect(unlinkGitHubAccount(pool, seeded.ownerId)).rejects.toThrow(
+      'delete from identities failed'
+    );
+    expect(await count('github_accounts')).toBe(1);
   });
 
   test('a GitHub account whose identity could not be stored is not linked at all', async () => {
