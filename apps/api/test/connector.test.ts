@@ -291,7 +291,7 @@ describe.skipIf(!url)('connector for Claude', () => {
     expect(open.annotations.readOnlyHint).toBe(false);
 
     expect((await tool(token, 'list_projects')).content[0]!.text).toContain(
-      'vici-app (ViciApp/vici-app): you are owner'
+      'vici-app (ViciApp/vici-app): your role is owner, so you can do everything, including changing the project settings.'
     );
     const opened = await tool(token, 'open_request', {
       title: 'Rename the Wager button',
