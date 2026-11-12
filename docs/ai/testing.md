@@ -14,7 +14,7 @@ The board has no unit tests: what it shows is decided and tested in the API view
 
 - **A lifecycle rule:** `packages/core/test/lifecycle.test.ts`, driving commands through `createDriver` from `packages/core/test/fixtures.ts`, as people and agents would. Test the outcome (stage, events, error), not the internals.
 - **A contract or a config key:** `contracts.test.ts` or `config.test.ts` in `packages/core/test`.
-- **A GitHub call:** `packages/github/test/client.test.ts`, with the fake `fetch` there; never the network.
+- **A GitHub call:** `packages/github/test/client.test.ts`, with the fake `fetch` there, and `http.test.ts` for the request every call shares; never the network.
 - **A runner behaviour:** `packages/runner/test`, with `createFakePort` from `fake-port.ts`; never the Managed Agents API.
 - **A query, a step, a tick, an API route:** the database suites, starting from `resetAndSeed` (`packages/db/test/seed.ts`), which recreates the schema for each test. Suites skip themselves when `TEST_DATABASE_URL` is unset (`describe.skipIf(!url)`), so `bun run test` stays fast.
 - **A migration:** `packages/db/test/migrate.test.ts` lists every migration and checks the constraints still mirror `packages/core`.
