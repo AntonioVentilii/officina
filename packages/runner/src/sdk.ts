@@ -101,6 +101,12 @@ export const createSdkPort = (client: Anthropic): ManagedAgentsPort => ({
     const amount = session.usage?.list_cost?.amount;
     return amount === undefined ? null : Number(amount);
   },
+  async findAgentByName(name) {
+    for await (const agent of client.beta.agents.list()) {
+      if (agent.name === name) return { id: agent.id };
+    }
+    return null;
+  },
   async createAgent(agent) {
     const created = await client.beta.agents.create(agentParams(agent));
     return { id: created.id, version: created.version };

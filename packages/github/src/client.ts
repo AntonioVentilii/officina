@@ -47,6 +47,23 @@ export interface RefSnapshot {
   readonly tags: Readonly<Record<string, string>>;
 }
 
+interface ReviewThread {
+  readonly id: string;
+  readonly isResolved: boolean;
+  readonly comments: { nodes: { pullRequestReview: { databaseId: number } | null }[] };
+}
+
+interface ReviewThreadsPage {
+  repository: {
+    pullRequest: {
+      reviewThreads: {
+        pageInfo: { hasNextPage: boolean; endCursor: string | null };
+        nodes: ReviewThread[];
+      };
+    };
+  };
+}
+
 interface CachedToken {
   readonly token: string;
   readonly expiresAtMs: number;
@@ -415,6 +432,29 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     }
   };
 
+  /** Every review thread of a pull request, page by page, with the review its first comment is from. */
+  const listReviewThreads = async (ref: RepoRef & { readonly pullRequest: number }) => {
+    const [owner, name] = ref.repo.split('/');
+    const threads: ReviewThread[] = [];
+    let after: string | null = null;
+    do {
+      const response: { data?: ReviewThreadsPage; errors?: { message: string }[] } =
+        await graphql<ReviewThreadsPage>(
+          ref,
+          'query($owner: String!, $name: String!, $number: Int!, $after: String) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { reviewThreads(first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { id isResolved comments(first: 1) { nodes { pullRequestReview { databaseId } } } } } } } }',
+          { owner, name, number: ref.pullRequest, after }
+        );
+      if (response.errors?.length) {
+        throw new GitHubError(422, '/graphql reviewThreads', response.errors[0]!.message);
+      }
+      const page: ReviewThreadsPage['repository']['pullRequest']['reviewThreads'] | undefined =
+        response.data?.repository.pullRequest.reviewThreads;
+      threads.push(...(page?.nodes ?? []));
+      after = page?.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+    } while (after);
+    return threads;
+  };
+
   /**
    * Resolves the open threads started by the given reviews. Officina calls it once the fixes for
    * those reviews were reviewed again and verified, since the repository only merges with every
@@ -423,28 +463,7 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
   const resolveReviewThreads = async (
     ref: RepoRef & { readonly pullRequest: number; readonly reviewIds: readonly number[] }
   ): Promise<number> => {
-    const [owner, name] = ref.repo.split('/');
-    const response = await graphql<{
-      repository: {
-        pullRequest: {
-          reviewThreads: {
-            nodes: {
-              id: string;
-              isResolved: boolean;
-              comments: { nodes: { pullRequestReview: { databaseId: number } | null }[] };
-            }[];
-          };
-        };
-      };
-    }>(
-      ref,
-      'query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { reviewThreads(first: 100) { nodes { id isResolved comments(first: 1) { nodes { pullRequestReview { databaseId } } } } } } } }',
-      { owner, name, number: ref.pullRequest }
-    );
-    if (response.errors?.length) {
-      throw new GitHubError(422, '/graphql reviewThreads', response.errors[0]!.message);
-    }
-    const threads = response.data?.repository.pullRequest.reviewThreads.nodes ?? [];
+    const threads = await listReviewThreads(ref);
     const open = threads.filter((thread) => {
       const reviewId = thread.comments.nodes[0]?.pullRequestReview?.databaseId;
       return !thread.isResolved && reviewId !== undefined && ref.reviewIds.includes(reviewId);

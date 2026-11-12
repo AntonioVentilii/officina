@@ -338,9 +338,7 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
         if (!consumed) return expired();
         const result = await deps.githubLogin.accounts.complete(code, consumed.memberId);
         if (!result.ok) return fail(result.why);
-        if (consumed.memberId) return redirect('/?github=linked', [clear]);
-        const session = await createSession(pool, result.memberId);
-        return redirect('/', [clear, sessionCookie(session, SESSION_TTL_MS, secure)]);
+        return redirect('/?github=linked', [clear]);
       })
       .post('/auth/github/unlink', async ({ request }) => {
         mutation(request);
