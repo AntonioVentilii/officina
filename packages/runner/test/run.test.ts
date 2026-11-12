@@ -76,18 +76,23 @@ describe('executeRun', () => {
     const { port, report } = run([
       toolUse(approve),
       idle('requires_action'),
+      toolUse({ outcome: 'approve', summary: 'A different, valid result.' }),
       toolUse({ outcome: 'approve' }),
       toolUse({ outcome: 'approve' }),
       toolUse({ outcome: 'approve' }),
       idle('requires_action'),
       idle('end_turn')
     ]);
+    // Neither the valid replacement nor three invalid submissions (which once ended the run as
+    // invalid_result) change the accepted output.
     expect((await report).outcome).toEqual({ kind: 'result', output: approve });
+    const refused = { isError: true, text: 'A result was already accepted. Stop here.' };
     expect(toolResults(port.sent)).toMatchObject([
       { isError: false },
-      { isError: true, text: 'A result was already accepted. Stop here.' },
-      { isError: true, text: 'A result was already accepted. Stop here.' },
-      { isError: true, text: 'A result was already accepted. Stop here.' }
+      refused,
+      refused,
+      refused,
+      refused
     ]);
   });
 
