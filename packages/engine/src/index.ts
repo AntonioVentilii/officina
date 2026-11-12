@@ -1,31 +1,16 @@
-export { buildBrief, type BriefInput } from './brief';
 export {
   approveOnGitHub,
   askCopilotToReview,
   checklistMarkdown,
   cancelStaleAutoMerges,
   finishVerifiedSpecs,
-  postChecklist,
   requestCopilotReviews,
-  specPathIn,
   syncSpecStatus,
-  type OnBehalf,
-  type SyncGitHubPort
-} from './github-sync';
-export {
-  runAgentStep,
   taskLink,
-  type EngineDependencies,
-  type GitHubPort,
-  type StepResult
-} from './step';
-export { openMissingPullRequests, openTaskPullRequest, type PullRequestPort } from './pull-request';
-export { collectDueSteps, tick, type DueStep, type TickReport } from './tick';
-export { learnerBrief, learningProblems, runLearnerStep } from './learner';
-export {
-  ONBOARDING_TITLE,
-  ensureOnboarding,
-  onboardingSpec,
-  openOnboardingIn,
-  type OnboardingInput
-} from './onboarding';
+  type OnBehalf
+} from './github-sync';
+export { runAgentStep, type EngineDependencies, type GitHubPort } from './step';
+export { openMissingPullRequests } from './pull-request';
+export { collectDueSteps, tick } from './tick';
+export { learningProblems } from './learner';
+export { ensureOnboarding, openOnboardingIn } from './onboarding';

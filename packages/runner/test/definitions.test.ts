@@ -10,6 +10,7 @@ import {
   loadDefinitions,
   loadStandard,
   syncAgents,
+  type SyncedAgent,
   withStandard
 } from '../src';
 import { createFakePort } from './fake-port';
@@ -85,14 +86,54 @@ describe('syncAgents', () => {
     const port = createFakePort(() => []);
     const spec = buildDefinition('spec', 'v1');
     const builder = buildDefinition('builder', 'v1');
-    const first = await syncAgents(port, [spec, builder], []);
+    const first = await syncAgents(port, [spec, builder], [], async () => {});
     expect(first.changed).toEqual(['spec', 'builder']);
 
-    const second = await syncAgents(port, [spec, buildDefinition('builder', 'v2')], first.agents);
+    const second = await syncAgents(
+      port,
+      [spec, buildDefinition('builder', 'v2')],
+      first.agents,
+      async () => {}
+    );
     expect(second.changed).toEqual(['builder']);
     expect(port.agentWrites.at(-1)!.id).toBe(first.agents[1]!.externalAgentId);
     expect(second.agents[0]).toEqual(first.agents[0]!);
     expect(second.agents[1]!.version).toBe(3);
+  });
+
+  test('a sync that fails partway keeps what it wrote, so the next one creates nothing twice', async () => {
+    const port = createFakePort(() => []);
+    const createAgent = port.createAgent.bind(port);
+    let refuse = true;
+    port.createAgent = (write) =>
+      refuse && write.name.includes('builder')
+        ? Promise.reject(new Error('rate limited'))
+        : createAgent(write);
+    const saved: SyncedAgent[] = [];
+    const save = async (agent: SyncedAgent) => {
+      saved.push(agent);
+    };
+    const definitions = [buildDefinition('spec', 'v1'), buildDefinition('builder', 'v1')];
+
+    await expect(syncAgents(port, definitions, [], save)).rejects.toThrow('rate limited');
+    expect(saved.map((agent) => agent.role)).toEqual(['spec']);
+
+    refuse = false;
+    const retried = await syncAgents(port, definitions, [...saved], save);
+    expect(retried.changed).toEqual(['builder']);
+    expect(port.agentWrites.filter((write) => write.id === null)).toHaveLength(2);
+  });
+
+  test('an agent created but never saved is found by name and updated, not created again', async () => {
+    const port = createFakePort(() => []);
+    const definitions = [buildDefinition('spec', 'v1')];
+    await expect(
+      syncAgents(port, definitions, [], () => Promise.reject(new Error('database down')))
+    ).rejects.toThrow('database down');
+
+    const retried = await syncAgents(port, definitions, [], async () => {});
+    expect(port.agentWrites.map((write) => write.id)).toEqual([null, 'agent_1']);
+    expect(retried.agents[0]!.externalAgentId).toBe('agent_1');
   });
 });
 

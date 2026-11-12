@@ -1,21 +1,19 @@
-import { createHash } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
+import { hashToken } from './auth';
 import { inTransaction } from './store';
 
 type Queryable = Pool | PoolClient;
 
-const hash = (value: string) => createHash('sha256').update(value).digest('hex');
-
 export const createOAuthState = async (
   db: Queryable,
   state: string,
-  memberId: string | null,
+  memberId: string,
   ttlMs: number
 ) => {
   await db.query(
     `insert into oauth_states (state_hash, member_id, expires_at)
      values ($1, $2, now() + make_interval(secs => $3))`,
-    [hash(state), memberId, ttlMs / 1000]
+    [hashToken(state), memberId, ttlMs / 1000]
   );
 };
 
@@ -23,10 +21,10 @@ export const createOAuthState = async (
 export const consumeOAuthState = async (
   db: Queryable,
   state: string
-): Promise<{ memberId: string | null } | null> => {
-  const { rows } = await db.query<{ member_id: string | null }>(
+): Promise<{ memberId: string } | null> => {
+  const { rows } = await db.query<{ member_id: string }>(
     'delete from oauth_states where state_hash = $1 and expires_at > now() returning member_id',
-    [hash(state)]
+    [hashToken(state)]
   );
   return rows[0] ? { memberId: rows[0].member_id } : null;
 };
@@ -44,7 +42,7 @@ export const spendOAuthState = async (
     await db.query(
       `insert into oauth_states (state_hash, member_id, expires_at) values ($1, null, $2)
        on conflict (state_hash) do nothing returning state_hash`,
-      [hash(state), expiresAt]
+      [hashToken(state), expiresAt]
     )
   ).rowCount === 1;
 
@@ -117,10 +115,14 @@ export const memberForGitHubUser = async (db: Queryable, githubUserId: number) =
     )
   ).rows[0]?.member_id ?? null;
 
-export const unlinkGitHubAccount = async (db: Queryable, memberId: string) => {
-  await db.query('delete from github_accounts where member_id = $1', [memberId]);
-  await db.query("delete from identities where provider = 'github' and member_id = $1", [memberId]);
-};
+/** Removes the linked account and the sign-in it gave, both or neither. */
+export const unlinkGitHubAccount = (pool: Pool, memberId: string) =>
+  inTransaction(pool, async (client) => {
+    await client.query('delete from github_accounts where member_id = $1', [memberId]);
+    await client.query("delete from identities where provider = 'github' and member_id = $1", [
+      memberId
+    ]);
+  });
 
 export const githubLoginOf = async (db: Queryable, memberId: string) =>
   (
