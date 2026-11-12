@@ -17,9 +17,7 @@
     },
     "apps/api": {
       "entry": ["src/main.ts", "src/cli.ts", "src/dev.ts", "test/**/*.test.ts"],
-      "project": ["src/**/*.ts", "test/**/*.ts"],
-      // Baseline: apps/api never imports the SDK (packages/runner does). Its removal is its own PR.
-      "ignoreDependencies": ["@anthropic-ai/sdk"]
+      "project": ["src/**/*.ts", "test/**/*.ts"]
     },
     "apps/board": {
       "project": ["src/**/*.{ts,svelte}"],
