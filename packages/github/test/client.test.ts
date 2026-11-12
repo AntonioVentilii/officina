@@ -8,6 +8,7 @@ const privateKeyPem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toStri
 interface Call {
   method: string;
   url: string;
+  query: string;
   authorization: string | null;
   body: unknown;
 }
@@ -22,6 +23,7 @@ const fakeGitHub = (routes: Record<string, () => Response>) => {
     calls.push({
       method,
       url: url.pathname,
+      query: url.search,
       authorization: headers.get('authorization'),
       body: init?.body ? JSON.parse(init.body as string) : undefined
     });
@@ -233,5 +235,56 @@ describe('GitHub client', () => {
     const failure = client.commentOnIssue({ ...ref, issueNumber: 3, body: 'hi' });
     await expect(failure).rejects.toBeInstanceOf(GitHubError);
     await expect(failure).rejects.toThrow('GitHub 403');
+  });
+
+  test('opening a pull request again returns the one an earlier attempt opened', async () => {
+    const { fetchImpl, calls } = fakeGitHub({
+      'POST /app/installations/99/access_tokens': tokenRoute('2099-01-01T00:00:00Z'),
+      'POST /repos/ViciApp/vici-app/pulls': () =>
+        json({ message: 'A pull request already exists for ViciApp:officina/12-copy.' }, 422),
+      'GET /repos/ViciApp/vici-app/pulls': () =>
+        json([{ number: 5, html_url: 'https://github.com/ViciApp/vici-app/pull/5' }])
+    });
+    const client = createGitHubClient({ appId: '1', privateKeyPem, fetch: fetchImpl });
+    const input = { ...ref, base: 'main', branch: 'officina/12-copy', title: 't', body: 'b' };
+    expect(await client.openPullRequest(input)).toEqual({
+      number: 5,
+      url: 'https://github.com/ViciApp/vici-app/pull/5'
+    });
+    expect(new URLSearchParams(calls.at(-1)!.query).get('head')).toBe('ViciApp:officina/12-copy');
+  });
+
+  test('a refused pull request with none open from its branch is still an error', async () => {
+    const { fetchImpl } = fakeGitHub({
+      'POST /app/installations/99/access_tokens': tokenRoute('2099-01-01T00:00:00Z'),
+      'POST /repos/ViciApp/vici-app/pulls': () => json({ message: 'No commits between' }, 422),
+      'GET /repos/ViciApp/vici-app/pulls': () => json([])
+    });
+    const client = createGitHubClient({ appId: '1', privateKeyPem, fetch: fetchImpl });
+    const opening = client.openPullRequest({
+      ...ref,
+      base: 'main',
+      branch: 'b',
+      title: 't',
+      body: 'b'
+    });
+    await expect(opening).rejects.toThrow('GitHub 422');
+  });
+
+  test('creating a branch an earlier attempt left moves it back to the base head', async () => {
+    const { fetchImpl, calls } = fakeGitHub({
+      'POST /app/installations/99/access_tokens': tokenRoute('2099-01-01T00:00:00Z'),
+      'GET /repos/ViciApp/vici-app/git/ref/heads/main': () => json({ object: { sha: 'abc' } }),
+      'POST /repos/ViciApp/vici-app/git/refs': () =>
+        json({ message: 'Reference already exists' }, 422),
+      'PATCH /repos/ViciApp/vici-app/git/refs/heads/officina%2Flearning-1': () =>
+        json({ object: { sha: 'abc' } })
+    });
+    const client = createGitHubClient({ appId: '1', privateKeyPem, fetch: fetchImpl });
+    await client.createBranch({ ...ref, branch: 'officina/learning-1', from: 'main' });
+    expect(calls.at(-1)).toMatchObject({
+      method: 'PATCH',
+      body: { sha: 'abc', force: true }
+    });
   });
 });
