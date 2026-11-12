@@ -62,7 +62,7 @@ The meta-update rule: a pull request that adds a pattern, a shared piece of code
 
 ### 14. Writing
 
-No em dashes or en dashes anywhere, in code, comments, docs or messages: use hyphens, commas, colons or two sentences. Comments say why, never what. No AI attribution in commits, pull requests or code.
+No em dash (U+2014) anywhere, in code, comments, docs or messages, and no en dash (U+2013) used the same way, as a break with whitespace on both sides: write a comma, a colon, parentheses or two sentences. An en dash between two values with no spaces is a range and stays (`10–20`, `Mon–Fri`). A check enforces both by matching U+2014, and U+2013 with whitespace on both sides (`\u2014|\s\u2013\s`). Comments say why, never what. No AI attribution in commits, pull requests or code.
 
 ### 15. Idempotent
 
