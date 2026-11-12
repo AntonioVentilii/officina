@@ -3,3 +3,4 @@ apps/board/build/
 bun.lock
 CHANGELOG.md
 .release-please-manifest.json
+eslint-suppressions.json
