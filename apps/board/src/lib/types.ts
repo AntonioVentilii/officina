@@ -72,6 +72,13 @@ export interface Card {
   readonly waitingOn: WaitingOn;
 }
 
+/** A role on the Agents page, named and described by the API. */
+export interface AgentRoleInfo {
+  readonly role: string;
+  readonly label: string;
+  readonly does: string;
+}
+
 export interface Run {
   readonly id: string;
   readonly taskNumber: number;
