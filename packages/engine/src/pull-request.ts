@@ -79,7 +79,11 @@ export const openTaskPullRequest = async (
     base: context.defaultBranch,
     branch,
     title: input.built.prTitle,
-    body: pullRequestBody(taskLink(input.publicUrl, context.number), input.built, context.issue)
+    body: pullRequestBody(
+      taskLink(input.publicUrl, context.projectId, context.number),
+      input.built,
+      context.issue
+    )
   });
   await syncSpecStatus(pool, github, {
     taskId: input.taskId,
