@@ -1,6 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import { createVerify, generateKeyPairSync } from 'node:crypto';
-import { COMPARE_FILE_LIMIT, GitHubError, createAppJwt, createGitHubClient } from '../src';
+import {
+  COMPARE_FILE_LIMIT,
+  GitHubError,
+  createAppJwt,
+  createGitHubAsUser,
+  createGitHubClient
+} from '../src';
 
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
 const privateKeyPem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
@@ -286,5 +292,33 @@ describe('GitHub client', () => {
       method: 'PATCH',
       body: { sha: 'abc', force: true }
     });
+  });
+});
+
+describe('GitHub as a person', () => {
+  test('asks Copilot to review with the person token, and a pending review is not an error', async () => {
+    const path = '/repos/ViciApp/vici-app/pulls';
+    const { fetchImpl, calls } = fakeGitHub({
+      [`POST ${path}/1/copilot-code-review`]: () => json({ node_id: 'R_1', state: 'PENDING' }, 201),
+      [`POST ${path}/2/copilot-code-review`]: () =>
+        json({ message: 'A Copilot code review request is already pending' }, 409),
+      [`POST ${path}/3/copilot-code-review`]: () =>
+        json({ message: 'Not eligible', failure_reason: 'ACTOR_NOT_ELIGIBLE' }, 422)
+    });
+    const asUser = createGitHubAsUser({ fetch: fetchImpl });
+
+    expect(await asUser.requestCopilotReview('ghu_1', 'ViciApp/vici-app', 1)).toBe('requested');
+    expect(calls[0]).toEqual({
+      method: 'POST',
+      url: `${path}/1/copilot-code-review`,
+      authorization: 'Bearer ghu_1',
+      body: undefined
+    });
+    expect(await asUser.requestCopilotReview('ghu_1', 'ViciApp/vici-app', 2)).toBe(
+      'already_pending'
+    );
+    const refused = asUser.requestCopilotReview('ghu_1', 'ViciApp/vici-app', 3);
+    await expect(refused).rejects.toBeInstanceOf(GitHubError);
+    await expect(refused).rejects.toThrow('ACTOR_NOT_ELIGIBLE');
   });
 });
