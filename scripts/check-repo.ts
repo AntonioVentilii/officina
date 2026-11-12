@@ -12,13 +12,10 @@ const problems: string[] = [];
 
 for (const path of tracked) {
   if (SKIP.has(path)) continue;
-  const file = Bun.file(path);
-  if (
-    !file.type.startsWith('text') &&
-    !/\.(ts|svelte|md|json|jsonc|yml|yaml|sql|css|html)$/.test(path)
-  )
-    continue;
-  const lines = (await file.text()).split('\n');
+  const bytes = await Bun.file(path).bytes();
+  // Binary files (images, fonts) hold a NUL byte; every other tracked file is text to check.
+  if (bytes.includes(0)) continue;
+  const lines = new TextDecoder().decode(bytes).split('\n');
   lines.forEach((line, index) => {
     if (DASH.test(line)) problems.push(`${path}:${index + 1}: em dash or spaced en dash (rule 14)`);
   });
