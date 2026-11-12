@@ -281,8 +281,8 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
   ): Promise<string | null> => (await readFile(ref))?.text ?? null;
 
   /**
-   * Points one of Officina's own branches at the current head of another one. A branch left by an
-   * earlier attempt is moved back, so a retried step starts from the same place as the first.
+   * Creates a branch at the current head of another one. A branch an earlier attempt left is kept as
+   * it is, never moved, so a retry cannot undo what was written on it since.
    */
   const createBranch = async (
     ref: RepoRef & { readonly branch: string; readonly from: string }
@@ -299,12 +299,11 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
         body: { ref: `refs/heads/${ref.branch}`, sha: head.object.sha }
       });
     } catch (error) {
-      if (!(error instanceof GitHubError && error.status === 422)) throw error;
-      await request(`/repos/${ref.repo}/git/refs/heads/${encodeURIComponent(ref.branch)}`, {
-        method: 'PATCH',
-        token,
-        body: { sha: head.object.sha, force: true }
-      });
+      const exists =
+        error instanceof GitHubError &&
+        error.status === 422 &&
+        error.message.includes('Reference already exists');
+      if (!exists) throw error;
     }
   };
 
