@@ -53,12 +53,24 @@ describe.skipIf(!url)('learning decisions', () => {
     await pool.end();
   });
 
-  const fakeGitHub = () => {
+  /** Remembers what each branch holds, so a second accept sees what the first one wrote. */
+  const fakeGitHub = (options: { failOpening?: number } = {}) => {
     const calls: { method: string; args: Record<string, unknown> }[] = [];
+    const written = new Map<string, string>();
+    let failOpening = options.failOpening ?? 0;
     const record = (method: string) => async (args: Record<string, unknown>) => {
       calls.push({ method, args });
-      if (method === 'readFile') return { text: '# Agents\n\n## Copy\n', sha: 'blob1' };
-      if (method === 'openPullRequest') return { number: 77, url: 'https://github.com/x/pull/77' };
+      if (method === 'readFile') {
+        const text = written.get(String(args.branch));
+        return text === undefined
+          ? { text: '# Agents\n\n## Copy\n', sha: 'blob1' }
+          : { text, sha: 'blob2' };
+      }
+      if (method === 'updateFile') written.set(String(args.branch), String(args.text));
+      if (method === 'openPullRequest') {
+        if (failOpening-- > 0) throw new Error('GitHub 502 on /pulls');
+        return { number: 77, url: 'https://github.com/x/pull/77' };
+      }
       return undefined;
     };
     const port = {
@@ -121,17 +133,19 @@ describe.skipIf(!url)('learning decisions', () => {
     expect(github.calls.map((call) => call.method)).toEqual([
       'readFile',
       'createBranch',
+      'readFile',
       'updateFile',
       'openPullRequest'
     ]);
-    expect(github.calls[2]!.args).toMatchObject({
+    expect(github.calls[2]!.args).toMatchObject({ path: 'AGENTS.md', branch });
+    expect(github.calls[3]!.args).toMatchObject({
       path: 'AGENTS.md',
       branch,
       sha: 'blob1',
       text: '# Agents\n\n## Copy\n\nUpdate every live locale.\n',
       message: 'docs(ai): update every live locale'
     });
-    const body = String(github.calls[3]!.args.body);
+    const body = String(github.calls[4]!.args.body);
     expect(body).toContain('[Officina task 1](https://o.example/tasks/1)');
     expect(body).not.toMatch(/(^|\s)#1\b/);
 
@@ -151,10 +165,26 @@ describe.skipIf(!url)('learning decisions', () => {
     const learning = await propose('project');
     const github = fakeGitHub();
     await decide(pool, github.port, owner(), { id: learning.id, decision: 'accept' });
-    expect(github.calls[2]!.args).toMatchObject({
+    expect(github.calls[3]!.args).toMatchObject({
       path: 'docs/copy.md',
       message: 'docs(learning): update every live locale'
     });
+  });
+
+  test('an accept that failed halfway can be accepted again, writing the edit once', async () => {
+    const learning = await propose('docs');
+    const github = fakeGitHub({ failOpening: 1 });
+    await expect(
+      decide(pool, github.port, owner(), { id: learning.id, decision: 'accept' })
+    ).rejects.toThrow('GitHub 502');
+    expect((await listLearnings(pool, seeded.projectId))[0]!.status).toBe('proposed');
+
+    const decided = await decide(pool, github.port, owner(), {
+      id: learning.id,
+      decision: 'accept'
+    });
+    expect(decided).toMatchObject({ status: 'accepted', prNumber: 77 });
+    expect(github.calls.filter((call) => call.method === 'updateFile')).toHaveLength(1);
   });
 
   test('agent learnings are recorded without touching the repository; contributors cannot decide', async () => {

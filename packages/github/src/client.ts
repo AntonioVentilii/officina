@@ -280,7 +280,10 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     ref: RepoRef & { readonly path: string; readonly branch: string }
   ): Promise<string | null> => (await readFile(ref))?.text ?? null;
 
-  /** Creates a branch pointing at the current head of another one. */
+  /**
+   * Creates a branch at the current head of another one. A branch an earlier attempt left is kept as
+   * it is, never moved, so a retry cannot undo what was written on it since.
+   */
   const createBranch = async (
     ref: RepoRef & { readonly branch: string; readonly from: string }
   ): Promise<void> => {
@@ -289,13 +292,22 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
       `/repos/${ref.repo}/git/ref/heads/${encodeURIComponent(ref.from)}`,
       { token }
     );
-    await request(`/repos/${ref.repo}/git/refs`, {
-      method: 'POST',
-      token,
-      body: { ref: `refs/heads/${ref.branch}`, sha: head.object.sha }
-    });
+    try {
+      await request(`/repos/${ref.repo}/git/refs`, {
+        method: 'POST',
+        token,
+        body: { ref: `refs/heads/${ref.branch}`, sha: head.object.sha }
+      });
+    } catch (error) {
+      const exists =
+        error instanceof GitHubError &&
+        error.status === 422 &&
+        error.message.includes('Reference already exists');
+      if (!exists) throw error;
+    }
   };
 
+  /** Opens a pull request, or returns the one already open from the same branch to the same base. */
   const openPullRequest = async (
     ref: RepoRef & {
       readonly base: string;
@@ -305,15 +317,27 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     }
   ): Promise<{ number: number; url: string }> => {
     const token = await installationToken(ref);
-    const created = await request<{ number: number; html_url: string }>(
-      `/repos/${ref.repo}/pulls`,
-      {
-        method: 'POST',
-        token,
-        body: { base: ref.base, head: ref.branch, title: ref.title, body: ref.body }
-      }
-    );
-    return { number: created.number, url: created.html_url };
+    try {
+      const created = await request<{ number: number; html_url: string }>(
+        `/repos/${ref.repo}/pulls`,
+        {
+          method: 'POST',
+          token,
+          body: { base: ref.base, head: ref.branch, title: ref.title, body: ref.body }
+        }
+      );
+      return { number: created.number, url: created.html_url };
+    } catch (error) {
+      if (!(error instanceof GitHubError && error.status === 422)) throw error;
+      // An earlier attempt may have opened it before failing: that one is the answer.
+      const owner = ref.repo.split('/')[0]!;
+      const open = await request<{ number: number; html_url: string }[]>(
+        `/repos/${ref.repo}/pulls?state=open&head=${encodeURIComponent(`${owner}:${ref.branch}`)}&base=${encodeURIComponent(ref.base)}`,
+        { token }
+      );
+      if (!open[0]) throw error;
+      return { number: open[0].number, url: open[0].html_url };
+    }
   };
 
   const commentOnIssue = async (
