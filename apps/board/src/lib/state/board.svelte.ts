@@ -1,4 +1,5 @@
 import { get } from '$lib/api';
+import { isActive } from '$lib/runs';
 import type { AgentRoleInfo, Card, Learning, Run } from '$lib/types';
 import { coalesce, live } from './live.svelte';
 import { session } from './session.svelte';
@@ -15,9 +16,7 @@ class Board {
 
   waitingOnMe = $derived(this.tasks.filter((task) => task.waitingOn.me));
   proposedLearnings = $derived(this.learnings.filter((item) => item.status === 'proposed'));
-  running = $derived(
-    this.runs.filter((run) => run.status === 'running' || run.status === 'queued')
-  );
+  running = $derived(this.runs.filter(isActive));
 
   #refreshSoon = coalesce(() => void this.refresh(), 250);
 
