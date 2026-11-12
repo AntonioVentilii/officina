@@ -3,7 +3,6 @@ import {
   evaluatePolicy,
   hasRole,
   parseProjectConfig,
-  type Role,
   type Actor,
   type Command,
   type Gate,
@@ -20,6 +19,7 @@ import {
   listProjectMembers,
   listRuns,
   listTaskSummaries,
+  loadProjectMember,
   loadTaskContext,
   resolveProjectId,
   resolveProjectMember,
@@ -112,13 +112,8 @@ export const createRequestAs = async (
   const { projectId, memberId } = input;
   const actor: Actor = { kind: 'member', memberId };
   // A request starts paid agent runs, so reading the board is not enough to open one.
-  const role = (
-    await pool.query<{ role: Role; domains: string[] }>(
-      'select role, domains from project_roles where project_id = $1 and member_id = $2',
-      [projectId, memberId]
-    )
-  ).rows[0];
-  if (!role || !hasRole({ id: memberId, ...role }, 'contributor'))
+  const member = await loadProjectMember(pool, projectId, memberId);
+  if (!member || !hasRole(member, 'contributor'))
     throw new TaskCommandError('watchers can read but not open requests');
   // The task and the request it carries land together: a task never exists without its request.
   const { task } = await createTask(pool, {
@@ -127,20 +122,17 @@ export const createRequestAs = async (
     requesterId: memberId,
     request: input.request
   });
-  const { rows } = await pool.query<{ config: unknown; number: number }>(
-    'select p.config, t.number from tasks t join projects p on p.id = t.project_id where t.id = $1',
-    [task.id]
-  );
-  const config = parseProjectConfig(rows[0]!.config);
+  const { number, rawConfig } = (await loadTaskContext(pool, task.id))!;
+  const config = parseProjectConfig(rawConfig);
   const interview = !input.skipInterview && (!config.ok || config.config.intake.interview);
-  if (interview) return { number: rows[0]!.number, stage: 'request' };
+  if (interview) return { number, stage: 'request' };
   const submitted = await applyCommand(pool, {
     taskId: task.id,
     command: { type: 'submit_request' },
     actor
   });
   if (!submitted.ok) throw new TaskCommandError(ERROR_TEXT[submitted.error]);
-  return { number: rows[0]!.number, stage: submitted.task.stage };
+  return { number, stage: submitted.task.stage };
 };
 
 export type TaskAction =

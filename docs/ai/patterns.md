@@ -35,5 +35,4 @@ The patterns Officina really uses, each with one place to copy from. [`../archit
 
 Named so nobody copies them; each is a follow-up of its own.
 
-- SQL outside `packages/db`: the requester's role and the new task's number and config in `createRequestAs` (`apps/api/src/tasks.ts`). Queries belong in the db module that owns the table.
 - Stage, lane and role types are mirrored by hand in `apps/board/src/lib/types.ts`.

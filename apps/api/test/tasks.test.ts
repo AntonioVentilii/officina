@@ -6,6 +6,7 @@ import {
   TaskCommandError,
   actOnTask,
   createRequest,
+  createRequestAs,
   describeTask,
   listTasksText
 } from '../src/tasks';
@@ -36,6 +37,23 @@ describe.skipIf(!url)('task commands', () => {
     const comments = await pool.query('select body from comments');
     expect(comments.rows).toEqual([{ body: request.request }]);
     expect(await listTasksText(pool, {})).toContain('#1    triage');
+  });
+
+  test('a watcher cannot open a request, and no task is left behind', async () => {
+    const watcher = (
+      await pool.query<{ id: string }>(
+        `with m as (insert into members (workspace_id, display_name, email)
+                    select workspace_id, 'Wanda', 'wanda@example.com' from projects where id = $1
+                    returning id)
+         insert into project_roles (project_id, member_id, role)
+         select $1, id, 'watcher' from m returning member_id as id`,
+        [seeded.projectId]
+      )
+    ).rows[0]!.id;
+    await expect(
+      createRequestAs(pool, { projectId: seeded.projectId, memberId: watcher, ...request })
+    ).rejects.toThrow('watchers can read but not open requests');
+    expect((await pool.query('select id from tasks')).rows).toEqual([]);
   });
 
   test('accept, spec approval and change requests move the task and describe what comes next', async () => {
