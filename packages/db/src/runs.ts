@@ -29,6 +29,25 @@ export const setRunExternalId = async (pool: Pool, runId: string, externalId: st
   await pool.query('update runs set external_id = $2 where id = $1', [runId, externalId]);
 };
 
+/** Records a run's validated result before it is applied, so it outlives a crash that follows. */
+export const recordRunResult = async (pool: Pool, runId: string, result: unknown) => {
+  await pool.query('update runs set result = $2 where id = $1', [runId, JSON.stringify(result)]);
+};
+
+/** The latest run of these roles on a task, whatever its status, with the result it recorded. */
+export const latestBuildRun = async (
+  pool: Pool,
+  taskId: string,
+  roles: readonly string[]
+): Promise<{ status: RunStatus; result: unknown } | null> =>
+  (
+    await pool.query<{ status: RunStatus; result: unknown }>(
+      `select status, result from runs where task_id = $1 and agent_role = any($2::text[])
+       order by created_at desc limit 1`,
+      [taskId, roles]
+    )
+  ).rows[0] ?? null;
+
 export const appendRunEvent = async (pool: Pool, runId: string, type: string, payload: unknown) => {
   await pool.query('insert into run_events (run_id, type, payload) values ($1, $2, $3)', [
     runId,

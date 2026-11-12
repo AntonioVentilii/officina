@@ -132,7 +132,8 @@ export const listSchedulableProjectIds = async (db: Queryable): Promise<string[]
 
 /**
  * Runs left `running` by a previous engine process can never finish: their stream is gone. They are
- * failed so the step can run again. Assumes a single scheduler instance.
+ * failed so the step can run again; a result the run already recorded is kept beside the error.
+ * Assumes a single scheduler instance.
  */
 export const failOrphanedRuns = async (
   db: Queryable
@@ -140,7 +141,8 @@ export const failOrphanedRuns = async (
   (
     await db.query<{ id: string; external_id: string | null }>(
       `update runs set status = 'failed', finished_at = now(),
-         result = '{"error": "the engine restarted while this run was in progress"}'
+         result = coalesce(result, '{}'::jsonb)
+           || '{"error": "the engine restarted while this run was in progress"}'::jsonb
        where status in ('queued', 'running') returning id, external_id`
     )
   ).rows.map((row) => ({ id: row.id, externalId: row.external_id }));
