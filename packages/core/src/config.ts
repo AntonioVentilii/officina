@@ -3,6 +3,9 @@ import { compileLaneMatcher, type Lane, type LaneMatcher } from './lanes';
 
 /** The board's two looks. A member's own pick wins over the project's default. */
 export const BOARD_LOOKS = ['modernista', 'tecnica'] as const;
+
+/** The look a project's board has when its config names none. */
+export const DEFAULT_BOARD_LOOK: (typeof BOARD_LOOKS)[number] = 'modernista';
 export type BoardLook = (typeof BOARD_LOOKS)[number];
 
 /** Where a project keeps the agent docs the code standard asks for, unless its config says otherwise. */
@@ -324,7 +327,7 @@ export const parseProjectConfig = (input: unknown): ConfigResult => {
         autoMerge: raw.pull_request?.auto_merge ?? false,
         copilotReview: raw.pull_request?.copilot_review ?? false
       },
-      board: { look: raw.board?.look ?? 'modernista' },
+      board: { look: raw.board?.look ?? DEFAULT_BOARD_LOOK },
       lanes,
       laneMatcher: compileLaneMatcher({ red: lanes.red.paths, green: lanes.green.paths })
     }

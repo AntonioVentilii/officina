@@ -68,6 +68,18 @@ export const executeRun = async (
         ]);
         continue;
       }
+      if (result !== null) {
+        // The accepted result stands: a later submission neither replaces it nor counts against it.
+        await port.send(sessionId, [
+          {
+            type: 'user.custom_tool_result',
+            toolUseId,
+            text: 'A result was already accepted. Stop here.',
+            isError: true
+          }
+        ]);
+        continue;
+      }
       attempts += 1;
       const parsed = parseAgentOutput(
         input.role,
