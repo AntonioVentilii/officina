@@ -93,7 +93,7 @@
 
 <article class="learning {learning.status}">
   <header>
-    <AgentAvatar role="learner" label="Learner" size={26} />
+    <AgentAvatar role="learner" label={board.roleLabel('learner')} size={26} />
     <div class="grow">
       <h3>{learning.title}</h3>
       <div class="meta">

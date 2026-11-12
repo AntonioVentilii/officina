@@ -69,6 +69,9 @@ const ROLE_LABELS: Record<AgentRole, string> = {
 
 export const roleLabel = (role: string) => ROLE_LABELS[role as AgentRole] ?? role;
 
+/** Every agent role's name, for the board surfaces that show a role without a run. */
+export const roleLabels = (): Readonly<Record<AgentRole, string>> => ROLE_LABELS;
+
 /** The roles the Agents page lists, in its order, with what each one does. */
 const AGENTS_PAGE: readonly { readonly role: AgentRole; readonly does: string }[] = [
   { role: 'spec', does: 'Reads the repo and writes a spec in its template' },

@@ -7,6 +7,7 @@ class Board {
   tasks = $state<Card[]>([]);
   runs = $state<Run[]>([]);
   agents = $state<AgentRoleInfo[]>([]);
+  roleLabels = $state<Record<string, string>>({});
   learnings = $state<Learning[]>([]);
   loaded = $state(false);
   #projectId: string | null = null;
@@ -26,6 +27,7 @@ class Board {
     this.tasks = [];
     this.runs = [];
     this.agents = [];
+    this.roleLabels = {};
     this.learnings = [];
     this.loaded = false;
     this.#unsubscribe?.();
@@ -41,7 +43,9 @@ class Board {
     // Runs and learnings are for maintainers and owners; the API refuses them to anyone else.
     const technical = session.technical;
     const [board, runs, learnings] = await Promise.all([
-      get<{ tasks: Card[] }>(`/api/projects/${projectId}/board`),
+      get<{ tasks: Card[]; roleLabels: Record<string, string> }>(
+        `/api/projects/${projectId}/board`
+      ),
       technical
         ? get<{ runs: Run[]; agents: AgentRoleInfo[] }>(`/api/projects/${projectId}/runs`)
         : { runs: [], agents: [] },
@@ -51,10 +55,16 @@ class Board {
     ]);
     if (projectId !== this.#projectId) return;
     this.tasks = board.tasks;
+    this.roleLabels = board.roleLabels;
     this.runs = runs.runs;
     this.agents = runs.agents;
     this.learnings = learnings.learnings;
     this.loaded = true;
+  }
+
+  /** An agent role's name as the API gives it, or the role itself until the board has loaded. */
+  roleLabel(role: string): string {
+    return this.roleLabels[role] ?? role;
   }
 
   get projectId() {

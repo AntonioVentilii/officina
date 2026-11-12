@@ -326,6 +326,8 @@ describe.skipIf(!url)('board api', () => {
     expect(seen.events.length).toBeGreaterThan(0);
     const board = await json(await call(contributor, `${project}/board`));
     expect(board.tasks[0].costCents).toBeNull();
+    // Every member gets the role names the board shows outside runs.
+    expect(board.roleLabels).toMatchObject({ chooser: 'Approval chooser', learner: 'Learner' });
     for (const path of [`${project}/runs`, `${project}/learnings`, `/api/runs/${run.runId}/log`])
       expect((await call(contributor, path)).status).toBe(403);
 
@@ -335,11 +337,38 @@ describe.skipIf(!url)('board api', () => {
     const runs = await call(owner, `${project}/runs`);
     expect(runs.status).toBe(200);
     // The Agents page takes each role's name and description from here, not its own copy.
-    expect((await json(runs)).agents).toContainEqual({
-      role: 'builder',
-      label: 'Builder',
-      does: 'Implements the approved spec on the task branch'
-    });
+    expect((await json(runs)).agents).toEqual([
+      {
+        role: 'spec',
+        label: 'Spec writer',
+        does: 'Reads the repo and writes a spec in its template'
+      },
+      {
+        role: 'builder',
+        label: 'Builder',
+        does: 'Implements the approved spec on the task branch'
+      },
+      {
+        role: 'reviewer_spec',
+        label: 'Spec reviewer',
+        does: 'Checks the diff does what the spec says, no more'
+      },
+      {
+        role: 'reviewer_correctness',
+        label: 'Code reviewer',
+        does: 'Checks correctness and project conventions'
+      },
+      {
+        role: 'chooser',
+        label: 'Approval chooser',
+        does: 'Decides who approves and how closely; can only raise the bar'
+      },
+      {
+        role: 'onboarder',
+        label: 'Onboarder',
+        does: "Writes a new project's agent docs before anything else is built"
+      }
+    ]);
 
     // Technical detail in the trail: check output, GitHub errors, a failure asked of a maintainer.
     const engine = { kind: 'engine' } as const;

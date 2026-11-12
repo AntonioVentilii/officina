@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Eye, GitMerge, Hand, ShieldPlus, Smartphone, UserCheck } from '@lucide/svelte';
+  import { board } from '$lib/state/board.svelte';
   import type { TaskDetail } from '$lib/types';
   import AgentAvatar from './AgentAvatar.svelte';
   import MemberAvatar from './MemberAvatar.svelte';
@@ -16,7 +17,7 @@
 
 <div class="plan" class:stale={!plan.current}>
   <div class="head">
-    <AgentAvatar role="chooser" label="Approval chooser" size={24} />
+    <AgentAvatar role="chooser" label={board.roleLabel('chooser')} size={24} />
     <div class="grow">
       <div class="who">
         {plan.gate === 'spec_review' ? 'For the plan' : 'For the result'}
