@@ -5,7 +5,12 @@ import {
   type AgentOutput,
   type Stage
 } from '@officina/core';
-import { latestBuildRun, linkPullRequest, loadTaskContext } from '@officina/db';
+import {
+  latestBuildRun,
+  linkPullRequest,
+  loadTaskContext,
+  type StoredTaskContext
+} from '@officina/db';
 import type { GitHubClient } from '@officina/github';
 import type { Pool } from 'pg';
 import { syncSpecStatus, taskLink, type SyncGitHubPort } from './github-sync';
@@ -22,6 +27,20 @@ const AWAITS_PULL_REQUEST: ReadonlySet<Stage> = new Set([
   'verifying',
   'merging'
 ]);
+
+/** A task whose build pushed but whose pull request is not linked yet. */
+const awaitsPullRequest = (context: StoredTaskContext | null): context is StoredTaskContext =>
+  context !== null &&
+  context.pullRequest === null &&
+  context.task.headSha !== null &&
+  AWAITS_PULL_REQUEST.has(context.task.stage);
+
+/** The pushed result a finished build run recorded, if it left one to open the pull request from. */
+const recordedPush = (run: { status: string; result: unknown } | null): PushedBuild | null => {
+  if (!run || run.status === 'running') return null;
+  const built = run.result as Partial<PushedBuild> | null;
+  return built?.outcome === 'pushed' && built.prTitle ? (built as PushedBuild) : null;
+};
 
 const bullets = (items: readonly string[]) =>
   items.map((item) => `- ${item}`).join('\n') || '- nothing reported';
@@ -50,8 +69,7 @@ export const openTaskPullRequest = async (
   input: { readonly taskId: string; readonly publicUrl: string; readonly built: PushedBuild }
 ): Promise<{ number: number; url: string } | null> => {
   const context = await loadTaskContext(pool, input.taskId);
-  if (!context || context.pullRequest !== null || context.installationId === null) return null;
-  if (!AWAITS_PULL_REQUEST.has(context.task.stage) || context.task.headSha === null) return null;
+  if (!awaitsPullRequest(context) || context.installationId === null) return null;
   const config = parseProjectConfig(context.rawConfig);
   const ref = { installationId: context.installationId, repo: context.repo };
   const branch = branchForTask(context.number);
@@ -85,14 +103,9 @@ export const openMissingPullRequests = async (
   publicUrl: string
 ) => {
   for (const taskId of taskIds) {
-    const context = await loadTaskContext(pool, taskId);
-    if (!context || context.pullRequest !== null || context.task.headSha === null) continue;
-    if (!AWAITS_PULL_REQUEST.has(context.task.stage)) continue;
-    const run = await latestBuildRun(pool, taskId, BUILD_ROLES);
+    if (!awaitsPullRequest(await loadTaskContext(pool, taskId))) continue;
     // A step still running opens its own pull request.
-    if (!run || run.status === 'running') continue;
-    const built = run.result as Partial<PushedBuild> | null;
-    if (built?.outcome !== 'pushed' || !built.prTitle) continue;
-    await openTaskPullRequest(pool, github, { taskId, publicUrl, built: built as PushedBuild });
+    const built = recordedPush(await latestBuildRun(pool, taskId, BUILD_ROLES));
+    if (built) await openTaskPullRequest(pool, github, { taskId, publicUrl, built });
   }
 };
