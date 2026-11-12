@@ -2,6 +2,7 @@ export { migrate } from './migrate';
 export * from './store';
 export * from './github';
 export * from './runs';
+export * from './run-status';
 export * from './projects';
 export * from './tasks';
 export type { StoredTaskContext } from './types';
