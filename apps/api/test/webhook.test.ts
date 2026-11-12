@@ -6,6 +6,7 @@ import {
   linkPullRequest,
   loadTask,
   markDeliveryHandled,
+  purgeOldDeliveries,
   releaseDelivery
 } from '@officina/db';
 import { Pool } from 'pg';
@@ -154,6 +155,18 @@ describe.skipIf(!url)('api', () => {
       outcomes: [{ taskId, ok: true }]
     });
     expect((await loadTask(pool, taskId))?.task.stage).toBe('done');
+  });
+
+  test('deliveries too old to be redelivered are purged, the recent ones kept', async () => {
+    await pool.query(
+      `insert into webhook_deliveries (id, event, received_at, handled_at) values
+         ('d-old', 'push', now() - interval '8 days', now() - interval '8 days'),
+         ('d-new', 'push', now() - interval '2 days', now() - interval '2 days')`
+    );
+    expect(await purgeOldDeliveries(pool)).toBe(1);
+    expect(await purgeOldDeliveries(pool)).toBe(0);
+    const left = await pool.query<{ id: string }>('select id from webhook_deliveries');
+    expect(left.rows.map((row) => row.id)).toEqual(['d-new']);
   });
 
   test('a handler that outlived its claim can neither mark nor give back the claim that replaced it', async () => {
