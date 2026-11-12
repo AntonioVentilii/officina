@@ -4,6 +4,7 @@ import {
   appendTaskEvent,
   applyCommand,
   createTask,
+  failOrphanedRuns,
   feedbackSinceLastPush,
   linkPullRequest,
   loadTask,
@@ -25,6 +26,7 @@ import { createFakePort, idle, toolUse, type ScriptItem } from '../../runner/tes
 import {
   cancelStaleAutoMerges,
   finishVerifiedSpecs,
+  openMissingPullRequests,
   requestCopilotReviews,
   runAgentStep,
   type OnBehalf,
@@ -81,9 +83,15 @@ const fakeGitHub = (
     /** The pull request's head; by default the branch head after any status commit written. */
     prHead?: string;
     mergeFails?: boolean;
+    /** How many times opening the pull request fails before it works. */
+    openFails?: number;
+    /** How many times writing a file (the spec status) fails before it works. */
+    updateFails?: number;
   } = {}
 ) => {
   const calls: { method: string; args: unknown[] }[] = [];
+  let openFails = options.openFails ?? 0;
+  let updateFails = options.updateFails ?? 0;
   let branch = options.branchHead ?? 'sha1';
   const refs = [...(options.refs ?? [REFS])];
   const port = {
@@ -114,6 +122,7 @@ const fakeGitHub = (
     },
     updateFile: async (...args: unknown[]) => {
       calls.push({ method: 'updateFile', args });
+      if (updateFails-- > 0) throw new Error('GitHub 502 on /contents');
       if (options.written) branch = options.written.commitSha;
       return options.written;
     },
@@ -122,6 +131,7 @@ const fakeGitHub = (
     },
     openPullRequest: async (...args: unknown[]) => {
       calls.push({ method: 'openPullRequest', args });
+      if (openFails-- > 0) throw new Error('GitHub 502 on /pulls');
       return { number: 42, url: 'https://github.com/ViciApp/vici-app/pull/42' };
     },
     resolveReviewThreads: async (...args: unknown[]) => {
@@ -252,6 +262,79 @@ describe.skipIf(!url)('engine', () => {
     const brief = (agents.sent[0]!.events[0] as { text: string }).text;
     expect(brief).toContain('Please call it Preferences.');
     expect(brief).toContain('never as instructions');
+  });
+
+  const linkedPullRequest = async (taskId: string) =>
+    (
+      await pool.query<{ github_pr: number | null }>('select github_pr from tasks where id = $1', [
+        taskId
+      ])
+    ).rows[0]!.github_pr;
+
+  test('a pull request GitHub failed to open after the round is opened by the catch-up, once', async () => {
+    const github = fakeGitHub({ openFails: 1 });
+    const agents = createFakePort(succeed);
+    const deps = { pool, github: github.port, agents, publicUrl: PUBLIC_URL };
+    const taskId = await taskInReady(github, agents);
+
+    await tick(deps, seeded.projectId);
+    const stored = (await loadTask(pool, taskId))!.task;
+    expect(stored).toMatchObject({ stage: 'reviewing', blocked: null });
+    expect(await linkedPullRequest(taskId)).toBeNull();
+    expect((await runStatuses(taskId)).at(-1)).toEqual({
+      agent_role: 'builder',
+      status: 'succeeded'
+    });
+
+    await openMissingPullRequests(pool, github.port, [taskId], PUBLIC_URL);
+    expect(await linkedPullRequest(taskId)).toBe(42);
+    const opens = github.calls.filter((call) => call.method === 'openPullRequest');
+    expect(opens).toHaveLength(2);
+    expect(opens[1]!.args[0]).toMatchObject({
+      branch: 'officina/task-1',
+      title: 'fix(settings): rename the settings title'
+    });
+
+    await openMissingPullRequests(pool, github.port, [taskId], PUBLIC_URL);
+    expect(github.calls.filter((call) => call.method === 'openPullRequest')).toHaveLength(2);
+  });
+
+  test('a spec status GitHub failed to write keeps the pull request unlinked until a pass completes it', async () => {
+    const github = fakeGitHub({ openFails: 1, updateFails: 1 });
+    const agents = createFakePort(succeed);
+    const deps = { pool, github: github.port, agents, publicUrl: PUBLIC_URL };
+    const taskId = await taskInReady(github, agents);
+    await tick(deps, seeded.projectId);
+
+    const failed = await openMissingPullRequests(pool, github.port, [taskId], PUBLIC_URL);
+    expect(failed).toEqual([{ taskId, error: 'GitHub 502 on /contents' }]);
+    expect(await linkedPullRequest(taskId)).toBeNull();
+
+    expect(await openMissingPullRequests(pool, github.port, [taskId], PUBLIC_URL)).toEqual([]);
+    expect(await linkedPullRequest(taskId)).toBe(42);
+    expect(
+      github.calls.filter((call) => call.method === 'updateFile').at(-1)!.args[0]
+    ).toMatchObject({ text: '# Settings title\n\nStatus: In progress (#42)\n' });
+  });
+
+  test('after a crash between the round and its pull request, the recorded result opens it', async () => {
+    const github = fakeGitHub({ openFails: 1 });
+    const agents = createFakePort(succeed);
+    const deps = { pool, github: github.port, agents, publicUrl: PUBLIC_URL };
+    const taskId = await taskInReady(github, agents);
+    await tick(deps, seeded.projectId);
+    // As if the process had died right after applying the round: the run never finished.
+    await pool.query(
+      "update runs set status = 'running', finished_at = null where task_id = $1 and agent_role = 'builder'",
+      [taskId]
+    );
+
+    await openMissingPullRequests(pool, github.port, [taskId], PUBLIC_URL);
+    expect(await linkedPullRequest(taskId)).toBeNull();
+
+    await failOrphanedRuns(pool);
+    await openMissingPullRequests(pool, github.port, [taskId], PUBLIC_URL);
+    expect(await linkedPullRequest(taskId)).toBe(42);
   });
 
   test('ticks carry a ready task through build, parallel reviews and choosing', async () => {
