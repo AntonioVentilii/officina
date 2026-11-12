@@ -154,14 +154,21 @@ export const saveAgentVersion = async (pool: Pool, record: AgentVersionRecord) =
   );
 };
 
-/** Review notes, change requests and CI failures since the builder last pushed, oldest first. */
+/** Where the current build round's feedback starts: the builder's last push or unchanged finish. */
+const SINCE_LAST_BUILD = `id > coalesce((select max(id) from task_events where task_id = $1
+  and type in ('pushed', 'build_unchanged')), 0)`;
+
+/**
+ * Review notes, change requests and CI failures since the builder last pushed or finished a round
+ * unchanged, oldest first.
+ */
 export const feedbackSinceLastPush = async (pool: Pool, taskId: string): Promise<string[]> =>
   (
     await pool.query<{ text: string }>(
       `select coalesce(payload->>'notes', payload->>'note', payload->>'details') as text
        from task_events
        where task_id = $1
-         and id > coalesce((select max(id) from task_events where task_id = $1 and type = 'pushed'), 0)
+         and ${SINCE_LAST_BUILD}
          and (type in ('changes_requested', 'ci_failed')
               or (type = 'review_recorded' and payload->>'verdict' = 'changes')
               or (type = 'guardrail_tripped' and payload->>'guardrail' = 'unlisted_files'))
@@ -169,6 +176,22 @@ export const feedbackSinceLastPush = async (pool: Pool, taskId: string): Promise
       [taskId]
     )
   ).rows.map((row) => row.text);
+
+/** The GitHub reviews the current build round answers, oldest first: who left each, and its notes. */
+export const githubReviewsSinceLastPush = async (
+  pool: Pool,
+  taskId: string
+): Promise<{ by: string; notes: string }[]> =>
+  (
+    await pool.query<{ by: string; notes: string }>(
+      `select payload->>'by' as by, payload->>'notes' as notes
+       from task_events
+       where task_id = $1 and ${SINCE_LAST_BUILD}
+         and type = 'review_recorded' and payload->>'reviewer' = 'github'
+       order by id`,
+      [taskId]
+    )
+  ).rows;
 
 export const listComments = async (pool: Pool, taskId: string): Promise<string[]> =>
   (

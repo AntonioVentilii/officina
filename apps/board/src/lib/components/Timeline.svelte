@@ -45,6 +45,8 @@
         return Array.isArray(p.changedPaths)
           ? `pushed ${String(p.headSha).slice(0, 7)} (${p.diffLines} lines in ${p.changedPaths.length} files)`
           : `pushed ${String(p.headSha).slice(0, 7)} (${p.diffLines} lines)`;
+      case 'build_unchanged':
+        return `checked the review and kept ${String(p.headSha).slice(0, 7)}: nothing needed a change`;
       case 'review_recorded':
         return p.verdict === 'approve' ? 'approved the change' : 'asked for changes';
       case 'guardrail_tripped':
@@ -98,6 +100,7 @@
     const p = event.payload;
     if (event.type === 'changes_requested') return String(p.note ?? '');
     if (event.type === 'review_recorded') return p.notes ? String(p.notes) : null;
+    if (event.type === 'build_unchanged') return p.note ? String(p.note) : null;
     if (event.type === 'blocked')
       return String((p.blocked as { question?: string })?.question ?? '');
     return null;

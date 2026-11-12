@@ -127,6 +127,7 @@ const PUBLIC_FIELDS: Readonly<Record<string, readonly string[]>> = {
   approval_planned: ['gate'],
   changes_requested: ['stage', 'note'],
   pushed: ['headSha', 'diffLines'],
+  build_unchanged: ['headSha'],
   review_recorded: ['reviewer', 'verdict', 'by'],
   guardrail_tripped: ['guardrail'],
   blocked: ['blocked'],
