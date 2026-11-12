@@ -1,13 +1,11 @@
 import { randomBytes } from 'node:crypto';
 import {
-  addComment,
   consumeOAuthState,
   createOAuthState,
   createSession,
   githubLoginOf,
   unlinkGitHubAccount,
   endSession,
-  findTaskIdByNumber,
   listMemberProjects,
   loadRun,
   memberForSession,
@@ -35,7 +33,13 @@ import { checkAuthorization, consentRedirect } from './connector';
 import type { GitHubAccounts } from './github-accounts';
 import { decide as decideLearning, type LearningGitHub } from './learnings';
 import type { BoardEvent, RealtimeHub } from './realtime';
-import { TaskCommandError, actOnTaskAs, createRequestAs, type TaskAction } from './tasks';
+import {
+  TaskCommandError,
+  actOnTaskAs,
+  commentAs,
+  createRequestAs,
+  type TaskAction
+} from './tasks';
 
 export interface BoardApiDependencies {
   readonly pool: Pool;
@@ -259,7 +263,7 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
           return { error: error.message };
         }
         if (code === 'TaskCommandError') {
-          set.status = 409;
+          set.status = error.status;
           return { error: error.message };
         }
       })
@@ -419,8 +423,6 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
       .post('/api/projects/:projectId/tasks', async ({ request, params, body }) => {
         mutation(request);
         const viewer = viewerFor(await signedIn(request), params.projectId);
-        if (viewer.role === 'watcher')
-          throw new HttpError(403, 'watchers can read but not open requests');
         const { interview, ...input } = parse(requestSchema, body);
         return createRequestAs(pool, {
           projectId: viewer.projectId,
@@ -468,16 +470,13 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
         async ({ request, params, body }) => {
           mutation(request);
           const viewer = viewerFor(await signedIn(request), params.projectId);
-          if (viewer.role === 'watcher')
-            throw new HttpError(403, 'watchers can read but not comment');
           const { body: text } = parse(commentSchema, body);
-          const taskId = await findTaskIdByNumber(
-            pool,
-            viewer.projectId,
-            taskNumber(params.number)
-          );
-          if (!taskId) throw new HttpError(404, 'task not found');
-          await addComment(pool, taskId, { kind: 'member', memberId: viewer.memberId }, text);
+          await commentAs(pool, {
+            projectId: viewer.projectId,
+            memberId: viewer.memberId,
+            number: taskNumber(params.number),
+            text
+          });
           return { ok: true };
         }
       )
