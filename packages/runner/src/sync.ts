@@ -12,7 +12,8 @@ export interface SyncedAgent {
  * Brings the runner's agents in line with the checked-in definitions: unchanged definitions are
  * left alone, changed ones become a new version of the same agent, missing ones are created.
  * `save` records each agent as soon as it is written, so a sync that fails partway does not create
- * the agents it already wrote a second time on the next run.
+ * the agents it already wrote a second time on the next run; one written but never saved is found
+ * by name and updated instead.
  */
 export const syncAgents = async (
   port: ManagedAgentsPort,
@@ -35,9 +36,9 @@ export const syncAgents = async (
       system: definition.system,
       tools: definition.tools
     };
-    const saved = existing
-      ? await port.updateAgent(existing.externalAgentId, write)
-      : await port.createAgent(write);
+    // An agent created by an earlier sync whose save failed is found by name and updated.
+    const id = existing?.externalAgentId ?? (await port.findAgentByName(definition.name))?.id;
+    const saved = id ? await port.updateAgent(id, write) : await port.createAgent(write);
     const synced: SyncedAgent = {
       role: definition.role,
       externalAgentId: saved.id,

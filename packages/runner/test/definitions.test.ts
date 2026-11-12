@@ -123,6 +123,18 @@ describe('syncAgents', () => {
     expect(retried.changed).toEqual(['builder']);
     expect(port.agentWrites.filter((write) => write.id === null)).toHaveLength(2);
   });
+
+  test('an agent created but never saved is found by name and updated, not created again', async () => {
+    const port = createFakePort(() => []);
+    const definitions = [buildDefinition('spec', 'v1')];
+    await expect(
+      syncAgents(port, definitions, [], () => Promise.reject(new Error('database down')))
+    ).rejects.toThrow('database down');
+
+    const retried = await syncAgents(port, definitions, [], async () => {});
+    expect(port.agentWrites.map((write) => write.id)).toEqual([null, 'agent_1']);
+    expect(retried.agents[0]!.externalAgentId).toBe('agent_1');
+  });
 });
 
 describe('ensureEnvironment', () => {
