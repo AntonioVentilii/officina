@@ -84,4 +84,21 @@ describe.skipIf(!url)('migrations', () => {
       client.query(`update tasks set stage = 'shipped' where id = $1`, [taskId])
     ).rejects.toThrow('tasks_stage_check');
   });
+
+  test('two processes migrating at once apply each migration once', async () => {
+    await client.query('drop schema public cascade; create schema public;');
+    const other = new Client({ connectionString: url });
+    await other.connect();
+    try {
+      const [first, second] = await Promise.all([migrate(client), migrate(other)]);
+      expect([...first, ...second].sort()).toEqual(
+        (await client.query<{ name: string }>('select name from schema_migrations')).rows
+          .map((row) => row.name)
+          .sort()
+      );
+      expect(first.length === 0 || second.length === 0).toBe(true);
+    } finally {
+      await other.end();
+    }
+  });
 });

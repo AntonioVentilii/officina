@@ -237,17 +237,20 @@ lanes:
 | Table                                                      | Holds                                                                                                           |
 | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
 | `workspaces`, `members`, `identities`                      | teams, people, linked email / Google / GitHub identities                                                        |
-| `projects`, `project_roles`                                | repositories, config snapshot, per-project roles and approval domains                                           |
-| `tasks`                                                    | kind (request or onboarding), stage, flags, lane, priority, assignee, linked issue and PR                       |
+| `projects`, `project_roles`                                | repositories, config snapshot, agent environment, per-project roles and approval domains                        |
+| `tasks`                                                    | kind (request or onboarding), stage, flags, lane, priority, assignee, approval plans, linked issue and PR       |
 | `task_events`                                              | append-only audit: actor (member or agent role + version), type, payload, timestamp                             |
-| `comments`, `mentions`, `attachments`                      | task threads; comments may anchor to a spec version and section                                                 |
+| `comments`                                                 | task threads; a comment may anchor to a spec version and section                                                |
 | `spec_versions`                                            | immutable spec documents per task                                                                               |
 | `approvals`                                                | member, gate, spec version or head commit, decision, note                                                       |
-| `leases`                                                   | step, holder, expiry                                                                                            |
 | `runs`, `run_events`                                       | runner, session id, role version, status, cost, tokens, normalized event stream                                 |
-| `votes`, `notifications`, `learnings`                      | as named                                                                                                        |
+| `agent_versions`                                           | the runner-side agent and version each role uses                                                                |
+| `learnings`                                                | proposed lessons with their exact edit, the decision and the pull request                                       |
+| `login_links`, `sessions`                                  | one-time sign-in links and board sessions (hashes only)                                                         |
+| `github_accounts`, `oauth_states`                          | members' linked GitHub accounts (tokens encrypted) and pending GitHub authorizations                            |
 | `webhook_deliveries`                                       | GitHub delivery ids, claimed once, and when each was handled                                                    |
 | `connector_clients`, `connector_codes`, `connector_tokens` | apps registered for the Claude connector, one-time authorization codes, access and refresh tokens (hashes only) |
+| `leases`, `votes`, `notifications`                         | created by the first migration for later phases; no code reads or writes them yet                               |
 
 ## 13. Security model
 
