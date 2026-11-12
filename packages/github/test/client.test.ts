@@ -311,6 +311,7 @@ describe('GitHub as a person', () => {
     expect(calls[0]).toEqual({
       method: 'POST',
       url: `${path}/1/copilot-code-review`,
+      query: '',
       authorization: 'Bearer ghu_1',
       body: undefined
     });
