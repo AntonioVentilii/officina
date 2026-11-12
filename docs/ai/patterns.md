@@ -33,7 +33,6 @@ The patterns Officina really uses, each with one place to copy from. [`../archit
 
 Named so nobody copies them; each is a follow-up of its own.
 
-- `fence` is written twice, privately, in `packages/engine/src/brief.ts:69` and `packages/engine/src/learner.ts:32`. Export one shared helper and use it in both.
 - `const RUNNER = 'managed_agents'` and `const ENGINE: Actor = { kind: 'engine' }` are repeated in several engine and API modules. One owner should export each.
 - The red-lane paths are read from the raw config with a cast (`packages/engine/src/step.ts:225`, `packages/engine/src/learner.ts:245`) instead of from the normalized `ProjectConfig`.
 - SQL outside `packages/db`: the interviewer's question count (`packages/engine/src/step.ts:209`) and the learner's "looked once" check (`packages/engine/src/learner.ts:233`). Queries belong in the db module that owns the table.
