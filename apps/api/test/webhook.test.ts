@@ -1,6 +1,13 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { createHmac } from 'node:crypto';
-import { applyCommand, linkPullRequest, loadTask } from '@officina/db';
+import {
+  applyCommand,
+  claimDelivery,
+  linkPullRequest,
+  loadTask,
+  markDeliveryHandled,
+  releaseDelivery
+} from '@officina/db';
 import { Pool } from 'pg';
 import { createTaskInMerging, resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
 import { createApp } from '../src';
@@ -147,6 +154,27 @@ describe.skipIf(!url)('api', () => {
       outcomes: [{ taskId, ok: true }]
     });
     expect((await loadTask(pool, taskId))?.task.stage).toBe('done');
+  });
+
+  test('a handler that outlived its claim can neither mark nor give back the claim that replaced it', async () => {
+    const stale = await claimDelivery(pool, 'd-slow', 'pull_request');
+    await pool.query(
+      "update webhook_deliveries set received_at = now() - interval '11 minutes' where id = 'd-slow'"
+    );
+    const replacing = await claimDelivery(pool, 'd-slow', 'pull_request');
+    expect(stale).not.toBeNull();
+    expect(replacing).not.toBeNull();
+    expect(replacing).not.toBe(stale);
+
+    await markDeliveryHandled(pool, 'd-slow', stale!);
+    await releaseDelivery(pool, 'd-slow', stale!);
+    const row = await pool.query<{ handled: boolean }>(
+      "select handled_at is not null as handled from webhook_deliveries where id = 'd-slow'"
+    );
+    expect(row.rows).toEqual([{ handled: false }]);
+
+    await markDeliveryHandled(pool, 'd-slow', replacing!);
+    expect(await claimDelivery(pool, 'd-slow', 'pull_request')).toBeNull();
   });
 
   test('failed checks send a merging task back to building and stop auto-merge', async () => {

@@ -69,15 +69,16 @@ export const createApp = ({ pool, webhookSecret, github, board, boardDir }: AppD
             return { error: 'invalid_json' };
           }
 
-          if (!(await claimDelivery(pool, deliveryId, event))) return { status: 'duplicate' };
+          const claim = await claimDelivery(pool, deliveryId, event);
+          if (!claim) return { status: 'duplicate' };
           try {
             const action = parseWebhookEvent(event, payload);
             const outcomes = action ? await handleWebhookAction(pool, action, github) : [];
-            await markDeliveryHandled(pool, deliveryId);
+            await markDeliveryHandled(pool, deliveryId, claim);
             return { status: action ? 'applied' : 'ignored', outcomes };
           } catch (error) {
             // Released so GitHub's redelivery of a delivery that failed mid-way is processed.
-            await releaseDelivery(pool, deliveryId);
+            await releaseDelivery(pool, deliveryId, claim);
             throw error;
           }
         },
