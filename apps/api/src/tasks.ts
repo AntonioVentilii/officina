@@ -120,8 +120,13 @@ export const createRequestAs = async (
   ).rows[0];
   if (!role || !hasRole({ id: memberId, ...role }, 'contributor'))
     throw new TaskCommandError('watchers can read but not open requests');
-  const { task } = await createTask(pool, { projectId, title: input.title, requesterId: memberId });
-  await addComment(pool, task.id, actor, input.request);
+  // The task and the request it carries land together: a task never exists without its request.
+  const { task } = await createTask(pool, {
+    projectId,
+    title: input.title,
+    requesterId: memberId,
+    request: input.request
+  });
   const { rows } = await pool.query<{ config: unknown; number: number }>(
     'select p.config, t.number from tasks t join projects p on p.id = t.project_id where t.id = $1',
     [task.id]

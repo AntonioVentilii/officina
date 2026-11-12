@@ -33,7 +33,8 @@ import {
   memberNames,
   type BoardTaskRow,
   type RunEventRow,
-  type RunRow
+  type RunRow,
+  loadProjectConfig
 } from '@officina/db';
 import type { Pool } from 'pg';
 
@@ -382,15 +383,13 @@ const projectFacts = async (pool: Pool, viewer: BoardViewer): Promise<ProjectFac
   const [members, names, config, onboarding] = await Promise.all([
     listProjectMembers(pool, viewer.projectId),
     memberNames(pool, viewer.workspaceId),
-    pool.query<{ config: unknown }>('select config from projects where id = $1', [
-      viewer.projectId
-    ]),
+    loadProjectConfig(pool, viewer.projectId),
     openOnboardingTask(pool, viewer.projectId)
   ]);
   return {
     members,
     names,
-    rawConfig: config.rows[0]?.config,
+    rawConfig: config,
     onboarding: onboarding?.number ?? null
   };
 };

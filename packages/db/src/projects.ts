@@ -86,32 +86,56 @@ export const setProjectEnvironment = async (
 
 export interface ProjectRecord {
   readonly id: string;
+  readonly workspaceId: string;
   readonly repo: string;
   readonly installationId: number | null;
   readonly defaultBranch: string;
   readonly environmentId: string | null;
 }
 
+const PROJECT_COLUMNS = `id, workspace_id, github_repo, github_installation_id, default_branch,
+  agent_environment_id`;
+
+interface ProjectRow {
+  id: string;
+  workspace_id: string;
+  github_repo: string;
+  github_installation_id: string | null;
+  default_branch: string;
+  agent_environment_id: string | null;
+}
+
+const toProjectRecord = (row: ProjectRow): ProjectRecord => ({
+  id: row.id,
+  workspaceId: row.workspace_id,
+  repo: row.github_repo,
+  installationId: row.github_installation_id === null ? null : Number(row.github_installation_id),
+  defaultBranch: row.default_branch,
+  environmentId: row.agent_environment_id
+});
+
 export const findProjectsByRepo = async (db: Queryable, repo: string): Promise<ProjectRecord[]> =>
   (
-    await db.query<{
-      id: string;
-      github_repo: string;
-      github_installation_id: string | null;
-      default_branch: string;
-      agent_environment_id: string | null;
-    }>(
-      `select id, github_repo, github_installation_id, default_branch, agent_environment_id
-       from projects where lower(github_repo) = lower($1)`,
+    await db.query<ProjectRow>(
+      `select ${PROJECT_COLUMNS} from projects where lower(github_repo) = lower($1)`,
       [repo]
     )
-  ).rows.map((row) => ({
-    id: row.id,
-    repo: row.github_repo,
-    installationId: row.github_installation_id === null ? null : Number(row.github_installation_id),
-    defaultBranch: row.default_branch,
-    environmentId: row.agent_environment_id
-  }));
+  ).rows.map(toProjectRecord);
+
+export const loadProject = async (
+  db: Queryable,
+  projectId: string
+): Promise<ProjectRecord | null> => {
+  const row = (
+    await db.query<ProjectRow>(`select ${PROJECT_COLUMNS} from projects where id = $1`, [projectId])
+  ).rows[0];
+  return row ? toProjectRecord(row) : null;
+};
+
+/** The project's stored config, raw: parse it with `parseProjectConfig`. */
+export const loadProjectConfig = async (db: Queryable, projectId: string): Promise<unknown> =>
+  (await db.query<{ config: unknown }>('select config from projects where id = $1', [projectId]))
+    .rows[0]?.config;
 
 export const updateProjectConfig = async (db: Queryable, projectId: string, config: unknown) => {
   await db.query('update projects set config = $2 where id = $1', [
