@@ -1,5 +1,39 @@
 # Changelog
 
+## [1.2.0](https://github.com/AntonioVentilii/officina/compare/v1.1.1...v1.2.0) (2026-11-12)
+
+
+### Features
+
+* **api:** add the Officina connector for Claude, with its own OAuth server ([#43](https://github.com/AntonioVentilii/officina/issues/43)) ([db4e87b](https://github.com/AntonioVentilii/officina/commit/db4e87b0cdf28f537fda0deaed91083bf75e9907))
+* **board:** welcome guide on first sign-in, with examples and the Claude connector ([#45](https://github.com/AntonioVentilii/officina/issues/45)) ([3fecd14](https://github.com/AntonioVentilii/officina/commit/3fecd145bfb396a524861328a672e4d5ae9ec02b))
+* **core:** require each project's agent docs pages and catalogs in its config ([#37](https://github.com/AntonioVentilii/officina/issues/37)) ([fb2eaf2](https://github.com/AntonioVentilii/officina/commit/fb2eaf2043f404337383b855b0e71530f3f9453b))
+* **engine:** ask Copilot to review new pull requests as the requester ([#55](https://github.com/AntonioVentilii/officina/issues/55)) ([ae03366](https://github.com/AntonioVentilii/officina/commit/ae03366d2c885326484a1dd9d2d7342ed4c7305f))
+* **engine:** auto-merge as a project setting the chooser decides per result ([#47](https://github.com/AntonioVentilii/officina/issues/47)) ([9d7646b](https://github.com/AntonioVentilii/officina/commit/9d7646bfd74d6e92741174378290bd808f4b3c3c))
+* **engine:** let the learner edit a project's agent docs as a target of their own ([#40](https://github.com/AntonioVentilii/officina/issues/40)) ([1315cca](https://github.com/AntonioVentilii/officina/commit/1315cca0e97cb37c9a1b74b9238e4f9408d4b5f1))
+* **engine:** never merge or turn on auto-merge; a person always merges ([#42](https://github.com/AntonioVentilii/officina/issues/42)) ([af9b9d5](https://github.com/AntonioVentilii/officina/commit/af9b9d5e21b8c46749f76e95691b8d080370ebdc))
+* **engine:** onboard every project's agent docs before anything else is built ([#38](https://github.com/AntonioVentilii/officina/issues/38)) ([25016fc](https://github.com/AntonioVentilii/officina/commit/25016fca911ed939641089df1185a1ab6e76e20b))
+* **engine:** read Copilot reviews that leave nothing on the code ([#49](https://github.com/AntonioVentilii/officina/issues/49)) ([766b885](https://github.com/AntonioVentilii/officina/commit/766b885703c064441b65e317bbf5609a56f45cff))
+* **engine:** send back new files their catalog page does not list ([#39](https://github.com/AntonioVentilii/officina/issues/39)) ([3c66e17](https://github.com/AntonioVentilii/officina/commit/3c66e1774399562b4175a193af3ac9b7fc79c15b))
+* **runner:** give every role the code standard after its own prompt ([#36](https://github.com/AntonioVentilii/officina/issues/36)) ([9173daf](https://github.com/AntonioVentilii/officina/commit/9173daffcaa6596616ea4321c99bb47f62f88b65))
+
+
+### Documentation
+
+* **ai:** add Officina's own agent docs ([#41](https://github.com/AntonioVentilii/officina/issues/41)) ([500269a](https://github.com/AntonioVentilii/officina/commit/500269a80ffee4bb9565cc936de5f80438abf94b))
+* **ai:** have every pr-and-ci page link the scope rules ([#54](https://github.com/AntonioVentilii/officina/issues/54)) ([7f6c637](https://github.com/AntonioVentilii/officina/commit/7f6c6377d679b72b972c84979fab7b916a79581a))
+* **repo:** restore architecture text the catalog check merge dropped ([#48](https://github.com/AntonioVentilii/officina/issues/48)) ([90e60fc](https://github.com/AntonioVentilii/officina/commit/90e60fc5f2ff2b32d4d7e2ca18420e02e7d0a7d0))
+* **standards:** add the universal code standard every repository links ([#35](https://github.com/AntonioVentilii/officina/issues/35)) ([8cc13b1](https://github.com/AntonioVentilii/officina/commit/8cc13b11a35a81e05e7d61e7187044082167dac4))
+* **standards:** ban the em dash and the en dash used as a break, keep en dash ranges ([#50](https://github.com/AntonioVentilii/officina/issues/50)) ([9842031](https://github.com/AntonioVentilii/officina/commit/98420315d441a90a05ac17a572d55427b181d529))
+
+
+### Code Refactoring
+
+* **api:** name agent roles in one place for the board and the Agents page ([#53](https://github.com/AntonioVentilii/officina/issues/53)) ([f220191](https://github.com/AntonioVentilii/officina/commit/f2201916b801d34da4f0949e3476ccaf9e98cffb))
+* **board:** keep the anvil in one file ([#44](https://github.com/AntonioVentilii/officina/issues/44)) ([98ae63a](https://github.com/AntonioVentilii/officina/commit/98ae63a99980991997c089cd33f5d1c4d8c54b7f))
+* **core:** read lane paths from the normalized project config ([#52](https://github.com/AntonioVentilii/officina/issues/52)) ([ad2503a](https://github.com/AntonioVentilii/officina/commit/ad2503adfd256042e565fae4a6f71aed4a833cf0))
+* **engine:** one fence helper for every brief ([#51](https://github.com/AntonioVentilii/officina/issues/51)) ([faf2e7b](https://github.com/AntonioVentilii/officina/commit/faf2e7ba7fa730f021b98295653d9871bc48e332))
+
 ## [1.1.1](https://github.com/AntonioVentilii/officina/compare/v1.1.0...v1.1.1) (2026-11-04)
 
 
