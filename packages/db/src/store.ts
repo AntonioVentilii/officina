@@ -91,45 +91,48 @@ const insertEvent = (client: PoolClient, taskId: string, actor: Actor, event: Do
   );
 };
 
-export const createTask = (
-  pool: Pool,
-  input: {
-    projectId: string;
-    title: string;
-    requesterId: string;
-    /** The requester's own words, recorded as the thread's first comment with the task. */
-    request?: string;
-  }
-): Promise<StoredTask> =>
-  inTransaction(pool, async (client) => {
-    // Locking the project serializes task numbering per project.
-    await client.query('select id from projects where id = $1 for update', [input.projectId]);
-    const { rows } = await client.query<TaskRow>(
-      `insert into tasks (project_id, number, title, requester_id, stage)
+interface NewTask {
+  readonly projectId: string;
+  readonly title: string;
+  readonly requesterId: string;
+  /** The requester's own words, recorded as the thread's first comment with the task. */
+  readonly request?: string;
+}
+
+/** Opens a task at `request` inside the caller's transaction, so what follows lands with it. */
+export const insertTask = async (client: PoolClient, input: NewTask): Promise<StoredTask> => {
+  // Locking the project serializes task numbering per project.
+  await client.query('select id from projects where id = $1 for update', [input.projectId]);
+  const { rows } = await client.query<TaskRow>(
+    `insert into tasks (project_id, number, title, requester_id, stage)
        select $1, coalesce(max(number), 0) + 1, $2, $3, 'request' from tasks where project_id = $1
        returning *`,
-      [input.projectId, input.title, input.requesterId]
+    [input.projectId, input.title, input.requesterId]
+  );
+  const row = rows[0]!;
+  await client.query(
+    'insert into task_events (task_id, actor, type, payload) values ($1, $2, $3, $4)',
+    [
+      row.id,
+      json({ kind: 'member', memberId: input.requesterId }),
+      'created',
+      json({ title: input.title })
+    ]
+  );
+  if (input.request !== undefined) {
+    await addComment(
+      client,
+      row.id,
+      { kind: 'member', memberId: input.requesterId },
+      input.request
     );
-    const row = rows[0]!;
-    await client.query(
-      'insert into task_events (task_id, actor, type, payload) values ($1, $2, $3, $4)',
-      [
-        row.id,
-        json({ kind: 'member', memberId: input.requesterId }),
-        'created',
-        json({ title: input.title })
-      ]
-    );
-    if (input.request !== undefined) {
-      await addComment(
-        client,
-        row.id,
-        { kind: 'member', memberId: input.requesterId },
-        input.request
-      );
-    }
-    return toStored(row);
-  });
+  }
+  return toStored(row);
+};
+
+/** `insertTask` in a transaction of its own. */
+export const createTask = (pool: Pool, input: NewTask): Promise<StoredTask> =>
+  inTransaction(pool, (client) => insertTask(client, input));
 
 /** The project's onboarding task while it is open: no other build is dispatched until it is done. */
 export const openOnboardingTask = async (
@@ -230,85 +233,91 @@ export interface ApplyInput {
   readonly onApplied?: (client: PoolClient, task: Task) => Promise<void>;
 }
 
-export const applyCommand = (pool: Pool, input: ApplyInput): Promise<ApplyResult> =>
-  inTransaction(pool, async (client) => {
-    const { rows } = await client.query<TaskRow & { config: unknown }>(
-      `select t.*, p.config from tasks t join projects p on p.id = t.project_id
+/** `applyCommand` inside the caller's transaction, so the command lands with the caller's writes. */
+export const applyCommandIn = async (
+  client: PoolClient,
+  input: ApplyInput
+): Promise<ApplyResult> => {
+  const { rows } = await client.query<TaskRow & { config: unknown }>(
+    `select t.*, p.config from tasks t join projects p on p.id = t.project_id
        where t.id = $1 for update of t`,
-      [input.taskId]
-    );
-    const row = rows[0];
-    if (!row) return { ok: false, error: 'not_found' };
-    if (input.expectedVersion !== undefined && row.version !== input.expectedVersion) {
-      return { ok: false, error: 'conflict' };
-    }
-    const parsedConfig = parseProjectConfig(row.config);
-    if (!parsedConfig.ok) return { ok: false, error: 'invalid_config' };
+    [input.taskId]
+  );
+  const row = rows[0];
+  if (!row) return { ok: false, error: 'not_found' };
+  if (input.expectedVersion !== undefined && row.version !== input.expectedVersion) {
+    return { ok: false, error: 'conflict' };
+  }
+  const parsedConfig = parseProjectConfig(row.config);
+  if (!parsedConfig.ok) return { ok: false, error: 'invalid_config' };
 
-    const members = await listProjectMembers(client, row.project_id);
-    const approvals = await listApprovedSubjects(client, input.taskId);
+  const members = await listProjectMembers(client, row.project_id);
+  const approvals = await listApprovedSubjects(client, input.taskId);
 
-    const before = toStored(row).task;
-    if (input.guard && !input.guard(before)) return { ok: false, error: 'conflict' };
-    // Only a dispatch reads the onboarding gate; the share lock waits for an onboarding task
-    // being opened, so the gate it reads is the one in force when the build starts.
-    let onboardingOpen = false;
-    if (input.command.type === 'dispatch') {
-      await client.query('select id from projects where id = $1 for share', [row.project_id]);
-      onboardingOpen = (await openOnboardingTask(client, row.project_id)) !== null;
-    }
-    const decision = decide(before, input.command, input.actor, {
-      config: parsedConfig.config,
-      members,
-      approvals,
-      onboardingOpen
-    });
-    if (!decision.ok) return decision;
+  const before = toStored(row).task;
+  if (input.guard && !input.guard(before)) return { ok: false, error: 'conflict' };
+  // Only a dispatch reads the onboarding gate; the share lock waits for an onboarding task
+  // being opened, so the gate it reads is the one in force when the build starts.
+  let onboardingOpen = false;
+  if (input.command.type === 'dispatch') {
+    await client.query('select id from projects where id = $1 for share', [row.project_id]);
+    onboardingOpen = (await openOnboardingTask(client, row.project_id)) !== null;
+  }
+  const decision = decide(before, input.command, input.actor, {
+    config: parsedConfig.config,
+    members,
+    approvals,
+    onboardingOpen
+  });
+  if (!decision.ok) return decision;
 
-    const task = decision.task;
-    const updated = await client.query<{ version: number }>(
-      `update tasks set stage = $2, lane = $3, spec_version = $4, head_sha = $5, user_visible = $6,
+  const task = decision.task;
+  const updated = await client.query<{ version: number }>(
+    `update tasks set stage = $2, lane = $3, spec_version = $4, head_sha = $5, user_visible = $6,
          assignee = $7, blocked = $8, paused = $9, fix_rounds = $10, reviews = $11, approval_plans = $12,
          version = version + 1, updated_at = now()
        where id = $1 returning version`,
-      [
-        task.id,
-        task.stage,
-        task.lane,
-        task.specVersion,
-        task.headSha,
-        task.userVisible,
-        json(task.assignee),
-        json(task.blocked),
-        task.paused,
-        task.fixRounds,
-        json(task.reviews),
-        json(task.approvalPlans)
-      ]
-    );
+    [
+      task.id,
+      task.stage,
+      task.lane,
+      task.specVersion,
+      task.headSha,
+      task.userVisible,
+      json(task.assignee),
+      json(task.blocked),
+      task.paused,
+      task.fixRounds,
+      json(task.reviews),
+      json(task.approvalPlans)
+    ]
+  );
 
-    for (const event of decision.events) {
-      await insertEvent(client, task.id, input.actor, event);
-      if (event.type === 'approval_recorded') {
-        await client.query(
-          `insert into approvals (task_id, member_id, gate, subject, decision)
+  for (const event of decision.events) {
+    await insertEvent(client, task.id, input.actor, event);
+    if (event.type === 'approval_recorded') {
+      await client.query(
+        `insert into approvals (task_id, member_id, gate, subject, decision)
            values ($1, $2, $3, $4, 'approve')`,
-          [task.id, event.memberId, event.gate, event.subject]
-        );
-      }
-      if (
-        event.type === 'changes_requested' &&
-        input.actor.kind === 'member' &&
-        (event.stage === 'spec_review' || event.stage === 'verifying')
-      ) {
-        await client.query(
-          `insert into approvals (task_id, member_id, gate, subject, decision, note)
-           values ($1, $2, $3, $4, 'changes', $5)`,
-          [task.id, input.actor.memberId, event.stage, gateSubject(before, event.stage), event.note]
-        );
-      }
+        [task.id, event.memberId, event.gate, event.subject]
+      );
     }
+    if (
+      event.type === 'changes_requested' &&
+      input.actor.kind === 'member' &&
+      (event.stage === 'spec_review' || event.stage === 'verifying')
+    ) {
+      await client.query(
+        `insert into approvals (task_id, member_id, gate, subject, decision, note)
+           values ($1, $2, $3, $4, 'changes', $5)`,
+        [task.id, input.actor.memberId, event.stage, gateSubject(before, event.stage), event.note]
+      );
+    }
+  }
 
-    await input.onApplied?.(client, task);
-    return { ok: true, task, version: updated.rows[0]!.version, events: decision.events };
-  });
+  await input.onApplied?.(client, task);
+  return { ok: true, task, version: updated.rows[0]!.version, events: decision.events };
+};
+
+export const applyCommand = (pool: Pool, input: ApplyInput): Promise<ApplyResult> =>
+  inTransaction(pool, (client) => applyCommandIn(client, input));

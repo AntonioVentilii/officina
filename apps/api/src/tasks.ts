@@ -10,14 +10,17 @@ import {
 import {
   addComment,
   applyCommand,
-  createTask,
+  applyCommandIn,
   findTaskIdByNumber,
+  inTransaction,
+  insertTask,
   latestChooserResult,
   listApprovedSubjects,
   listProjectMemberProfiles,
   listProjectMembers,
   listRuns,
   listTaskSummaries,
+  loadProjectConfig,
   loadProjectMember,
   loadTaskContext,
   resolveProjectId,
@@ -125,24 +128,28 @@ export const createRequestAs = async (
       'watchers can read but not open requests; an owner can give the contributor role',
       403
     );
-  // The task and the request it carries land together: a task never exists without its request.
-  const { task } = await createTask(pool, {
-    projectId,
-    title: input.title,
-    requesterId: memberId,
-    request: input.request
-  });
-  const { number, rawConfig } = (await loadTaskContext(pool, task.id))!;
-  const config = parseProjectConfig(rawConfig);
+  const config = parseProjectConfig(await loadProjectConfig(pool, projectId));
   const interview = !input.skipInterview && (!config.ok || config.config.intake.interview);
-  if (interview) return { number, stage: 'request' };
-  const submitted = await applyCommand(pool, {
-    taskId: task.id,
-    command: { type: 'submit_request' },
-    actor
+  // The task, its request and a skipped interview land together: a task never exists without its
+  // request, and one that skips the interviewer is never seen waiting for it.
+  const opened = await inTransaction(pool, async (client) => {
+    const { task } = await insertTask(client, {
+      projectId,
+      title: input.title,
+      requesterId: memberId,
+      request: input.request
+    });
+    if (interview) return task;
+    const submitted = await applyCommandIn(client, {
+      taskId: task.id,
+      command: { type: 'submit_request' },
+      actor
+    });
+    if (!submitted.ok) throw new TaskCommandError(ERROR_TEXT[submitted.error]);
+    return submitted.task;
   });
-  if (!submitted.ok) throw new TaskCommandError(ERROR_TEXT[submitted.error]);
-  return { number, stage: submitted.task.stage };
+  const { number } = (await loadTaskContext(pool, opened.id))!;
+  return { number, stage: opened.stage };
 };
 
 /** A member's comment on a task's conversation; watchers read but do not comment. */

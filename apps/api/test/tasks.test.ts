@@ -56,6 +56,21 @@ describe.skipIf(!url)('task commands', () => {
     expect((await pool.query('select id from tasks')).rows).toEqual([]);
   });
 
+  test('a request that skips the interview is opened and submitted together, or not at all', async () => {
+    // A failure at the submit, as a crash there would be, must not leave the task waiting for the interviewer.
+    await pool.query(
+      `create function fail_submit() returns trigger language plpgsql as
+         $$ begin if new.type = 'stage_changed' then raise exception 'submit failed'; end if;
+         return new; end $$`
+    );
+    await pool.query(
+      'create trigger fail_submit before insert on task_events for each row execute function fail_submit()'
+    );
+    await expect(createRequest(pool, request)).rejects.toThrow('submit failed');
+    expect((await pool.query('select id from tasks')).rows).toEqual([]);
+    expect((await pool.query('select id from comments')).rows).toEqual([]);
+  });
+
   test('accept, spec approval and change requests move the task and describe what comes next', async () => {
     await createRequest(pool, request);
     expect(await actOnTask(pool, { number: 1, action: { type: 'accept' } })).toEqual({
