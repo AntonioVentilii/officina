@@ -428,6 +428,43 @@ describe.skipIf(!url)('board api', () => {
     );
   });
 
+  test('the stream sends a member only the events of their own projects', async () => {
+    const listeners = new Set<(event: BoardEvent) => void>();
+    const realtime = {
+      subscribe: (listener: (event: BoardEvent) => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      close: async () => {}
+    };
+    const cookie = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    // A real project in the same workspace where the member has no role, so the filter is what drops it.
+    const other = await pool.query<{ id: string }>(
+      `insert into projects (workspace_id, name, github_repo, config)
+       select workspace_id, 'other-app', 'ViciApp/other-app', config from projects where id = $1
+       returning id`,
+      [seeded.projectId]
+    );
+    const response = await createApp({
+      pool,
+      webhookSecret: 'x'.repeat(32),
+      board: { publicUrl: PUBLIC_URL, realtime }
+    }).handle(new Request('http://local/api/stream', { headers: { cookie } }));
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+    let text = '';
+    while (!text.includes(': connected')) text += decoder.decode((await reader.read()).value);
+    for (const listener of listeners) {
+      listener({ kind: 'task', projectId: other.rows[0]!.id, number: 7 });
+      listener({ kind: 'task', projectId: seeded.projectId, number: 1 });
+    }
+    while (!text.includes('"number":1')) text += decoder.decode((await reader.read()).value);
+    await reader.cancel();
+
+    expect(text).toContain(`"projectId":"${seeded.projectId}"`);
+    expect(text).not.toContain('"number":7');
+  });
+
   test('database changes reach open boards as events', async () => {
     const hub = await startRealtime({ connectionString: url!, pool, log: () => {} });
     const received: BoardEvent[] = [];

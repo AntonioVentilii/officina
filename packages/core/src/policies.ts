@@ -83,5 +83,3 @@ export const evaluatePolicy = (
 
   return { satisfied: pending.length === 0, pending, waived };
 };
-
-export const canApprove = (member: Member): boolean => hasRole(member, 'contributor');
