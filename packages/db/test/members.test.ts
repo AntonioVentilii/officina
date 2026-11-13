@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { Pool } from 'pg';
 import {
+  createInviteLink,
   createLoginLink,
   issueConnectorTokens,
   listMemberActivity,
@@ -173,5 +174,29 @@ describe.skipIf(!url)('member activity', () => {
     const { Tim, Gio } = await byName();
     expect(Tim!.link?.state).toBe('used');
     expect(Gio!.link?.state).toBe('expired');
+  });
+  test('a fresh invite link waits for a first sign-in in flight and is refused once it lands', async () => {
+    const tim = await addMember('Tim', 'contributor');
+    const mint = (memberId: string) =>
+      createInviteLink(pool, { projectId: seeded.projectId, memberId, ttlMs: HOUR_MS });
+    const signing = await pool.connect();
+    try {
+      await signing.query('begin');
+      await recordFirstSignIn(signing, tim);
+      const minting = mint(tim);
+      await Bun.sleep(50);
+      await signing.query('commit');
+      expect(await minting).toEqual({ ok: false, error: 'signed_in', name: 'Tim' });
+    } finally {
+      signing.release();
+    }
+    expect(
+      (await pool.query('select 1 from login_links where member_id = $1', [tim])).rowCount
+    ).toBe(0);
+    expect(await mint(await addMember('Gio', 'contributor'))).toMatchObject({ ok: true });
+    expect(await mint(seeded.ownerId.replace(/.$/, '0'))).toEqual({
+      ok: false,
+      error: 'not_member'
+    });
   });
 });

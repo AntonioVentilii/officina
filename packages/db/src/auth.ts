@@ -26,6 +26,32 @@ export const createLoginLink = async (
   return token;
 };
 
+export type InviteLinkResult =
+  | { readonly ok: true; readonly token: string }
+  | { readonly ok: false; readonly error: 'not_member' }
+  | { readonly ok: false; readonly error: 'signed_in'; readonly name: string };
+
+/**
+ * A new sign-in link for a project member who has never signed in. The member's row is locked while
+ * the link is written, so a sign-in racing it either lands first, and no link is made, or after.
+ */
+export const createInviteLink = (
+  pool: Pool,
+  input: { projectId: string; memberId: string; ttlMs: number }
+): Promise<InviteLinkResult> =>
+  inTransaction(pool, async (client) => {
+    const { rows } = await client.query<{ name: string; signed_in: boolean }>(
+      `select m.display_name as name, m.first_signed_in_at is not null as signed_in
+       from members m join project_roles r on r.member_id = m.id and r.project_id = $2
+       where m.id = $1 for update of m`,
+      [input.memberId, input.projectId]
+    );
+    const member = rows[0];
+    if (!member) return { ok: false, error: 'not_member' };
+    if (member.signed_in) return { ok: false, error: 'signed_in', name: member.name };
+    return { ok: true, token: await createLoginLink(client, input.memberId, input.ttlMs) };
+  });
+
 /**
  * Spends a sign-in link and opens a session, both or neither: a failure after spending it would
  * otherwise burn the link without signing anyone in. A link works once, and only before it expires.

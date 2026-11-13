@@ -475,7 +475,7 @@ describe.skipIf(!url)('board api', () => {
     expect(freshUrl).toStartWith(`${PUBLIC_URL}/signin#`);
     await signIn(freshUrl);
     const again = await call(owner, link, {});
-    expect(again.status).toBe(403);
+    expect(again.status).toBe(409);
     expect((await json(again)).error).toBe('Tim has already signed in');
   });
 

@@ -1,5 +1,6 @@
 import { ROLES, type Role } from '@officina/core';
 import {
+  createInviteLink,
   createLoginLink,
   findMemberByEmail,
   listMemberActivity,
@@ -81,7 +82,7 @@ export interface MemberView extends MemberActivity {
 
 /**
  * A sign-in link signs in as its member, so only an owner, who could invite them, may send another,
- * and only to someone who never signed in: a member who has signs in on their own.
+ * and only to someone who never signed in: a member who has signed in has their own way back in.
  */
 const mayInviteAgain = (viewerRole: Role, member: MemberActivity) =>
   viewerRole === 'owner' && member.firstSignedInAt === null;
@@ -102,18 +103,12 @@ export const inviteAgain = async (
   pool: Pool,
   input: { publicUrl: string; projectId: string; viewerRole: Role; memberId: string }
 ): Promise<string> => {
-  const member = (await listMemberActivity(pool, input.projectId)).find(
-    (candidate) => candidate.id === input.memberId
-  );
-  if (!member) throw new TaskCommandError('member not found', 404);
-  if (!mayInviteAgain(input.viewerRole, member))
-    throw new TaskCommandError(
-      member.firstSignedInAt
-        ? `${member.name} has already signed in`
-        : 'only owners send invite links',
-      403
-    );
-  return signInUrl(input.publicUrl, await createLoginLink(pool, member.id, INVITE_TTL_MS));
+  if (input.viewerRole !== 'owner')
+    throw new TaskCommandError('only owners send invite links', 403);
+  const result = await createInviteLink(pool, { ...input, ttlMs: INVITE_TTL_MS });
+  if (result.ok) return signInUrl(input.publicUrl, result.token);
+  if (result.error === 'not_member') throw new TaskCommandError('member not found', 404);
+  throw new TaskCommandError(`${result.name} has already signed in`);
 };
 
 const at = (date: Date) => `${date.toISOString().slice(0, 16).replace('T', ' ')} UTC`;
