@@ -118,6 +118,17 @@ describe('project config', () => {
     expect(on.ok && on.config.pullRequest.autoMerge).toBe(true);
   });
 
+  test('a requester may meet their own gates unless the project turns it off', () => {
+    const on = parseProjectConfig({ version: 1, docs: { entry: 'AGENTS.md' } });
+    expect(on.ok && on.config.approvals.selfApproval).toBe(true);
+    const off = parseProjectConfig({
+      version: 1,
+      docs: { entry: 'AGENTS.md' },
+      approvals: { self_approval: false }
+    });
+    expect(off.ok && off.config.approvals.selfApproval).toBe(false);
+  });
+
   test('asking Copilot to review is off unless the project turns it on', () => {
     const off = parseProjectConfig({ version: 1, docs: { entry: 'AGENTS.md' } });
     expect(off.ok && off.config.pullRequest.copilotReview).toBe(false);

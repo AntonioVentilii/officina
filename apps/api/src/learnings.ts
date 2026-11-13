@@ -1,4 +1,4 @@
-import { editsProject, hasRole, type Role } from '@officina/core';
+import { can, editsProject, type Role } from '@officina/core';
 import {
   decideLearning,
   inTransaction,
@@ -115,7 +115,7 @@ export const decide = async (
   target: Target,
   input: { id: string; decision: 'accept' | 'reject'; note?: string | undefined }
 ): Promise<LearningRow> => {
-  if (!hasRole({ id: target.memberId, role: target.role, domains: [] }, 'maintainer'))
+  if (!can(target, 'decide_learnings'))
     throw new TaskCommandError('only maintainers and owners decide on learnings');
   return inTransaction(pool, async (client) => {
     await lockLearning(client, input.id);

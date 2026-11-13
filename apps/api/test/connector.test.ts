@@ -281,6 +281,7 @@ describe.skipIf(!url)('connector for Claude', () => {
       'list_projects',
       'open_request',
       'whats_waiting_on_me',
+      'list_tasks',
       'show_task',
       'answer_question',
       'comment',
@@ -291,7 +292,7 @@ describe.skipIf(!url)('connector for Claude', () => {
     expect(open.annotations.readOnlyHint).toBe(false);
 
     expect((await tool(token, 'list_projects')).content[0]!.text).toContain(
-      'vici-app (ViciApp/vici-app): your role is owner, so you can do everything, including changing the project settings.'
+      'vici-app (ViciApp/vici-app): your role is owner, so you can see every task in the project, its thread and every decision; open requests;'
     );
     const opened = await tool(token, 'open_request', {
       title: 'Rename the Wager button',
@@ -321,6 +322,51 @@ describe.skipIf(!url)('connector for Claude', () => {
     expect(missing).toMatchObject({ isError: true });
     const invalid = await tool(token, 'show_task', { number: 'one' });
     expect(invalid.isError).toBe(true);
+  });
+
+  test('every member sees every task in progress, with who asked and who approves', async () => {
+    const owner = (await connect()).tokens.access_token as string;
+    await tool(owner, 'open_request', {
+      title: 'Rename the Wager button',
+      request: 'It should say Prediction.',
+      skip_interview: true
+    });
+    await invite(pool, {
+      publicUrl: PUBLIC_URL,
+      email: 'tim@example.com',
+      name: 'Tim',
+      role: 'contributor',
+      domains: ['product']
+    });
+    const tim = (await connect('tim@example.com')).tokens.access_token as string;
+
+    const listed = (await tool(tim, 'list_tasks')).content[0]!.text;
+    expect(listed).toContain('1 in progress');
+    expect(listed).toContain('Task 1: Rename the Wager button, requested by Antonio.');
+    expect((await tool(tim, 'whats_waiting_on_me')).content[0]!.text).not.toContain('Task 1');
+
+    const shown = (await tool(tim, 'show_task', { number: 1 })).content[0]!.text;
+    expect(shown).toContain('Requested by Antonio.');
+    expect(shown).toContain('Approve the plan: an owner (Antonio).');
+    expect(shown).toContain('Merge: a person merges it on GitHub (Antonio).');
+
+    // Whom the chooser asked to check is part of the people too.
+    const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
+    await pool.query(`update tasks set approval_plans = $1 where id = $2`, [
+      JSON.stringify({
+        spec_review: {
+          subject: 'spec:0',
+          depth: 'glance',
+          rationale: 'Copy.',
+          extra: [],
+          verifiers: [{ memberId: seeded.ownerId, reason: 'Knows the screen.' }]
+        }
+      }),
+      taskId
+    ]);
+    expect((await tool(tim, 'show_task', { number: 1 })).content[0]!.text).toContain(
+      'Approve the plan: an owner (Antonio). Asked to check: Antonio.'
+    );
   });
 
   test('Claude sees a question with its options and previews and answers by letter', async () => {

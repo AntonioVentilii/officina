@@ -15,6 +15,20 @@ export type Stage =
 
 export type Lane = 'green' | 'standard' | 'red';
 export type Role = 'watcher' | 'contributor' | 'maintainer' | 'owner';
+/** What a member may do in a project: the permission matrix's actions, as the API sends them. */
+export type Permission =
+  | 'see'
+  | 'request'
+  | 'comment'
+  | 'answer'
+  | 'approve_spec'
+  | 'verify_result'
+  | 'triage'
+  | 'steer'
+  | 'see_runs'
+  | 'decide_learnings'
+  | 'merge'
+  | 'manage_members';
 export type BoardAction =
   'submit' | 'accept' | 'decline' | 'approve' | 'changes' | 'answer' | 'cancel' | 'comment';
 
@@ -25,6 +39,7 @@ export interface Project {
   readonly role: Role;
   readonly domains: readonly string[];
   readonly look: Look;
+  readonly can: readonly Permission[];
 }
 
 export type Look = 'modernista' | 'tecnica';
@@ -164,6 +179,23 @@ export interface TaskDetail extends Card {
     readonly extra: readonly { readonly label: string; readonly reason: string }[];
     readonly verifiers: readonly { readonly name: string; readonly reason: string }[];
   } | null;
+  /** Who asked, who the approval policy expects at each gate, and who merges. */
+  readonly people: {
+    readonly requester: string;
+    readonly gates: readonly {
+      readonly gate: 'spec_review' | 'verifying';
+      readonly does: string;
+      readonly current: boolean;
+      readonly requirements: readonly {
+        readonly label: string;
+        readonly who: readonly string[];
+        readonly waived: boolean;
+        readonly approvedBy: readonly string[];
+      }[];
+      readonly asked: readonly string[];
+    }[];
+    readonly merge: { readonly by: 'person' | 'auto'; readonly who: readonly string[] };
+  };
   readonly approval: {
     readonly gate: 'spec_review' | 'verifying';
     readonly planned: boolean;
@@ -215,6 +247,7 @@ export interface MemberActivity {
   readonly id: string;
   readonly name: string;
   readonly role: Role;
+  readonly domains: readonly string[];
   readonly firstSignedInAt: string | null;
   readonly link: {
     readonly state: 'pending' | 'used' | 'expired';

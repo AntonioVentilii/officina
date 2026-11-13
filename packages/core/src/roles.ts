@@ -9,5 +9,5 @@ export interface Member {
   readonly domains: readonly string[];
 }
 
-export const hasRole = (member: Member, atLeast: Role): boolean =>
+export const hasRole = (member: Pick<Member, 'role'>, atLeast: Role): boolean =>
   ROLES.indexOf(member.role) >= ROLES.indexOf(atLeast);

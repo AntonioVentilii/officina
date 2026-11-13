@@ -69,7 +69,9 @@
           <MemberAvatar name={member.name} size={26} />
           <div class="who">
             <span class="name">{member.name}</span>
-            <span class="role caps">{member.role}</span>
+            <span class="role caps"
+              >{member.role}{#if member.domains.length}, {member.domains.join(', ')}{/if}</span
+            >
           </div>
           <div class="fact">
             <span class="label caps">Joined</span>

@@ -51,7 +51,7 @@
   ] as const;
 
   const project = $derived(session.project);
-  const canRequest = $derived(project !== null && project.role !== 'watcher');
+  const canRequest = $derived(session.can('request'));
   const connectorUrl = `${location.origin}/mcp`;
 
   const copy = async () => {

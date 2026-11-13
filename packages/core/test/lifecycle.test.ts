@@ -1124,3 +1124,49 @@ describe('catalog check', () => {
     expect(task.blocked?.askedOf).toEqual({ role: 'maintainer' });
   });
 });
+
+describe('the requester is not assumed to approve their own task', () => {
+  const marco = { id: 'marco', role: 'maintainer', domains: [] } as const;
+  const SEPARATE = `${CONFIG_YAML}approvals:\n  self_approval: false\n`;
+
+  const plannedSpec = (driver: Driver): Task => {
+    let task = newTask('t1', marco.id);
+    task = driver.step(task, { type: 'submit_request' }, asMember(marco));
+    task = driver.step(task, { type: 'accept' }, asMember(marco));
+    task = driver.step(
+      task,
+      { type: 'post_spec', predictedPaths: COPY_PATHS, userVisible: false },
+      asAgent('spec')
+    );
+    return driver.step(
+      task,
+      { type: 'plan_approval', userVisible: false, plan: PLAN },
+      asAgent('chooser')
+    );
+  };
+
+  test('by default a maintainer who asked can also approve the plan', () => {
+    const driver = createDriver([owner, marco]);
+    const task = driver.step(plannedSpec(driver), { type: 'approve' }, asMember(marco));
+    // The green lane needs the requester and a product approver (nobody holds it: waived).
+    expect(task.stage).toBe('ready');
+  });
+
+  test('with self_approval off, someone else must meet the maintainer floor', () => {
+    const driver = createDriver([owner, marco], loadConfig(SEPARATE));
+    let task = driver.step(plannedSpec(driver), { type: 'approve' }, asMember(marco));
+    expect(task.stage).toBe('spec_review');
+    expect(driver.events()).toContainEqual(
+      expect.objectContaining({ type: 'approval_recorded', pending: [{ role: 'maintainer' }] })
+    );
+    task = driver.step(task, { type: 'approve' }, asMember(owner));
+    expect(task.stage).toBe('ready');
+  });
+
+  test('with self_approval off, a requester alone in the project is never stuck', () => {
+    const driver = createDriver([marco], loadConfig(SEPARATE));
+    expect(driver.step(plannedSpec(driver), { type: 'approve' }, asMember(marco)).stage).toBe(
+      'ready'
+    );
+  });
+});

@@ -1,4 +1,10 @@
-import { taskUrl, type Preview } from '@officina/core';
+import {
+  ACTION_LABELS,
+  TERMINAL_STAGES,
+  allowedActions,
+  taskUrl,
+  type Preview
+} from '@officina/core';
 import type { MemberProject } from '@officina/db';
 import type { Pool } from 'pg';
 import { z } from 'zod';
@@ -67,15 +73,32 @@ const projectFor = (context: ToolContext, wanted: string | undefined): MemberPro
   return found;
 };
 
-const ROLE_CAN: Record<MemberProject['role'], string> = {
-  watcher: 'read tasks and threads',
-  contributor: 'open requests, answer questions, comment and check results',
-  maintainer: 'do everything a contributor can, plus accept requests and approve plans',
-  owner: 'do everything, including changing the project settings'
-};
+/** What a role may do, in the permission matrix's own words. */
+const roleCan = (role: MemberProject['role']) =>
+  allowedActions(role)
+    .map((action) => ACTION_LABELS[action])
+    .join('; ');
 
 const cardLine = (context: ToolContext, project: MemberProject, card: CardView) =>
-  `- Task ${card.number}: ${card.title}. Now: ${card.waitingOn.label}. ${taskUrl(context.publicUrl, project.id, card.number)}`;
+  `- Task ${card.number}: ${card.title}, requested by ${card.requester}. Now: ${card.waitingOn.label}. ${taskUrl(context.publicUrl, project.id, card.number)}`;
+
+type TaskDetail = NonNullable<Awaited<ReturnType<typeof taskView>>>;
+
+/** Who asked, who approves each gate and who merges, so nobody assumes the requester decides. */
+const peopleLines = ({ people }: TaskDetail) => [
+  ...people.gates.map(
+    (gate) =>
+      `${gate.does}: ${gate.requirements
+        .map(
+          (requirement) =>
+            `${requirement.label} (${requirement.waived ? 'nobody holds it, so it is waived' : requirement.who.join(', ') || 'nobody yet'}${requirement.approvedBy.length ? `; approved by ${requirement.approvedBy.join(', ')}` : ''})`
+        )
+        .join(', ')}.${gate.asked.length ? ` Asked to check: ${gate.asked.join(', ')}.` : ''}`
+  ),
+  people.merge.by === 'auto'
+    ? 'Merge: GitHub merges it once its checks pass.'
+    : `Merge: a person merges it on GitHub (${people.merge.who.join(', ') || 'nobody yet'}).`
+];
 
 const truncate = (text: string, max: number) =>
   text.length > max ? `${text.slice(0, max)}\n\n(cut here; the full text is on the board)` : text;
@@ -158,7 +181,7 @@ export const TOOLS = [
         ? context.projects
             .map(
               (project) =>
-                `- ${project.name} (${project.repo}): your role is ${project.role}, so you can ${ROLE_CAN[project.role]}.`
+                `- ${project.name} (${project.repo}): your role is ${project.role}, so you can ${roleCan(project.role)}.`
             )
             .join('\n')
         : 'You are not a member of any project yet. Ask an Officina owner to add you.'
@@ -246,6 +269,23 @@ After it is opened, tell the person the task link and that an agent may ask them
     }
   }),
   tool({
+    name: 'list_tasks',
+    title: 'List the tasks in progress',
+    description:
+      "Lists every task in progress in a project, whoever asked for it: its number, title, who requested it and what it waits for now. Every member of a project sees all of its work. Use it when the person asks what the team is working on or how something is going; use whats_waiting_on_me for what needs them, and show_task for one task's detail.",
+    input: z.object({ project: PROJECT }),
+    readOnly: true,
+    run: async (context, input) => {
+      const project = projectFor(context, input.project);
+      const open = (await boardView(context.pool, viewerFor(context, project))).filter(
+        (card) => !TERMINAL_STAGES.has(card.stage)
+      );
+      return open.length
+        ? `${project.name}, ${open.length} in progress:\n${open.map((card) => cardLine(context, project, card)).join('\n')}`
+        : `Nothing is in progress in ${project.name}. Open a request with open_request.`;
+    }
+  }),
+  tool({
     name: 'show_task',
     title: 'Show a task',
     description:
@@ -259,7 +299,8 @@ After it is opened, tell the person the task link and that an agent may ask them
       const lines = [
         `Task ${task.number} in ${project.name}: ${task.title}`,
         `Link: ${taskUrl(context.publicUrl, project.id, task.number)}`,
-        `Requested by ${task.requester}. Now: ${task.waitingOn.label}${task.waitingOn.me ? ' (your turn)' : ''}.`
+        `Requested by ${task.requester}. Now: ${task.waitingOn.label}${task.waitingOn.me ? ' (your turn)' : ''}.`,
+        ...peopleLines(task)
       ];
       if (task.pullRequestUrl) lines.push(`Pull request: ${task.pullRequestUrl}`);
       if (task.blocked) lines.push(...questionLines(task.blocked));
