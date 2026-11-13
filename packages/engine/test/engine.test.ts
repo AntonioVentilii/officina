@@ -4,6 +4,7 @@ import {
   appendTaskEvent,
   applyCommand,
   createTask,
+  expectedHead,
   failOrphanedRuns,
   feedbackSinceLastPush,
   linkPullRequest,
@@ -146,6 +147,11 @@ const fakeGitHub = (
     pullRequestHead: async (...args: unknown[]) => {
       calls.push({ method: 'pullRequestHead', args });
       return options.prHead ?? branch;
+    },
+    // Someone else's commit right on the verified head, touching the code.
+    commitChanges: async (...args: unknown[]) => {
+      calls.push({ method: 'commitChanges', args });
+      return { parents: ['abc'], paths: [COPY] };
     },
     cancelAutoMerge: async (...args: unknown[]) => {
       calls.push({ method: 'cancelAutoMerge', args });
@@ -917,6 +923,73 @@ describe.skipIf(!url)('engine', () => {
       expect.objectContaining({ commitSha: null, unverified: 'status1' }),
       expect.objectContaining({ commitSha: 'status2' })
     ]);
+  });
+
+  /**
+   * A GitHub where the first status write lands on the branch on top of `base` but its answer is
+   * lost, as when the process dies or the connection drops right after the write.
+   */
+  const lostStatusWrite = (base: string) => {
+    const github = fakeGitHub({ branchHead: base });
+    const draft = '# Settings title\n\nStatus: Draft\n';
+    let head = base;
+    let written = draft;
+    let writes = 0;
+    const port: GitHubPort = {
+      ...github.port,
+      pushFacts: async (input) => ({ ...(await github.port.pushFacts(input)), headSha: head }),
+      readFile: async ({ branch }) => ({
+        text: branch === 'status1' || (branch !== base && head === 'status1') ? written : draft,
+        sha: 'blob1'
+      }),
+      updateFile: async ({ text }) => {
+        writes += 1;
+        written = text;
+        head = 'status1';
+        throw new Error('socket hang up');
+      },
+      commitChanges: async ({ sha }) =>
+        sha === 'status1' ? { parents: [base], paths: [SPEC] } : { parents: [], paths: [] },
+      pullRequestHead: async () => head
+    };
+    return { port, writes: () => writes };
+  };
+
+  test('a status commit whose answer was lost stands for the verified head on the next pass', async () => {
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    const github = lostStatusWrite('abc');
+
+    expect(await finishVerifiedSpecs(pool, github.port, [taskId])).toEqual([
+      { taskId, error: 'socket hang up' }
+    ]);
+    expect(await finishVerifiedSpecs(pool, github.port, [taskId])).toEqual([]);
+    await finishVerifiedSpecs(pool, github.port, [taskId]);
+
+    expect(github.writes()).toBe(1);
+    expect(await expectedHead(pool, taskId)).toBe('status1');
+    const events = await pool.query<{ type: string; commit: string | null }>(
+      `select type, payload->>'commitSha' as commit from task_events where task_id = $1
+         and type in ('spec_status_set', 'merge_held', 'awaiting_merge') order by id`,
+      [taskId]
+    );
+    expect(events.rows).toEqual([
+      { type: 'spec_status_set', commit: 'status1' },
+      { type: 'awaiting_merge', commit: null }
+    ]);
+  });
+
+  test('an in-progress status commit whose answer was lost is taken when the catch-up opens the pull request', async () => {
+    const github = lostStatusWrite('sha1');
+    const agents = createFakePort(succeed);
+    const taskId = await taskInReady(fakeGitHub(), agents);
+    await tick({ pool, github: github.port, agents, publicUrl: PUBLIC_URL }, seeded.projectId);
+    expect(await linkedPullRequest(taskId)).toBeNull();
+
+    expect(await openMissingPullRequests(pool, github.port, [taskId], PUBLIC_URL)).toEqual([]);
+    expect(await linkedPullRequest(taskId)).toBe(42);
+    expect(github.writes()).toBe(1);
+    expect(await expectedHead(pool, taskId)).toBe('status1');
   });
 
   test('GitHub merges on its own only when the project allows it and the chooser chose it', async () => {

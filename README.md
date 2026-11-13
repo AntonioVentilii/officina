@@ -43,7 +43,7 @@ A request goes in as a sentence. An interviewer agent asks the follow-up questio
   ①  Request          ②  Plan                 ③  Build               ④  Check               ⑤  Ship
   ──────────          ──────────────          ─────────────          ────────────           ──────────
   "Battle screens  →  Spec agent writes   →   Builder pushes     →   Chooser picks      →   Code owner
-   still say           the spec; people        officina/12-*;         verifiers and a        merges; the
+   still say           the spec; people        officina/task-12;      verifiers and a        merges; the
    Wager"              approve the exact       two reviewers          checklist; people      learner
   Interviewer asks     version                 check it against       verify in the          proposes what
   what's missing                               spec and for bugs      product                to improve
@@ -140,7 +140,7 @@ Checks:
 
 ```bash
 bun run lint && bun run typecheck
-bun run test       # core, GitHub and runner: no network, no database
+bun run test       # core, GitHub, runner and the API suites that need no database; no network
 bun run test:db    # database, engine and API against a throwaway Postgres
 ```
 
@@ -164,7 +164,7 @@ Protect your default branch and tags with a ruleset the App cannot bypass: Offic
 
 ## Status
 
-Early preview. Phase 0 of the [roadmap](./docs/architecture.md#14-phases) is running in production for one team: engine, GitHub App, Managed Agents runner, all seven roles, the board, approvals and learnings. Next: email sign-in, notifications, multiple projects per workspace and a self-hosted runner.
+Early preview. Phase 0 of the [roadmap](./docs/architecture.md#14-phases) is running in production for one team: engine, GitHub App, Managed Agents runner, all eight roles, the board, approvals and learnings. Next: email sign-in, notifications, multiple projects per workspace and a self-hosted runner.
 
 Officina is built to be built with Officina. [`AGENTS.md`](./AGENTS.md) is the entry point for agents working on this repository, and [`docs/architecture.md`](./docs/architecture.md) is the source of truth for the design.
 
