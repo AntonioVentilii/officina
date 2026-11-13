@@ -3,12 +3,13 @@ import {
   TERMINAL_STAGES,
   allowedActions,
   redactSecrets,
-  taskUrl
+  taskUrl,
+  type Preview
 } from '@officina/core';
 import type { MemberProject } from '@officina/db';
 import type { Pool } from 'pg';
 import { z } from 'zod';
-import { boardView, taskView, type BoardViewer, type CardView } from '../board';
+import { boardView, taskView, type BoardViewer, type CardView, type TaskView } from '../board';
 import { TaskCommandError, actOnTaskAs, commentAs, createRequestAs } from '../tasks';
 
 /**
@@ -102,6 +103,34 @@ const peopleLines = ({ people }: TaskDetail) => [
 
 const truncate = (text: string, max: number) =>
   text.length > max ? `${text.slice(0, max)}\n\n(cut here; the full text is on the board)` : text;
+
+/** A preview as Claude can show it in chat: words side by side, a mock to render, or a link. */
+const previewText = (preview: Preview): string => {
+  switch (preview.kind) {
+    case 'text':
+      return `Wording now: "${preview.before}"\n   Wording after: "${preview.after}"`;
+    case 'markdown':
+      return `Example (Markdown):\n${preview.body}`;
+    case 'html':
+      return `Mock (agent-written HTML; show it rendered as a static picture, never run scripts in it):\n\`\`\`html\n${preview.body}\n\`\`\``;
+    case 'link':
+      return `See it: ${preview.url}${preview.label ? ` (${preview.label})` : ''}`;
+  }
+};
+
+const questionLines = (blocked: NonNullable<TaskView['blocked']>): string[] => {
+  const lines = ['', `Open question for ${blocked.askedOf}:`, blocked.question];
+  if (!blocked.options.length) return lines;
+  lines.push(
+    '',
+    'Options (show each preview to the person before they choose; they may also answer in their own words):'
+  );
+  for (const option of blocked.options) {
+    lines.push(`(${option.key}) ${option.label}${option.detail ? `: ${option.detail}` : ''}`);
+    if (option.preview) lines.push(`   ${previewText(option.preview)}`);
+  }
+  return lines;
+};
 
 const WHAT_TO_DO: Record<string, string> = {
   answer: 'answer the open question (answer_question)',
@@ -237,7 +266,7 @@ After it is opened, tell the person the task link and that an agent may ask them
           );
       }
       return sections.length
-        ? `${sections.join('\n\n')}\n\nUse show_task to see what each one needs.`
+        ? `${sections.join('\n\n')}\n\nUse show_task to see what each one needs, with the options and previews of any question.`
         : 'Nothing is waiting on you. Agents keep working; new questions and checks appear here.';
     }
   }),
@@ -262,7 +291,7 @@ After it is opened, tell the person the task link and that an agent may ask them
     name: 'show_task',
     title: 'Show a task',
     description:
-      'Shows one task: where it is, whose turn it is, the request, any open question, the plan, what to check and the conversation. Use it before answering, approving or asking for changes, and summarise it for the person in plain words.',
+      'Shows one task: where it is, whose turn it is, the request, any open question with the options it offers and a preview of each, the plan, what to check and the conversation. Use it before answering, approving or asking for changes, and summarise it for the person in plain words. When a question offers options, show the person what each one would look like (the wording side by side, the example or mock rendered as a visual, the link) before they choose.',
     input: z.object({ project: PROJECT, number: NUMBER }),
     readOnly: true,
     run: async (context, input) => {
@@ -276,8 +305,7 @@ After it is opened, tell the person the task link and that an agent may ask them
         ...peopleLines(task)
       ];
       if (task.pullRequestUrl) lines.push(`Pull request: ${task.pullRequestUrl}`);
-      if (task.blocked)
-        lines.push('', `Open question for ${task.blocked.askedOf}:`, task.blocked.question);
+      if (task.blocked) lines.push(...questionLines(task.blocked));
       if (task.request) lines.push('', `Request (${task.request.author}):`, task.request.body);
       const spec = task.specs.at(-1);
       if (spec) lines.push('', `Plan, version ${spec.version}:`, truncate(spec.body, 8_000));
@@ -303,20 +331,35 @@ After it is opened, tell the person the task link and that an agent may ask them
     name: 'answer_question',
     title: 'Answer a question',
     description:
-      'Answers the open question an agent asked on a task (show_task shows it). Pass on the person\'s answer in their words; if they are unsure, it is fine to answer "I don\'t know, choose what is simplest". The agent resumes as soon as it is answered.',
+      'Answers the open question an agent asked on a task (show_task shows it). When the person picks one of the options the question offers, pass its letter as `option`, plus anything they added as `answer`; otherwise pass their answer in their words. If they are unsure, it is fine to answer "I don\'t know, choose what is simplest". The agent resumes as soon as it is answered.',
     input: z.object({
       project: PROJECT,
       number: NUMBER,
-      answer: z.string().trim().min(1).max(10_000).describe('The answer, in plain language.')
+      option: z
+        .string()
+        .trim()
+        .min(1)
+        .max(2)
+        .optional()
+        .describe('The letter of the option the person chose, as show_task lists it ("a", "b").'),
+      answer: z
+        .string()
+        .trim()
+        .min(1)
+        .max(10_000)
+        .optional()
+        .describe('The answer in plain language, or a note on the chosen option.')
     }),
     readOnly: false,
     run: async (context, input) => {
       const project = projectFor(context, input.project);
+      if (!input.option && !input.answer)
+        throw new ToolError('Pass the chosen option, the answer in words, or both.');
       await actOnTaskAs(context.pool, {
         projectId: project.id,
         memberId: context.memberId,
         number: input.number,
-        action: { type: 'answer', text: input.answer }
+        action: { type: 'answer', text: input.answer ?? '', option: input.option }
       });
       return `Answered; the work on task ${input.number} continues: ${taskUrl(context.publicUrl, project.id, input.number)}`;
     }

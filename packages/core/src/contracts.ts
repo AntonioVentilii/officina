@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { CatalogPages } from './catalogs';
 import { CHECK_DEPTHS, MERGE_MODES, type Blocked, type Command, type Task } from './lifecycle';
 import { redactDeep } from './guards';
+import { questionOptionsSchema } from './questions';
 import { TASK_BRANCH_PREFIX } from './steps';
 
 /*
@@ -27,7 +28,11 @@ const blockedSchema = z.strictObject({
 });
 
 export const interviewerOutputSchema = z.discriminatedUnion('outcome', [
-  z.strictObject({ outcome: z.literal('question'), question: text.max(1500) }),
+  z.strictObject({
+    outcome: z.literal('question'),
+    question: text.max(1500),
+    options: questionOptionsSchema
+  }),
   z.strictObject({
     outcome: z.literal('complete'),
     title: text.max(120),
@@ -43,7 +48,8 @@ export const specOutputSchema = z.discriminatedUnion('outcome', [
     predictedPaths: z.array(text).min(1),
     userVisible: z.boolean()
   }),
-  blockedSchema
+  // A spec question is a decision people make, so it may offer options; a builder's is not.
+  blockedSchema.extend({ options: questionOptionsSchema })
 ]);
 
 /** What every push hands back, the builder's and the onboarder's alike. */
@@ -220,11 +226,12 @@ export interface PushFacts {
 const blockCommand = (
   task: Task,
   question: string,
-  askedOf: z.infer<typeof askedOfSchema>
+  askedOf: z.infer<typeof askedOfSchema>,
+  options?: Blocked['options']
 ): Command => {
   const target: Blocked['askedOf'] =
     askedOf === 'requester' ? { memberId: task.requesterId } : { role: askedOf };
-  return { type: 'block', question, askedOf: target };
+  return { type: 'block', question, askedOf: target, ...(options ? { options } : {}) };
 };
 
 export type RoleOutput =
@@ -258,14 +265,20 @@ export const commandForOutput = (task: Task, result: RoleOutput): CommandResult 
     case 'interviewer': {
       const output = result.output;
       if (output.outcome === 'question') {
-        return { ok: true, command: blockCommand(task, output.question, 'requester') };
+        return {
+          ok: true,
+          command: blockCommand(task, output.question, 'requester', output.options)
+        };
       }
       return { ok: true, command: { type: 'submit_request' } };
     }
     case 'spec': {
       const output = result.output;
       if (output.outcome === 'blocked') {
-        return { ok: true, command: blockCommand(task, output.question, output.askedOf) };
+        return {
+          ok: true,
+          command: blockCommand(task, output.question, output.askedOf, output.options)
+        };
       }
       return {
         ok: true,

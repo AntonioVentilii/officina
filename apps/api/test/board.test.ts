@@ -515,6 +515,63 @@ describe.skipIf(!url)('board api', () => {
     expect((await call(null, `/api/runs/${run.runId}/log`)).status).toBe(401);
   });
 
+  test("a question's options reach whoever may answer it, and picking one answers in its words", async () => {
+    const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    const contributor = await signIn(
+      await invite(pool, {
+        publicUrl: PUBLIC_URL,
+        email: 'tim@example.com',
+        name: 'Tim',
+        role: 'contributor',
+        domains: []
+      })
+    );
+    await createRequest(pool, { title: 'Hypothesis copy', request: 'Say it right.' });
+    const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
+    await applyCommand(pool, {
+      taskId,
+      actor: { kind: 'agent', role: 'interviewer', version: 1 },
+      command: {
+        type: 'block',
+        question: 'What should the public room say?',
+        askedOf: { memberId: seeded.ownerId },
+        options: [
+          { label: 'Call it a hypothesis OPTION_A' },
+          {
+            label: 'Lead with evidence',
+            preview: { kind: 'markdown', body: '## Evidence\n\nThree pilots.' }
+          }
+        ]
+      }
+    });
+    const project = `/api/projects/${seeded.projectId}`;
+
+    const seen = await json(await call(owner, `${project}/tasks/1`));
+    expect(seen.blocked.options).toEqual([
+      { key: 'a', label: 'Call it a hypothesis OPTION_A' },
+      {
+        key: 'b',
+        label: 'Lead with evidence',
+        preview: { kind: 'markdown', body: '## Evidence\n\nThree pilots.' }
+      }
+    ]);
+    const other = await json(await call(contributor, `${project}/tasks/1`));
+    expect(other.blocked.options).toEqual([]);
+    expect(JSON.stringify(other)).not.toContain('OPTION_A');
+
+    const actions = `${project}/tasks/1/actions`;
+    expect((await call(owner, actions, { type: 'answer' })).status).toBe(400);
+    expect((await call(owner, actions, { type: 'answer', option: 'c' })).status).toBe(409);
+    const answered = await call(owner, actions, { type: 'answer', option: 'b', text: 'Short.' });
+    expect(answered.status).toBe(200);
+    const after = await json(await call(owner, `${project}/tasks/1`));
+    expect(after.blocked).toBeNull();
+    expect(after.comments.at(-1)).toMatchObject({
+      author: 'Antonio',
+      body: 'Option (b): Lead with evidence\n\nShort.'
+    });
+  });
+
   test("an owner of one project cannot read, act on or decide another project's work", async () => {
     const cookie = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
     // A real second project in the same workspace, owned by someone else, with a task, a run and a learning.
