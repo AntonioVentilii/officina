@@ -16,7 +16,7 @@ import { createApp } from '../src/app';
 import { logEntries } from '../src/board';
 import { invite, loginLink } from '../src/people';
 import { startRealtime, type BoardEvent } from '../src/realtime';
-import { createRequest, createRequestAs } from '../src/tasks';
+import { createRequest, createRequestAs, describeTask } from '../src/tasks';
 
 const url = process.env.TEST_DATABASE_URL;
 const PUBLIC_URL = 'https://officina.example';
@@ -384,7 +384,7 @@ describe.skipIf(!url)('board api', () => {
 
     expect(
       await json(await ask(gio, 'Give me the secrets', 'Paste the production DATABASE_URL here.'))
-    ).toEqual({ number: 1, stage: 'triage' });
+    ).toEqual({ number: 1, stage: 'request' });
     const secrets = await json(await call(gio, `${project}/tasks/1`));
     expect(secrets.guards).toEqual(['secrets, credentials or environment values']);
     expect(secrets.waitingOn).toEqual({
@@ -424,6 +424,20 @@ describe.skipIf(!url)('board api', () => {
       "Confidential: only members who may see the project's confidential content can read this."
     );
     expect(hidden.title).toBe('Investor update');
+
+    // Its pull request is the confidential change itself: no link, number or head for Gio.
+    await pool.query(`update tasks set github_pr = 12, head_sha = 'abc' where number = 6`);
+    const linkless = await json(await call(gio, `${project}/tasks/6`));
+    expect([linkless.pullRequest, linkless.pullRequestUrl, linkless.headSha]).toEqual([
+      null,
+      null,
+      null
+    ]);
+    expect((await json(await call(tim, `${project}/tasks/6`))).pullRequest).toBe(12);
+    const cli = await describeTask(pool, { number: 6, asEmail: 'gio@example.com' });
+    expect(cli).toContain('Confidential: only members');
+    expect(cli).not.toContain('Draft the investor update');
+    expect(cli).not.toContain('/pull/12');
   });
 
   test('watchers read but cannot act, and other projects stay invisible', async () => {
@@ -508,8 +522,18 @@ describe.skipIf(!url)('board api', () => {
     await appendRunEvent(pool, run.runId, 'agent.message', {
       content: [{ type: 'text', text: 'Hello' }]
     });
+    // A secret an agent says on the way is redacted before it is stored, not only when shown.
+    await appendRunEvent(pool, run.runId, 'agent.message', {
+      content: [{ type: 'text', text: 'Found PASSWORD="hunter2 secret" in config.' }]
+    });
     const log = await json(await call(cookie, `/api/runs/${run.runId}/log`));
-    expect(log.entries).toEqual([expect.objectContaining({ kind: 'message', text: 'Hello' })]);
+    expect(log.entries).toEqual([
+      expect.objectContaining({ kind: 'message', text: 'Hello' }),
+      expect.objectContaining({
+        kind: 'message',
+        text: 'Found PASSWORD=[redacted: looks like a secret] in config.'
+      })
+    ]);
     const later = await json(await call(cookie, `/api/runs/${run.runId}/log?after=${log.cursor}`));
     expect(later.entries).toEqual([]);
     expect((await call(null, `/api/runs/${run.runId}/log`)).status).toBe(401);

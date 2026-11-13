@@ -82,6 +82,9 @@ describe('the security wall, by rule', () => {
     expect(redacted).toContain('ANTHROPIC_API_KEY=[redacted: looks like a secret]');
     expect(redacted).toContain('postgres://app:[redacted: looks like a secret]@db.internal');
     expect(redacted).toContain('Set STRIPE_SECRET in the dashboard.');
+    expect(redactSecrets('PASSWORD="hunter2 secret" here')).toBe(
+      'PASSWORD=[redacted: looks like a secret] here'
+    );
   });
 
   test('an agent result never carries a secret, whatever it was asked', () => {

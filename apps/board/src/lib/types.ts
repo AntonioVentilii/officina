@@ -28,6 +28,8 @@ export type Permission =
   | 'see_runs'
   | 'decide_learnings'
   | 'merge'
+  | 'see_confidential'
+  | 'publish'
   | 'manage_members';
 export type BoardAction =
   'submit' | 'accept' | 'decline' | 'approve' | 'changes' | 'answer' | 'cancel' | 'comment';

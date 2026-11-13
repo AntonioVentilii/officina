@@ -8,6 +8,7 @@ import {
   type Actor,
   type Command,
   type DecisionError,
+  type Blocked,
   type DomainEvent,
   type Guard,
   type ProjectConfig,
@@ -104,16 +105,25 @@ export const createTask = (
     request?: string;
     /** What the request's words touch that no agent may handle alone (`guardsInRequest`). */
     guards?: readonly Guard[];
+    /** A question the task is born held on, so nothing moves it before someone answers. */
+    hold?: Blocked;
   }
 ): Promise<StoredTask> =>
   inTransaction(pool, async (client) => {
     // Locking the project serializes task numbering per project.
     await client.query('select id from projects where id = $1 for update', [input.projectId]);
     const { rows } = await client.query<TaskRow>(
-      `insert into tasks (project_id, number, title, requester_id, stage, guards)
-       select $1, coalesce(max(number), 0) + 1, $2, $3, 'request', $4 from tasks where project_id = $1
+      `insert into tasks (project_id, number, title, requester_id, stage, guards, blocked)
+       select $1, coalesce(max(number), 0) + 1, $2, $3, 'request', $4, $5
+       from tasks where project_id = $1
        returning *`,
-      [input.projectId, input.title, input.requesterId, input.guards ?? []]
+      [
+        input.projectId,
+        input.title,
+        input.requesterId,
+        input.guards ?? [],
+        json(input.hold ?? null)
+      ]
     );
     const row = rows[0]!;
     await client.query(
@@ -125,6 +135,9 @@ export const createTask = (
         json({ title: input.title })
       ]
     );
+    if (input.hold) {
+      await insertEvent(client, row.id, ENGINE, { type: 'blocked', blocked: input.hold });
+    }
     if (input.request !== undefined) {
       await addComment(
         client,

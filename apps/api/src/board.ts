@@ -199,7 +199,7 @@ const optionsFor = (viewer: BoardViewer, blocked: Blocked) =>
     ? (blocked.options ?? []).map((option, index) => ({ key: optionKey(index), ...option }))
     : [];
 
-const CONFIDENTIAL =
+export const CONFIDENTIAL =
   "Confidential: only members who may see the project's confidential content can read this.";
 
 /**
@@ -264,14 +264,22 @@ const approvalState = async (
     return { gate, planned: false, pending: [], waived: [], approvedBy: [], canApprove: [] };
   const approvals = await listApprovedSubjects(pool, row.id);
   const context = policyContext(config.config, row, gate, { members: facts.members, subject });
-  const result = evaluatePolicy(effectivePolicy(config.config, row, gate), approvals, context);
+  const policy = effectivePolicy(config.config, row, gate);
+  const result = evaluatePolicy(policy, approvals, context);
+  // Only approvals that count are shown as approvals: someone the policy does not name (or who may
+  // not see a confidential task) can record one, but it meets nothing.
+  const counting = new Set(
+    applicableRequirements(policy, row.userVisible).flatMap((requirement) =>
+      eligibleMembers(requirement, context).map((member) => member.id)
+    )
+  );
   return {
     gate,
     planned: true,
     pending: result.pending,
     waived: result.waived,
     approvedBy: approvals
-      .filter((approval) => approval.subject === subject)
+      .filter((approval) => approval.subject === subject && counting.has(approval.memberId))
       .map((approval) => facts.names.get(approval.memberId) ?? 'a former member'),
     canApprove: [
       ...new Set(
@@ -442,7 +450,8 @@ const cardView = (
   paused: row.paused,
   userVisible: row.userVisible,
   requester: row.requesterName,
-  pullRequest: row.pullRequest,
+  // Its pull request shows the confidential change itself.
+  pullRequest: readsContent(row, viewer) ? row.pullRequest : null,
   costCents: seesTechnical(viewer) ? row.costCents : null,
   running: row.runningRoles.map((role) => ({ role, label: roleLabel(role) })),
   fixRounds: row.fixRounds,
@@ -653,11 +662,12 @@ export const taskView = async (
         }
       : null,
     repo: context?.repo ?? null,
-    pullRequestUrl:
+    pullRequestUrl: shown.value(
       context?.repo && row.pullRequest
         ? `https://github.com/${context.repo}/pull/${row.pullRequest}`
-        : null,
-    headSha: row.headSha,
+        : null
+    ),
+    headSha: shown.value(row.headSha),
     request: request
       ? {
           author: label(request.author),

@@ -100,7 +100,7 @@ const SECRET_PATTERNS: readonly RegExp[] = [
 
 /** `NAME=value` where the name says it is a secret: the name stays, the value goes. */
 const SECRET_ASSIGNMENT =
-  /\b([A-Z][A-Z0-9_]*(SECRET|TOKEN|PASSWORD|PASSWD|API_KEY|PRIVATE_KEY|ACCESS_KEY|DATABASE_URL|DSN)[A-Z0-9_]*)(\s*[=:]\s*)["']?[^\s"'`]{6,}["']?/g;
+  /\b([A-Z0-9_]*(SECRET|TOKEN|PASSWORD|PASSWD|API_KEY|PRIVATE_KEY|ACCESS_KEY|DATABASE_URL|DSN)[A-Z0-9_]*)(\s*[=:]\s*)("[^"\n]*"|'[^'\n]*'|[^\s"'`]{6,})/g;
 
 /** A URL with a password in it: the password goes. */
 const URL_PASSWORD = /\b([a-z][a-z0-9+.-]*:\/\/[^\s:@/]+:)[^\s@/]+@/gi;

@@ -43,6 +43,8 @@ describe('permission matrix', () => {
     const ceo = { role: 'contributor', domains: ['confidential'] } as const;
     expect(can(ceo, 'see_confidential')).toBe(true);
     expect(can({ role: 'contributor', domains: [] }, 'see_confidential')).toBe(false);
+    // A domain grants nothing below contributor: a watcher with it still only reads the board.
+    expect(can({ role: 'watcher', domains: ['confidential'] }, 'see_confidential')).toBe(false);
     expect(allowedActions(ceo)).not.toContain('publish');
   });
 
