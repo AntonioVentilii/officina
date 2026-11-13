@@ -428,6 +428,85 @@ describe.skipIf(!url)('board api', () => {
     );
   });
 
+  test('owners and maintainers see who accepted their invite; only owners send a fresh link', async () => {
+    const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    const invited = (name: string, role: string) =>
+      invite(pool, {
+        publicUrl: PUBLIC_URL,
+        email: `${name.toLowerCase()}@example.com`,
+        name,
+        role,
+        domains: []
+      });
+    const maintainer = await signIn(await invited('Mia', 'maintainer'));
+    const contributor = await signIn(await invited('Carla', 'contributor'));
+    await invited('Tim', 'contributor');
+    const project = `/api/projects/${seeded.projectId}`;
+    interface Listed {
+      id: string;
+      name: string;
+      firstSignedInAt: string | null;
+      link: { state: string } | null;
+      invitable: boolean;
+    }
+    const members = async (cookie: string): Promise<Listed[]> =>
+      (await json(await call(cookie, `${project}/members`))).members;
+
+    const listed = await members(owner);
+    expect(listed.map((member) => [member.name, member.link?.state, member.invitable])).toEqual([
+      ['Antonio', 'used', false],
+      ['Mia', 'used', false],
+      ['Carla', 'used', false],
+      ['Tim', 'pending', true]
+    ]);
+    const tim = listed.find((member) => member.name === 'Tim')!;
+    expect(tim.firstSignedInAt).toBeNull();
+    expect(typeof listed[0]!.firstSignedInAt).toBe('string');
+
+    expect((await members(maintainer)).some((member) => member.invitable)).toBe(false);
+    expect((await call(contributor, `${project}/members`)).status).toBe(403);
+
+    const link = `${project}/members/${tim.id}/link`;
+    expect((await call(maintainer, link, {})).status).toBe(403);
+    expect((await call(owner, link, {}, false)).status).toBe(403);
+    const fresh = await call(owner, link, {});
+    expect(fresh.status).toBe(200);
+    const { url: freshUrl } = await json(fresh);
+    expect(freshUrl).toStartWith(`${PUBLIC_URL}/signin#`);
+    await signIn(freshUrl);
+    const again = await call(owner, link, {});
+    expect(again.status).toBe(403);
+    expect((await json(again)).error).toBe('Tim has already signed in');
+  });
+
+  test('an accepted invite reaches the owner Inbox and leaves it once read', async () => {
+    const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    const project = `/api/projects/${seeded.projectId}`;
+    expect((await json(await call(owner, `${project}/notifications`))).notifications).toEqual([]);
+    const tim = await signIn(
+      await invite(pool, {
+        publicUrl: PUBLIC_URL,
+        email: 'tim@example.com',
+        name: 'Tim',
+        role: 'contributor',
+        domains: []
+      })
+    );
+
+    const [notice] = (await json(await call(owner, `${project}/notifications`))).notifications;
+    expect(notice).toMatchObject({
+      kind: 'invite_accepted',
+      text: 'Tim accepted the invite to vici-app'
+    });
+    expect((await json(await call(tim, `${project}/notifications`))).notifications).toEqual([]);
+
+    const read = `/api/notifications/${notice.id}/read`;
+    expect((await call(owner, read, {}, false)).status).toBe(403);
+    expect((await call(tim, read, {})).status).toBe(404);
+    expect((await call(owner, read, {})).status).toBe(200);
+    expect((await json(await call(owner, `${project}/notifications`))).notifications).toEqual([]);
+  });
+
   test('the stream sends a member only the events of their own projects', async () => {
     const listeners = new Set<(event: BoardEvent) => void>();
     const realtime = {

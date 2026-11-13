@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { DEFAULT_BOARD_LOOK, type BoardLook, type Role } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
+import { recordFirstSignIn } from './members';
 import { inTransaction } from './store';
 
 type Queryable = Pool | PoolClient;
@@ -28,6 +29,7 @@ export const createLoginLink = async (
 /**
  * Spends a sign-in link and opens a session, both or neither: a failure after spending it would
  * otherwise burn the link without signing anyone in. A link works once, and only before it expires.
+ * A member's first link also records their first sign-in, which tells the project owners.
  */
 export const redeemLoginLink = (
   pool: Pool,
@@ -42,6 +44,7 @@ export const redeemLoginLink = (
     );
     const memberId = rows[0]?.member_id;
     if (!memberId) return null;
+    await recordFirstSignIn(client, memberId);
     return { sessionToken: await createSession(client, memberId), memberId };
   });
 
@@ -96,13 +99,18 @@ export const endSession = async (db: Queryable, sessionToken: string) => {
 
 /**
  * Deletes sign-in links, sessions and GitHub authorization states that can no longer be used, so
- * the tables hold only live credentials.
+ * the tables hold only live credentials. Each member's latest link stays, spent or not: it is what
+ * shows owners whether an invite was used or ran out, and its hash can no longer sign anyone in.
  */
 export const purgeExpiredCredentials = async (
   db: Queryable
 ): Promise<{ loginLinks: number; sessions: number; oauthStates: number }> => {
   const links = await db.query(
-    'delete from login_links where expires_at <= now() or used_at is not null'
+    `delete from login_links l
+     where (l.expires_at <= now() or l.used_at is not null)
+       and exists (select 1 from login_links newer
+                   where newer.member_id = l.member_id
+                     and (newer.created_at, newer.token_hash) > (l.created_at, l.token_hash))`
   );
   const sessions = await db.query('delete from sessions where expires_at <= now()');
   const states = await db.query('delete from oauth_states where expires_at <= now()');

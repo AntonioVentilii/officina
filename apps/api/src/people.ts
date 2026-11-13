@@ -2,11 +2,13 @@ import { ROLES, type Role } from '@officina/core';
 import {
   createLoginLink,
   findMemberByEmail,
+  listMemberActivity,
   resolveProjectId,
   resolveProjectMember,
   setProjectRole,
   upsertMember,
-  loadProject
+  loadProject,
+  type MemberActivity
 } from '@officina/db';
 import type { Pool } from 'pg';
 import { TaskCommandError } from './tasks';
@@ -70,4 +72,89 @@ export const invite = async (
     domains: input.domains
   });
   return signInUrl(input.publicUrl, await createLoginLink(pool, memberId, INVITE_TTL_MS));
+};
+
+export interface MemberView extends MemberActivity {
+  /** Whether this viewer may send them a fresh invite link from the board. */
+  readonly invitable: boolean;
+}
+
+/**
+ * A sign-in link signs in as its member, so only an owner, who could invite them, may send another,
+ * and only to someone who never signed in: a member who has signs in on their own.
+ */
+const mayInviteAgain = (viewerRole: Role, member: MemberActivity) =>
+  viewerRole === 'owner' && member.firstSignedInAt === null;
+
+/** The project's members as the board's Members page shows them to an owner or maintainer. */
+export const membersView = async (
+  pool: Pool,
+  projectId: string,
+  viewerRole: Role
+): Promise<MemberView[]> =>
+  (await listMemberActivity(pool, projectId)).map((member) => ({
+    ...member,
+    invitable: mayInviteAgain(viewerRole, member)
+  }));
+
+/** A fresh invite link for a member who has not signed in yet, valid as long as a first invite. */
+export const inviteAgain = async (
+  pool: Pool,
+  input: { publicUrl: string; projectId: string; viewerRole: Role; memberId: string }
+): Promise<string> => {
+  const member = (await listMemberActivity(pool, input.projectId)).find(
+    (candidate) => candidate.id === input.memberId
+  );
+  if (!member) throw new TaskCommandError('member not found', 404);
+  if (!mayInviteAgain(input.viewerRole, member))
+    throw new TaskCommandError(
+      member.firstSignedInAt
+        ? `${member.name} has already signed in`
+        : 'only owners send invite links',
+      403
+    );
+  return signInUrl(input.publicUrl, await createLoginLink(pool, member.id, INVITE_TTL_MS));
+};
+
+const at = (date: Date) => `${date.toISOString().slice(0, 16).replace('T', ' ')} UTC`;
+
+const linkUse = (link: MemberActivity['link']): string => {
+  if (!link) return '-';
+  if (link.usedAt) return at(link.usedAt);
+  return link.state === 'expired'
+    ? `expired ${at(link.expiresAt)}`
+    : `not yet (valid until ${at(link.expiresAt)})`;
+};
+
+const table = (rows: readonly (readonly string[])[]): string => {
+  const widths = rows[0]!.map((_, column) => Math.max(...rows.map((row) => row[column]!.length)));
+  return rows
+    .map((row) =>
+      row
+        .map((cell, column) => cell.padEnd(widths[column]!))
+        .join('  ')
+        .trimEnd()
+    )
+    .join('\n');
+};
+
+/**
+ * The `members` command: who is in the project, when they first signed in, their latest link and
+ * whether they used it, their last request to the board (while a session is live) and Claude.
+ */
+export const membersText = async (pool: Pool, input: { repo?: string | undefined }) => {
+  const { projectId } = await projectFor(pool, input.repo);
+  const members = await listMemberActivity(pool, projectId);
+  return table([
+    ['NAME', 'ROLE', 'JOINED', 'LINK SENT', 'LINK USED', 'LAST SEEN', 'CLAUDE'],
+    ...members.map((member) => [
+      member.name,
+      member.role,
+      member.firstSignedInAt ? at(member.firstSignedInAt) : 'not yet',
+      member.link ? at(member.link.createdAt) : '-',
+      linkUse(member.link),
+      member.lastSeenAt ? at(member.lastSeenAt) : '-',
+      member.claudeConnected ? 'connected' : 'no'
+    ])
+  ]);
 };
