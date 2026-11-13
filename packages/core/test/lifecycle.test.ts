@@ -1,5 +1,12 @@
 import { describe, expect, test } from 'bun:test';
-import { effectivePolicy, newTask, nextAgentRoles, type PlanInput, type Task } from '../src';
+import {
+  effectivePolicy,
+  newTask,
+  nextAgentRoles,
+  type Member,
+  type PlanInput,
+  type Task
+} from '../src';
 import {
   CONFIG_YAML,
   PLAN,
@@ -347,6 +354,23 @@ describe('permissions', () => {
     expect(task.blocked).toBeNull();
   });
 
+  test('a question keeps the options it offers, and an empty list is no options', () => {
+    const driver = createDriver([owner]);
+    const options = [{ label: 'Keep it' }, { label: 'Rename it' }];
+    const asked = driver.step(
+      newTask('t1', owner.id),
+      { type: 'block', question: 'Which?', askedOf: { memberId: owner.id }, options },
+      asAgent('interviewer')
+    );
+    expect(asked.blocked).toEqual({ question: 'Which?', askedOf: { memberId: owner.id }, options });
+    const plain = driver.step(
+      newTask('t2', owner.id),
+      { type: 'block', question: 'Which?', askedOf: { memberId: owner.id }, options: [] },
+      asAgent('interviewer')
+    );
+    expect(plain.blocked).toEqual({ question: 'Which?', askedOf: { memberId: owner.id } });
+  });
+
   test('submitting a request as is closes an open interview question', () => {
     const driver = createDriver([owner]);
     let task = newTask('t1', owner.id);
@@ -385,6 +409,128 @@ describe('permissions', () => {
       ok: false,
       error: 'terminal'
     });
+  });
+
+  test("only a maintainer declines a request, and a contributor cannot cancel someone else's", () => {
+    const driver = createDriver([owner, productContributor]);
+    let task = newTask('t1', owner.id);
+    task = driver.step(task, { type: 'submit_request' }, asMember(owner));
+    for (const type of ['decline', 'cancel'] as const)
+      expect(
+        driver.attempt(task, { type, reason: 'not needed' }, asMember(productContributor))
+      ).toEqual({ ok: false, error: 'not_allowed' });
+
+    const declined = driver.step(
+      task,
+      { type: 'decline', reason: 'out of scope' },
+      asMember(owner)
+    );
+    expect(declined.stage).toBe('declined');
+    expect(driver.events()).toContainEqual({
+      type: 'closed',
+      stage: 'declined',
+      reason: 'out of scope'
+    });
+
+    let theirs = newTask('t2', productContributor.id);
+    theirs = driver.step(theirs, { type: 'submit_request' }, asMember(productContributor));
+    expect(
+      driver.step(theirs, { type: 'cancel', reason: 'duplicate' }, asMember(owner)).stage
+    ).toBe('cancelled');
+  });
+
+  test('a watcher cannot send a spec or a result back, a contributor can', () => {
+    const driver = createDriver([owner, productContributor, watcher]);
+    const specReview = driver.step(
+      driver.step(
+        driver.step(newTask('t1', owner.id), { type: 'submit_request' }, asMember(owner)),
+        { type: 'accept' },
+        asMember(owner)
+      ),
+      { type: 'post_spec', predictedPaths: PAGE_PATHS, userVisible: false },
+      asAgent('spec')
+    );
+    let verifying = dispatchAgent(driver, toReady(driver, PAGE_PATHS, true));
+    verifying = buildAndReview(driver, verifying, 'abc', PAGE_PATHS);
+    verifying = driver.step(
+      verifying,
+      { type: 'choose', userVisible: true, plan: PLAN },
+      asAgent('chooser')
+    );
+    expect(verifying.stage).toBe('verifying');
+
+    for (const task of [specReview, verifying])
+      expect(
+        driver.attempt(task, { type: 'request_changes', note: 'no' }, asMember(watcher))
+      ).toEqual({ ok: false, error: 'not_allowed' });
+    expect(
+      driver.step(
+        specReview,
+        { type: 'request_changes', note: 'name it Preferences' },
+        asMember(productContributor)
+      ).stage
+    ).toBe('speccing');
+  });
+
+  test('only the assignee or a maintainer hands a claimed task back', () => {
+    const maintainer: Member = { id: 'marta', role: 'maintainer', domains: [] };
+    const driver = createDriver([owner, maintainer, productContributor]);
+    const claimed = driver.step(
+      dispatchAgent(driver, toReady(driver, PAGE_PATHS)),
+      { type: 'claim' },
+      asMember(maintainer)
+    );
+    expect(driver.attempt(claimed, { type: 'release' }, asMember(productContributor))).toEqual({
+      ok: false,
+      error: 'not_allowed'
+    });
+    expect(driver.step(claimed, { type: 'release' }, asMember(owner))).toMatchObject({
+      stage: 'ready',
+      assignee: null
+    });
+
+    // An assignee whose role was lowered since the claim can still hand it back.
+    const lowered = createDriver([owner, { ...maintainer, role: 'contributor' }]);
+    expect(lowered.step(claimed, { type: 'release' }, asMember(maintainer))).toMatchObject({
+      stage: 'ready',
+      assignee: null
+    });
+  });
+
+  test('only a maintainer pauses or resumes a task, and a paused task takes no decision', () => {
+    const driver = createDriver([owner, productContributor]);
+    const ready = toReady(driver, PAGE_PATHS);
+    expect(driver.attempt(ready, { type: 'pause' }, asMember(productContributor))).toEqual({
+      ok: false,
+      error: 'not_allowed'
+    });
+    const paused = driver.step(ready, { type: 'pause' }, asMember(owner));
+    expect(paused.paused).toBe(true);
+    expect(driver.events()).toEqual([{ type: 'paused' }]);
+    expect(driver.attempt(paused, { type: 'pause' }, asMember(owner))).toEqual({
+      ok: false,
+      error: 'already_paused'
+    });
+    expect(
+      driver.attempt(
+        paused,
+        { type: 'dispatch', assignee: { kind: 'agent', role: 'builder' }, openInLane: 0 },
+        engine
+      )
+    ).toEqual({ ok: false, error: 'paused' });
+
+    expect(driver.attempt(paused, { type: 'resume' }, asMember(productContributor))).toEqual({
+      ok: false,
+      error: 'not_allowed'
+    });
+    const resumed = driver.step(paused, { type: 'resume' }, asMember(owner));
+    expect(resumed.paused).toBe(false);
+    expect(driver.events()).toEqual([{ type: 'resumed' }]);
+    expect(driver.attempt(resumed, { type: 'resume' }, asMember(owner))).toEqual({
+      ok: false,
+      error: 'not_paused'
+    });
+    expect(dispatchAgent(driver, resumed).stage).toBe('building');
   });
 });
 

@@ -2,6 +2,8 @@ import {
   can,
   effectivePolicy,
   evaluatePolicy,
+  findOption,
+  optionAnswer,
   parseProjectConfig,
   policyContext,
   type Actor,
@@ -20,6 +22,7 @@ import {
   listRuns,
   listTaskSummaries,
   loadProjectMember,
+  loadTask,
   loadTaskContext,
   resolveProjectId,
   resolveProjectMember,
@@ -164,7 +167,8 @@ export type TaskAction =
   | { readonly type: 'accept' }
   | { readonly type: 'approve' }
   | { readonly type: 'changes'; readonly note: string }
-  | { readonly type: 'answer'; readonly text: string }
+  /** With `option`, the letter of an option the question offers, and `text` an optional note. */
+  | { readonly type: 'answer'; readonly text: string; readonly option?: string | undefined }
   | { readonly type: 'cancel'; readonly reason: string }
   | { readonly type: 'decline'; readonly reason: string };
 
@@ -183,6 +187,30 @@ const toCommand = (action: TaskAction): Command => {
     case 'decline':
       return { type: action.type, reason: action.reason };
   }
+};
+
+/**
+ * The answer as the thread keeps it. A picked option is written out by its letter and label, and
+ * holds only for the task version it was read from, so a question asked meanwhile, even with the
+ * same words, is never answered by it.
+ */
+const resolveAnswer = async (
+  pool: Pool,
+  taskId: string,
+  action: TaskAction
+): Promise<{ action: TaskAction; expectedVersion?: number }> => {
+  if (action.type !== 'answer') return { action };
+  if (action.option === undefined) {
+    if (!action.text.trim()) throw new TaskCommandError('write an answer or pick an option', 400);
+    return { action };
+  }
+  const stored = await loadTask(pool, taskId);
+  const option = findOption(stored?.task.blocked?.options, action.option);
+  if (!stored || !option) throw new TaskCommandError('the open question offers no such option');
+  return {
+    action: { type: 'answer', text: optionAnswer(action.option, option, action.text) },
+    expectedVersion: stored.version
+  };
 };
 
 /** Applies one person's decision to a task, as that person. */
@@ -204,11 +232,12 @@ export const actOnTaskAs = async (
   const actor: Actor = { kind: 'member', memberId: input.memberId };
   const taskId = await findTaskIdByNumber(pool, projectId, input.number);
   if (!taskId) throw new TaskCommandError(`task #${input.number} not found`);
-  const { action } = input;
+  const { action, expectedVersion } = await resolveAnswer(pool, taskId, input.action);
   const result = await applyCommand(pool, {
     taskId,
     command: toCommand(action),
     actor,
+    ...(expectedVersion === undefined ? {} : { expectedVersion }),
     // In the same transaction as the decision: someone not allowed to answer leaves no comment.
     onApplied: async (client) => {
       if (action.type === 'answer') await addComment(client, taskId, actor, action.text);

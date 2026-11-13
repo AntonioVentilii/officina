@@ -9,6 +9,7 @@ import {
 import { computeLane, redPaths, stricterLane, type Lane } from './lanes';
 import { GATE_ACTIONS, can, type Action } from './permissions';
 import { evaluatePolicy, policyContext, type Approval } from './policies';
+import type { QuestionOption } from './questions';
 import { hasRole, type Member, type Role } from './roles';
 
 export const STAGES = [
@@ -78,6 +79,8 @@ export type Assignee =
 export interface Blocked {
   readonly question: string;
   readonly askedOf: { readonly memberId: string } | { readonly role: Role };
+  /** Choices an agent offered, each with an optional preview; people may still answer freely. */
+  readonly options?: readonly QuestionOption[];
 }
 
 export interface Task {
@@ -190,7 +193,12 @@ export type Command =
       /** A bot review that left nothing on the code, only its verdict and overview. */
       readonly overviewOnly: boolean;
     }
-  | { readonly type: 'block'; readonly question: string; readonly askedOf: Blocked['askedOf'] }
+  | {
+      readonly type: 'block';
+      readonly question: string;
+      readonly askedOf: Blocked['askedOf'];
+      readonly options?: Blocked['options'];
+    }
   | { readonly type: 'answer'; readonly text: string }
   | { readonly type: 'pause' }
   | { readonly type: 'resume' }
@@ -840,7 +848,11 @@ export const decide = (
       if (task.blocked) return fail('already_blocked');
       const allowed = actor.kind !== 'member' || memberCan(actor, context, 'comment');
       if (!allowed) return fail('not_allowed');
-      const blocked: Blocked = { question: command.question, askedOf: command.askedOf };
+      const blocked: Blocked = {
+        question: command.question,
+        askedOf: command.askedOf,
+        ...(command.options?.length ? { options: command.options } : {})
+      };
       return ok({ ...task, blocked }, [{ type: 'blocked', blocked }]);
     }
 

@@ -136,7 +136,25 @@ export interface BeforeAfter {
   readonly after: string;
 }
 
+/** What choosing an option would look like; agent-written, so only ever rendered sanitized. */
+export type OptionPreview =
+  | { readonly kind: 'text'; readonly before: string; readonly after: string }
+  | { readonly kind: 'markdown' | 'html'; readonly body: string }
+  | { readonly kind: 'link'; readonly url: string; readonly label?: string };
+
+export interface QuestionOption {
+  readonly key: string;
+  readonly label: string;
+  readonly detail?: string;
+  readonly preview?: OptionPreview;
+}
+
 export interface TaskDetail extends Card {
+  readonly blocked: {
+    readonly question: string;
+    readonly askedOf?: string;
+    readonly options: readonly QuestionOption[];
+  } | null;
   readonly repo: string | null;
   readonly pullRequestUrl: string | null;
   readonly headSha: string | null;
