@@ -1,5 +1,12 @@
 import { describe, expect, test } from 'bun:test';
-import { effectivePolicy, newTask, nextAgentRoles, type PlanInput, type Task } from '../src';
+import {
+  canAutoVerify,
+  effectivePolicy,
+  newTask,
+  nextAgentRoles,
+  type PlanInput,
+  type Task
+} from '../src';
 import {
   CONFIG_YAML,
   PLAN,
@@ -1021,6 +1028,95 @@ describe('the requester is not assumed to approve their own task', () => {
     const driver = createDriver([marco], loadConfig(SEPARATE));
     expect(driver.step(plannedSpec(driver), { type: 'approve' }, asMember(marco)).stage).toBe(
       'ready'
+    );
+  });
+});
+
+describe('guarded tasks', () => {
+  const GUARDED = `${CONFIG_YAML}guards:\n  confidential: ['room/**']\n  publishing: ['CNAME']\n`;
+
+  test('a push that adds a secret file never reaches review and goes to the owner', () => {
+    const driver = createDriver([owner]);
+    const task = dispatchAgent(driver, toReady(driver, PAGE_PATHS));
+    const next = driver.step(
+      task,
+      {
+        type: 'push',
+        headSha: 'abc',
+        changedPaths: ['src/routes/+page.svelte', '.env'],
+        addedPaths: ['.env'],
+        catalogPages: {},
+        diffLines: 10
+      },
+      asAgent('builder')
+    );
+    expect(next).toMatchObject({ stage: 'ready', assignee: null });
+    expect(next.blocked?.askedOf).toEqual({ role: 'owner' });
+    expect(driver.events()).toContainEqual({
+      type: 'guardrail_tripped',
+      guardrail: 'secret_files',
+      details: '.env'
+    });
+  });
+
+  test('a change that publishes needs the owner, never skips people and never auto-merges', () => {
+    const driver = createDriver([owner], loadConfig(GUARDED));
+    let task = newTask('t1', owner.id);
+    task = driver.step(task, { type: 'submit_request' }, asMember(owner));
+    task = driver.step(task, { type: 'accept' }, asMember(owner));
+    task = driver.step(
+      task,
+      { type: 'post_spec', predictedPaths: ['CNAME', ...COPY_PATHS], userVisible: false },
+      asAgent('spec')
+    );
+    expect(task.guards).toEqual(['publishing']);
+    expect(driver.events()).toContainEqual({ type: 'guards_changed', guards: ['publishing'] });
+    expect(effectivePolicy(driver.config, task, 'spec_review')).toContainEqual({ role: 'owner' });
+    expect(canAutoVerify(driver.config, { ...task, lane: 'green' })).toBe(false);
+  });
+
+  test('confidential content is approved only by members who may see it', () => {
+    const ceo = { id: 'tim', role: 'contributor', domains: ['product', 'confidential'] } as const;
+    const driver = createDriver([owner, productContributor, ceo], loadConfig(GUARDED));
+    let task = newTask('t1', owner.id);
+    task = driver.step(task, { type: 'submit_request' }, asMember(owner));
+    task = driver.step(task, { type: 'accept' }, asMember(owner));
+    task = driver.step(
+      task,
+      { type: 'post_spec', predictedPaths: ['room/investors.md'], userVisible: true },
+      asAgent('spec')
+    );
+    task = driver.step(
+      task,
+      {
+        type: 'plan_approval',
+        userVisible: true,
+        plan: { ...PLAN, extra: [{ requirement: { domain: 'product' }, reason: 'Copy.' }] }
+      },
+      asAgent('chooser')
+    );
+    task = driver.step(task, { type: 'approve' }, asMember(owner));
+    task = driver.step(task, { type: 'approve' }, asMember(productContributor));
+    // Gio holds product but may not see confidential content: his approval meets nothing.
+    expect(task.stage).toBe('spec_review');
+    expect(driver.step(task, { type: 'approve' }, asMember(ceo)).stage).toBe('ready');
+  });
+
+  test('submitting as is cannot skip a hold for the owner', () => {
+    const driver = createDriver([owner, productContributor]);
+    let task = newTask('t1', productContributor.id);
+    task = driver.step(
+      task,
+      { type: 'block', question: 'About secrets.', askedOf: { role: 'owner' } },
+      engine
+    );
+    expect(driver.attempt(task, { type: 'submit_request' }, asMember(productContributor))).toEqual({
+      ok: false,
+      error: 'blocked'
+    });
+    task = driver.step(task, { type: 'answer', text: 'Go ahead.' }, asMember(owner));
+    expect(driver.step(task, { type: 'submit_request' }, asMember(productContributor)).stage).toBe(
+      'triage'
     );
   });
 });

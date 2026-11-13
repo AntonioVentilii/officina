@@ -6,8 +6,9 @@ import {
   type ProjectConfig,
   type Requirement
 } from './config';
+import { OWNER_GUARDS, guardsForPaths, secretFiles, withGuards, type Guard } from './guards';
 import { computeLane, redPaths, stricterLane, type Lane } from './lanes';
-import { GATE_ACTIONS, can, type Action } from './permissions';
+import { GATE_ACTIONS, PERMISSIONS, can, type Action } from './permissions';
 import { evaluatePolicy, policyContext, type Approval } from './policies';
 import { hasRole, type Member, type Role } from './roles';
 
@@ -97,6 +98,8 @@ export interface Task {
   readonly reviews: Readonly<Partial<Record<ReviewerRole, 'approve'>>>;
   /** The approval chooser's decision for each human gate. */
   readonly approvalPlans: Readonly<Partial<Record<Gate, ApprovalPlan>>>;
+  /** What the task touches that no agent may handle alone (`GUARDS`); set by rule, only grows. */
+  readonly guards: readonly Guard[];
 }
 
 /** How closely people should check: a read, a hands-on test, or a test on a real device. */
@@ -142,7 +145,8 @@ export const newTask = (id: string, requesterId: string, kind: TaskKind = 'reque
   paused: false,
   fixRounds: 0,
   reviews: {},
-  approvalPlans: {}
+  approvalPlans: {},
+  guards: []
 });
 
 export type Command =
@@ -198,13 +202,19 @@ export type Command =
 
 /** `unlisted_files` sends the work back to its builder; the others hold it for a person. */
 export type Guardrail =
-  'red_paths' | 'outside_agent_docs' | 'diff_too_large' | 'unlisted_files' | 'fix_rounds_exhausted';
+  | 'red_paths'
+  | 'secret_files'
+  | 'outside_agent_docs'
+  | 'diff_too_large'
+  | 'unlisted_files'
+  | 'fix_rounds_exhausted';
 
 export type DomainEvent =
   | { readonly type: 'stage_changed'; readonly from: Stage; readonly to: Stage }
   | { readonly type: 'lane_changed'; readonly from: Lane | null; readonly to: Lane }
   | { readonly type: 'spec_versioned'; readonly version: number }
   | { readonly type: 'user_visible_changed'; readonly userVisible: boolean }
+  | { readonly type: 'guards_changed'; readonly guards: readonly Guard[] }
   | {
       readonly type: 'approval_recorded';
       readonly gate: Gate;
@@ -315,12 +325,18 @@ export const gateSubject = (
 /** The lane's policy for a gate plus whatever the approval chooser added to it. */
 export const effectivePolicy = (
   config: ProjectConfig,
-  task: Pick<Task, 'lane' | 'approvalPlans'>,
+  task: Pick<Task, 'lane' | 'approvalPlans' | 'guards'>,
   gate: Gate
 ): Policy => [
   ...config.lanes[task.lane ?? 'standard'].approvals[gate],
-  ...(task.approvalPlans[gate]?.extra.map((item) => item.requirement) ?? [])
+  ...(task.approvalPlans[gate]?.extra.map((item) => item.requirement) ?? []),
+  // Secrets, access and publishing always need whoever may `publish`, whatever the lane says.
+  ...(needsOwner(task) ? [{ role: PERMISSIONS.publish }] : [])
 ];
+
+/** Whether the task's guards call for the owner at both gates. */
+export const needsOwner = (task: Pick<Task, 'guards'>): boolean =>
+  task.guards.some((guard) => OWNER_GUARDS.has(guard));
 
 /**
  * Whether a result may skip people's verification: only in a green lane that opts in, only when a
@@ -329,10 +345,11 @@ export const effectivePolicy = (
  */
 export const canAutoVerify = (
   config: ProjectConfig,
-  task: Pick<Task, 'lane' | 'approvalPlans'>
+  task: Pick<Task, 'lane' | 'approvalPlans' | 'guards'>
 ): boolean => {
   const plan = task.approvalPlans.verifying;
   return (
+    task.guards.length === 0 &&
     task.lane === 'green' &&
     config.lanes.green.autoVerify &&
     config.release.onMerge !== 'production' &&
@@ -374,7 +391,10 @@ const withPlan = (
   // A plan without the field predates the choice and counts as `person`.
   const earlier = task.approvalPlans[gate];
   const merge: MergeMode =
-    gate === 'verifying' && input.merge === 'auto' && (!earlier || earlier.merge === 'auto')
+    gate === 'verifying' &&
+    input.merge === 'auto' &&
+    (!earlier || earlier.merge === 'auto') &&
+    task.guards.length === 0
       ? 'auto'
       : 'person';
   const plan: ApprovalPlan = { ...input, subject, extra, verifiers, merge };
@@ -382,6 +402,22 @@ const withPlan = (
     { approvalPlans: { ...task.approvalPlans, [gate]: plan } },
     { type: 'approval_planned', gate, plan, added }
   ];
+};
+
+/** Whether a held question is the requester's own to answer. */
+const isAskedOf = (blocked: Blocked, memberId: string): boolean =>
+  'memberId' in blocked.askedOf && blocked.askedOf.memberId === memberId;
+
+/** The task's guards once these paths are counted, and the event when they grew. */
+const guardedBy = (
+  task: Task,
+  context: DecideContext,
+  paths: readonly string[]
+): [readonly Guard[], DomainEvent[]] => {
+  const guards = withGuards(task.guards, guardsForPaths(context.config.guards, paths));
+  return guards.length === task.guards.length
+    ? [task.guards, []]
+    : [guards, [{ type: 'guards_changed', guards }]];
 };
 
 /** Whether the actor is the one the task is assigned to, so it may report the build. */
@@ -473,6 +509,9 @@ export const decide = (
           (member.id === task.requesterId || can(member, 'triage')));
       if (!allowed) return fail('not_allowed');
       if (task.paused) return fail('paused');
+      // Only the interview's own question to the requester can be skipped; a hold for anyone else
+      // (the owner, for a guarded request) stays until they answer.
+      if (task.blocked && !isAskedOf(task.blocked, task.requesterId)) return fail('blocked');
       // Submitting as is closes an open interview question: triage decides with what is there.
       const [moved, event] = moveTo(task, 'triage', { blocked: null });
       const events: DomainEvent[] = task.blocked
@@ -504,9 +543,16 @@ export const decide = (
       const lane = task.lane ? stricterLane(task.lane, predicted) : predicted;
       const specVersion = task.specVersion + 1;
       const userVisible = task.userVisible || command.userVisible;
-      const [moved, stageEvent] = moveTo(task, 'spec_review', { lane, specVersion, userVisible });
+      const [guards, guardEvents] = guardedBy(task, context, command.predictedPaths);
+      const [moved, stageEvent] = moveTo(task, 'spec_review', {
+        lane,
+        specVersion,
+        userVisible,
+        guards
+      });
       const events: DomainEvent[] = [{ type: 'spec_versioned', version: specVersion }];
       if (lane !== task.lane) events.push({ type: 'lane_changed', from: task.lane, to: lane });
+      events.push(...guardEvents);
       if (userVisible !== task.userVisible)
         events.push({ type: 'user_visible_changed', userVisible });
       events.push(stageEvent);
@@ -614,8 +660,32 @@ export const decide = (
       };
       const actual = computeLane(command.changedPaths, context.config.laneMatcher);
       const lane = stricterLane(task.lane ?? 'standard', actual);
-      const laneEvents: DomainEvent[] =
-        lane !== task.lane ? [{ type: 'lane_changed', from: task.lane, to: lane }] : [];
+      const [guards, guardEvents] = guardedBy(task, context, command.changedPaths);
+      const laneEvents: DomainEvent[] = [
+        ...(lane !== task.lane
+          ? [{ type: 'lane_changed', from: task.lane, to: lane } as const]
+          : []),
+        ...guardEvents
+      ];
+      task = { ...task, guards };
+
+      // A secret committed to the branch must never reach a pull request people or bots read.
+      const secrets = secretFiles(command.changedPaths);
+      if (secrets.length) {
+        const blocked: Blocked = {
+          question: `The branch adds or changes files that hold secrets: ${secrets.join(', ')}. Remove them from the branch and its history, rotate anything exposed, then build again or cancel.`,
+          askedOf: { role: 'owner' }
+        };
+        const [moved, stageEvent] = moveTo(task, 'ready', { lane, assignee: null, blocked });
+        return ok(moved, [
+          pushed,
+          ...laneEvents,
+          { type: 'guardrail_tripped', guardrail: 'secret_files', details: secrets.join(', ') },
+          stageEvent,
+          { type: 'assigned', assignee: null },
+          { type: 'blocked', blocked }
+        ]);
+      }
 
       if (assignee.kind === 'agent' && !context.config.lanes[lane].agentsBuild) {
         const touched = redPaths(command.changedPaths, context.config.laneMatcher);

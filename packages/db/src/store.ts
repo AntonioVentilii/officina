@@ -9,6 +9,7 @@ import {
   type Command,
   type DecisionError,
   type DomainEvent,
+  type Guard,
   type ProjectConfig,
   type Task
 } from '@officina/core';
@@ -39,6 +40,7 @@ interface TaskRow {
   fix_rounds: number;
   reviews: Task['reviews'];
   approval_plans: Task['approvalPlans'];
+  guards: Task['guards'];
   version: number;
 }
 
@@ -58,7 +60,8 @@ const toStored = (row: TaskRow): StoredTask => ({
     paused: row.paused,
     fixRounds: row.fix_rounds,
     reviews: row.reviews,
-    approvalPlans: row.approval_plans
+    approvalPlans: row.approval_plans,
+    guards: row.guards
   }
 });
 
@@ -99,16 +102,18 @@ export const createTask = (
     requesterId: string;
     /** The requester's own words, recorded as the thread's first comment with the task. */
     request?: string;
+    /** What the request's words touch that no agent may handle alone (`guardsInRequest`). */
+    guards?: readonly Guard[];
   }
 ): Promise<StoredTask> =>
   inTransaction(pool, async (client) => {
     // Locking the project serializes task numbering per project.
     await client.query('select id from projects where id = $1 for update', [input.projectId]);
     const { rows } = await client.query<TaskRow>(
-      `insert into tasks (project_id, number, title, requester_id, stage)
-       select $1, coalesce(max(number), 0) + 1, $2, $3, 'request' from tasks where project_id = $1
+      `insert into tasks (project_id, number, title, requester_id, stage, guards)
+       select $1, coalesce(max(number), 0) + 1, $2, $3, 'request', $4 from tasks where project_id = $1
        returning *`,
-      [input.projectId, input.title, input.requesterId]
+      [input.projectId, input.title, input.requesterId, input.guards ?? []]
     );
     const row = rows[0]!;
     await client.query(
@@ -269,7 +274,7 @@ export const applyCommand = (pool: Pool, input: ApplyInput): Promise<ApplyResult
     const updated = await client.query<{ version: number }>(
       `update tasks set stage = $2, lane = $3, spec_version = $4, head_sha = $5, user_visible = $6,
          assignee = $7, blocked = $8, paused = $9, fix_rounds = $10, reviews = $11, approval_plans = $12,
-         version = version + 1, updated_at = now()
+         guards = $13, version = version + 1, updated_at = now()
        where id = $1 returning version`,
       [
         task.id,
@@ -283,7 +288,8 @@ export const applyCommand = (pool: Pool, input: ApplyInput): Promise<ApplyResult
         task.paused,
         task.fixRounds,
         json(task.reviews),
-        json(task.approvalPlans)
+        json(task.approvalPlans),
+        task.guards
       ]
     );
 

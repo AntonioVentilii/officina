@@ -1,6 +1,11 @@
 import {
+  ENGINE,
+  GUARD_LABELS,
+  PERMISSIONS,
   can,
   effectivePolicy,
+  guardsInRequest,
+  type Guard,
   evaluatePolicy,
   parseProjectConfig,
   policyContext,
@@ -19,6 +24,7 @@ import {
   listProjectMembers,
   listRuns,
   listTaskSummaries,
+  loadProjectConfig,
   loadProjectMember,
   loadTaskContext,
   resolveProjectId,
@@ -126,24 +132,52 @@ export const createRequestAs = async (
       'watchers can read but not open requests; an owner can give the contributor role',
       403
     );
+  const config = parseProjectConfig(await loadProjectConfig(pool, projectId));
+  // By rule, never a model's reading: words about secrets, access, publishing or the project's
+  // confidential terms guard the task from the start.
+  const guards = guardsInRequest(
+    `${input.title}\n${input.request}`,
+    config.ok ? config.config.guards.confidentialTerms : []
+  );
   // The task and the request it carries land together: a task never exists without its request.
   const { task } = await createTask(pool, {
     projectId,
     title: input.title,
     requesterId: memberId,
-    request: input.request
+    request: input.request,
+    guards
   });
-  const { number, rawConfig } = (await loadTaskContext(pool, task.id))!;
-  const config = parseProjectConfig(rawConfig);
+  const { number } = (await loadTaskContext(pool, task.id))!;
   const interview = !input.skipInterview && (!config.ok || config.config.intake.interview);
-  if (interview) return { number, stage: 'request' };
-  const submitted = await applyCommand(pool, {
-    taskId: task.id,
-    command: { type: 'submit_request' },
-    actor
+  let stage: string = task.stage;
+  if (!interview) {
+    const submitted = await applyCommand(pool, {
+      taskId: task.id,
+      command: { type: 'submit_request' },
+      actor
+    });
+    if (!submitted.ok) throw new TaskCommandError(ERROR_TEXT[submitted.error]);
+    stage = submitted.task.stage;
+  }
+  if (guards.length && !can(member, 'publish')) await holdForOwner(pool, task.id, guards);
+  return { number, stage };
+};
+
+/**
+ * A guarded request from someone who may not decide it waits for whoever may `publish`, before
+ * any agent works on it. Submitting as is cannot skip it; the owner answers or cancels.
+ */
+const holdForOwner = async (pool: Pool, taskId: string, guards: readonly Guard[]) => {
+  const held = await applyCommand(pool, {
+    taskId,
+    command: {
+      type: 'block',
+      question: `This request is about ${guards.map((guard) => GUARD_LABELS[guard]).join(', ')}. Agents never reveal secrets or confidential content, and never publish, deploy or change access on their own. The owner decides: answer to let the work go on, or cancel it.`,
+      askedOf: { role: PERMISSIONS.publish }
+    },
+    actor: ENGINE
   });
-  if (!submitted.ok) throw new TaskCommandError(ERROR_TEXT[submitted.error]);
-  return { number, stage: submitted.task.stage };
+  if (!held.ok) throw new TaskCommandError(ERROR_TEXT[held.error]);
 };
 
 /** A member's comment on a task's conversation; watchers read but do not comment. */

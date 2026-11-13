@@ -1,5 +1,6 @@
 export * from './roles';
 export * from './permissions';
+export * from './guards';
 export * from './lanes';
 export * from './config';
 export * from './policies';

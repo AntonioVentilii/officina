@@ -18,6 +18,8 @@ export const ACTIONS = [
   'see_runs',
   'decide_learnings',
   'merge',
+  'see_confidential',
+  'publish',
   'manage_members'
 ] as const;
 export type Action = (typeof ACTIONS)[number];
@@ -27,7 +29,7 @@ export type Action = (typeof ACTIONS)[number];
  * Approving a plan or checking a result also needs the gate's policy to name the member (a role,
  * a domain or the requester), and answering needs the question to be asked of them.
  */
-export const PERMISSIONS: Readonly<Record<Action, Role>> = {
+export const PERMISSIONS = {
   see: 'watcher',
   request: 'contributor',
   comment: 'contributor',
@@ -39,7 +41,17 @@ export const PERMISSIONS: Readonly<Record<Action, Role>> = {
   see_runs: 'maintainer',
   decide_learnings: 'maintainer',
   merge: 'maintainer',
+  see_confidential: 'maintainer',
+  publish: 'owner',
   manage_members: 'owner'
+} as const satisfies Readonly<Record<Action, Role>>;
+
+/**
+ * Domains that grant an action below its least role, so a project can let one contributor (a CEO,
+ * a finance lead) read confidential content without making them a maintainer.
+ */
+export const DOMAIN_GRANTS: Readonly<Partial<Record<Action, string>>> = {
+  see_confidential: 'confidential'
 };
 
 /** Each action in the words people read on the board and in Claude. */
@@ -55,6 +67,9 @@ export const ACTION_LABELS: Readonly<Record<Action, string>> = {
   see_runs: 'see agent runs, their logs and costs',
   decide_learnings: 'accept or reject learnings',
   merge: 'merge results on GitHub',
+  see_confidential:
+    "read and approve tasks that touch the project's confidential content (also anyone with the `confidential` domain)",
+  publish: 'approve anything that publishes, deploys, changes access or touches secrets',
   manage_members: 'invite members and change their roles'
 };
 
@@ -64,9 +79,18 @@ export const GATE_ACTIONS: Readonly<Record<Gate, Action>> = {
   verifying: 'verify_result'
 };
 
-export const can = (member: Pick<Member, 'role'>, action: Action): boolean =>
-  hasRole(member, PERMISSIONS[action]);
+export const can = (
+  member: Pick<Member, 'role'> & Partial<Pick<Member, 'domains'>>,
+  action: Action
+): boolean => {
+  const domain = DOMAIN_GRANTS[action];
+  return (
+    hasRole(member, PERMISSIONS[action]) ||
+    (domain !== undefined && (member.domains ?? []).includes(domain))
+  );
+};
 
-/** Everything a role may do, in the matrix's order. */
-export const allowedActions = (role: Role): Action[] =>
-  ACTIONS.filter((action) => can({ role }, action));
+/** Everything a member may do, in the matrix's order. */
+export const allowedActions = (
+  member: Pick<Member, 'role'> & Partial<Pick<Member, 'domains'>>
+): Action[] => ACTIONS.filter((action) => can(member, action));

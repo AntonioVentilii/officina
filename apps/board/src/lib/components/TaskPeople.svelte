@@ -5,9 +5,10 @@
 
   interface Props {
     people: TaskDetail['people'];
+    guards: TaskDetail['guards'];
   }
 
-  let { people }: Props = $props();
+  let { people, guards }: Props = $props();
 </script>
 
 <dl class="people">
@@ -39,6 +40,11 @@
       {/if}
     </dd>
   {/each}
+
+  {#if guards.length}
+    <dt>Owner's call</dt>
+    <dd>Touches {guards.join(', ')}</dd>
+  {/if}
 
   <dt>Merges it</dt>
   <dd>

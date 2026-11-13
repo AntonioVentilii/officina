@@ -1,4 +1,10 @@
-import { ACTION_LABELS, TERMINAL_STAGES, allowedActions, taskUrl } from '@officina/core';
+import {
+  ACTION_LABELS,
+  TERMINAL_STAGES,
+  allowedActions,
+  redactSecrets,
+  taskUrl
+} from '@officina/core';
 import type { MemberProject } from '@officina/db';
 import type { Pool } from 'pg';
 import { z } from 'zod';
@@ -68,8 +74,8 @@ const projectFor = (context: ToolContext, wanted: string | undefined): MemberPro
 };
 
 /** What a role may do, in the permission matrix's own words. */
-const roleCan = (role: MemberProject['role']) =>
-  allowedActions(role)
+const roleCan = (project: MemberProject) =>
+  allowedActions(project)
     .map((action) => ACTION_LABELS[action])
     .join('; ');
 
@@ -130,7 +136,8 @@ const tool = <T extends z.ZodType>(definition: Tool<T>) => ({
           .join('; '),
         isError: true
       };
-    return { text: await definition.run(context, parsed.data), isError: false };
+    // Whatever a task holds, nothing shaped like a secret leaves Officina through Claude.
+    return { text: redactSecrets(await definition.run(context, parsed.data)), isError: false };
   }
 });
 
@@ -147,7 +154,7 @@ export const TOOLS = [
         ? context.projects
             .map(
               (project) =>
-                `- ${project.name} (${project.repo}): your role is ${project.role}, so you can ${roleCan(project.role)}.`
+                `- ${project.name} (${project.repo}): your role is ${project.role}, so you can ${roleCan(project)}.`
             )
             .join('\n')
         : 'You are not a member of any project yet. Ask an Officina owner to add you.'

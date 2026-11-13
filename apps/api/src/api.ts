@@ -360,7 +360,7 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
           // shows only what the API would accept.
           projects: signed.projects.map((project) => ({
             ...project,
-            can: allowedActions(project.role)
+            can: allowedActions(project)
           })),
           github: login ? { login } : null,
           githubAvailable: Boolean(deps.githubLogin)

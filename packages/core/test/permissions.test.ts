@@ -3,7 +3,7 @@ import { ACTIONS, ACTION_LABELS, ROLES, allowedActions, can } from '../src';
 
 describe('permission matrix', () => {
   test('each role may do exactly what the matrix says', () => {
-    expect(ROLES.map((role) => ({ role, actions: allowedActions(role) }))).toEqual([
+    expect(ROLES.map((role) => ({ role, actions: allowedActions({ role }) }))).toEqual([
       { role: 'watcher', actions: ['see'] },
       {
         role: 'contributor',
@@ -22,7 +22,8 @@ describe('permission matrix', () => {
           'steer',
           'see_runs',
           'decide_learnings',
-          'merge'
+          'merge',
+          'see_confidential'
         ]
       },
       { role: 'owner', actions: [...ACTIONS] }
@@ -34,7 +35,15 @@ describe('permission matrix', () => {
     expect(can({ role: 'watcher' }, 'request')).toBe(false);
     expect(can({ role: 'contributor' }, 'triage')).toBe(false);
     expect(can({ role: 'maintainer' }, 'manage_members')).toBe(false);
-    expect(allowedActions('owner')).toContain('manage_members');
+    expect(allowedActions({ role: 'owner' })).toContain('manage_members');
+    expect(can({ role: 'maintainer' }, 'publish')).toBe(false);
+  });
+
+  test('a domain can grant one action below its role, and only that one', () => {
+    const ceo = { role: 'contributor', domains: ['confidential'] } as const;
+    expect(can(ceo, 'see_confidential')).toBe(true);
+    expect(can({ role: 'contributor', domains: [] }, 'see_confidential')).toBe(false);
+    expect(allowedActions(ceo)).not.toContain('publish');
   });
 
   test('every action has words people read', () => {

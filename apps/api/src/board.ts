@@ -1,6 +1,7 @@
 import {
   APPROVAL_FLOOR,
   GATE_ACTIONS,
+  GUARD_LABELS,
   REVIEWER_ROLES,
   TERMINAL_STAGES,
   applicableRequirements,
@@ -148,6 +149,7 @@ const PUBLIC_FIELDS: Readonly<Record<string, readonly string[]>> = {
   lane_changed: ['from', 'to'],
   spec_versioned: ['version'],
   user_visible_changed: ['userVisible'],
+  guards_changed: ['guards'],
   approval_recorded: ['gate', 'satisfied', 'memberId'],
   approval_planned: ['gate'],
   changes_requested: ['stage', 'note'],
@@ -186,6 +188,19 @@ const questionFor = (viewer: BoardViewer, blocked: Blocked): string =>
     : hasRole(viewerMember(viewer), blocked.askedOf.role))
     ? blocked.question
     : HIDDEN_QUESTION;
+
+const CONFIDENTIAL =
+  "Confidential: only members who may see the project's confidential content can read this.";
+
+/**
+ * Whether the viewer may read what a task says. A task guarded as confidential keeps its title,
+ * stage and people for everyone, and its words for members with `see_confidential`.
+ */
+const readsContent = (row: Pick<BoardTaskRow, 'guards'>, viewer: BoardViewer): boolean =>
+  !row.guards.includes('confidential') || can(viewer, 'see_confidential');
+
+/** Free text a timeline event may carry, dropped for viewers who may not read the task. */
+const EVENT_TEXT = ['note', 'answer', 'reason', 'blocked'];
 
 const payloadFor = (
   viewer: BoardViewer,
@@ -410,7 +425,10 @@ const cardView = (
   title: row.title,
   stage: row.stage,
   lane: row.lane,
-  blocked: row.blocked ? { question: questionFor(viewer, row.blocked) } : null,
+  blocked: row.blocked
+    ? { question: readsContent(row, viewer) ? questionFor(viewer, row.blocked) : CONFIDENTIAL }
+    : null,
+  guards: row.guards.map((guard) => GUARD_LABELS[guard]),
   paused: row.paused,
   userVisible: row.userVisible,
   requester: row.requesterName,
@@ -558,6 +576,24 @@ const runView = (run: RunRow, consoleWorkspace: string | undefined) => ({
 export const runsView = async (pool: Pool, viewer: BoardViewer, consoleWorkspace?: string) =>
   (await listProjectRuns(pool, viewer.projectId, 60)).map((run) => runView(run, consoleWorkspace));
 
+/**
+ * What a viewer reads of a confidential task they may not see: their own words, and that the
+ * rest is confidential. Everyone else reads everything.
+ */
+const confidentialView = (row: BoardTaskRow, viewer: BoardViewer) => {
+  const reads = readsContent(row, viewer);
+  const own = (author: Actor | undefined) =>
+    author?.kind === 'member' && author.memberId === viewer.memberId;
+  return {
+    text: (body: string, author?: Actor) => (reads || own(author) ? body : CONFIDENTIAL),
+    value: <T>(value: T): T | null => (reads ? value : null),
+    payload: (payload: Record<string, unknown>) =>
+      reads
+        ? payload
+        : Object.fromEntries(Object.entries(payload).filter(([key]) => !EVENT_TEXT.includes(key)))
+  };
+};
+
 export const taskView = async (
   pool: Pool,
   viewer: BoardViewer,
@@ -579,11 +615,12 @@ export const taskView = async (
   ]);
   const label = (actor: Actor) => actorLabel(actor, facts.names);
   const [request, ...thread] = comments;
+  const shown = confidentialView(row, viewer);
   return {
     ...cardView(row, viewer, approval, facts),
     blocked: row.blocked
       ? {
-          question: questionFor(viewer, row.blocked),
+          question: shown.text(questionFor(viewer, row.blocked)),
           askedOf:
             'memberId' in row.blocked.askedOf
               ? (facts.names.get(row.blocked.askedOf.memberId) ?? 'a member')
@@ -597,18 +634,22 @@ export const taskView = async (
         : null,
     headSha: row.headSha,
     request: request
-      ? { author: label(request.author), body: request.body, at: request.createdAt }
+      ? {
+          author: label(request.author),
+          body: shown.text(request.body, request.author),
+          at: request.createdAt
+        }
       : null,
     comments: thread.map((comment) => ({
       id: comment.id,
       author: label(comment.author),
       authorKind: comment.author.kind,
-      body: comment.body,
+      body: shown.text(comment.body, comment.author),
       at: comment.createdAt
     })),
     specs: specs.map((spec) => ({
       version: spec.version,
-      body: spec.body,
+      body: shown.text(spec.body),
       author: label(spec.createdBy),
       at: spec.createdAt
     })),
@@ -618,11 +659,11 @@ export const taskView = async (
       actor: label(event.actor),
       actorKind: event.actor.kind,
       actorRole: event.actor.kind === 'agent' ? event.actor.role : null,
-      payload: payloadFor(viewer, event.type, event.payload),
+      payload: shown.payload(payloadFor(viewer, event.type, event.payload)),
       at: event.createdAt
     })),
     runs: seesTechnical(viewer) ? runs.map((run) => runView(run, consoleWorkspace)) : [],
-    plan: planView(row, facts),
+    plan: shown.value(planView(row, facts)),
     people: peopleView(row, facts, approvals),
     approval: approval && {
       gate: approval.gate,
@@ -631,11 +672,13 @@ export const taskView = async (
       waived: approval.waived.map(describeRequirement),
       approvedBy: approval.approvedBy
     },
-    checklist: chooser as {
-      checklist: string[];
-      beforeAfter?: { key: string; locale: string; before: string; after: string }[];
-      userVisible: boolean;
-    } | null,
+    checklist: shown.value(
+      chooser as {
+        checklist: string[];
+        beforeAfter?: { key: string; locale: string; before: string; after: string }[];
+        userVisible: boolean;
+      } | null
+    ),
     reviewers: REVIEWER_ROLES.map((role) => ({ role, label: roleLabel(role) })),
     actions: actionsFor(row, viewer)
   };

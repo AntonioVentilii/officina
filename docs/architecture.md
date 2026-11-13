@@ -23,22 +23,24 @@ Roles are per project and live in Officina, never in repository permissions. A m
 
 **The permission matrix.** What each role may do is written once, in `PERMISSIONS` (`packages/core/src/permissions.ts`), as the least role that may take each action; roles are ordered, so each role may do everything the one below it may. The lifecycle (`decide`), the board's views and actions, the API, the CLI and the Claude connector all ask `can(member, action)`, and the board receives each member's actions from the API (`can` on every project of `/api/me`) instead of comparing roles itself. A test keeps this table equal to the code.
 
-| Action             | What it lets a member do                                     | Watcher | Contributor | Maintainer | Owner |
-| ------------------ | ------------------------------------------------------------ | ------- | ----------- | ---------- | ----- |
-| `see`              | see every task in the project, its thread and every decision | yes     | yes         | yes        | yes   |
-| `request`          | open requests                                                | no      | yes         | yes        | yes   |
-| `comment`          | comment                                                      | no      | yes         | yes        | yes   |
-| `answer`           | answer the questions asked of them                           | no      | yes         | yes        | yes   |
-| `approve_spec`     | approve a plan when its approval policy names them           | no      | yes         | yes        | yes   |
-| `verify_result`    | check a result when its approval policy names them           | no      | yes         | yes        | yes   |
-| `triage`           | accept or decline requests, and send anyone's request on     | no      | no          | yes        | yes   |
-| `steer`            | pause, resume, claim, review by hand or cancel any task      | no      | no          | yes        | yes   |
-| `see_runs`         | see agent runs, their logs and costs                         | no      | no          | yes        | yes   |
-| `decide_learnings` | accept or reject learnings                                   | no      | no          | yes        | yes   |
-| `merge`            | merge results on GitHub                                      | no      | no          | yes        | yes   |
-| `manage_members`   | invite members and change their roles                        | no      | no          | no         | yes   |
+| Action             | What it lets a member do                                                                                          | Watcher | Contributor | Maintainer | Owner |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------- | ------- | ----------- | ---------- | ----- |
+| `see`              | see every task in the project, its thread and every decision                                                      | yes     | yes         | yes        | yes   |
+| `request`          | open requests                                                                                                     | no      | yes         | yes        | yes   |
+| `comment`          | comment                                                                                                           | no      | yes         | yes        | yes   |
+| `answer`           | answer the questions asked of them                                                                                | no      | yes         | yes        | yes   |
+| `approve_spec`     | approve a plan when its approval policy names them                                                                | no      | yes         | yes        | yes   |
+| `verify_result`    | check a result when its approval policy names them                                                                | no      | yes         | yes        | yes   |
+| `triage`           | accept or decline requests, and send anyone's request on                                                          | no      | no          | yes        | yes   |
+| `steer`            | pause, resume, claim, review by hand or cancel any task                                                           | no      | no          | yes        | yes   |
+| `see_runs`         | see agent runs, their logs and costs                                                                              | no      | no          | yes        | yes   |
+| `decide_learnings` | accept or reject learnings                                                                                        | no      | no          | yes        | yes   |
+| `merge`            | merge results on GitHub                                                                                           | no      | no          | yes        | yes   |
+| `see_confidential` | read and approve tasks that touch the project's confidential content (also anyone with the `confidential` domain) | no      | no          | yes        | yes   |
+| `publish`          | approve anything that publishes, deploys, changes access or touches secrets                                       | no      | no          | no         | yes   |
+| `manage_members`   | invite members and change their roles                                                                             | no      | no          | no         | yes   |
 
-Three rules sit on top of the matrix. Approving a plan or checking a result also needs the gate's approval policy to name the member, by role, by domain or as the requester (section 3). A question is answered by whoever it is asked of (a member or a role), and an owner may answer any. The requester may always cancel their own request.
+A domain can grant one action below its least role (`DOMAIN_GRANTS`): the `confidential` domain lets a contributor, for example a CEO, read and approve confidential tasks without becoming a maintainer. Three rules sit on top of the matrix. Approving a plan or checking a result also needs the gate's approval policy to name the member, by role, by domain or as the requester (section 3). A question is answered by whoever it is asked of (a member or a role), and an owner may answer any. The requester may always cancel their own request.
 
 **Everyone sees the work.** Every member of a project, watchers included, sees every task in it, whoever asked for it: the board lists them all, the realtime stream sends every change in the member's projects, and the connector's `list_tasks` lists every task in progress. What differs by role is detail, not tasks: agent runs, logs, costs and learnings are for `see_runs` (section 9).
 
@@ -238,6 +240,10 @@ pull_request:
   title_pattern: '^(feat|fix|docs|chore)\([a-z-]+\): .+$' # the builder's PR title must match
   auto_merge: false # true lets the chooser decide, per result, that GitHub merges it once checks pass (section 8)
   copilot_review: false # true asks Copilot to review each pull request Officina opens, as the task's requester (section 3)
+guards: # the security wall (section 13); every list is optional
+  confidential: ['room/**'] # files whose content is confidential
+  confidential_terms: ['investor', 'cap table'] # words that mark a request as about it
+  publishing: ['CNAME', 'firebase.json'] # files that publish, deploy or open access
 approvals:
   self_approval: true # false: the requester's own approval meets only `requester: true`; roles, domains and the maintainer floor need someone else (section 2)
 verify: ['npm ci', 'npm run lint', 'npm run check'] # run by the builder before pushing
@@ -273,29 +279,30 @@ lanes:
 
 ## 12. Data model
 
-| Table                                                      | Holds                                                                                                           |
-| ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `workspaces`, `members`, `identities`                      | teams, people, linked email / Google / GitHub identities                                                        |
-| `projects`, `project_roles`                                | repositories, config snapshot, agent environment, per-project roles and approval domains                        |
-| `tasks`                                                    | kind (request or onboarding), stage, flags, lane, priority, assignee, approval plans, linked issue and PR       |
-| `task_events`                                              | append-only audit: actor (member or agent role + version), type, payload, timestamp                             |
-| `comments`                                                 | task threads; a comment may anchor to a spec version and section                                                |
-| `spec_versions`                                            | immutable spec documents per task                                                                               |
-| `approvals`                                                | member, gate, spec version or head commit, decision, note                                                       |
-| `runs`, `run_events`                                       | runner, session id, role version, status, cost, tokens, normalized event stream                                 |
-| `agent_versions`                                           | the runner-side agent and version each role uses                                                                |
-| `learnings`                                                | proposed lessons with their exact edit, the decision and the pull request                                       |
-| `login_links`, `sessions`                                  | one-time sign-in links and board sessions (hashes only)                                                         |
-| `github_accounts`, `oauth_states`                          | members' linked GitHub accounts (tokens encrypted) and pending GitHub authorizations                            |
-| `webhook_deliveries`                                       | GitHub delivery ids, claimed once, and when each was handled                                                    |
-| `connector_clients`, `connector_codes`, `connector_tokens` | apps registered for the Claude connector, one-time authorization codes, access and refresh tokens (hashes only) |
-| `leases`, `votes`, `notifications`                         | created by the first migration for later phases; no code reads or writes them yet                               |
+| Table                                                      | Holds                                                                                                             |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `workspaces`, `members`, `identities`                      | teams, people, linked email / Google / GitHub identities                                                          |
+| `projects`, `project_roles`                                | repositories, config snapshot, agent environment, per-project roles and approval domains                          |
+| `tasks`                                                    | kind (request or onboarding), stage, flags, lane, guards, priority, assignee, approval plans, linked issue and PR |
+| `task_events`                                              | append-only audit: actor (member or agent role + version), type, payload, timestamp                               |
+| `comments`                                                 | task threads; a comment may anchor to a spec version and section                                                  |
+| `spec_versions`                                            | immutable spec documents per task                                                                                 |
+| `approvals`                                                | member, gate, spec version or head commit, decision, note                                                         |
+| `runs`, `run_events`                                       | runner, session id, role version, status, cost, tokens, normalized event stream                                   |
+| `agent_versions`                                           | the runner-side agent and version each role uses                                                                  |
+| `learnings`                                                | proposed lessons with their exact edit, the decision and the pull request                                         |
+| `login_links`, `sessions`                                  | one-time sign-in links and board sessions (hashes only)                                                           |
+| `github_accounts`, `oauth_states`                          | members' linked GitHub accounts (tokens encrypted) and pending GitHub authorizations                              |
+| `webhook_deliveries`                                       | GitHub delivery ids, claimed once, and when each was handled                                                      |
+| `connector_clients`, `connector_codes`, `connector_tokens` | apps registered for the Claude connector, one-time authorization codes, access and refresh tokens (hashes only)   |
+| `leases`, `votes`, `notifications`                         | created by the first migration for later phases; no code reads or writes them yet                                 |
 
 ## 13. Security model
 
 - **Agents act only on dispatch from the engine**, never directly on issue text or comments from the outside world. Public issue text is data: it reaches prompts inside a quoted block labelled as untrusted.
 - **Least privilege per role.** Read-only roles have no write tools. The engine accepts only the task's own `officina/*` branch as a builder's result. The installation token it hands the builder can still write any ref the App can reach, so the engine snapshots the default branch head and every tag before and after each build run: a tag created, moved or deleted, or a default branch move that is not a pull request merged on top of the old head, fails the run, discards its result and blocks the task with a question for a maintainer. That check finds a push after the fact; it does not prevent one, so a project must still protect its default branch and tags with a ruleset the App cannot bypass. No role can merge, change branch rules, touch CI secrets or deploy; the token never carries the `workflows` permission.
 - **Approvals and merges are pinned to what was verified.** Approving on GitHub as the verifier, and turning on auto-merge or merging, name the expected head: the task's verified head, or Officina's own spec status commit on top of it. A status commit counts only when its parent is that head; on a branch that moved, none is written. A pull request whose head is anything else is not approved; the mismatch is recorded on the task, and GitHub refuses a merge of any other commit.
+- **The security wall.** What no agent may handle alone is decided by rule, in code, and the prompts only repeat it. A task carries **guards** (`GUARDS` in `packages/core/src/guards.ts`), set from the request's words (secrets, access, publishing, and the project's `guards.confidential_terms`) and from the paths the spec predicts and each push changes (`guards.confidential`, `guards.publishing`); they only grow, recorded as `guards_changed`. A guarded request from anyone who may not `publish` is held for the owner before any agent reads it, and submitting it as is cannot skip the hold. A task guarded for secrets, access or publishing needs the owner's approval at both gates, whatever the lane says, and nothing guarded skips people's check or merges on its own. A confidential task keeps its title, stage and people for every member, but its request, thread, spec, plan, checklist and question are shown only to members with `see_confidential` (and each person's own words to them), through the board and the connector alike, and only they can approve it. Every agent result is redacted of anything shaped like a secret (keys, tokens, private keys, `NAME=value` for secret names, passwords in URLs) when it is parsed, before anything stores, shows or posts it, and every connector answer is redacted again; a push that adds or changes a file that holds secrets (`.env`, keys, credentials) never reaches review and is handed to the owner (`secret_files`). Every brief ends with the same rules and the project's confidential paths.
 - **People act within their role.** Every check reads the permission matrix (section 2). Watchers read; they cannot open requests (each one starts paid agent runs), comment, or answer questions. An answer's comment is written in the same transaction as the decision, so a refused answer leaves nothing behind.
 - **Webhooks apply once.** A delivery id is claimed atomically before processing, given back if processing fails and marked handled when it succeeds, so concurrent redeliveries are never applied twice and a failed one is retried. Deliveries older than a week are purged, since GitHub redelivers only within three days. A claim left unhandled for ten minutes belonged to a process that died while handling it, and a redelivery takes it again under a new claim id, which the old handler can no longer mark or give back. Such a redelivery may repeat effects the dead handler already applied; that is safe, because every webhook effect goes through the lifecycle's stage and head guards and a repeat is rejected (`wrong_stage`, `stale_head`).
 - **The connector holds no secrets in the clear.** Codes and tokens are stored as hashes; a code works once, for its client, redirect, PKCE verifier and resource; a token is accepted only for `/mcp`. A redirect is https, or http on the loopback interface for local apps (any port, RFC 8252), and is checked against the registration before Officina ever redirects to it, so a bad request is shown on the board instead of becoming an open redirect. A sign-in started from the consent page returns there only through a same-site path.
