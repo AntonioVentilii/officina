@@ -64,6 +64,7 @@ export type BoardAction =
   | 'accept'
   | 'decline'
   | 'claim'
+  | 'hand_in'
   | 'approve'
   | 'changes'
   | 'answer'
@@ -300,7 +301,7 @@ const waitingOn = (
   row: BoardTaskRow,
   viewer: BoardViewer,
   approval: ApprovalState | null,
-  facts: Pick<ProjectFacts, 'config' | 'onboarding'>
+  facts: Pick<ProjectFacts, 'config' | 'onboarding' | 'names'>
 ): WaitingOn => {
   const member = viewerMember(viewer);
   if (TERMINAL_STAGES.has(row.stage)) return { kind: 'nobody', label: row.stage, me: false };
@@ -360,8 +361,8 @@ const waitingOn = (
       if (byPerson)
         return {
           kind: 'people',
-          label: `Needs a developer: a maintainer claims the build. ${byPerson}`,
-          me: can(member, 'steer')
+          label: `Needs a developer: a developer claims the build. ${byPerson}`,
+          me: can(member, 'build')
         };
       return row.kind === 'request' && facts.onboarding !== null
         ? {
@@ -375,7 +376,7 @@ const waitingOn = (
       return row.assignee?.kind === 'member'
         ? {
             kind: 'people',
-            label: 'A person is building it',
+            label: `${facts.names.get(row.assignee.memberId) ?? 'A person'} is building it, then hands it in`,
             me: row.assignee.memberId === viewer.memberId
           }
         : {
@@ -400,6 +401,21 @@ const waitingOn = (
   }
 };
 
+/**
+ * A developer claims a build when it waits or the agent has it, and hands in what they pushed once
+ * it is theirs: built by hand or with their own agents, it goes to the same review.
+ */
+const buildActions = (row: BoardTaskRow, viewer: BoardViewer): BoardAction[] => {
+  if (!can(viewer, 'build')) return [];
+  if (row.stage === 'ready' || (row.stage === 'building' && row.assignee?.kind === 'agent'))
+    return ['claim'];
+  return row.stage === 'building' &&
+    row.assignee?.kind === 'member' &&
+    row.assignee.memberId === viewer.memberId
+    ? ['hand_in']
+    : [];
+};
+
 const actionsFor = (row: BoardTaskRow, viewer: BoardViewer): BoardAction[] => {
   const member = viewerMember(viewer);
   if (TERMINAL_STAGES.has(row.stage)) return can(member, 'comment') ? ['comment'] : [];
@@ -411,12 +427,7 @@ const actionsFor = (row: BoardTaskRow, viewer: BoardViewer): BoardAction[] => {
     if (canAnswer(row, viewer)) actions.push('answer');
   } else if (!row.paused) {
     if (row.stage === 'triage' && can(member, 'triage')) actions.push('accept', 'decline');
-    // A maintainer may build it themselves: when it waits, or to take over from the agent.
-    if (
-      can(member, 'steer') &&
-      (row.stage === 'ready' || (row.stage === 'building' && row.assignee?.kind === 'agent'))
-    )
-      actions.push('claim');
+    actions.push(...buildActions(row, viewer));
     if (
       (row.stage === 'spec_review' || row.stage === 'verifying') &&
       can(member, GATE_ACTIONS[row.stage]) &&
@@ -578,14 +589,14 @@ const peopleView = (row: BoardTaskRow, facts: ProjectFacts, approvals: readonly 
       })
     : [];
   const byPerson = facts.config && humanBuildReason(facts.config, row);
-  const maintainers = facts.members
-    .filter((member) => can(member, 'steer'))
+  const developers = facts.members
+    .filter((member) => can(member, 'build'))
     .map((member) => name(member.id));
   return {
     requester: row.requesterName,
     gates,
     build: byPerson
-      ? { by: 'person' as const, reason: byPerson, who: maintainers }
+      ? { by: 'person' as const, reason: byPerson, who: developers }
       : { by: 'agent' as const, reason: null, who: [] },
     merge: {
       by: mergedBy(row.approvalPlans.verifying, config.ok ? config.config : null),

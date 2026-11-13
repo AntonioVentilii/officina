@@ -1219,6 +1219,26 @@ describe('work agents cannot or should not do goes to a person', () => {
     });
   });
 
+  test('a contributor with the developer domain claims it, but not from another person', () => {
+    const dev = { id: 'dev', role: 'contributor', domains: ['developer'] } as const;
+    const other = { id: 'other', role: 'contributor', domains: ['developer'] } as const;
+    const driver = createDriver([owner, dev, other]);
+    let task = toReady(driver, PAGE_PATHS);
+    task = driver.step(task, { type: 'claim' }, asMember(dev));
+    expect(task).toMatchObject({
+      stage: 'building',
+      assignee: { kind: 'member', memberId: 'dev' }
+    });
+    expect(driver.attempt(task, { type: 'claim' }, asMember(other))).toEqual({
+      ok: false,
+      error: 'not_allowed'
+    });
+    expect(driver.step(task, { type: 'claim' }, asMember(owner)).assignee).toEqual({
+      kind: 'member',
+      memberId: owner.id
+    });
+  });
+
   test('only an agent result hands a task to a person; a member asks an ordinary question', () => {
     const driver = createDriver([owner]);
     const task = newTask('t1', owner.id);

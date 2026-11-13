@@ -14,6 +14,7 @@ export const ACTIONS = [
   'approve_spec',
   'verify_result',
   'triage',
+  'build',
   'steer',
   'see_runs',
   'decide_learnings',
@@ -35,11 +36,20 @@ export const PERMISSIONS: Readonly<Record<Action, Role>> = {
   approve_spec: 'contributor',
   verify_result: 'contributor',
   triage: 'maintainer',
+  build: 'maintainer',
   steer: 'maintainer',
   see_runs: 'maintainer',
   decide_learnings: 'maintainer',
   merge: 'maintainer',
   manage_members: 'owner'
+};
+
+/**
+ * Domains that grant an action below its least role, so a project can let one contributor (a
+ * developer it brings in to build) do it without making them a maintainer.
+ */
+export const DOMAIN_GRANTS: Readonly<Partial<Record<Action, string>>> = {
+  build: 'developer'
 };
 
 /** Each action in the words people read on the board and in Claude. */
@@ -51,7 +61,9 @@ export const ACTION_LABELS: Readonly<Record<Action, string>> = {
   approve_spec: 'approve a plan when its approval policy names them',
   verify_result: 'check a result when its approval policy names them',
   triage: "accept or decline requests, and send anyone's request on",
-  steer: 'pause, resume, claim, review by hand or cancel any task',
+  build:
+    'claim a build and hand it in, built by hand or with their own agents (also anyone with the `developer` domain)',
+  steer: 'pause, resume, review by hand or cancel any task, and hand a claimed build back',
   see_runs: 'see agent runs, their logs and costs',
   decide_learnings: 'accept or reject learnings',
   merge: 'merge results on GitHub',
@@ -64,9 +76,18 @@ export const GATE_ACTIONS: Readonly<Record<Gate, Action>> = {
   verifying: 'verify_result'
 };
 
-export const can = (member: Pick<Member, 'role'>, action: Action): boolean =>
-  hasRole(member, PERMISSIONS[action]);
+export const can = (
+  member: Pick<Member, 'role'> & Partial<Pick<Member, 'domains'>>,
+  action: Action
+): boolean => {
+  const domain = DOMAIN_GRANTS[action];
+  return (
+    hasRole(member, PERMISSIONS[action]) ||
+    (domain !== undefined && (member.domains ?? []).includes(domain))
+  );
+};
 
-/** Everything a role may do, in the matrix's order. */
-export const allowedActions = (role: Role): Action[] =>
-  ACTIONS.filter((action) => can({ role }, action));
+/** Everything a member may do, in the matrix's order. */
+export const allowedActions = (
+  member: Pick<Member, 'role'> & Partial<Pick<Member, 'domains'>>
+): Action[] => ACTIONS.filter((action) => can(member, action));

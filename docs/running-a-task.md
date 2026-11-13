@@ -58,7 +58,10 @@ Two moments wait on a person instead of an agent. When an agent finds that the t
 agents cannot do or decide (a domain, a secret, a new host, an account, access, publishing somewhere
 new), the task is handed to the owner or a maintainer with the list of what is needed; `task answer`
 resumes it. When the plan says a person must build it (or the lane forbids agents), it waits in
-`ready` until a maintainer runs `task claim --number <n>`.
+`ready` until a maintainer, or a contributor with the `developer` domain, runs
+`task claim --number <n>`. They build it on `officina/task-<n>` by hand or with their own agents,
+push, and hand it in from the board ("Hand in the build") or from Claude (`hand_in_build`); it then
+goes to the same review as an agent's build.
 
 ## Step by step
 

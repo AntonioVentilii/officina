@@ -6,6 +6,7 @@
   import { toasts } from '$lib/state/toasts.svelte';
   import type { TaskDetail } from '$lib/types';
   import AgentAvatar from './AgentAvatar.svelte';
+  import HandIn from './HandIn.svelte';
   import Markdown from './Markdown.svelte';
   import QuestionOptions from './QuestionOptions.svelte';
 
@@ -279,6 +280,9 @@
           >
             Accept
           </button>
+        {/if}
+        {#if can('hand_in')}
+          <HandIn number={task.number} {onchanged} />
         {/if}
         {#if can('claim')}
           <button

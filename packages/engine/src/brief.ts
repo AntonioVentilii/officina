@@ -63,7 +63,7 @@ const describe = (requirement: Requirement) =>
 /** At spec review the chooser also decides whether a person builds it instead of the agent. */
 const buildChoice = (gate: Gate): string | null =>
   gate === 'spec_review'
-    ? 'Set `approval.build` to `person`, with `approval.buildReason`, when the work is too big or too risky for the build agent: a large port of a design into the app, a change across many areas, anything that needs judgement on the spot. A maintainer then claims the build. Leave it `agent` otherwise. A plan that asked for a person keeps it.'
+    ? 'Set `approval.build` to `person`, with `approval.buildReason`, when the work is too big or too risky for the build agent: a large port of a design into the app, a change across many areas, anything that needs judgement on the spot. A developer then claims the build. Leave it `agent` otherwise. A plan that asked for a person keeps it.'
     : null;
 
 const chooserSections = (context: ChooserContext): string[] => [

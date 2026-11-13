@@ -3,7 +3,7 @@ import { ACTIONS, ACTION_LABELS, ROLES, allowedActions, can } from '../src';
 
 describe('permission matrix', () => {
   test('each role may do exactly what the matrix says', () => {
-    expect(ROLES.map((role) => ({ role, actions: allowedActions(role) }))).toEqual([
+    expect(ROLES.map((role) => ({ role, actions: allowedActions({ role }) }))).toEqual([
       { role: 'watcher', actions: ['see'] },
       {
         role: 'contributor',
@@ -19,6 +19,7 @@ describe('permission matrix', () => {
           'approve_spec',
           'verify_result',
           'triage',
+          'build',
           'steer',
           'see_runs',
           'decide_learnings',
@@ -34,7 +35,22 @@ describe('permission matrix', () => {
     expect(can({ role: 'watcher' }, 'request')).toBe(false);
     expect(can({ role: 'contributor' }, 'triage')).toBe(false);
     expect(can({ role: 'maintainer' }, 'manage_members')).toBe(false);
-    expect(allowedActions('owner')).toContain('manage_members');
+    expect(allowedActions({ role: 'owner' })).toContain('manage_members');
+  });
+
+  test('the developer domain lets a contributor build, and nothing more', () => {
+    const developer = { role: 'contributor', domains: ['developer'] } as const;
+    expect(can(developer, 'build')).toBe(true);
+    expect(can({ role: 'contributor', domains: [] }, 'build')).toBe(false);
+    expect(allowedActions(developer)).toEqual([
+      'see',
+      'request',
+      'comment',
+      'answer',
+      'approve_spec',
+      'verify_result',
+      'build'
+    ]);
   });
 
   test('every action has words people read', () => {

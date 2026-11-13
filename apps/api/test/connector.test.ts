@@ -285,6 +285,7 @@ describe.skipIf(!url)('connector for Claude', () => {
       'show_task',
       'answer_question',
       'comment',
+      'hand_in_build',
       'review'
     ]);
     const open = list.result.tools.find((tool: { name: string }) => tool.name === 'open_request');

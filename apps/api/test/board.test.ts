@@ -428,7 +428,7 @@ describe.skipIf(!url)('board api', () => {
     expect(ready.waitingOn).toEqual({
       kind: 'people',
       label:
-        'Needs a developer: a maintainer claims the build. It needs the hosting set up by hand.',
+        'Needs a developer: a developer claims the build. It needs the hosting set up by hand.',
       me: true
     });
     expect(ready.actions).toContain('claim');
@@ -439,9 +439,32 @@ describe.skipIf(!url)('board api', () => {
     });
     expect((await json(await call(contributor, path))).actions).not.toContain('claim');
     expect((await call(contributor, `${path}/actions`, { type: 'claim' })).status).toBe(409);
-    expect(await json(await call(owner, `${path}/actions`, { type: 'claim' }))).toEqual({
+
+    // A developer is a contributor with the `developer` domain: they claim it and hand it in.
+    const developer = await signIn(
+      await invite(pool, {
+        publicUrl: PUBLIC_URL,
+        email: 'dev@example.com',
+        name: 'Dev',
+        role: 'contributor',
+        domains: ['developer']
+      })
+    );
+    expect((await json(await call(developer, path))).people.build.who).toEqual(['Antonio', 'Dev']);
+    expect(await json(await call(developer, `${path}/actions`, { type: 'claim' }))).toEqual({
       stage: 'building'
     });
+    const building = await json(await call(developer, path));
+    expect(building.actions).toContain('hand_in');
+    expect(building.waitingOn).toEqual({
+      kind: 'people',
+      label: 'Dev is building it, then hands it in',
+      me: true
+    });
+    expect((await json(await call(owner, path))).actions).not.toContain('hand_in');
+    const handIn = await call(developer, `${path}/hand-in`, { prTitle: 'feat(deck): publish it' });
+    expect(handIn.status).toBe(503);
+    expect(await json(handIn)).toEqual({ error: 'the GitHub App is not configured' });
   });
 
   test('watchers read but cannot act, and other projects stay invisible', async () => {

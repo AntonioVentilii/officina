@@ -625,7 +625,7 @@ export const decide = (
       } else {
         const assigneeId = command.assignee.memberId;
         const assignee = context.members.find((member) => member.id === assigneeId);
-        if (assignee === undefined || !can(assignee, 'steer')) {
+        if (assignee === undefined || !can(assignee, 'build')) {
           return fail('not_allowed');
         }
       }
@@ -634,7 +634,7 @@ export const decide = (
     }
 
     case 'claim': {
-      if (actor.kind !== 'member' || !memberCan(actor, context, 'steer')) {
+      if (actor.kind !== 'member' || !memberCan(actor, context, 'build')) {
         return fail('not_allowed');
       }
       const assignee: Assignee = { kind: 'member', memberId: actor.memberId };
@@ -642,7 +642,11 @@ export const decide = (
         const [moved, stageEvent] = moveTo(task, 'building', { assignee });
         return ok(moved, [stageEvent, { type: 'assigned', assignee }]);
       }
+      // Taking a build over from the agent is anyone's who may build; from another person, only
+      // someone who may steer the work.
       if (task.stage === 'building') {
+        if (task.assignee?.kind === 'member' && !memberCan(actor, context, 'steer'))
+          return fail('not_allowed');
         return ok({ ...task, assignee }, [{ type: 'assigned', assignee }]);
       }
       return fail('wrong_stage');
