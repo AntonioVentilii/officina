@@ -1,6 +1,7 @@
 import {
   catalogPagesToRead,
   commandForOutput,
+  questionMarkdown,
   type AgentOutput,
   type RoleOutput,
   type Task
@@ -58,7 +59,7 @@ const recordAlongside =
       // The thread keeps the whole conversation, so the spec writer and people read it as one.
       const body =
         interview.outcome === 'question'
-          ? interview.question
+          ? questionMarkdown(interview.question, interview.options)
           : [
               `**Summary.** ${interview.summary}`,
               `**Done when:**\n${interview.acceptance.map((item) => `- ${item}`).join('\n')}`

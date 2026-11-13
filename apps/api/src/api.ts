@@ -116,7 +116,12 @@ const actionSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('accept') }),
   z.strictObject({ type: z.literal('approve') }),
   z.strictObject({ type: z.literal('changes'), note: z.string().trim().min(1).max(10_000) }),
-  z.strictObject({ type: z.literal('answer'), text: z.string().trim().min(1).max(10_000) }),
+  // A free answer is its text; a picked option is its letter, with `text` as an optional note.
+  z.strictObject({
+    type: z.literal('answer'),
+    text: z.string().trim().max(10_000).default(''),
+    option: z.string().trim().min(1).max(2).optional()
+  }),
   z.strictObject({ type: z.literal('decline'), reason: z.string().trim().min(1).max(2_000) }),
   z.strictObject({ type: z.literal('cancel'), reason: z.string().trim().min(1).max(2_000) })
 ]);
