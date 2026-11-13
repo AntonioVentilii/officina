@@ -1,8 +1,9 @@
 import {
+  can,
   effectivePolicy,
   evaluatePolicy,
-  hasRole,
   parseProjectConfig,
+  policyContext,
   type Actor,
   type Command,
   type Gate
@@ -120,7 +121,7 @@ export const createRequestAs = async (
   const actor: Actor = { kind: 'member', memberId };
   // A request starts paid agent runs, so reading the board is not enough to open one.
   const member = await loadProjectMember(pool, projectId, memberId);
-  if (!member || !hasRole(member, 'contributor'))
+  if (!member || !can(member, 'request'))
     throw new TaskCommandError(
       'watchers can read but not open requests; an owner can give the contributor role',
       403
@@ -151,7 +152,7 @@ export const commentAs = async (
   input: ProjectActor & { readonly number: number; readonly text: string }
 ): Promise<void> => {
   const member = await loadProjectMember(pool, input.projectId, input.memberId);
-  if (!member || !hasRole(member, 'contributor'))
+  if (!member || !can(member, 'comment'))
     throw new TaskCommandError('watchers can read but not comment', 403);
   const taskId = await findTaskIdByNumber(pool, input.projectId, input.number);
   if (!taskId) throw new TaskCommandError('task not found', 404);
@@ -290,12 +291,10 @@ export const describeTask = async (
       const result = evaluatePolicy(
         effectivePolicy(config.config, task, gate),
         await listApprovedSubjects(pool, taskId),
-        {
+        policyContext(config.config, task, gate, {
           members: await listProjectMembers(pool, projectId),
-          requesterId: task.requesterId,
-          userVisible: task.userVisible,
           subject
-        }
+        })
       );
       lines.push(
         '',

@@ -87,6 +87,16 @@ const projectConfigSchema = z
       })
       .optional(),
     verify: z.array(z.string().min(1)).optional(),
+    approvals: z
+      .strictObject({
+        /**
+         * Whether the requester's own approval meets a role or domain requirement and the
+         * maintainer floor at their task's gates. Left out, it does; set to false, someone else
+         * must, unless nobody else can.
+         */
+        self_approval: z.boolean().optional()
+      })
+      .optional(),
     release: z
       .strictObject({
         /** What merging into the default branch deploys. Left out, it is taken to be production. */
@@ -188,6 +198,7 @@ export interface ProjectConfig {
   readonly setup: readonly string[];
   readonly intake: { readonly interview: boolean };
   readonly verify: readonly string[];
+  readonly approvals: { readonly selfApproval: boolean };
   readonly release: { readonly onMerge: ReleaseOnMerge };
   readonly runtime: { readonly allowedHosts: readonly string[] };
   readonly pullRequest: {
@@ -320,6 +331,7 @@ export const parseProjectConfig = (input: unknown): ConfigResult => {
       setup: raw.setup ?? [],
       intake: { interview: raw.intake?.interview ?? true },
       verify: raw.verify ?? [],
+      approvals: { selfApproval: raw.approvals?.self_approval ?? true },
       release: { onMerge: raw.release?.on_merge ?? 'production' },
       runtime: { allowedHosts: raw.runtime?.allowed_hosts ?? [] },
       pullRequest: {

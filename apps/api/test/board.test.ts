@@ -205,6 +205,78 @@ describe.skipIf(!url)('board api', () => {
     expect(task.actions).toEqual(['cancel', 'comment']);
   });
 
+  test('every member sees every task in the project, with who asked and who approves', async () => {
+    await createRequest(pool, {
+      title: 'Rename settings',
+      request: 'Call it Preferences.',
+      skipInterview: true
+    });
+    const tim = await signIn(
+      await invite(pool, {
+        publicUrl: PUBLIC_URL,
+        email: 'tim@example.com',
+        name: 'Tim',
+        role: 'contributor',
+        domains: ['product']
+      })
+    );
+    const watcher = await signIn(
+      await invite(pool, {
+        publicUrl: PUBLIC_URL,
+        email: 'visitor@example.com',
+        name: 'Visitor',
+        role: 'watcher',
+        domains: []
+      })
+    );
+
+    for (const cookie of [tim, watcher]) {
+      const board = await json(await call(cookie, `/api/projects/${seeded.projectId}/board`));
+      expect(board.tasks).toEqual([expect.objectContaining({ number: 1, requester: 'Antonio' })]);
+    }
+
+    const me = await json(await call(tim, '/api/me'));
+    expect(me.projects[0].can).toEqual([
+      'see',
+      'request',
+      'comment',
+      'answer',
+      'approve_spec',
+      'verify_result'
+    ]);
+    expect((await json(await call(watcher, '/api/me'))).projects[0].can).toEqual(['see']);
+
+    const task = await json(await call(tim, `/api/projects/${seeded.projectId}/tasks/1`));
+    expect(task.people).toEqual({
+      requester: 'Antonio',
+      gates: [
+        {
+          gate: 'spec_review',
+          does: 'Approve the plan',
+          current: false,
+          requirements: [{ label: 'an owner', who: ['Antonio'], waived: false, approvedBy: [] }],
+          asked: []
+        },
+        {
+          gate: 'verifying',
+          does: 'Check the result',
+          current: false,
+          requirements: [{ label: 'an owner', who: ['Antonio'], waived: false, approvedBy: [] }],
+          asked: []
+        }
+      ],
+      merge: { by: 'person', who: ['Antonio'] }
+    });
+
+    // Once the change is user-visible, the product approver joins the result's check.
+    await pool.query('update tasks set user_visible = true');
+    const visible = await json(await call(tim, `/api/projects/${seeded.projectId}/tasks/1`));
+    expect(visible.people.gates[1].requirements).toEqual([
+      { label: 'a product approver', who: ['Tim'], waived: false, approvedBy: [] },
+      { label: 'an owner', who: ['Antonio'], waived: false, approvedBy: [] }
+    ]);
+  });
+
   test('watchers read but cannot act, and other projects stay invisible', async () => {
     await createRequest(pool, {
       title: 'Rename settings',

@@ -1,17 +1,25 @@
 import {
+  APPROVAL_FLOOR,
+  GATE_ACTIONS,
   REVIEWER_ROLES,
   TERMINAL_STAGES,
+  applicableRequirements,
+  can,
   effectivePolicy,
+  eligibleMembers,
   evaluatePolicy,
   gateSubject,
   hasRole,
-  isEligible,
   parseProjectConfig,
+  policyContext,
   type Actor,
   type AgentRole,
+  type Approval,
+  type ApprovalPlan,
   type Blocked,
   type Gate,
   type Member,
+  type ProjectConfig,
   type Requirement,
   type Role
 } from '@officina/core';
@@ -127,8 +135,7 @@ const viewerMember = (viewer: BoardViewer): Member => ({
  * learnings. Maintainers and owners look after the work; contributors and watchers may not have
  * access to the repository at all, so they get the decisions and the trail, not the code or money.
  */
-export const seesTechnical = (viewer: BoardViewer): boolean =>
-  hasRole(viewerMember(viewer), 'maintainer');
+export const seesTechnical = (viewer: BoardViewer): boolean => can(viewer, 'see_runs');
 
 /**
  * What contributors and watchers read of each event's payload: what the timeline says about the
@@ -204,6 +211,8 @@ interface ApprovalState {
   readonly pending: readonly Requirement[];
   readonly waived: readonly Requirement[];
   readonly approvedBy: readonly string[];
+  /** The members whose approval would meet a pending requirement. */
+  readonly canApprove: readonly string[];
 }
 
 interface ProjectFacts {
@@ -227,14 +236,10 @@ const approvalState = async (
   const plan = row.approvalPlans[gate];
   // Until the approval chooser has planned this subject, nobody can approve it yet.
   if (plan?.subject !== subject)
-    return { gate, planned: false, pending: [], waived: [], approvedBy: [] };
+    return { gate, planned: false, pending: [], waived: [], approvedBy: [], canApprove: [] };
   const approvals = await listApprovedSubjects(pool, row.id);
-  const result = evaluatePolicy(effectivePolicy(config.config, row, gate), approvals, {
-    members: facts.members,
-    requesterId: row.requesterId,
-    userVisible: row.userVisible,
-    subject
-  });
+  const context = policyContext(config.config, row, gate, { members: facts.members, subject });
+  const result = evaluatePolicy(effectivePolicy(config.config, row, gate), approvals, context);
   return {
     gate,
     planned: true,
@@ -242,7 +247,14 @@ const approvalState = async (
     waived: result.waived,
     approvedBy: approvals
       .filter((approval) => approval.subject === subject)
-      .map((approval) => facts.names.get(approval.memberId) ?? 'a former member')
+      .map((approval) => facts.names.get(approval.memberId) ?? 'a former member'),
+    canApprove: [
+      ...new Set(
+        result.pending.flatMap((requirement) =>
+          eligibleMembers(requirement, context).map((member) => member.id)
+        )
+      )
+    ]
   };
 };
 
@@ -250,10 +262,11 @@ const canAnswer = (row: BoardTaskRow, viewer: BoardViewer) => {
   if (!row.blocked) return false;
   const askedOf = row.blocked.askedOf;
   return (
-    viewer.role === 'owner' ||
-    ('memberId' in askedOf
-      ? askedOf.memberId === viewer.memberId
-      : hasRole(viewerMember(viewer), askedOf.role))
+    can(viewer, 'answer') &&
+    (viewer.role === 'owner' ||
+      ('memberId' in askedOf
+        ? askedOf.memberId === viewer.memberId
+        : hasRole(viewerMember(viewer), askedOf.role)))
   );
 };
 
@@ -273,7 +286,7 @@ const waitingOn = (
       me: canAnswer(row, viewer)
     };
   }
-  if (row.paused) return { kind: 'people', label: 'Paused', me: hasRole(member, 'maintainer') };
+  if (row.paused) return { kind: 'people', label: 'Paused', me: can(member, 'steer') };
   const running = row.runningRoles.map(roleLabel);
   switch (row.stage) {
     case 'request':
@@ -286,7 +299,7 @@ const waitingOn = (
       return {
         kind: 'people',
         label: 'A maintainer accepts or declines it',
-        me: hasRole(member, 'maintainer')
+        me: can(member, 'triage')
       };
     case 'speccing':
       return {
@@ -308,8 +321,8 @@ const waitingOn = (
           ? `${noun} by ${[...new Set(readable(pending).map(describeRequirement))].join(' and ')}`
           : noun,
         me:
-          pending.some((requirement) => isEligible(member, requirement, row.requesterId)) ||
-          (Boolean(asked) && pending.length > 0 && hasRole(member, 'contributor'))
+          Boolean(approval?.canApprove.includes(viewer.memberId)) ||
+          (Boolean(asked) && pending.length > 0 && can(member, GATE_ACTIONS[row.stage]))
       };
     }
     case 'ready':
@@ -343,7 +356,7 @@ const waitingOn = (
     case 'merging':
       return row.autoMergeOn
         ? { kind: 'github', label: 'Merging once GitHub checks pass', me: false }
-        : { kind: 'github', label: 'Merge on GitHub', me: hasRole(member, 'maintainer') };
+        : { kind: 'github', label: 'Merge on GitHub', me: can(member, 'merge') };
     default:
       return { kind: 'nobody', label: row.stage, me: false };
   }
@@ -351,31 +364,24 @@ const waitingOn = (
 
 const actionsFor = (row: BoardTaskRow, viewer: BoardViewer): BoardAction[] => {
   const member = viewerMember(viewer);
-  if (TERMINAL_STAGES.has(row.stage)) return hasRole(member, 'contributor') ? ['comment'] : [];
+  if (TERMINAL_STAGES.has(row.stage)) return can(member, 'comment') ? ['comment'] : [];
   const actions: BoardAction[] = [];
-  if (
-    row.stage === 'request' &&
-    hasRole(member, 'contributor') &&
-    (row.requesterId === viewer.memberId || hasRole(member, 'maintainer'))
-  )
+  const requester = row.requesterId === viewer.memberId;
+  if (row.stage === 'request' && can(member, 'request') && (requester || can(member, 'triage')))
     actions.push('submit');
   if (row.blocked) {
     if (canAnswer(row, viewer)) actions.push('answer');
   } else if (!row.paused) {
-    if (row.stage === 'triage' && hasRole(member, 'maintainer')) actions.push('accept', 'decline');
+    if (row.stage === 'triage' && can(member, 'triage')) actions.push('accept', 'decline');
     if (
       (row.stage === 'spec_review' || row.stage === 'verifying') &&
-      hasRole(member, 'contributor') &&
+      can(member, GATE_ACTIONS[row.stage]) &&
       row.approvalPlans[row.stage]?.subject === gateSubject(row, row.stage)
     )
       actions.push('approve', 'changes');
   }
-  if (
-    hasRole(member, 'maintainer') ||
-    (row.requesterId === viewer.memberId && hasRole(member, 'contributor'))
-  )
-    actions.push('cancel');
-  if (hasRole(member, 'contributor')) actions.push('comment');
+  if (can(member, 'steer') || (requester && can(member, 'request'))) actions.push('cancel');
+  if (can(member, 'comment')) actions.push('comment');
   return actions;
 };
 
@@ -427,6 +433,10 @@ const DEPTH_LABELS = {
   device: 'Test it on a real device'
 } as const;
 
+/** Who will merge the result: the chooser's choice, which the project may not allow. */
+const mergedBy = (plan: ApprovalPlan | undefined, config: ProjectConfig | null) =>
+  plan?.merge === 'auto' && config?.pullRequest.autoMerge ? ('auto' as const) : ('person' as const);
+
 /** The approval chooser's plan for the gate the task is at (or the latest one), for people. */
 const planView = (row: BoardTaskRow, facts: ProjectFacts) => {
   const gate: Gate | null =
@@ -437,13 +447,7 @@ const planView = (row: BoardTaskRow, facts: ProjectFacts) => {
   return {
     gate,
     current: plan.subject === gateSubject(row, gate),
-    // Who will merge the result: the chooser's choice, which the project may not allow.
-    merge:
-      gate === 'verifying'
-        ? plan.merge === 'auto' && config.ok && config.config.pullRequest.autoMerge
-          ? ('auto' as const)
-          : ('person' as const)
-        : null,
+    merge: gate === 'verifying' ? mergedBy(plan, config.ok ? config.config : null) : null,
     depth: plan.depth,
     depthLabel: DEPTH_LABELS[plan.depth],
     rationale: plan.rationale,
@@ -459,6 +463,67 @@ const planView = (row: BoardTaskRow, facts: ProjectFacts) => {
 };
 
 export type CardView = ReturnType<typeof cardView>;
+
+/** Each human gate, in order, with what the people it names do there. */
+const GATE_PEOPLE = [
+  { gate: 'spec_review', does: 'Approve the plan' },
+  { gate: 'verifying', does: 'Check the result' }
+] as const satisfies readonly { gate: Gate; does: string }[];
+
+/**
+ * The people of a task: who asked for it, who the approval policy expects at each gate (the
+ * lane's policy plus what the chooser added, and the maintainer floor) with who already approved,
+ * whom the chooser asked to check, and who merges. The requester approves only where a
+ * requirement names them, or where the project lets them meet their own gates.
+ */
+const peopleView = (row: BoardTaskRow, facts: ProjectFacts, approvals: readonly Approval[]) => {
+  const config = parseProjectConfig(facts.rawConfig);
+  const name = (id: string) => facts.names.get(id) ?? 'a former member';
+  const gates = config.ok
+    ? GATE_PEOPLE.map(({ gate, does }) => {
+        const subject = gateSubject(row, gate);
+        const approved = new Set(
+          approvals
+            .filter((approval) => subject !== null && approval.subject === subject)
+            .map((approval) => approval.memberId)
+        );
+        const context = policyContext(config.config, row, gate, {
+          members: facts.members,
+          subject: subject ?? ''
+        });
+        const policy = effectivePolicy(config.config, row, gate);
+        return {
+          gate,
+          does,
+          current: row.stage === gate,
+          requirements: readable(applicableRequirements(policy, row.userVisible)).map(
+            (requirement) => {
+              const eligible = eligibleMembers(requirement, context);
+              return {
+                label: describeRequirement(requirement),
+                who: eligible.map((member) => name(member.id)),
+                waived: eligible.length === 0 && requirement !== APPROVAL_FLOOR,
+                approvedBy: eligible
+                  .filter((member) => approved.has(member.id))
+                  .map((member) => name(member.id))
+              };
+            }
+          ),
+          asked: (row.approvalPlans[gate]?.verifiers ?? []).map((verifier) =>
+            name(verifier.memberId)
+          )
+        };
+      })
+    : [];
+  return {
+    requester: row.requesterName,
+    gates,
+    merge: {
+      by: mergedBy(row.approvalPlans.verifying, config.ok ? config.config : null),
+      who: facts.members.filter((member) => can(member, 'merge')).map((member) => name(member.id))
+    }
+  };
+};
 
 export const boardView = async (pool: Pool, viewer: BoardViewer) => {
   const facts = await projectFacts(pool, viewer);
@@ -502,14 +567,15 @@ export const taskView = async (
   const row = await loadBoardTask(pool, viewer.projectId, number);
   if (!row) return null;
   const facts = await projectFacts(pool, viewer);
-  const [approval, context, specs, comments, events, runs, chooser] = await Promise.all([
+  const [approval, context, specs, comments, events, runs, chooser, approvals] = await Promise.all([
     approvalState(pool, row, facts),
     loadTaskContext(pool, row.id),
     listSpecVersions(pool, row.id),
     listTaskComments(pool, row.id),
     listTaskEvents(pool, row.id),
     listTaskRuns(pool, row.id),
-    latestChooserResult(pool, row.id)
+    latestChooserResult(pool, row.id),
+    listApprovedSubjects(pool, row.id)
   ]);
   const label = (actor: Actor) => actorLabel(actor, facts.names);
   const [request, ...thread] = comments;
@@ -557,6 +623,7 @@ export const taskView = async (
     })),
     runs: seesTechnical(viewer) ? runs.map((run) => runView(run, consoleWorkspace)) : [],
     plan: planView(row, facts),
+    people: peopleView(row, facts, approvals),
     approval: approval && {
       gate: approval.gate,
       planned: approval.planned,
@@ -692,10 +759,7 @@ export const learningsView = async (pool: Pool, viewer: BoardViewer) => {
     listLearnings(pool, viewer.projectId),
     memberNames(pool, viewer.workspaceId)
   ]);
-  const canDecide = hasRole(
-    { id: viewer.memberId, role: viewer.role, domains: viewer.domains },
-    'maintainer'
-  );
+  const canDecide = can(viewer, 'decide_learnings');
   return rows.map((row) => ({
     id: row.id,
     title: row.title,

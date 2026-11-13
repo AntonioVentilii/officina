@@ -7,7 +7,8 @@ import {
   type Requirement
 } from './config';
 import { computeLane, redPaths, stricterLane, type Lane } from './lanes';
-import { evaluatePolicy, type Approval } from './policies';
+import { GATE_ACTIONS, can, type Action } from './permissions';
+import { evaluatePolicy, policyContext, type Approval } from './policies';
 import { hasRole, type Member, type Role } from './roles';
 
 export const STAGES = [
@@ -299,9 +300,10 @@ const memberFor = (actor: Actor, context: DecideContext): Member | undefined =>
     ? context.members.find((member) => member.id === actor.memberId)
     : undefined;
 
-const isMemberWith = (actor: Actor, context: DecideContext, role: Role): boolean => {
+/** Whether the actor is a member the permission matrix lets take the action. */
+const memberCan = (actor: Actor, context: DecideContext, action: Action): boolean => {
   const member = memberFor(actor, context);
-  return member !== undefined && hasRole(member, role);
+  return member !== undefined && can(member, action);
 };
 
 export const gateSubject = (
@@ -365,7 +367,7 @@ const withPlan = (
   }
   const verifiers = input.verifiers.filter((verifier) => {
     const member = context.members.find((candidate) => candidate.id === verifier.memberId);
-    return member !== undefined && hasRole(member, 'contributor');
+    return member !== undefined && can(member, GATE_ACTIONS[gate]);
   });
   // Like approvals, the merge only gets stricter: once a plan for this gate asked for a person, a
   // later plan cannot hand the merge back to GitHub. The spec gate has nothing to merge.
@@ -467,8 +469,8 @@ export const decide = (
       const allowed =
         (actor.kind === 'agent' && actor.role === 'interviewer') ||
         (member !== undefined &&
-          hasRole(member, 'contributor') &&
-          (member.id === task.requesterId || hasRole(member, 'maintainer')));
+          can(member, 'request') &&
+          (member.id === task.requesterId || can(member, 'triage')));
       if (!allowed) return fail('not_allowed');
       if (task.paused) return fail('paused');
       // Submitting as is closes an open interview question: triage decides with what is there.
@@ -481,14 +483,14 @@ export const decide = (
 
     case 'accept': {
       if (task.stage !== 'triage') return fail('wrong_stage');
-      if (!isMemberWith(actor, context, 'maintainer')) return fail('not_allowed');
+      if (!memberCan(actor, context, 'triage')) return fail('not_allowed');
       const [moved, event] = moveTo(task, 'speccing');
       return ok(moved, [event]);
     }
 
     case 'decline': {
       if (task.stage !== 'triage') return fail('wrong_stage');
-      if (!isMemberWith(actor, context, 'maintainer')) return fail('not_allowed');
+      if (!memberCan(actor, context, 'triage')) return fail('not_allowed');
       const [moved, event] = moveTo(task, 'declined');
       return ok(moved, [event, { type: 'closed', stage: 'declined', reason: command.reason }]);
     }
@@ -496,8 +498,7 @@ export const decide = (
     case 'post_spec': {
       if (task.stage !== 'speccing') return fail('wrong_stage');
       const allowed =
-        (actor.kind === 'agent' && actor.role === 'spec') ||
-        isMemberWith(actor, context, 'contributor');
+        (actor.kind === 'agent' && actor.role === 'spec') || memberCan(actor, context, 'request');
       if (!allowed) return fail('not_allowed');
       const predicted = computeLane(command.predictedPaths, context.config.laneMatcher);
       const lane = task.lane ? stricterLane(task.lane, predicted) : predicted;
@@ -516,9 +517,9 @@ export const decide = (
       if (task.stage !== 'spec_review' && task.stage !== 'verifying') return fail('wrong_stage');
       if (actor.kind !== 'member') return fail('agents_cannot_approve');
       const member = memberFor(actor, context);
-      if (member === undefined || !hasRole(member, 'contributor')) return fail('not_allowed');
-      if (task.lane === null) return fail('no_lane');
       const gate: Gate = task.stage;
+      if (member === undefined || !can(member, GATE_ACTIONS[gate])) return fail('not_allowed');
+      if (task.lane === null) return fail('no_lane');
       const subject = gateSubject(task, gate);
       if (subject === null) return fail('no_head');
       // Nobody can approve before the approval chooser has said who needs to.
@@ -527,12 +528,7 @@ export const decide = (
       const result = evaluatePolicy(
         effectivePolicy(context.config, task, gate),
         [...context.approvals, approval],
-        {
-          members: context.members,
-          requesterId: task.requesterId,
-          userVisible: task.userVisible,
-          subject
-        }
+        policyContext(context.config, task, gate, { members: context.members, subject })
       );
       const recorded: DomainEvent = {
         type: 'approval_recorded',
@@ -549,14 +545,12 @@ export const decide = (
     }
 
     case 'request_changes': {
-      if (!isMemberWith(actor, context, 'contributor')) return fail('not_allowed');
+      if (task.stage !== 'spec_review' && task.stage !== 'verifying') return fail('wrong_stage');
+      if (!memberCan(actor, context, GATE_ACTIONS[task.stage])) return fail('not_allowed');
       const why: DomainEvent = { type: 'changes_requested', stage: task.stage, note: command.note };
-      if (task.stage === 'spec_review') {
-        const [moved, stageEvent] = moveTo(task, 'speccing');
-        return ok(moved, [why, stageEvent]);
-      }
       if (task.stage === 'verifying') return backToBuilding(task, context, why);
-      return fail('wrong_stage');
+      const [moved, stageEvent] = moveTo(task, 'speccing');
+      return ok(moved, [why, stageEvent]);
     }
 
     case 'dispatch': {
@@ -573,7 +567,7 @@ export const decide = (
       } else {
         const assigneeId = command.assignee.memberId;
         const assignee = context.members.find((member) => member.id === assigneeId);
-        if (assignee === undefined || !hasRole(assignee, 'maintainer')) {
+        if (assignee === undefined || !can(assignee, 'steer')) {
           return fail('not_allowed');
         }
       }
@@ -582,7 +576,7 @@ export const decide = (
     }
 
     case 'claim': {
-      if (actor.kind !== 'member' || !isMemberWith(actor, context, 'maintainer')) {
+      if (actor.kind !== 'member' || !memberCan(actor, context, 'steer')) {
         return fail('not_allowed');
       }
       const assignee: Assignee = { kind: 'member', memberId: actor.memberId };
@@ -602,7 +596,7 @@ export const decide = (
         actor.kind === 'member' &&
         task.assignee?.kind === 'member' &&
         task.assignee.memberId === actor.memberId;
-      if (!isAssignee && !isMemberWith(actor, context, 'maintainer')) return fail('not_allowed');
+      if (!isAssignee && !memberCan(actor, context, 'steer')) return fail('not_allowed');
       const [moved, stageEvent] = moveTo(task, 'ready', { assignee: null });
       return ok(moved, [stageEvent, { type: 'assigned', assignee: null }]);
     }
@@ -727,7 +721,7 @@ export const decide = (
       let reviewer: ReviewerRole | 'member';
       if (actor.kind === 'agent' && (REVIEWER_ROLES as readonly string[]).includes(actor.role)) {
         reviewer = actor.role as ReviewerRole;
-      } else if (isMemberWith(actor, context, 'maintainer')) {
+      } else if (memberCan(actor, context, 'steer')) {
         reviewer = 'member';
       } else {
         return fail('not_allowed');
@@ -752,7 +746,7 @@ export const decide = (
 
     case 'choose': {
       if (task.stage !== 'choosing') return fail('wrong_stage');
-      const isMaintainer = isMemberWith(actor, context, 'maintainer');
+      const isMaintainer = memberCan(actor, context, 'steer');
       const allowed =
         (actor.kind === 'agent' && actor.role === 'chooser') ||
         actor.kind === 'engine' ||
@@ -844,7 +838,7 @@ export const decide = (
 
     case 'block': {
       if (task.blocked) return fail('already_blocked');
-      const allowed = actor.kind !== 'member' || isMemberWith(actor, context, 'contributor');
+      const allowed = actor.kind !== 'member' || memberCan(actor, context, 'comment');
       if (!allowed) return fail('not_allowed');
       const blocked: Blocked = { question: command.question, askedOf: command.askedOf };
       return ok({ ...task, blocked }, [{ type: 'blocked', blocked }]);
@@ -853,8 +847,9 @@ export const decide = (
     case 'answer': {
       if (!task.blocked) return fail('not_blocked');
       const member = memberFor(actor, context);
-      if (member === undefined) return fail('not_allowed');
+      if (member === undefined || !can(member, 'answer')) return fail('not_allowed');
       const askedOf = task.blocked.askedOf;
+      // An owner may answer any question, so nothing waits on someone who is away.
       const allowed =
         hasRole(member, 'owner') ||
         ('memberId' in askedOf ? askedOf.memberId === member.id : hasRole(member, askedOf.role));
@@ -863,13 +858,13 @@ export const decide = (
     }
 
     case 'pause': {
-      if (!isMemberWith(actor, context, 'maintainer')) return fail('not_allowed');
+      if (!memberCan(actor, context, 'steer')) return fail('not_allowed');
       if (task.paused) return fail('already_paused');
       return ok({ ...task, paused: true }, [{ type: 'paused' }]);
     }
 
     case 'resume': {
-      if (!isMemberWith(actor, context, 'maintainer')) return fail('not_allowed');
+      if (!memberCan(actor, context, 'steer')) return fail('not_allowed');
       if (!task.paused) return fail('not_paused');
       return ok({ ...task, paused: false }, [{ type: 'resumed' }]);
     }
@@ -881,8 +876,7 @@ export const decide = (
       const allowed =
         (actor.kind === 'engine' && task.kind === 'onboarding') ||
         (member !== undefined &&
-          (hasRole(member, 'maintainer') ||
-            (member.id === task.requesterId && hasRole(member, 'contributor'))));
+          (can(member, 'steer') || (member.id === task.requesterId && can(member, 'request'))));
       if (!allowed) return fail('not_allowed');
       const [moved, event] = moveTo(task, 'cancelled', { assignee: null, blocked: null });
       return ok(moved, [event, { type: 'closed', stage: 'cancelled', reason: command.reason }]);

@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { allowedActions } from '@officina/core';
 import {
   consumeOAuthState,
   createOAuthState,
@@ -355,7 +356,12 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
             name: signed.member.displayName,
             email: signed.member.email
           },
-          projects: signed.projects,
+          // What the member may do in each project, from the permission matrix, so the board
+          // shows only what the API would accept.
+          projects: signed.projects.map((project) => ({
+            ...project,
+            can: allowedActions(project.role)
+          })),
           github: login ? { login } : null,
           githubAvailable: Boolean(deps.githubLogin)
         };
