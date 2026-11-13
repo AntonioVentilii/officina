@@ -195,7 +195,11 @@ describe.skipIf(!url)('learner', () => {
     const agents = createFakePort(() => [
       toolUse({ learnings: [learning({}), learning({ title: 'Another one' })] }),
       idle('requires_action'),
-      toolUse({ learnings: [learning({ target: 'project' })] }),
+      toolUse({
+        learnings: [
+          learning({ target: 'project', edit: { file: 'docs/ai/patterns.md', text: 'x' } })
+        ]
+      }),
       idle('requires_action'),
       toolUse({ learnings: [learning({})] }),
       idle('requires_action'),
@@ -210,6 +214,7 @@ describe.skipIf(!url)('learner', () => {
     const feedback = JSON.stringify(agents.sent);
     expect(feedback).toContain('return this one learning rewritten, or none');
     expect(feedback).toContain('keep the target docs');
+    expect(feedback).toContain('keep the file AGENTS.md');
 
     const [rewritten] = await listLearnings(pool, seeded.projectId);
     expect(rewritten).toMatchObject({

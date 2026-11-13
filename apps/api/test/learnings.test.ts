@@ -1,6 +1,12 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import type { LearningTarget } from '@officina/core';
-import { failLearningRewrite, insertLearnings, listLearnings } from '@officina/db';
+import {
+  failLearningRewrite,
+  insertLearnings,
+  listLearnings,
+  requestLearningRewrite,
+  rewriteLearningEdit
+} from '@officina/db';
 import { Pool } from 'pg';
 import { createTaskInMerging, resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
 import { applyEdit, decide, type LearningGitHub } from '../src/learnings';
@@ -250,6 +256,22 @@ describe.skipIf(!url)('learning decisions', () => {
     expect(
       await decide(pool, github.port, owner(), { id: learning.id, decision: 'reject' })
     ).toMatchObject({ status: 'rejected' });
+  });
+
+  test('a rewritten edit opens its pull request from a branch of its own', async () => {
+    const learning = await propose('docs');
+    await requestLearningRewrite(pool, learning.id);
+    await rewriteLearningEdit(pool, learning.id, {
+      file: 'AGENTS.md',
+      find: '## Copy\n',
+      text: '## Copy\n\nEvery live locale.\n'
+    });
+    const github = fakeGitHub();
+    await decide(pool, github.port, owner(), { id: learning.id, decision: 'accept' });
+    const created = github.calls.find((call) => call.method === 'createBranch')!;
+    expect(String(created.args.branch)).toMatch(
+      new RegExp(`^officina/learning-${learning.id.slice(0, 8)}-[0-9a-z]+$`)
+    );
   });
 
   test('agent learnings are recorded without touching the repository; contributors cannot decide', async () => {

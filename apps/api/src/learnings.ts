@@ -52,6 +52,14 @@ const titleFor = (learning: LearningRow) => {
 };
 
 /**
+ * A rewritten edit gets a branch of its own: one an accept left before the rewrite starts from an
+ * older default branch, while retries of the same edit keep reusing theirs.
+ */
+const branchFor = (learning: LearningRow) =>
+  `officina/learning-${learning.id.slice(0, 8)}` +
+  (learning.rewrittenAt ? `-${learning.rewrittenAt.getTime().toString(36)}` : '');
+
+/**
  * Opens the pull request with exactly the edit people saw; a branch an earlier attempt left is
  * reused. When the default branch changed so the edit no longer applies, nothing is written.
  */
@@ -71,7 +79,7 @@ const openLearningPullRequest = async (
   });
   const edited = applyEdit(current?.text ?? null, learning);
   if (!edited.ok) return edited;
-  const branch = `officina/learning-${learning.id.slice(0, 8)}`;
+  const branch = branchFor(learning);
   const title = titleFor(learning);
   await github.createBranch({ ...ref, branch, from: project.defaultBranch });
   // A branch an earlier attempt left may already hold the edit; writing it again is skipped.
