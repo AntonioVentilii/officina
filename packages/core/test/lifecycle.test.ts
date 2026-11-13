@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   canAutoVerify,
   effectivePolicy,
+  humanBuildReason,
   newTask,
   nextAgentRoles,
   type Member,
@@ -1172,6 +1173,96 @@ describe('the requester is not assumed to approve their own task', () => {
   });
 });
 
+describe('work agents cannot or should not do goes to a person', () => {
+  const developerPlan: PlanInput = {
+    ...PLAN,
+    build: 'person',
+    buildReason: 'A large port of the static design.'
+  };
+
+  test('a plan that asks for a developer keeps agents off the build until a maintainer claims it', () => {
+    const driver = createDriver([owner, productContributor]);
+    let task = newTask('t1', owner.id);
+    task = driver.step(task, { type: 'submit_request' }, asMember(owner));
+    task = driver.step(task, { type: 'accept' }, asMember(owner));
+    task = driver.step(
+      task,
+      { type: 'post_spec', predictedPaths: PAGE_PATHS, userVisible: false },
+      asAgent('spec')
+    );
+    task = driver.step(
+      task,
+      { type: 'plan_approval', userVisible: false, plan: developerPlan },
+      asAgent('chooser')
+    );
+    // A later plan cannot hand the build back to the agent.
+    task = driver.step(
+      task,
+      { type: 'plan_approval', userVisible: false, plan: PLAN },
+      asAgent('chooser')
+    );
+    expect(task.approvalPlans.spec_review).toMatchObject({
+      build: 'person',
+      buildReason: 'A large port of the static design.'
+    });
+    expect(humanBuildReason(driver.config, task)).toBe('A large port of the static design.');
+    task = driver.step(task, { type: 'approve' }, asMember(owner));
+    expect(task.stage).toBe('ready');
+
+    const agent = { kind: 'agent', role: 'builder' } as const;
+    expect(
+      driver.attempt(task, { type: 'dispatch', assignee: agent, openInLane: 0 }, engine)
+    ).toEqual({ ok: false, error: 'needs_developer' });
+    expect(driver.attempt(task, { type: 'claim' }, asMember(productContributor)).ok).toBe(false);
+    expect(driver.step(task, { type: 'claim' }, asMember(owner))).toMatchObject({
+      stage: 'building',
+      assignee: { kind: 'member', memberId: owner.id }
+    });
+  });
+
+  test('a contributor with the developer domain claims it, but not from another person', () => {
+    const dev = { id: 'dev', role: 'contributor', domains: ['developer'] } as const;
+    const other = { id: 'other', role: 'contributor', domains: ['developer'] } as const;
+    const driver = createDriver([owner, dev, other]);
+    let task = toReady(driver, PAGE_PATHS);
+    task = driver.step(task, { type: 'claim' }, asMember(dev));
+    expect(task).toMatchObject({
+      stage: 'building',
+      assignee: { kind: 'member', memberId: 'dev' }
+    });
+    expect(driver.attempt(task, { type: 'claim' }, asMember(other))).toEqual({
+      ok: false,
+      error: 'not_allowed'
+    });
+    expect(driver.step(task, { type: 'claim' }, asMember(owner)).assignee).toEqual({
+      kind: 'member',
+      memberId: owner.id
+    });
+  });
+
+  test('only an agent result hands a task to a person; a member asks an ordinary question', () => {
+    const driver = createDriver([owner]);
+    const task = newTask('t1', owner.id);
+    const handoff = { needs: ['secrets' as const] };
+    const byAgent = driver.step(
+      task,
+      { type: 'block', question: 'Needs a key.', askedOf: { role: 'owner' }, handoff },
+      asAgent('interviewer')
+    );
+    expect(byAgent.blocked).toEqual({
+      question: 'Needs a key.',
+      askedOf: { role: 'owner' },
+      handoff
+    });
+    const byMember = driver.step(
+      task,
+      { type: 'block', question: 'Which one?', askedOf: { role: 'owner' }, handoff },
+      asMember(owner)
+    );
+    expect(byMember.blocked).not.toHaveProperty('handoff');
+  });
+});
+
 describe('guarded tasks', () => {
   const GUARDED = `${CONFIG_YAML}guards:\n  confidential: ['room/**']\n  publishing: ['CNAME']\n`;
 
@@ -1240,6 +1331,35 @@ describe('guarded tasks', () => {
     // Gio holds product but may not see confidential content: his approval meets nothing.
     expect(task.stage).toBe('spec_review');
     expect(driver.step(task, { type: 'approve' }, asMember(ceo)).stage).toBe('ready');
+  });
+
+  test('nobody claims the build of a confidential task they may not read', () => {
+    const dev = { id: 'dev', role: 'contributor', domains: ['developer'] } as const;
+    const trusted = {
+      id: 'eva',
+      role: 'contributor',
+      domains: ['developer', 'confidential']
+    } as const;
+    const driver = createDriver([owner, dev, trusted], loadConfig(GUARDED));
+    let task = newTask('t1', owner.id);
+    task = driver.step(task, { type: 'submit_request' }, asMember(owner));
+    task = driver.step(task, { type: 'accept' }, asMember(owner));
+    task = driver.step(
+      task,
+      { type: 'post_spec', predictedPaths: ['room/deck.md'], userVisible: false },
+      asAgent('spec')
+    );
+    task = driver.step(
+      task,
+      { type: 'plan_approval', userVisible: false, plan: PLAN },
+      asAgent('chooser')
+    );
+    task = driver.step(task, { type: 'approve' }, asMember(owner));
+    expect(driver.attempt(task, { type: 'claim' }, asMember(dev))).toEqual({
+      ok: false,
+      error: 'not_allowed'
+    });
+    expect(driver.step(task, { type: 'claim' }, asMember(trusted)).stage).toBe('building');
   });
 
   test('submitting as is cannot skip a hold for the owner', () => {

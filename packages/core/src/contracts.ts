@@ -1,5 +1,12 @@
 import { z } from 'zod';
 import type { CatalogPages } from './catalogs';
+import {
+  BUILD_REASON_MISSING,
+  buildChoice,
+  buildReasonGiven,
+  handoffCommand,
+  needsPersonSchema
+} from './handoffs';
 import { CHECK_DEPTHS, MERGE_MODES, type Blocked, type Command, type Task } from './lifecycle';
 import { redactDeep } from './guards';
 import { questionOptionsSchema } from './questions';
@@ -33,6 +40,7 @@ export const interviewerOutputSchema = z.discriminatedUnion('outcome', [
     question: text.max(1500),
     options: questionOptionsSchema
   }),
+  needsPersonSchema,
   z.strictObject({
     outcome: z.literal('complete'),
     title: text.max(120),
@@ -49,7 +57,8 @@ export const specOutputSchema = z.discriminatedUnion('outcome', [
     userVisible: z.boolean()
   }),
   // A spec question is a decision people make, so it may offer options; a builder's is not.
-  blockedSchema.extend({ options: questionOptionsSchema })
+  blockedSchema.extend({ options: questionOptionsSchema }),
+  needsPersonSchema
 ]);
 
 /** What every push hands back, the builder's and the onboarder's alike. */
@@ -78,7 +87,8 @@ export const builderOutputSchema = z.discriminatedUnion('outcome', [
     reviewReply: reviewReply.optional()
   }),
   z.strictObject({ outcome: z.literal('failed'), why: text }),
-  blockedSchema
+  blockedSchema,
+  needsPersonSchema
 ]);
 
 /**
@@ -91,7 +101,8 @@ export const onboarderOutputSchema = z.discriminatedUnion('outcome', [
     followUps: z.array(text.max(500)).max(15)
   }),
   z.strictObject({ outcome: z.literal('failed'), why: text }),
-  blockedSchema
+  blockedSchema,
+  needsPersonSchema
 ]);
 
 export const reviewerOutputSchema = z.discriminatedUnion('outcome', [
@@ -126,17 +137,20 @@ const extraApprovalSchema = z.union([
  */
 export const chooserOutputSchema = z.strictObject({
   userVisible: z.boolean(),
-  approval: z.strictObject({
-    depth: z.enum(CHECK_DEPTHS),
-    rationale: text.max(600),
-    extraApprovals: z.array(extraApprovalSchema).max(4).default([]),
-    verifiers: z
-      .array(z.strictObject({ memberId: z.uuid(), reason: text.max(300) }))
-      .max(3)
-      .default([]),
-    /** At verification: may GitHub merge it on its own once the branch rules pass? */
-    merge: z.enum(MERGE_MODES).default('person')
-  }),
+  approval: z
+    .strictObject({
+      depth: z.enum(CHECK_DEPTHS),
+      rationale: text.max(600),
+      extraApprovals: z.array(extraApprovalSchema).max(4).default([]),
+      verifiers: z
+        .array(z.strictObject({ memberId: z.uuid(), reason: text.max(300) }))
+        .max(3)
+        .default([]),
+      /** At verification: may GitHub merge it on its own once the branch rules pass? */
+      merge: z.enum(MERGE_MODES).default('person'),
+      ...buildChoice
+    })
+    .refine(buildReasonGiven, BUILD_REASON_MISSING),
   /** Required at verification, where the engine checks it is not empty. */
   checklist: z.array(text).default([]),
   beforeAfter: z
@@ -202,10 +216,8 @@ export const parseAgentOutput = <R extends ContractRole>(
   raw: unknown
 ): OutputResult<R> => {
   const parsed = OUTPUT_SCHEMAS[role].safeParse(raw);
-  if (parsed.success) {
-    // Every word an agent hands back is stored, shown or posted somewhere: none may carry a secret.
-    return { ok: true, output: redactDeep(parsed.data) as AgentOutput<R> };
-  }
+  // Every word an agent hands back is stored, shown or posted somewhere: none may carry a secret.
+  if (parsed.success) return { ok: true, output: redactDeep(parsed.data) as AgentOutput<R> };
   return {
     ok: false,
     errors: parsed.error.issues.map(
@@ -270,6 +282,7 @@ export const commandForOutput = (task: Task, result: RoleOutput): CommandResult 
           command: blockCommand(task, output.question, 'requester', output.options)
         };
       }
+      if (output.outcome === 'needs_person') return { ok: true, command: handoffCommand(output) };
       return { ok: true, command: { type: 'submit_request' } };
     }
     case 'spec': {
@@ -280,6 +293,7 @@ export const commandForOutput = (task: Task, result: RoleOutput): CommandResult 
           command: blockCommand(task, output.question, output.askedOf, output.options)
         };
       }
+      if (output.outcome === 'needs_person') return { ok: true, command: handoffCommand(output) };
       return {
         ok: true,
         command: {
@@ -295,6 +309,7 @@ export const commandForOutput = (task: Task, result: RoleOutput): CommandResult 
       if (output.outcome === 'blocked') {
         return { ok: true, command: blockCommand(task, output.question, output.askedOf) };
       }
+      if (output.outcome === 'needs_person') return { ok: true, command: handoffCommand(output) };
       if (output.outcome === 'failed') {
         return {
           ok: true,
@@ -331,7 +346,13 @@ export const commandForOutput = (task: Task, result: RoleOutput): CommandResult 
           reason
         })),
         verifiers: approval.verifiers,
-        merge: approval.merge
+        merge: approval.merge,
+        ...(task.stage === 'spec_review' && approval.build === 'person'
+          ? {
+              build: approval.build,
+              ...(approval.buildReason ? { buildReason: approval.buildReason } : {})
+            }
+          : {})
       };
       return {
         ok: true,

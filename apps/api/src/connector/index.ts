@@ -1,4 +1,5 @@
 import { listMemberProjects, loadSessionMember, memberForConnectorToken } from '@officina/db';
+import type { HandInPort } from '@officina/engine';
 import { Elysia } from 'elysia';
 import type { Pool } from 'pg';
 import { version } from '../../../../package.json';
@@ -33,7 +34,12 @@ const oauthFailure = (error: unknown) => {
  * token endpoint and the MCP endpoint itself. The consent step needs the board's session, so it
  * lives with the board API (`/api/connector/authorization`).
  */
-export const createConnector = (deps: { pool: Pool; publicUrl: string }) => {
+export const createConnector = (deps: {
+  pool: Pool;
+  publicUrl: string;
+  /** Reads a developer's handed-in push; without it `hand_in_build` says GitHub is not set up. */
+  github?: HandInPort | undefined;
+}) => {
   const { pool, publicUrl } = deps;
   const resource = mcpResource(publicUrl);
   const board = publicUrl.replace(/\/$/, '');
@@ -125,6 +131,7 @@ export const createConnector = (deps: { pool: Pool; publicUrl: string }) => {
               return {
                 pool,
                 publicUrl,
+                github: deps.github,
                 memberId,
                 workspaceId: member.workspaceId,
                 projects: await listMemberProjects(pool, memberId)

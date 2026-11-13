@@ -24,6 +24,7 @@ export type Permission =
   | 'approve_spec'
   | 'verify_result'
   | 'triage'
+  | 'build'
   | 'steer'
   | 'see_runs'
   | 'decide_learnings'
@@ -32,7 +33,16 @@ export type Permission =
   | 'publish'
   | 'manage_members';
 export type BoardAction =
-  'submit' | 'accept' | 'decline' | 'approve' | 'changes' | 'answer' | 'cancel' | 'comment';
+  | 'submit'
+  | 'accept'
+  | 'decline'
+  | 'claim'
+  | 'hand_in'
+  | 'approve'
+  | 'changes'
+  | 'answer'
+  | 'cancel'
+  | 'comment';
 
 export interface Project {
   readonly id: string;
@@ -69,7 +79,12 @@ export interface Card {
   readonly title: string;
   readonly stage: Stage;
   readonly lane: Lane | null;
-  readonly blocked: { readonly question: string; readonly askedOf?: string } | null;
+  readonly blocked: {
+    readonly question: string;
+    readonly askedOf?: string;
+    /** What agents need from a person to go on; empty for an ordinary question. */
+    readonly needs: readonly string[];
+  } | null;
   readonly paused: boolean;
   readonly userVisible: boolean;
   readonly requester: string;
@@ -157,6 +172,8 @@ export interface TaskDetail extends Card {
   readonly blocked: {
     readonly question: string;
     readonly askedOf?: string;
+    /** What agents need from a person to go on; empty for an ordinary question. */
+    readonly needs: readonly string[];
     readonly options: readonly QuestionOption[];
   } | null;
   readonly repo: string | null;
@@ -198,6 +215,12 @@ export interface TaskDetail extends Card {
       }[];
       readonly asked: readonly string[];
     }[];
+    /** Who builds it: the agent, or a developer who claims it, and why. */
+    readonly build: {
+      readonly by: 'agent' | 'person';
+      readonly reason: string | null;
+      readonly who: readonly string[];
+    };
     readonly merge: { readonly by: 'person' | 'auto'; readonly who: readonly string[] };
   };
   readonly approval: {

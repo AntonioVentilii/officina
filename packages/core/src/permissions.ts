@@ -14,6 +14,7 @@ export const ACTIONS = [
   'approve_spec',
   'verify_result',
   'triage',
+  'build',
   'steer',
   'see_runs',
   'decide_learnings',
@@ -37,6 +38,7 @@ export const PERMISSIONS = {
   approve_spec: 'contributor',
   verify_result: 'contributor',
   triage: 'maintainer',
+  build: 'maintainer',
   steer: 'maintainer',
   see_runs: 'maintainer',
   decide_learnings: 'maintainer',
@@ -47,10 +49,12 @@ export const PERMISSIONS = {
 } as const satisfies Readonly<Record<Action, Role>>;
 
 /**
- * Domains that grant an action below its least role, so a project can let one contributor (a CEO,
- * a finance lead) read confidential content without making them a maintainer.
+ * Domains that grant an action below its least role, so a project can let one contributor (a
+ * developer it brings in to build, a CEO or finance lead who reads confidential work) do it without
+ * making them a maintainer.
  */
 export const DOMAIN_GRANTS: Readonly<Partial<Record<Action, string>>> = {
+  build: 'developer',
   see_confidential: 'confidential'
 };
 
@@ -66,7 +70,9 @@ export const ACTION_LABELS: Readonly<Record<Action, string>> = {
   approve_spec: 'approve a plan when its approval policy names them',
   verify_result: 'check a result when its approval policy names them',
   triage: "accept or decline requests, and send anyone's request on",
-  steer: 'pause, resume, claim, review by hand or cancel any task',
+  build:
+    'claim a build and hand it in, built by hand or with their own agents (also anyone with the `developer` domain)',
+  steer: 'pause, resume, review by hand or cancel any task, and hand a claimed build back',
   see_runs: 'see agent runs, their logs and costs',
   decide_learnings: 'accept or reject learnings',
   merge: 'merge results on GitHub',

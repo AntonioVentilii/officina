@@ -7,6 +7,7 @@ import {
   type Requirement
 } from './config';
 import { OWNER_GUARDS, guardsForPaths, secretFiles, withGuards, type Guard } from './guards';
+import type { HandoffNeed } from './handoffs';
 import { computeLane, redPaths, stricterLane, type Lane } from './lanes';
 import { GATE_ACTIONS, PERMISSIONS, can, type Action } from './permissions';
 import { evaluatePolicy, policyContext, type Approval } from './policies';
@@ -80,6 +81,8 @@ export type Assignee =
 export interface Blocked {
   readonly question: string;
   readonly askedOf: { readonly memberId: string } | { readonly role: Role };
+  /** Set when agents cannot go on without something only a person can provide or decide. */
+  readonly handoff?: { readonly needs: readonly HandoffNeed[] };
   /** Choices an agent offered, each with an optional preview; people may still answer freely. */
   readonly options?: readonly QuestionOption[];
 }
@@ -116,6 +119,13 @@ export type CheckDepth = (typeof CHECK_DEPTHS)[number];
 export const MERGE_MODES = ['person', 'auto'] as const;
 export type MergeMode = (typeof MERGE_MODES)[number];
 
+/**
+ * Who builds an approved spec: the build agent, or a person with the technical role who claims it,
+ * when the work is too big or too risky for agents. The chooser decides at spec review.
+ */
+export const BUILD_MODES = ['agent', 'person'] as const;
+export type BuildMode = (typeof BUILD_MODES)[number];
+
 /** An approval the chooser adds to a gate on top of the lane policy. It can only add, never remove. */
 export type ExtraRequirement =
   { readonly domain: string } | { readonly role: 'maintainer' | 'owner' };
@@ -130,6 +140,10 @@ export interface ApprovalPlan {
   readonly verifiers: readonly { readonly memberId: string; readonly reason: string }[];
   /** Absent in plans made before the chooser decided it, which means `person`. */
   readonly merge?: MergeMode;
+  /** At spec review: who builds it. Absent means the build agent. */
+  readonly build?: BuildMode;
+  /** Why a person must build it, for the people asked. */
+  readonly buildReason?: string;
 }
 
 export type PlanInput = Omit<ApprovalPlan, 'subject'>;
@@ -201,6 +215,7 @@ export type Command =
       readonly type: 'block';
       readonly question: string;
       readonly askedOf: Blocked['askedOf'];
+      readonly handoff?: Blocked['handoff'];
       readonly options?: Blocked['options'];
     }
   | { readonly type: 'answer'; readonly text: string }
@@ -284,6 +299,7 @@ export type DecisionError =
   | 'no_head'
   | 'wip_limit'
   | 'agents_cannot_build_lane'
+  | 'needs_developer'
   | 'not_planned'
   | 'stale_head'
   | 'awaiting_onboarding';
@@ -322,6 +338,20 @@ const memberFor = (actor: Actor, context: DecideContext): Member | undefined =>
 const memberCan = (actor: Actor, context: DecideContext, action: Action): boolean => {
   const member = memberFor(actor, context);
   return member !== undefined && can(member, action);
+};
+
+/**
+ * Why a person must build this task instead of an agent: its lane forbids agents, or the chooser
+ * asked for a human developer at spec review. `null` when agents may build it.
+ */
+export const humanBuildReason = (
+  config: ProjectConfig,
+  task: Pick<Task, 'lane' | 'approvalPlans'>
+): string | null => {
+  if (task.lane && !config.lanes[task.lane].agentsBuild)
+    return `Agents may not build changes in the ${task.lane} lane.`;
+  const plan = task.approvalPlans.spec_review;
+  return plan?.build === 'person' ? (plan.buildReason ?? null) : null;
 };
 
 export const gateSubject = (
@@ -370,6 +400,18 @@ export const canAutoVerify = (
 const sameRequirement = (a: ExtraRequirement, b: ExtraRequirement) =>
   JSON.stringify(a) === JSON.stringify(b);
 
+/** Who builds only gets stricter too: once a spec plan asked for a person, agents never build it. */
+const plannedBuild = (
+  gate: Gate,
+  input: PlanInput,
+  earlier: ApprovalPlan | undefined
+): Pick<ApprovalPlan, 'build' | 'buildReason'> => {
+  const byPerson = input.build === 'person' ? input : earlier?.build === 'person' ? earlier : null;
+  return gate === 'spec_review' && byPerson
+    ? { build: 'person', buildReason: byPerson.buildReason ?? 'The chooser asked for a person.' }
+    : { build: 'agent' };
+};
+
 /**
  * Records the chooser's plan for a gate. Requirements only accumulate across plans for the same
  * gate, so a later plan (after changes, or a manipulated one) can never lower the bar; people it
@@ -405,7 +447,14 @@ const withPlan = (
     task.guards.length === 0
       ? 'auto'
       : 'person';
-  const plan: ApprovalPlan = { ...input, subject, extra, verifiers, merge };
+  const plan: ApprovalPlan = {
+    ...input,
+    subject,
+    extra,
+    verifiers,
+    merge,
+    ...plannedBuild(gate, input, earlier)
+  };
   return [
     { approvalPlans: { ...task.approvalPlans, [gate]: plan } },
     { type: 'approval_planned', gate, plan, added }
@@ -617,11 +666,12 @@ export const decide = (
       if (command.assignee.kind === 'agent') {
         if (command.assignee.role !== buildRoleFor(task.kind)) return fail('not_allowed');
         if (!settings.agentsBuild) return fail('agents_cannot_build_lane');
+        if (humanBuildReason(context.config, task) !== null) return fail('needs_developer');
         if (command.openInLane >= settings.wip) return fail('wip_limit');
       } else {
         const assigneeId = command.assignee.memberId;
         const assignee = context.members.find((member) => member.id === assigneeId);
-        if (assignee === undefined || !can(assignee, 'steer')) {
+        if (assignee === undefined || !can(assignee, 'build')) {
           return fail('not_allowed');
         }
       }
@@ -630,15 +680,22 @@ export const decide = (
     }
 
     case 'claim': {
-      if (actor.kind !== 'member' || !memberCan(actor, context, 'steer')) {
+      if (actor.kind !== 'member' || !memberCan(actor, context, 'build')) {
         return fail('not_allowed');
       }
+      // Nobody builds what they may not read.
+      if (task.guards.includes('confidential') && !memberCan(actor, context, 'see_confidential'))
+        return fail('not_allowed');
       const assignee: Assignee = { kind: 'member', memberId: actor.memberId };
       if (task.stage === 'ready') {
         const [moved, stageEvent] = moveTo(task, 'building', { assignee });
         return ok(moved, [stageEvent, { type: 'assigned', assignee }]);
       }
+      // Taking a build over from the agent is anyone's who may build; from another person, only
+      // someone who may steer the work.
       if (task.stage === 'building') {
+        if (task.assignee?.kind === 'member' && !memberCan(actor, context, 'steer'))
+          return fail('not_allowed');
         return ok({ ...task, assignee }, [{ type: 'assigned', assignee }]);
       }
       return fail('wrong_stage');
@@ -918,9 +975,12 @@ export const decide = (
       if (task.blocked) return fail('already_blocked');
       const allowed = actor.kind !== 'member' || memberCan(actor, context, 'comment');
       if (!allowed) return fail('not_allowed');
+      // A handoff is engine-routed from agent output; a person's own question is a plain one.
+      const handoff = actor.kind === 'member' ? undefined : command.handoff;
       const blocked: Blocked = {
         question: command.question,
         askedOf: command.askedOf,
+        ...(handoff ? { handoff } : {}),
         ...(command.options?.length ? { options: command.options } : {})
       };
       return ok({ ...task, blocked }, [{ type: 'blocked', blocked }]);

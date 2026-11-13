@@ -35,7 +35,8 @@ import {
   resolveProjectMember,
   type StoreError
 } from '@officina/db';
-import { checklistMarkdown } from '@officina/engine';
+import { checklistMarkdown, handInBuild, type HandInPort } from '@officina/engine';
+import { GitHubError } from '@officina/github';
 import { CONFIDENTIAL, consoleUrl, describeRequirement } from './board';
 import type { Pool } from 'pg';
 
@@ -64,6 +65,7 @@ const ERROR_TEXT: Record<StoreError, string> = {
   no_head: 'nothing has been built yet',
   wip_limit: 'the lane is at its limit of concurrent work',
   agents_cannot_build_lane: 'agents may not build in this lane',
+  needs_developer: 'a person with the technical role builds this one; claim it',
   not_planned: 'the approval chooser has not yet decided who approves this; try again shortly',
   stale_head: 'that review is about an earlier version of the change',
   not_found: 'task not found',
@@ -201,6 +203,7 @@ export const commentAs = async (
 export type TaskAction =
   | { readonly type: 'submit' }
   | { readonly type: 'accept' }
+  | { readonly type: 'claim' }
   | { readonly type: 'approve' }
   | { readonly type: 'changes'; readonly note: string }
   /** With `option`, the letter of an option the question offers, and `text` an optional note. */
@@ -213,6 +216,7 @@ const toCommand = (action: TaskAction): Command => {
     case 'submit':
       return { type: 'submit_request' };
     case 'accept':
+    case 'claim':
     case 'approve':
       return { type: action.type };
     case 'changes':
@@ -285,6 +289,48 @@ export const actOnTaskAs = async (
     stage: result.task.stage,
     ...(recorded && recorded.type === 'approval_recorded' ? { satisfied: recorded.satisfied } : {})
   };
+};
+
+/** What a developer hands in with the build they pushed. */
+export interface HandInInput {
+  readonly number: number;
+  readonly prTitle: string;
+  readonly verified: readonly string[];
+  readonly notVerified: readonly string[];
+}
+
+/**
+ * A developer hands in the build they claimed and pushed to the task branch, by hand or with their
+ * own agents: Officina reads the push from GitHub and sends it to the same review an agent's gets.
+ */
+export const handInAs = async (
+  pool: Pool,
+  github: HandInPort | undefined,
+  input: ProjectActor & HandInInput & { readonly publicUrl: string }
+): Promise<{ stage: string; pullRequest: number | null }> => {
+  if (!github) throw new TaskCommandError('the GitHub App is not configured', 503);
+  const taskId = await findTaskIdByNumber(pool, input.projectId, input.number);
+  if (!taskId) throw new TaskCommandError(`task #${input.number} not found`, 404);
+  try {
+    const result = await handInBuild(
+      { pool, github, publicUrl: input.publicUrl },
+      { ...input, taskId }
+    );
+    if (result.ok) return { stage: result.stage, pullRequest: result.pullRequest };
+    throw new TaskCommandError(
+      result.error === 'bad_title'
+        ? result.problems.join('; ')
+        : result.error === 'not_installed'
+          ? 'the GitHub App is not installed on this repository'
+          : ERROR_TEXT[result.error]
+    );
+  } catch (error) {
+    if (error instanceof GitHubError)
+      throw new TaskCommandError(
+        `could not read the task branch on GitHub; push it first (${error.message})`
+      );
+    throw error;
+  }
 };
 
 const money = (cents: number | null) =>

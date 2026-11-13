@@ -7,10 +7,11 @@ import {
   type Preview
 } from '@officina/core';
 import type { MemberProject } from '@officina/db';
+import type { HandInPort } from '@officina/engine';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import { boardView, taskView, type BoardViewer, type CardView, type TaskView } from '../board';
-import { TaskCommandError, actOnTaskAs, commentAs, createRequestAs } from '../tasks';
+import { TaskCommandError, actOnTaskAs, commentAs, createRequestAs, handInAs } from '../tasks';
 
 /**
  * The connector's tools. Each one is a thin call into what the board's API already does
@@ -25,6 +26,8 @@ export interface ToolContext {
   readonly memberId: string;
   readonly workspaceId: string;
   readonly projects: readonly MemberProject[];
+  /** Reads a handed-in push from GitHub; absent where the GitHub App is not configured. */
+  readonly github?: HandInPort | undefined;
 }
 
 /** A failure Claude should explain to the person, not a protocol error. */
@@ -96,6 +99,9 @@ const peopleLines = ({ people }: TaskDetail) => [
         )
         .join(', ')}.${gate.asked.length ? ` Asked to check: ${gate.asked.join(', ')}.` : ''}`
   ),
+  people.build.by === 'person'
+    ? `Build: a developer, not the agents (${people.build.reason}). Who can claim it: ${people.build.who.join(', ') || 'nobody yet'}.`
+    : 'Build: the build agent.',
   people.merge.by === 'auto'
     ? 'Merge: GitHub merges it once its checks pass.'
     : `Merge: a person merges it on GitHub (${people.merge.who.join(', ') || 'nobody yet'}).`
@@ -119,7 +125,13 @@ const previewText = (preview: Preview): string => {
 };
 
 const questionLines = (blocked: NonNullable<TaskView['blocked']>): string[] => {
-  const lines = ['', `Open question for ${blocked.askedOf}:`, blocked.question];
+  const lines = [
+    '',
+    blocked.needs.length
+      ? `The agents cannot do this alone. It needs ${blocked.askedOf} for: ${blocked.needs.join('; ')}.`
+      : `Open question for ${blocked.askedOf}:`,
+    blocked.question
+  ];
   if (!blocked.options.length) return lines;
   lines.push(
     '',
@@ -138,6 +150,8 @@ const WHAT_TO_DO: Record<string, string> = {
   changes: 'ask for changes, saying what is wrong (review with decision "changes")',
   comment: 'add a comment (comment)',
   accept: 'accept or decline it on the board',
+  claim: 'claim the build, to build it yourself, on the board',
+  hand_in: 'hand in the build once its branch is pushed (hand_in_build)',
   submit: 'send it on as it is, on the board',
   cancel: 'cancel it on the board'
 };
@@ -384,6 +398,45 @@ After it is opened, tell the person the task link and that an agent may ask them
         text: input.text
       });
       return `Comment added to task ${input.number}: ${taskUrl(context.publicUrl, project.id, input.number)}`;
+    }
+  }),
+  tool({
+    name: 'hand_in_build',
+    title: 'Hand in a build',
+    description: `For a developer who claimed a task's build and pushed it to the task branch (\`officina/task-<number>\`), by hand or with their own agents, for example in Claude Code. Officina reads what was pushed from GitHub, sends it to the same review an agent's build gets (two reviewer agents, then the people who check the result) and opens the pull request. Call show_task first to read the approved plan; build exactly that, push the branch, then call this with a pull request title in the repository's format and what you checked.`,
+    input: z.object({
+      project: PROJECT,
+      number: NUMBER,
+      pr_title: z
+        .string()
+        .trim()
+        .min(3)
+        .max(120)
+        .describe("The pull request title, in the repository's own format."),
+      verified: z
+        .array(z.string().trim().min(1).max(500))
+        .max(20)
+        .optional()
+        .describe('What you checked, one item each, for example the commands you ran.'),
+      not_verified: z
+        .array(z.string().trim().min(1).max(500))
+        .max(20)
+        .optional()
+        .describe('What you could not check.')
+    }),
+    readOnly: false,
+    run: async (context, input) => {
+      const project = projectFor(context, input.project);
+      const result = await handInAs(context.pool, context.github, {
+        projectId: project.id,
+        memberId: context.memberId,
+        number: input.number,
+        publicUrl: context.publicUrl,
+        prTitle: input.pr_title,
+        verified: input.verified ?? [],
+        notVerified: input.not_verified ?? []
+      });
+      return `Handed in; task ${input.number} is now ${result.stage}${result.pullRequest ? `, pull request #${result.pullRequest}` : ''}: ${taskUrl(context.publicUrl, project.id, input.number)}`;
     }
   }),
   tool({

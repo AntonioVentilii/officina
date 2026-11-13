@@ -2,6 +2,7 @@ import {
   APPROVAL_FLOOR,
   GATE_ACTIONS,
   GUARD_LABELS,
+  HANDOFF_NEEDS,
   REVIEWER_ROLES,
   TERMINAL_STAGES,
   applicableRequirements,
@@ -11,6 +12,7 @@ import {
   evaluatePolicy,
   gateSubject,
   hasRole,
+  humanBuildReason,
   optionKey,
   parseProjectConfig,
   policyContext,
@@ -59,7 +61,16 @@ export interface WaitingOn {
 }
 
 export type BoardAction =
-  'submit' | 'accept' | 'decline' | 'approve' | 'changes' | 'answer' | 'cancel' | 'comment';
+  | 'submit'
+  | 'accept'
+  | 'decline'
+  | 'claim'
+  | 'hand_in'
+  | 'approve'
+  | 'changes'
+  | 'answer'
+  | 'cancel'
+  | 'comment';
 
 export interface BoardViewer {
   readonly memberId: string;
@@ -206,8 +217,10 @@ export const CONFIDENTIAL =
  * Whether the viewer may read what a task says. A task guarded as confidential keeps its title,
  * stage and people for everyone, and its words for members with `see_confidential`.
  */
-const readsContent = (row: Pick<BoardTaskRow, 'guards'>, viewer: BoardViewer): boolean =>
-  !row.guards.includes('confidential') || can(viewer, 'see_confidential');
+const readsContent = (
+  row: Pick<BoardTaskRow, 'guards'>,
+  viewer: Pick<BoardViewer, 'role' | 'domains'>
+): boolean => !row.guards.includes('confidential') || can(viewer, 'see_confidential');
 
 /** Free text a timeline event may carry, dropped for viewers who may not read the task. */
 const EVENT_TEXT = ['note', 'answer', 'reason', 'blocked'];
@@ -244,6 +257,8 @@ interface ProjectFacts {
   readonly members: Awaited<ReturnType<typeof listProjectMembers>>;
   readonly names: ReadonlyMap<string, string>;
   readonly rawConfig: unknown;
+  /** The project's config, parsed once; `null` when it is invalid. */
+  readonly config: ProjectConfig | null;
   /** The open onboarding task's number: until it is done, no other task is built. */
   readonly onboarding: number | null;
 }
@@ -303,19 +318,27 @@ const canAnswer = (row: BoardTaskRow, viewer: BoardViewer) => {
   );
 };
 
+/** What a handoff to a person needs, in words. */
+const handoffNeeds = (blocked: Blocked): string[] =>
+  (blocked.handoff?.needs ?? []).map((need) => HANDOFF_NEEDS[need].label);
+
 const waitingOn = (
   row: BoardTaskRow,
   viewer: BoardViewer,
   approval: ApprovalState | null,
-  onboarding: number | null
+  facts: Pick<ProjectFacts, 'config' | 'onboarding' | 'names'>
 ): WaitingOn => {
   const member = viewerMember(viewer);
   if (TERMINAL_STAGES.has(row.stage)) return { kind: 'nobody', label: row.stage, me: false };
   if (row.blocked) {
     const askedOf = row.blocked.askedOf;
+    const who = 'memberId' in askedOf ? 'a member' : article(askedOf.role);
+    const needs = handoffNeeds(row.blocked);
     return {
       kind: 'people',
-      label: `A question for ${'memberId' in askedOf ? 'a member' : article(askedOf.role)}`,
+      label: needs.length
+        ? `Agents cannot go on: needs ${who} for ${needs.join(', ')}`
+        : `A question for ${who}`,
       me: canAnswer(row, viewer)
     };
   }
@@ -358,19 +381,27 @@ const waitingOn = (
           (Boolean(asked) && pending.length > 0 && can(member, GATE_ACTIONS[row.stage]))
       };
     }
-    case 'ready':
-      return row.kind === 'request' && onboarding !== null
+    case 'ready': {
+      const byPerson = facts.config && humanBuildReason(facts.config, row);
+      if (byPerson)
+        return {
+          kind: 'people',
+          label: `Needs a developer: a developer claims the build. ${byPerson}`,
+          me: can(member, 'build')
+        };
+      return row.kind === 'request' && facts.onboarding !== null
         ? {
             kind: 'agent',
-            label: `Builds once the agent docs of task ${onboarding} are merged`,
+            label: `Builds once the agent docs of task ${facts.onboarding} are merged`,
             me: false
           }
         : { kind: 'agent', label: 'Waiting for a build slot', me: false };
+    }
     case 'building':
       return row.assignee?.kind === 'member'
         ? {
             kind: 'people',
-            label: 'A person is building it',
+            label: `${facts.names.get(row.assignee.memberId) ?? 'A person'} is building it, then hands it in`,
             me: row.assignee.memberId === viewer.memberId
           }
         : {
@@ -395,6 +426,27 @@ const waitingOn = (
   }
 };
 
+/** Whether a member may build this task: the `build` action, and reading it if it is confidential. */
+const buildsIt = (
+  row: Pick<BoardTaskRow, 'guards'>,
+  member: Pick<BoardViewer, 'role' | 'domains'>
+) => can(member, 'build') && readsContent(row, member);
+
+/**
+ * A developer claims a build when it waits or the agent has it, and hands in what they pushed once
+ * it is theirs: built by hand or with their own agents, it goes to the same review.
+ */
+const buildActions = (row: BoardTaskRow, viewer: BoardViewer): BoardAction[] => {
+  if (!buildsIt(row, viewer)) return [];
+  if (row.stage === 'ready' || (row.stage === 'building' && row.assignee?.kind === 'agent'))
+    return ['claim'];
+  return row.stage === 'building' &&
+    row.assignee?.kind === 'member' &&
+    row.assignee.memberId === viewer.memberId
+    ? ['hand_in']
+    : [];
+};
+
 const actionsFor = (row: BoardTaskRow, viewer: BoardViewer): BoardAction[] => {
   const member = viewerMember(viewer);
   if (TERMINAL_STAGES.has(row.stage)) return can(member, 'comment') ? ['comment'] : [];
@@ -406,6 +458,7 @@ const actionsFor = (row: BoardTaskRow, viewer: BoardViewer): BoardAction[] => {
     if (canAnswer(row, viewer)) actions.push('answer');
   } else if (!row.paused) {
     if (row.stage === 'triage' && can(member, 'triage')) actions.push('accept', 'decline');
+    actions.push(...buildActions(row, viewer));
     if (
       (row.stage === 'spec_review' || row.stage === 'verifying') &&
       can(member, GATE_ACTIONS[row.stage]) &&
@@ -425,10 +478,12 @@ const projectFacts = async (pool: Pool, viewer: BoardViewer): Promise<ProjectFac
     loadProjectConfig(pool, viewer.projectId),
     openOnboardingTask(pool, viewer.projectId)
   ]);
+  const parsed = parseProjectConfig(config);
   return {
     members,
     names,
     rawConfig: config,
+    config: parsed.ok ? parsed.config : null,
     onboarding: onboarding?.number ?? null
   };
 };
@@ -444,7 +499,10 @@ const cardView = (
   stage: row.stage,
   lane: row.lane,
   blocked: row.blocked
-    ? { question: readsContent(row, viewer) ? questionFor(viewer, row.blocked) : CONFIDENTIAL }
+    ? {
+        question: readsContent(row, viewer) ? questionFor(viewer, row.blocked) : CONFIDENTIAL,
+        needs: handoffNeeds(row.blocked)
+      }
     : null,
   guards: row.guards.map((guard) => GUARD_LABELS[guard]),
   paused: row.paused,
@@ -461,7 +519,7 @@ const cardView = (
   stageSince: row.stageSince,
   autoVerified: row.autoVerified,
   autoMergeOn: row.autoMergeOn,
-  waitingOn: waitingOn(row, viewer, approval, facts.onboarding)
+  waitingOn: waitingOn(row, viewer, approval, facts)
 });
 
 const DEPTH_LABELS = {
@@ -566,9 +624,16 @@ const peopleView = (row: BoardTaskRow, facts: ProjectFacts, approvals: readonly 
         };
       })
     : [];
+  const byPerson = facts.config && humanBuildReason(facts.config, row);
+  const developers = facts.members
+    .filter((member) => buildsIt(row, member))
+    .map((member) => name(member.id));
   return {
     requester: row.requesterName,
     gates,
+    build: byPerson
+      ? { by: 'person' as const, reason: byPerson, who: developers }
+      : { by: 'agent' as const, reason: null, who: [] },
     merge: {
       by: mergedBy(row.approvalPlans.verifying, config.ok ? config.config : null),
       who: facts.members.filter((member) => can(member, 'merge')).map((member) => name(member.id))
@@ -654,6 +719,7 @@ export const taskView = async (
     blocked: row.blocked
       ? {
           question: shown.text(questionFor(viewer, row.blocked)),
+          needs: handoffNeeds(row.blocked),
           options: shown.value(optionsFor(viewer, row.blocked)) ?? [],
           askedOf:
             'memberId' in row.blocked.askedOf

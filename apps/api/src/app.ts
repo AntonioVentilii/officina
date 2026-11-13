@@ -43,7 +43,11 @@ export const createApp = ({ pool, webhookSecret, github, board, boardDir }: AppD
         return { error: 'internal' };
       })
       .use(board ? createBoardApi({ pool, ...board }) : new Elysia())
-      .use(board ? createConnector({ pool, publicUrl: board.publicUrl }) : new Elysia())
+      .use(
+        board
+          ? createConnector({ pool, publicUrl: board.publicUrl, github: board.builds })
+          : new Elysia()
+      )
       .get('/health', () => ({ ok: true }))
       .post(
         '/github/webhook',

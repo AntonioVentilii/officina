@@ -19,6 +19,7 @@ describe('permission matrix', () => {
           'approve_spec',
           'verify_result',
           'triage',
+          'build',
           'steer',
           'see_runs',
           'decide_learnings',
@@ -46,6 +47,23 @@ describe('permission matrix', () => {
     // A domain grants nothing below contributor: a watcher with it still only reads the board.
     expect(can({ role: 'watcher', domains: ['confidential'] }, 'see_confidential')).toBe(false);
     expect(allowedActions(ceo)).not.toContain('publish');
+  });
+
+  test('the developer domain lets a contributor build, and nothing more', () => {
+    const developer = { role: 'contributor', domains: ['developer'] } as const;
+    expect(can(developer, 'build')).toBe(true);
+    expect(can({ role: 'contributor', domains: [] }, 'build')).toBe(false);
+    // A domain grants nothing below contributor: a watcher with it still only reads the board.
+    expect(can({ role: 'watcher', domains: ['developer'] }, 'build')).toBe(false);
+    expect(allowedActions(developer)).toEqual([
+      'see',
+      'request',
+      'comment',
+      'answer',
+      'approve_spec',
+      'verify_result',
+      'build'
+    ]);
   });
 
   test('every action has words people read', () => {
