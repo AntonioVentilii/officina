@@ -283,6 +283,33 @@ describe('GitHub client', () => {
     await expect(opening).rejects.toThrow('GitHub 422');
   });
 
+  test('closes every pull request still open from a branch, and none open is not an error', async () => {
+    let open = [
+      { number: 7, html_url: 'https://github.com/ViciApp/vici-app/pull/7' },
+      { number: 9, html_url: 'https://github.com/ViciApp/vici-app/pull/9' }
+    ];
+    const { fetchImpl, calls } = fakeGitHub({
+      'POST /app/installations/99/access_tokens': tokenRoute('2099-01-01T00:00:00Z'),
+      'GET /repos/ViciApp/vici-app/pulls': () => json(open),
+      'PATCH /repos/ViciApp/vici-app/pulls/7': () => json({}),
+      'PATCH /repos/ViciApp/vici-app/pulls/9': () => json({})
+    });
+    const client = createGitHubClient({ appId: '1', privateKeyPem, fetch: fetchImpl });
+    await client.closePullRequestsFrom({ ...ref, branch: 'officina/learning-1' });
+    const listed = new URLSearchParams(calls[1]!.query);
+    expect(listed.get('head')).toBe('ViciApp:officina/learning-1');
+    expect(listed.get('state')).toBe('open');
+    const closed = calls.filter((call) => call.method === 'PATCH');
+    expect(closed.map((call) => [call.url, call.body])).toEqual([
+      ['/repos/ViciApp/vici-app/pulls/7', { state: 'closed' }],
+      ['/repos/ViciApp/vici-app/pulls/9', { state: 'closed' }]
+    ]);
+
+    open = [];
+    await client.closePullRequestsFrom({ ...ref, branch: 'officina/learning-1' });
+    expect(calls.filter((call) => call.method === 'PATCH')).toHaveLength(2);
+  });
+
   test('creating a branch again keeps the one the first attempt made, never moving it', async () => {
     const refs = new Map<string, string>();
     let head = 'abc';

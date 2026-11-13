@@ -296,6 +296,19 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     }
   };
 
+  /** The pull requests open from one of the repository's own branches, to any base or to one. */
+  const openFromBranch = (
+    ref: RepoRef & { readonly branch: string; readonly base?: string },
+    token: string
+  ) => {
+    const owner = ref.repo.split('/')[0]!;
+    const base = ref.base === undefined ? '' : `&base=${encodeURIComponent(ref.base)}`;
+    return request<{ number: number; html_url: string }[]>(
+      `/repos/${ref.repo}/pulls?state=open&head=${encodeURIComponent(`${owner}:${ref.branch}`)}${base}`,
+      { token }
+    );
+  };
+
   /** Opens a pull request, or returns the one already open from the same branch to the same base. */
   const openPullRequest = async (
     ref: RepoRef & {
@@ -319,13 +332,21 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     } catch (error) {
       if (!(error instanceof GitHubError && error.status === 422)) throw error;
       // An earlier attempt may have opened it before failing: that one is the answer.
-      const owner = ref.repo.split('/')[0]!;
-      const open = await request<{ number: number; html_url: string }[]>(
-        `/repos/${ref.repo}/pulls?state=open&head=${encodeURIComponent(`${owner}:${ref.branch}`)}&base=${encodeURIComponent(ref.base)}`,
-        { token }
-      );
+      const open = await openFromBranch(ref, token);
       if (!open[0]) throw error;
       return { number: open[0].number, url: open[0].html_url };
+    }
+  };
+
+  /** Closes every pull request still open from a branch; none open is not an error. */
+  const closePullRequestsFrom = async (ref: RepoRef & { readonly branch: string }) => {
+    const token = await installationToken(ref);
+    for (const pull of await openFromBranch(ref, token)) {
+      await request(`/repos/${ref.repo}/pulls/${pull.number}`, {
+        method: 'PATCH',
+        token,
+        body: { state: 'closed' }
+      });
     }
   };
 
@@ -486,6 +507,7 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     refSnapshot,
     isPullRequestMerge,
     openPullRequest,
+    closePullRequestsFrom,
     commentOnIssue,
     reviewComments,
     mergeWhenReady,

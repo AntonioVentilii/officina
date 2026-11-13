@@ -10,12 +10,12 @@ import {
 } from '@officina/db';
 import type { GitHubClient } from '@officina/github';
 import { taskLink } from '@officina/engine';
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import { TaskCommandError } from './tasks';
 
 export type LearningGitHub = Pick<
   GitHubClient,
-  'readFile' | 'updateFile' | 'createBranch' | 'openPullRequest'
+  'readFile' | 'updateFile' | 'createBranch' | 'openPullRequest' | 'closePullRequestsFrom'
 >;
 
 interface Target {
@@ -42,6 +42,9 @@ export const applyEdit = (
   return { ok: true, text: current.replace(learning.find, learning.text) };
 };
 
+/** The one branch a learning's pull request is opened from, so a retry and a reject find it. */
+const branchFor = (learning: LearningRow) => `officina/learning-${learning.id.slice(0, 8)}`;
+
 /** Agent docs learnings say so in their scope, so they read as changes to `docs/ai` in the history. */
 const titleFor = (learning: LearningRow) => {
   const summary = learning.title.charAt(0).toLowerCase() + learning.title.slice(1);
@@ -67,7 +70,7 @@ const openLearningPullRequest = async (
   const edited = applyEdit(current?.text ?? null, learning);
   if (!edited.ok)
     throw new TaskCommandError(`the edit no longer applies (${edited.why}); reject it instead`);
-  const branch = `officina/learning-${learning.id.slice(0, 8)}`;
+  const branch = branchFor(learning);
   const title = titleFor(learning);
   await github.createBranch({ ...ref, branch, from: project.defaultBranch });
   // A branch an earlier attempt left may already hold the edit; writing it again is skipped.
@@ -102,6 +105,26 @@ const openLearningPullRequest = async (
 };
 
 /**
+ * An accept whose decision failed to save may have left its pull request open; rejecting the
+ * learning closes it, so nobody merges an edit people turned down.
+ */
+const closeLeftPullRequest = async (
+  client: PoolClient,
+  github: LearningGitHub | undefined,
+  projectId: string,
+  learning: LearningRow
+): Promise<void> => {
+  if (!github || !editsProject(learning.target)) return;
+  const project = (await loadProject(client, projectId))!;
+  if (project.installationId === null) return;
+  await github.closePullRequestsFrom({
+    installationId: project.installationId,
+    repo: project.repo,
+    branch: branchFor(learning)
+  });
+};
+
+/**
  * Accepting a learning for the project's docs or agent docs opens a pull request with exactly the edit people saw; an agent
  * learning is recorded for Officina's maintainers, whose repository Officina does not write to.
  * Either way people merge, never Officina. The learning stays locked from the first read to the
@@ -131,6 +154,8 @@ export const decide = async (
         note: input.note
       });
     }
+    if (input.decision === 'reject')
+      await closeLeftPullRequest(client, github, target.projectId, learning);
     await decideLearning(client, {
       id: learning.id,
       status: input.decision === 'accept' ? 'accepted' : 'rejected',

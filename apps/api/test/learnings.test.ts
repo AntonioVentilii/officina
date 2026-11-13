@@ -53,10 +53,14 @@ describe.skipIf(!url)('learning decisions', () => {
     await pool.end();
   });
 
-  /** Remembers what each branch holds, so a second accept sees what the first one wrote. */
+  /**
+   * Remembers what each branch holds and which pull requests are open, so a second decision sees
+   * what the first one left. A failed opening has opened it, as when GitHub's answer is lost.
+   */
   const fakeGitHub = (options: { failOpening?: number } = {}) => {
     const calls: { method: string; args: Record<string, unknown> }[] = [];
     const written = new Map<string, string>();
+    const open = new Set<string>();
     let failOpening = options.failOpening ?? 0;
     const record = (method: string) => async (args: Record<string, unknown>) => {
       calls.push({ method, args });
@@ -67,7 +71,9 @@ describe.skipIf(!url)('learning decisions', () => {
           : { text, sha: 'blob2' };
       }
       if (method === 'updateFile') written.set(String(args.branch), String(args.text));
+      if (method === 'closePullRequestsFrom') open.delete(String(args.branch));
       if (method === 'openPullRequest') {
+        open.add(String(args.branch));
         if (failOpening-- > 0) throw new Error('GitHub 502 on /pulls');
         return { number: 77, url: 'https://github.com/x/pull/77' };
       }
@@ -77,9 +83,10 @@ describe.skipIf(!url)('learning decisions', () => {
       readFile: record('readFile'),
       updateFile: record('updateFile'),
       createBranch: record('createBranch'),
-      openPullRequest: record('openPullRequest')
+      openPullRequest: record('openPullRequest'),
+      closePullRequestsFrom: record('closePullRequestsFrom')
     } as unknown as LearningGitHub;
-    return { port, calls };
+    return { port, calls, open };
   };
 
   const propose = async (target: LearningTarget) => {
@@ -220,6 +227,27 @@ describe.skipIf(!url)('learning decisions', () => {
     });
     expect(decided).toMatchObject({ status: 'accepted', prNumber: 77 });
     expect(github.calls.filter((call) => call.method === 'updateFile')).toHaveLength(1);
+  });
+
+  test('rejecting a learning closes the pull request an accept that failed halfway left open', async () => {
+    const learning = await propose('docs');
+    const github = fakeGitHub({ failOpening: 1 });
+    await expect(
+      decide(pool, github.port, owner(), { id: learning.id, decision: 'accept' })
+    ).rejects.toThrow('GitHub 502');
+    const branch = `officina/learning-${learning.id.slice(0, 8)}`;
+    expect([...github.open]).toEqual([branch]);
+
+    const decided = await decide(pool, github.port, owner(), {
+      id: learning.id,
+      decision: 'reject'
+    });
+    expect(decided).toMatchObject({ status: 'rejected', prNumber: null });
+    expect(github.open.size).toBe(0);
+    expect(github.calls.at(-1)).toEqual({
+      method: 'closePullRequestsFrom',
+      args: { installationId: 99, repo: 'ViciApp/vici-app', branch }
+    });
   });
 
   test('agent learnings are recorded without touching the repository; contributors cannot decide', async () => {
