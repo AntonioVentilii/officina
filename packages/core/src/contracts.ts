@@ -8,6 +8,7 @@ import {
   needsPersonSchema
 } from './handoffs';
 import { CHECK_DEPTHS, MERGE_MODES, type Blocked, type Command, type Task } from './lifecycle';
+import { redactDeep } from './guards';
 import { questionOptionsSchema } from './questions';
 import { TASK_BRANCH_PREFIX } from './steps';
 
@@ -215,9 +216,8 @@ export const parseAgentOutput = <R extends ContractRole>(
   raw: unknown
 ): OutputResult<R> => {
   const parsed = OUTPUT_SCHEMAS[role].safeParse(raw);
-  if (parsed.success) {
-    return { ok: true, output: parsed.data as AgentOutput<R> };
-  }
+  // Every word an agent hands back is stored, shown or posted somewhere: none may carry a secret.
+  if (parsed.success) return { ok: true, output: redactDeep(parsed.data) as AgentOutput<R> };
   return {
     ok: false,
     errors: parsed.error.issues.map(

@@ -5,7 +5,7 @@ import { owner, productContributor, watcher } from './fixtures';
 const policy: Policy = [{ requester: true }, { domain: 'product' }];
 
 /** Today's default: the requester's approval meets every requirement they are eligible for. */
-const gate = { gate: 'spec_review', selfApproval: true } as const;
+const gate = { gate: 'spec_review', selfApproval: true, confidential: false } as const;
 
 describe('approval policies', () => {
   test('solo owner: requirements nobody can meet are waived, the owner approval is enough', () => {
@@ -105,7 +105,8 @@ describe('without self-approval', () => {
     requesterId: 'antonio',
     userVisible: true,
     subject: 'sha:1',
-    selfApproval: false
+    selfApproval: false,
+    confidential: false
   } as const;
   const own = [{ memberId: 'antonio', subject: 'sha:1' }];
 

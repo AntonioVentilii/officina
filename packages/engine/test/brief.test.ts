@@ -31,6 +31,7 @@ describe('the brief', () => {
     spec: null,
     verify: [],
     protectedPaths: [],
+    confidentialPaths: [],
     requestThread: [],
     feedback: [],
     firstRound: true,

@@ -19,6 +19,8 @@ export const ACTIONS = [
   'see_runs',
   'decide_learnings',
   'merge',
+  'see_confidential',
+  'publish',
   'manage_members'
 ] as const;
 export type Action = (typeof ACTIONS)[number];
@@ -28,7 +30,7 @@ export type Action = (typeof ACTIONS)[number];
  * Approving a plan or checking a result also needs the gate's policy to name the member (a role,
  * a domain or the requester), and answering needs the question to be asked of them.
  */
-export const PERMISSIONS: Readonly<Record<Action, Role>> = {
+export const PERMISSIONS = {
   see: 'watcher',
   request: 'contributor',
   comment: 'contributor',
@@ -41,15 +43,19 @@ export const PERMISSIONS: Readonly<Record<Action, Role>> = {
   see_runs: 'maintainer',
   decide_learnings: 'maintainer',
   merge: 'maintainer',
+  see_confidential: 'maintainer',
+  publish: 'owner',
   manage_members: 'owner'
-};
+} as const satisfies Readonly<Record<Action, Role>>;
 
 /**
  * Domains that grant an action below its least role, so a project can let one contributor (a
- * developer it brings in to build) do it without making them a maintainer.
+ * developer it brings in to build, a CEO or finance lead who reads confidential work) do it without
+ * making them a maintainer.
  */
 export const DOMAIN_GRANTS: Readonly<Partial<Record<Action, string>>> = {
-  build: 'developer'
+  build: 'developer',
+  see_confidential: 'confidential'
 };
 
 /** A domain grants nothing below this role: a watcher with a domain still only reads the board. */
@@ -70,6 +76,9 @@ export const ACTION_LABELS: Readonly<Record<Action, string>> = {
   see_runs: 'see agent runs, their logs and costs',
   decide_learnings: 'accept or reject learnings',
   merge: 'merge results on GitHub',
+  see_confidential:
+    "read and approve tasks that touch the project's confidential content (also anyone with the `confidential` domain)",
+  publish: 'approve anything that publishes, deploys, changes access or touches secrets',
   manage_members: 'invite members and change their roles'
 };
 

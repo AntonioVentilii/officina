@@ -2,6 +2,7 @@ import {
   ACTION_LABELS,
   TERMINAL_STAGES,
   allowedActions,
+  redactSecrets,
   taskUrl,
   type Preview
 } from '@officina/core';
@@ -178,7 +179,8 @@ const tool = <T extends z.ZodType>(definition: Tool<T>) => ({
           .join('; '),
         isError: true
       };
-    return { text: await definition.run(context, parsed.data), isError: false };
+    // Whatever a task holds, nothing shaped like a secret leaves Officina through Claude.
+    return { text: redactSecrets(await definition.run(context, parsed.data)), isError: false };
   }
 });
 

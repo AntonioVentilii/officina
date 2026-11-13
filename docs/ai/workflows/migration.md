@@ -1,6 +1,6 @@
 # Add a database migration
 
-History: one numbered file per schema change, `0001_init.sql` to `0014_learning_rewrite.sql`.
+History: one numbered file per schema change, `0001_init.sql` to `0015_learning_rewrite.sql`.
 
 1. Add `packages/db/migrations/NNNN_<what>.sql` with the next number. Never edit an applied migration.
 2. Start it with a comment that says why the change exists. Use raw SQL; there is no ORM.

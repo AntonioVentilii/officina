@@ -1,6 +1,14 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { Client } from 'pg';
-import { AGENT_ROLES, LANES, LEARNING_TARGETS, ROLES, STAGES, TASK_KINDS } from '@officina/core';
+import {
+  AGENT_ROLES,
+  GUARDS,
+  LANES,
+  LEARNING_TARGETS,
+  ROLES,
+  STAGES,
+  TASK_KINDS
+} from '@officina/core';
 import { migrate } from '../src';
 
 const url = process.env.TEST_DATABASE_URL;
@@ -33,7 +41,8 @@ describe.skipIf(!url)('migrations', () => {
       '0011_connector.sql',
       '0012_webhook_handled.sql',
       '0013_member_activity.sql',
-      '0014_learning_rewrite.sql'
+      '0014_task_guards.sql',
+      '0015_learning_rewrite.sql'
     ]);
     expect(await migrate(client)).toEqual([]);
   });
@@ -52,6 +61,7 @@ describe.skipIf(!url)('migrations', () => {
     expect(quoted(await definition('tasks_lane_check'))).toEqual([...LANES].sort());
     expect(quoted(await definition('project_roles_role_check'))).toEqual([...ROLES].sort());
     expect(quoted(await definition('tasks_kind_check'))).toEqual([...TASK_KINDS].sort());
+    expect(quoted(await definition('tasks_guards_check'))).toEqual([...GUARDS].sort());
     expect(quoted(await definition('runs_agent_role_check'))).toEqual([...AGENT_ROLES].sort());
     expect(quoted(await definition('agent_versions_role_check'))).toEqual([...AGENT_ROLES].sort());
     expect(quoted(await definition('learnings_target_check'))).toEqual(
