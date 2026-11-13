@@ -52,6 +52,9 @@ export const DOMAIN_GRANTS: Readonly<Partial<Record<Action, string>>> = {
   build: 'developer'
 };
 
+/** A domain grants nothing below this role: a watcher with a domain still only reads the board. */
+const DOMAIN_GRANT_FLOOR: Role = 'contributor';
+
 /** Each action in the words people read on the board and in Claude. */
 export const ACTION_LABELS: Readonly<Record<Action, string>> = {
   see: 'see every task in the project, its thread and every decision',
@@ -83,7 +86,9 @@ export const can = (
   const domain = DOMAIN_GRANTS[action];
   return (
     hasRole(member, PERMISSIONS[action]) ||
-    (domain !== undefined && (member.domains ?? []).includes(domain))
+    (domain !== undefined &&
+      hasRole(member, DOMAIN_GRANT_FLOOR) &&
+      (member.domains ?? []).includes(domain))
   );
 };
 

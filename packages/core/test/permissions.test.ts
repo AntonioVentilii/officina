@@ -42,6 +42,8 @@ describe('permission matrix', () => {
     const developer = { role: 'contributor', domains: ['developer'] } as const;
     expect(can(developer, 'build')).toBe(true);
     expect(can({ role: 'contributor', domains: [] }, 'build')).toBe(false);
+    // A domain grants nothing below contributor: a watcher with it still only reads the board.
+    expect(can({ role: 'watcher', domains: ['developer'] }, 'build')).toBe(false);
     expect(allowedActions(developer)).toEqual([
       'see',
       'request',
