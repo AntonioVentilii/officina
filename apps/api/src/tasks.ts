@@ -282,9 +282,11 @@ export const handInAs = async (
     );
     if (result.ok) return { stage: result.stage, pullRequest: result.pullRequest };
     throw new TaskCommandError(
-      result.error === 'not_installed'
-        ? 'the GitHub App is not installed on this repository'
-        : ERROR_TEXT[result.error]
+      result.error === 'bad_title'
+        ? result.problems.join('; ')
+        : result.error === 'not_installed'
+          ? 'the GitHub App is not installed on this repository'
+          : ERROR_TEXT[result.error]
     );
   } catch (error) {
     if (error instanceof GitHubError)

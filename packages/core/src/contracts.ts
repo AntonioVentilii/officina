@@ -1,14 +1,13 @@
 import { z } from 'zod';
 import type { CatalogPages } from './catalogs';
-import { handoffCommand, needsPersonSchema } from './handoffs';
 import {
-  BUILD_MODES,
-  CHECK_DEPTHS,
-  MERGE_MODES,
-  type Blocked,
-  type Command,
-  type Task
-} from './lifecycle';
+  BUILD_REASON_MISSING,
+  buildChoice,
+  buildReasonGiven,
+  handoffCommand,
+  needsPersonSchema
+} from './handoffs';
+import { CHECK_DEPTHS, MERGE_MODES, type Blocked, type Command, type Task } from './lifecycle';
 import { questionOptionsSchema } from './questions';
 import { TASK_BRANCH_PREFIX } from './steps';
 
@@ -137,21 +136,20 @@ const extraApprovalSchema = z.union([
  */
 export const chooserOutputSchema = z.strictObject({
   userVisible: z.boolean(),
-  approval: z.strictObject({
-    depth: z.enum(CHECK_DEPTHS),
-    rationale: text.max(600),
-    extraApprovals: z.array(extraApprovalSchema).max(4).default([]),
-    verifiers: z
-      .array(z.strictObject({ memberId: z.uuid(), reason: text.max(300) }))
-      .max(3)
-      .default([]),
-    /** At verification: may GitHub merge it on its own once the branch rules pass? */
-    merge: z.enum(MERGE_MODES).default('person'),
-    /** At spec review: is it too big or too risky for the build agent? */
-    build: z.enum(BUILD_MODES).default('agent'),
-    /** Required with `build: person`: why a human developer must build it. */
-    buildReason: text.max(600).optional()
-  }),
+  approval: z
+    .strictObject({
+      depth: z.enum(CHECK_DEPTHS),
+      rationale: text.max(600),
+      extraApprovals: z.array(extraApprovalSchema).max(4).default([]),
+      verifiers: z
+        .array(z.strictObject({ memberId: z.uuid(), reason: text.max(300) }))
+        .max(3)
+        .default([]),
+      /** At verification: may GitHub merge it on its own once the branch rules pass? */
+      merge: z.enum(MERGE_MODES).default('person'),
+      ...buildChoice
+    })
+    .refine(buildReasonGiven, BUILD_REASON_MISSING),
   /** Required at verification, where the engine checks it is not empty. */
   checklist: z.array(text).default([]),
   beforeAfter: z

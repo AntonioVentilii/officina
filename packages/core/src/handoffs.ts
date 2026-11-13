@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { Command } from './lifecycle';
+import { BUILD_MODES, type Command } from './lifecycle';
 import type { Role } from './roles';
 
 /**
@@ -51,3 +51,20 @@ export const handoffCommand = (output: NeedsPerson): Command => ({
   askedOf: { role: handoffAskedOf(output.needs) },
   handoff: { needs: [...new Set(output.needs)] }
 });
+
+/** The chooser's choice at spec review: the build agent, or a person when agents should not. */
+export const buildChoice = {
+  /** Is it too big or too risky for the build agent? */
+  build: z.enum(BUILD_MODES).default('agent'),
+  /** Required with `build: person`: why a human developer must build it. */
+  buildReason: z.string().trim().min(1).max(600).optional()
+};
+
+/** A plan that asks for a developer says why, so the people asked can read it. */
+export const buildReasonGiven = (approval: { build: string; buildReason?: string | undefined }) =>
+  approval.build !== 'person' || Boolean(approval.buildReason);
+
+export const BUILD_REASON_MISSING: { message: string; path: PropertyKey[] } = {
+  message: 'buildReason is required when build is person',
+  path: ['buildReason']
+};

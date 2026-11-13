@@ -89,6 +89,24 @@ describe.skipIf(!url)('a developer hands in a build', () => {
     return task.id;
   };
 
+  test("a title that breaks the project's pattern is refused before anything is applied", async () => {
+    await pool.query(
+      `update projects set config = jsonb_set(config, '{pull_request}', $1::jsonb) where id = $2`,
+      [JSON.stringify({ title_pattern: '^(feat|fix)\\([a-z-]+\\): .+$' }), seeded.projectId]
+    );
+    const taskId = await waitingForDeveloper();
+    const dev = await developer('dev@example.com', 'Dev');
+    await applyOrThrow(pool, taskId, { type: 'claim' }, dev);
+    const github = fakeGitHub();
+    const result = await handInBuild(
+      { pool, github: github.port, publicUrl: PUBLIC_URL },
+      { taskId, memberId: dev.memberId, prTitle: 'Port the design', verified: [], notVerified: [] }
+    );
+    expect(result).toMatchObject({ ok: false, error: 'bad_title' });
+    expect(github.calls).toEqual([]);
+    expect((await loadTask(pool, taskId))?.task.stage).toBe('building');
+  });
+
   test('their push goes to review as theirs and the pull request opens, once', async () => {
     const taskId = await waitingForDeveloper();
     const dev = await developer('dev@example.com', 'Dev');

@@ -226,6 +226,17 @@ describe('agent output contracts', () => {
         }
       }
     });
+    // A plan that asks for a developer must say why.
+    const unexplained = parseAgentOutput('chooser', {
+      userVisible: true,
+      approval: { depth: 'test', rationale: 'A large port.', build: 'person' }
+    });
+    expect(unexplained.ok).toBe(false);
+    if (!unexplained.ok)
+      expect(unexplained.errors).toContain(
+        'approval.buildReason: buildReason is required when build is person'
+      );
+
     const atResult = { ...task, stage: 'choosing' as const, headSha: 'abc' };
     const result = commandForOutput(atResult, { role: 'chooser', output: chosen.output });
     expect(result.ok && result.command.type === 'choose' && result.command.plan).not.toHaveProperty(

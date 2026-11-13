@@ -7,6 +7,7 @@ import {
   type PullRequestPort,
   type PushFactsPort
 } from './pull-request';
+import { titleProblems } from './validators';
 
 export type HandInPort = PullRequestPort & PushFactsPort;
 
@@ -21,7 +22,9 @@ export interface HandIn {
 
 export type HandInResult =
   | { readonly ok: true; readonly stage: string; readonly pullRequest: number | null }
-  | { readonly ok: false; readonly error: StoreError | 'not_installed' };
+  | { readonly ok: false; readonly error: StoreError | 'not_installed' }
+  /** The title breaks the project's `pull_request.title_pattern`, as an agent's would. */
+  | { readonly ok: false; readonly error: 'bad_title'; readonly problems: readonly string[] };
 
 /** The member's push was applied already: the build moved on from `building` and is still theirs. */
 const handedIn = (task: Task, memberId: string): boolean =>
@@ -67,6 +70,9 @@ export const handInBuild = async (
     verified: [...input.verified],
     notVerified: [...input.notVerified]
   };
+  // A person's title meets the same rule as an agent's: nothing is applied until it does.
+  const problems = titleProblems(config.pullRequest.titlePattern)(built);
+  if (problems.length) return { ok: false, error: 'bad_title', problems };
   const open = () =>
     openTaskPullRequest(deps.pool, deps.github, {
       taskId: input.taskId,

@@ -47,12 +47,21 @@
       Push the task branch <code>officina/task-{number}</code> first, built by hand or with your own agents.
       Officina reads the push from GitHub and opens the pull request.
     </p>
-    <input class="field" bind:value={title} placeholder="Pull request title" maxlength="120" />
+    <label class="caps" for="hand-in-title-{number}">Pull request title</label>
+    <input
+      id="hand-in-title-{number}"
+      class="field"
+      bind:value={title}
+      placeholder="feat(scope): what it does"
+      maxlength="120"
+    />
+    <label class="caps" for="hand-in-checked-{number}">What you checked (optional)</label>
     <textarea
+      id="hand-in-checked-{number}"
       class="field"
       bind:value={checked}
       rows="3"
-      placeholder="What you checked, one per line (optional)"></textarea>
+      placeholder="One item per line"></textarea>
     <div class="buttons">
       <button type="button" class="btn ghost" onclick={() => (open = false)}>Back</button>
       <button class="btn primary" disabled={busy || title.trim().length < 3}>Hand in</button>
