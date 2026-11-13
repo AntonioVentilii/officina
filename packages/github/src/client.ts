@@ -11,6 +11,11 @@ const ADDED_STATUSES: ReadonlySet<string> = new Set(['added', 'copied', 'renamed
 
 const base64url = (input: string | Buffer): string => Buffer.from(input).toString('base64url');
 
+/** The paths a list of changed files touches, a renamed file under both names. */
+const touchedPaths = (files: readonly { filename: string; previous_filename?: string }[]) => [
+  ...new Set(files.flatMap((file) => [file.filename, file.previous_filename ?? []].flat()))
+];
+
 /** A short-lived JWT that authenticates as the GitHub App itself. */
 export const createAppJwt = (appId: string, privateKeyPem: string, nowSeconds: number): string => {
   const header = base64url(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
@@ -126,9 +131,7 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     }>(`/repos/${ref.repo}/compare/${encodeURIComponent(ref.base)}...${headSha}`, { token });
 
     const files = comparison.files ?? [];
-    const changedPaths = [
-      ...new Set(files.flatMap((file) => [file.filename, file.previous_filename ?? []].flat()))
-    ];
+    const changedPaths = touchedPaths(files);
     const addedPaths = files
       .filter((file) => ADDED_STATUSES.has(file.status))
       .map((file) => file.filename);
@@ -192,6 +195,21 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     );
   };
 
+  /** A commit's parents and the paths it changes. */
+  const commitChanges = async (
+    ref: RepoRef & { readonly sha: string }
+  ): Promise<{ parents: string[]; paths: string[] }> => {
+    const token = await installationToken(ref, { contents: 'read' });
+    const commit = await request<{
+      parents: { sha: string }[];
+      files?: { filename: string; previous_filename?: string }[];
+    }>(`/repos/${ref.repo}/commits/${encodeURIComponent(ref.sha)}`, { token });
+    return {
+      parents: commit.parents.map((parent) => parent.sha),
+      paths: touchedPaths(commit.files ?? [])
+    };
+  };
+
   /** The installation of this app on a repository, authenticated as the app itself. */
   const repoInstallationId = async (repo: string): Promise<number> => {
     const jwt = createAppJwt(options.appId, options.privateKeyPem, Math.floor(now() / 1000));
@@ -211,7 +229,7 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     `/repos/${repo}/contents/${path.split('/').map(encodeURIComponent).join('/')}`;
 
   /**
-   * A file's text and blob sha at a branch, or `null` when no file exists there. A directory (or a
+   * A file's text and blob sha at a branch (or a commit), or `null` when no file exists there. A directory (or a
    * symlink or submodule) at that path is not a file, so it reads as missing instead of failing.
    */
   const readFile = async (
@@ -485,6 +503,7 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     pushFacts,
     refSnapshot,
     isPullRequestMerge,
+    commitChanges,
     openPullRequest,
     commentOnIssue,
     reviewComments,
