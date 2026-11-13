@@ -10,7 +10,7 @@ Officina: a collaborative agent workshop. The design lives in [`docs/architectur
 
 - `bun install`
 - `bun run typecheck`, `bun run lint` (Prettier, ESLint, knip, jscpd, `scripts/check-repo.ts`), `bun run format`
-- `bun run test`: core, GitHub and runner tests, no network or database
+- `bun run test`: core, GitHub, runner and the API tests that need no database; no network
 - `bun run test:db`: database, engine and API tests against a throwaway Postgres container (needs Docker)
 - `bun run dev` then `bun run dev:board`: the board at `http://localhost:5173` against a throwaway Postgres with a demo workshop in every stage and simulated agents; the first command prints a sign-in link (needs Docker)
 - `bun run check:board`, `bun run build:board`: svelte-check and the static build of the board
