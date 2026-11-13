@@ -1,4 +1,5 @@
 import type { Gate, Policy, ProjectConfig, Requirement } from './config';
+import type { Guard } from './guards';
 import { GATE_ACTIONS, can } from './permissions';
 import { hasRole, type Member } from './roles';
 
@@ -16,10 +17,15 @@ export interface PolicyContext {
   readonly subject: string;
   /** The project's `approvals.self_approval`: whether the requester may meet their own gates. */
   readonly selfApproval: boolean;
+  /** The task touches confidential content: only members who may see it can approve it. */
+  readonly confidential: boolean;
 }
 
 /** Who an approval needs, for the members who may meet it, without the subject and its approvals. */
-export type Eligibility = Pick<PolicyContext, 'gate' | 'members' | 'requesterId' | 'selfApproval'>;
+export type Eligibility = Pick<
+  PolicyContext,
+  'gate' | 'members' | 'requesterId' | 'selfApproval' | 'confidential'
+>;
 
 export interface PolicyResult {
   readonly satisfied: boolean;
@@ -35,7 +41,11 @@ export const APPROVAL_FLOOR: Requirement = { role: 'maintainer' };
 /** The policy context of a task's gate, from the project's config and its current members. */
 export const policyContext = (
   config: Pick<ProjectConfig, 'approvals'>,
-  task: { readonly requesterId: string; readonly userVisible: boolean },
+  task: {
+    readonly requesterId: string;
+    readonly userVisible: boolean;
+    readonly guards: readonly Guard[];
+  },
   gate: Gate,
   at: { readonly members: readonly Member[]; readonly subject: string }
 ): PolicyContext => ({
@@ -44,11 +54,13 @@ export const policyContext = (
   requesterId: task.requesterId,
   userVisible: task.userVisible,
   subject: at.subject,
-  selfApproval: config.approvals.selfApproval
+  selfApproval: config.approvals.selfApproval,
+  confidential: task.guards.includes('confidential')
 });
 
 const meets = (member: Member, requirement: Requirement, context: Eligibility): boolean => {
   if (!can(member, GATE_ACTIONS[context.gate])) return false;
+  if (context.confidential && !can(member, 'see_confidential')) return false;
   if ('role' in requirement) return hasRole(member, requirement.role);
   if ('domain' in requirement) return member.domains.includes(requirement.domain);
   return member.id === context.requesterId;

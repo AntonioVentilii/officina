@@ -23,7 +23,8 @@ describe('permission matrix', () => {
           'steer',
           'see_runs',
           'decide_learnings',
-          'merge'
+          'merge',
+          'see_confidential'
         ]
       },
       { role: 'owner', actions: [...ACTIONS] }
@@ -36,6 +37,16 @@ describe('permission matrix', () => {
     expect(can({ role: 'contributor' }, 'triage')).toBe(false);
     expect(can({ role: 'maintainer' }, 'manage_members')).toBe(false);
     expect(allowedActions({ role: 'owner' })).toContain('manage_members');
+    expect(can({ role: 'maintainer' }, 'publish')).toBe(false);
+  });
+
+  test('a domain can grant one action below its role, and only that one', () => {
+    const ceo = { role: 'contributor', domains: ['confidential'] } as const;
+    expect(can(ceo, 'see_confidential')).toBe(true);
+    expect(can({ role: 'contributor', domains: [] }, 'see_confidential')).toBe(false);
+    // A domain grants nothing below contributor: a watcher with it still only reads the board.
+    expect(can({ role: 'watcher', domains: ['confidential'] }, 'see_confidential')).toBe(false);
+    expect(allowedActions(ceo)).not.toContain('publish');
   });
 
   test('the developer domain lets a contributor build, and nothing more', () => {

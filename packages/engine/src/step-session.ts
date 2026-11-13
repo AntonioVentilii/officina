@@ -77,6 +77,7 @@ const briefFor = async (step: Step, inputs: StepInputs) => {
     spec: context.latestSpec,
     verify: config.verify,
     protectedPaths: config.lanes.red.paths,
+    confidentialPaths: config.guards.confidential,
     requestThread:
       role === 'spec' || role === 'interviewer' ? await listComments(pool, taskId) : [],
     feedback: step.builds ? await feedbackSinceLastPush(pool, taskId) : [],

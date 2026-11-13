@@ -370,6 +370,22 @@ describe.skipIf(!url)('connector for Claude', () => {
     );
   });
 
+  test('nothing shaped like a secret leaves through Claude, even from a person', async () => {
+    const token = (await connect()).tokens.access_token as string;
+    await tool(token, 'open_request', {
+      title: 'Rename the Wager button',
+      request: 'It should say Prediction.',
+      skip_interview: true
+    });
+    await tool(token, 'comment', {
+      number: 1,
+      text: 'Use ghp_abcdefghijklmnopqrstuvwxyz0123456789 to test.'
+    });
+    const shown = (await tool(token, 'show_task', { number: 1 })).content[0]!.text;
+    expect(shown).toContain('Use [redacted: looks like a secret] to test.');
+    expect(shown).not.toContain('ghp_');
+  });
+
   test('Claude sees a question with its options and previews and answers by letter', async () => {
     const token = (await connect()).tokens.access_token as string;
     await tool(token, 'open_request', { title: 'Hypothesis copy', request: 'Say it right.' });

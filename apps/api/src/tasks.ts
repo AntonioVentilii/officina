@@ -1,6 +1,12 @@
 import {
+  GUARD_LABELS,
+  PERMISSIONS,
   can,
   effectivePolicy,
+  guardsInRequest,
+  type Blocked,
+  type Guard,
+  type Member,
   evaluatePolicy,
   findOption,
   optionAnswer,
@@ -21,6 +27,7 @@ import {
   listProjectMembers,
   listRuns,
   listTaskSummaries,
+  loadProjectConfig,
   loadProjectMember,
   loadTask,
   loadTaskContext,
@@ -30,7 +37,7 @@ import {
 } from '@officina/db';
 import { checklistMarkdown, handInBuild, type HandInPort } from '@officina/engine';
 import { GitHubError } from '@officina/github';
-import { consoleUrl, describeRequirement } from './board';
+import { CONFIDENTIAL, consoleUrl, describeRequirement } from './board';
 import type { Pool } from 'pg';
 
 /** A refused task command, with the HTTP status the API answers it with. */
@@ -131,17 +138,20 @@ export const createRequestAs = async (
       'watchers can read but not open requests; an owner can give the contributor role',
       403
     );
+  const config = parseProjectConfig(await loadProjectConfig(pool, projectId));
+  const { guards, hold } = guardRequest(config, member, input);
   // The task and the request it carries land together: a task never exists without its request.
   const { task } = await createTask(pool, {
     projectId,
     title: input.title,
     requesterId: memberId,
-    request: input.request
+    request: input.request,
+    guards,
+    ...(hold ? { hold } : {})
   });
-  const { number, rawConfig } = (await loadTaskContext(pool, task.id))!;
-  const config = parseProjectConfig(rawConfig);
+  const { number } = (await loadTaskContext(pool, task.id))!;
   const interview = !input.skipInterview && (!config.ok || config.config.intake.interview);
-  if (interview) return { number, stage: 'request' };
+  if (interview || hold) return { number, stage: task.stage };
   const submitted = await applyCommand(pool, {
     taskId: task.id,
     command: { type: 'submit_request' },
@@ -150,6 +160,32 @@ export const createRequestAs = async (
   if (!submitted.ok) throw new TaskCommandError(ERROR_TEXT[submitted.error]);
   return { number, stage: submitted.task.stage };
 };
+
+/**
+ * By rule, never a model's reading: words about secrets, access, publishing or the project's
+ * confidential terms guard the task from the start. A guarded request from someone who may not
+ * decide it is born held, in the same transaction, so nothing moves it before the owner answers.
+ */
+const guardRequest = (
+  config: ReturnType<typeof parseProjectConfig>,
+  member: Member,
+  input: RequestInput
+): { guards: Guard[]; hold: Blocked | undefined } => {
+  const guards = guardsInRequest(
+    `${input.title}\n${input.request}`,
+    config.ok ? config.config.guards.confidentialTerms : []
+  );
+  return { guards, hold: guards.length && !can(member, 'publish') ? ownerHold(guards) : undefined };
+};
+
+/**
+ * The question a guarded request waits on, asked of whoever may `publish`. Submitting as is cannot
+ * skip it; the owner answers, and the request goes on like any other, or cancels it.
+ */
+const ownerHold = (guards: readonly Guard[]): Blocked => ({
+  question: `This request is about ${guards.map((guard) => GUARD_LABELS[guard]).join(', ')}. Agents never reveal secrets or confidential content, and never publish, deploy or change access on their own. The owner decides: answer to let the work go on, or cancel it.`,
+  askedOf: { role: PERMISSIONS.publish }
+});
 
 /** A member's comment on a task's conversation; watchers read but do not comment. */
 export const commentAs = async (
@@ -329,6 +365,10 @@ export const describeTask = async (
   const context = (await loadTaskContext(pool, taskId))!;
   const viewer = await loadProjectMember(pool, projectId, memberId);
   const { task } = context;
+  // As on the board: a confidential task's words only for members who may see them.
+  const reads =
+    !task.guards.includes('confidential') || (viewer !== null && can(viewer, 'see_confidential'));
+  const shown = (text: string) => (reads ? text : CONFIDENTIAL);
   const lines = [
     `Task #${context.number}: ${context.title}`,
     `Stage: ${task.stage}   Lane: ${task.lane ?? 'not set yet'}   User-visible: ${task.userVisible ? 'yes' : 'no'}${task.paused ? '   PAUSED' : ''}`
@@ -337,7 +377,7 @@ export const describeTask = async (
   if (task.blocked) {
     const who =
       'memberId' in task.blocked.askedOf ? 'a specific member' : `a ${task.blocked.askedOf.role}`;
-    lines.push('', `BLOCKED, question for ${who}:`, `  ${task.blocked.question}`);
+    lines.push('', `BLOCKED, question for ${who}:`, `  ${shown(task.blocked.question)}`);
   }
 
   if ((task.stage === 'spec_review' || task.stage === 'verifying') && task.lane) {
@@ -354,13 +394,13 @@ export const describeTask = async (
       } else {
         lines.push(
           '',
-          `Approval plan: check depth ${plan.depth}. ${plan.rationale}`,
+          `Approval plan: check depth ${plan.depth}. ${shown(plan.rationale)}`,
           ...plan.extra.map(
-            (item) => `  also needs ${describeRequirement(item.requirement)}: ${item.reason}`
+            (item) => `  also needs ${describeRequirement(item.requirement)}: ${shown(item.reason)}`
           ),
           ...plan.verifiers.map(
             (verifier) =>
-              `  asks ${names.get(verifier.memberId) ?? 'a former member'} to verify: ${verifier.reason}`
+              `  asks ${names.get(verifier.memberId) ?? 'a former member'} to verify: ${shown(verifier.reason)}`
           )
         );
       }
@@ -384,15 +424,15 @@ export const describeTask = async (
     }
   }
 
-  if (context.pullRequest)
+  if (context.pullRequest && reads)
     lines.push('', `Pull request: https://github.com/${context.repo}/pull/${context.pullRequest}`);
   const checklist = checklistMarkdown(
     await latestChooserResult(pool, taskId),
     `task ${context.number}`
   );
-  if (checklist) lines.push('', checklist);
+  if (checklist) lines.push('', shown(checklist));
   if (context.latestSpec)
-    lines.push('', `Spec, version ${task.specVersion}:`, '', context.latestSpec);
+    lines.push('', `Spec, version ${task.specVersion}:`, '', shown(context.latestSpec));
 
   // Runs quote the code and carry costs: like the board, only for members with `see_runs`.
   const runs = viewer && can(viewer, 'see_runs') ? await listRuns(pool, taskId) : [];

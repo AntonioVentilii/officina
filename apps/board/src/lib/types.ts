@@ -29,6 +29,8 @@ export type Permission =
   | 'see_runs'
   | 'decide_learnings'
   | 'merge'
+  | 'see_confidential'
+  | 'publish'
   | 'manage_members';
 export type BoardAction =
   | 'submit'
@@ -100,6 +102,8 @@ export interface Card {
   /** GitHub's auto-merge is on: it merges once checks pass, no person needs to press merge. */
   readonly autoMergeOn: boolean;
   readonly waitingOn: WaitingOn;
+  /** What the task touches that only the owner may let through, in words. */
+  readonly guards: readonly string[];
 }
 
 /** A role on the Agents page, named and described by the API. */

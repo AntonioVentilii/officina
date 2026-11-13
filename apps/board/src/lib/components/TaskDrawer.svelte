@@ -192,7 +192,7 @@
 
           <section>
             <h3 class="caps">People</h3>
-            <TaskPeople people={task.people} />
+            <TaskPeople people={task.people} guards={task.guards} />
           </section>
 
           {#if task.checklist?.checklist?.length && (task.stage === 'verifying' || session.technical)}
