@@ -282,10 +282,11 @@ export const describeTask = async (
   pool: Pool,
   input: Target & { readonly number: number; readonly consoleWorkspace?: string | undefined }
 ): Promise<string> => {
-  const { projectId } = await resolve(pool, input);
+  const { projectId, memberId } = await resolve(pool, input);
   const taskId = await findTaskIdByNumber(pool, projectId, input.number);
   if (!taskId) throw new TaskCommandError(`task #${input.number} not found`);
   const context = (await loadTaskContext(pool, taskId))!;
+  const viewer = await loadProjectMember(pool, projectId, memberId);
   const { task } = context;
   const lines = [
     `Task #${context.number}: ${context.title}`,
@@ -352,7 +353,8 @@ export const describeTask = async (
   if (context.latestSpec)
     lines.push('', `Spec, version ${task.specVersion}:`, '', context.latestSpec);
 
-  const runs = await listRuns(pool, taskId);
+  // Runs quote the code and carry costs: like the board, only for members with `see_runs`.
+  const runs = viewer && can(viewer, 'see_runs') ? await listRuns(pool, taskId) : [];
   if (runs.length) {
     lines.push('', 'Agent runs:');
     for (const run of runs) {

@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { createHash, randomBytes } from 'node:crypto';
-import { purgeConnectorCredentials } from '@officina/db';
+import { findTaskIdByNumber, purgeConnectorCredentials } from '@officina/db';
 import { Pool } from 'pg';
 import { resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
 import { createApp } from '../src/app';
@@ -349,6 +349,24 @@ describe.skipIf(!url)('connector for Claude', () => {
     expect(shown).toContain('Requested by Antonio.');
     expect(shown).toContain('Approve the plan: an owner (Antonio).');
     expect(shown).toContain('Merge: a person merges it on GitHub (Antonio).');
+
+    // Whom the chooser asked to check is part of the people too.
+    const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
+    await pool.query(`update tasks set approval_plans = $1 where id = $2`, [
+      JSON.stringify({
+        spec_review: {
+          subject: 'spec:0',
+          depth: 'glance',
+          rationale: 'Copy.',
+          extra: [],
+          verifiers: [{ memberId: seeded.ownerId, reason: 'Knows the screen.' }]
+        }
+      }),
+      taskId
+    ]);
+    expect((await tool(tim, 'show_task', { number: 1 })).content[0]!.text).toContain(
+      'Approve the plan: an owner (Antonio). Asked to check: Antonio.'
+    );
   });
 
   test('nothing shaped like a secret leaves through Claude, even from a person', async () => {

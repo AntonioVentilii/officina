@@ -19,7 +19,9 @@ import {
   type ApprovalPlan,
   type Blocked,
   type Gate,
+  type Eligibility,
   type Member,
+  type Policy,
   type ProjectConfig,
   type Requirement,
   type Role
@@ -482,6 +484,22 @@ const planView = (row: BoardTaskRow, facts: ProjectFacts) => {
 
 export type CardView = ReturnType<typeof cardView>;
 
+/**
+ * The requirements a gate shows people. The floor folds into an owner requirement only when someone
+ * can meet that one: an owner requirement waived for want of an owner leaves the floor to read.
+ */
+const shownRequirements = (policy: Policy, userVisible: boolean, context: Eligibility) => {
+  const applicable = applicableRequirements(policy, userVisible);
+  const meetable = applicable.filter(
+    (requirement) =>
+      requirement === APPROVAL_FLOOR || eligibleMembers(requirement, context).length > 0
+  );
+  const collapsed = readable(meetable);
+  return applicable.filter(
+    (requirement) => !meetable.includes(requirement) || collapsed.includes(requirement)
+  );
+};
+
 /** Each human gate, in order, with what the people it names do there. */
 const GATE_PEOPLE = [
   { gate: 'spec_review', does: 'Approve the plan' },
@@ -514,19 +532,17 @@ const peopleView = (row: BoardTaskRow, facts: ProjectFacts, approvals: readonly 
           gate,
           does,
           current: row.stage === gate,
-          requirements: readable(applicableRequirements(policy, row.userVisible)).map(
-            (requirement) => {
-              const eligible = eligibleMembers(requirement, context);
-              return {
-                label: describeRequirement(requirement),
-                who: eligible.map((member) => name(member.id)),
-                waived: eligible.length === 0 && requirement !== APPROVAL_FLOOR,
-                approvedBy: eligible
-                  .filter((member) => approved.has(member.id))
-                  .map((member) => name(member.id))
-              };
-            }
-          ),
+          requirements: shownRequirements(policy, row.userVisible, context).map((requirement) => {
+            const eligible = eligibleMembers(requirement, context);
+            return {
+              label: describeRequirement(requirement),
+              who: eligible.map((member) => name(member.id)),
+              waived: eligible.length === 0 && requirement !== APPROVAL_FLOOR,
+              approvedBy: eligible
+                .filter((member) => approved.has(member.id))
+                .map((member) => name(member.id))
+            };
+          }),
           asked: (row.approvalPlans[gate]?.verifiers ?? []).map((verifier) =>
             name(verifier.memberId)
           )

@@ -1,5 +1,6 @@
 import type { Actor, Task } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
+import { autoMergeIsOn, wasAutoVerified } from './github';
 import { RUN_IS_ACTIVE } from './run-status';
 
 type Queryable = Pool | PoolClient;
@@ -30,7 +31,7 @@ export interface BoardTaskRow {
   readonly stageSince: Date;
   /** The latest way into merging skipped people's verification. */
   readonly autoVerified: boolean;
-  /** GitHub's auto-merge was turned on since the task last reached merging. */
+  /** GitHub may merge the pull request on its own, as the engine reads it (`handedToGitHub`). */
   readonly autoMergeOn: boolean;
 }
 
@@ -51,20 +52,8 @@ const BOARD_COLUMNS = `
     (select max(e.created_at) from task_events e where e.task_id = t.id and e.type = 'stage_changed'),
     t.created_at
   ) as "stageSince",
-  exists (
-    select 1 from task_events e where e.task_id = t.id and e.type = 'auto_verified'
-      and e.id > coalesce((select max(c.id) from task_events c where c.task_id = t.id
-        and c.type = 'stage_changed' and c.payload->>'to' = 'choosing'), 0)
-  ) as "autoVerified",
-  exists (
-    select 1 from task_events e where e.task_id = t.id
-      and (e.type = 'github_auto_merge'
-        or (e.type = 'github_approved' and e.payload->>'merge' = 'auto_merge'))
-      and e.id > coalesce((select max(m.id) from task_events m where m.task_id = t.id
-        and m.type = 'stage_changed' and m.payload->>'to' = 'merging'), 0)
-      and not exists (select 1 from task_events c where c.task_id = t.id
-        and c.type = 'github_auto_merge_cancelled' and c.id > e.id)
-  ) as "autoMergeOn"`;
+  ${wasAutoVerified('t.id')} as "autoVerified",
+  ${autoMergeIsOn('t.id')} as "autoMergeOn"`;
 
 export const listBoardTasks = async (db: Queryable, projectId: string): Promise<BoardTaskRow[]> =>
   (

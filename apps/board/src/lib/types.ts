@@ -226,3 +226,28 @@ export interface Learning {
   readonly createdAt: string;
   readonly canDecide: boolean;
 }
+
+export interface MemberActivity {
+  readonly id: string;
+  readonly name: string;
+  readonly role: Role;
+  readonly domains: readonly string[];
+  readonly firstSignedInAt: string | null;
+  readonly link: {
+    readonly state: 'pending' | 'used' | 'expired';
+    readonly createdAt: string;
+    readonly usedAt: string | null;
+    readonly expiresAt: string;
+  } | null;
+  readonly lastSeenAt: string | null;
+  readonly claudeConnected: boolean;
+  /** Whether you may send them a fresh invite link. */
+  readonly invitable: boolean;
+}
+
+export interface Notice {
+  readonly id: string;
+  readonly kind: 'invite_accepted';
+  readonly text: string;
+  readonly createdAt: string;
+}
