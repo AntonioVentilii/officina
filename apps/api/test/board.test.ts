@@ -207,6 +207,68 @@ describe.skipIf(!url)('board api', () => {
     expect(task.actions).toEqual(['cancel', 'comment']);
   });
 
+  test('every decision route refuses a request without the request header and changes nothing', async () => {
+    const cookie = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    await createRequest(pool, {
+      title: 'Rename settings',
+      request: 'Call it Preferences.',
+      skipInterview: true
+    });
+    const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
+    const run = await pool.query<{ id: string }>(
+      `insert into runs (task_id, stage, runner, agent_role, agent_version, status)
+       values ($1, 'done', 'managed_agents', 'learner', 1, 'succeeded') returning id`,
+      [taskId]
+    );
+    await insertLearnings(pool, {
+      projectId: seeded.projectId,
+      taskId,
+      runId: run.rows[0]!.id,
+      learnings: [
+        {
+          title: 'Check every locale',
+          lesson: 'Copy changes cover every live locale.',
+          evidence: 'Italian was missing.',
+          target: 'agent',
+          edit: { file: 'agents/builder.md', text: 'Check every locale.' }
+        }
+      ]
+    });
+    const learningId = (await listLearnings(pool, seeded.projectId))[0]!.id;
+    const project = `/api/projects/${seeded.projectId}`;
+    const routes: [string, unknown][] = [
+      [`${project}/tasks/1/actions`, { type: 'accept' }],
+      [`${project}/tasks/1/comments`, { body: 'Thanks!' }],
+      [`${project}/learnings/${learningId}`, { decision: 'reject' }],
+      [`${project}/tasks`, { title: 'Something new', request: 'Please.' }],
+      ['/auth/github/unlink', {}],
+      // Last: signing out ends the session the other requests use.
+      ['/auth/sign-out', {}]
+    ];
+    const state = async () =>
+      (
+        await pool.query(
+          `select (select json_agg(stage order by number) from tasks) as stages,
+                  (select count(*) from comments) as comments,
+                  (select json_agg(status) from learnings) as learnings,
+                  (select count(*) from sessions) as sessions`
+        )
+      ).rows[0];
+    const before = await state();
+
+    for (const [path, body] of routes) {
+      const refused = await call(cookie, path, body, false);
+      expect(refused.status).toBe(403);
+      expect(await json(refused)).toEqual({ error: 'missing request header' });
+    }
+    expect(await state()).toEqual(before);
+    expect((await call(cookie, '/api/me')).status).toBe(200);
+
+    // The same requests with the header go through, so the header is what refused them.
+    for (const [path, body] of routes) expect((await call(cookie, path, body)).status).toBe(200);
+    expect(await state()).not.toEqual(before);
+  });
+
   test('watchers read but cannot act, and other projects stay invisible', async () => {
     await createRequest(pool, {
       title: 'Rename settings',
@@ -523,6 +585,85 @@ describe.skipIf(!url)('board api', () => {
     expect((await json(await call(owner, `${project}/tasks/1`))).blocked.question).toContain(
       'SECRET2'
     );
+  });
+
+  test('owners and maintainers see who accepted their invite; only owners send a fresh link', async () => {
+    const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    const invited = (name: string, role: string) =>
+      invite(pool, {
+        publicUrl: PUBLIC_URL,
+        email: `${name.toLowerCase()}@example.com`,
+        name,
+        role,
+        domains: []
+      });
+    const maintainer = await signIn(await invited('Mia', 'maintainer'));
+    const contributor = await signIn(await invited('Carla', 'contributor'));
+    await invited('Tim', 'contributor');
+    const project = `/api/projects/${seeded.projectId}`;
+    interface Listed {
+      id: string;
+      name: string;
+      firstSignedInAt: string | null;
+      link: { state: string } | null;
+      invitable: boolean;
+    }
+    const members = async (cookie: string): Promise<Listed[]> =>
+      (await json(await call(cookie, `${project}/members`))).members;
+
+    const listed = await members(owner);
+    expect(listed.map((member) => [member.name, member.link?.state, member.invitable])).toEqual([
+      ['Antonio', 'used', false],
+      ['Mia', 'used', false],
+      ['Carla', 'used', false],
+      ['Tim', 'pending', true]
+    ]);
+    const tim = listed.find((member) => member.name === 'Tim')!;
+    expect(tim.firstSignedInAt).toBeNull();
+    expect(typeof listed[0]!.firstSignedInAt).toBe('string');
+
+    expect((await members(maintainer)).some((member) => member.invitable)).toBe(false);
+    expect((await call(contributor, `${project}/members`)).status).toBe(403);
+
+    const link = `${project}/members/${tim.id}/link`;
+    expect((await call(maintainer, link, {})).status).toBe(403);
+    expect((await call(owner, link, {}, false)).status).toBe(403);
+    const fresh = await call(owner, link, {});
+    expect(fresh.status).toBe(200);
+    const { url: freshUrl } = await json(fresh);
+    expect(freshUrl).toStartWith(`${PUBLIC_URL}/signin#`);
+    await signIn(freshUrl);
+    const again = await call(owner, link, {});
+    expect(again.status).toBe(409);
+    expect((await json(again)).error).toBe('Tim has already signed in');
+  });
+
+  test('an accepted invite reaches the owner Inbox and leaves it once read', async () => {
+    const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    const project = `/api/projects/${seeded.projectId}`;
+    expect((await json(await call(owner, `${project}/notifications`))).notifications).toEqual([]);
+    const tim = await signIn(
+      await invite(pool, {
+        publicUrl: PUBLIC_URL,
+        email: 'tim@example.com',
+        name: 'Tim',
+        role: 'contributor',
+        domains: []
+      })
+    );
+
+    const [notice] = (await json(await call(owner, `${project}/notifications`))).notifications;
+    expect(notice).toMatchObject({
+      kind: 'invite_accepted',
+      text: 'Tim accepted the invite to vici-app'
+    });
+    expect((await json(await call(tim, `${project}/notifications`))).notifications).toEqual([]);
+
+    const read = `/api/notifications/${notice.id}/read`;
+    expect((await call(owner, read, {}, false)).status).toBe(403);
+    expect((await call(tim, read, {})).status).toBe(404);
+    expect((await call(owner, read, {})).status).toBe(200);
+    expect((await json(await call(owner, `${project}/notifications`))).notifications).toEqual([]);
   });
 
   test('the stream sends a member only the events of their own projects', async () => {
