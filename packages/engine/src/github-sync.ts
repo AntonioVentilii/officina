@@ -222,6 +222,7 @@ export type SyncGitHubPort = Pick<
   | 'readFile'
   | 'updateFile'
   | 'pushFacts'
+  | 'commitChanges'
   | 'commentOnIssue'
   | 'mergeWhenReady'
   | 'cancelAutoMerge'
@@ -368,6 +369,61 @@ export const specPathIn = (
   return changedPaths.find((path) => pattern.test(path)) ?? null;
 };
 
+const withStatus = (text: string, status: string) =>
+  text.replace(/^Status: .*$/m, `Status: ${status}`);
+
+/**
+ * Whether the branch head is the status commit an earlier pass wrote but never recorded (the
+ * process died, or GitHub's answer was lost after the write landed): its only parent is the
+ * expected head and it changes only the spec file, to the expected head's text with this status.
+ */
+const isOwnStatusCommit = async (
+  github: SyncGitHubPort,
+  input: { ref: RepoRef; head: string; expected: string; path: string; status: string }
+): Promise<boolean> => {
+  const commit = await github.commitChanges({ ...input.ref, sha: input.head });
+  if (commit.parents.length !== 1 || commit.parents[0] !== input.expected) return false;
+  if (commit.paths.length !== 1 || commit.paths[0] !== input.path) return false;
+  const at = (sha: string) => github.readFile({ ...input.ref, path: input.path, branch: sha });
+  const [before, after] = await Promise.all([at(input.expected), at(input.head)]);
+  if (!before || !after || after.text === before.text) return false;
+  return after.text === withStatus(before.text, input.status);
+};
+
+/**
+ * Records the status on a branch whose head is not the expected one. Officina's own status commit,
+ * written by an earlier pass whose record was lost, stands for the task's head like any other.
+ * Anything else holds commits nobody verified, and a status commit on top of them must not stand
+ * for the task's head: recorded once, so the approval that follows sees the mismatch and skips.
+ */
+const recordUnexpectedHead = async (
+  pool: Pool,
+  github: SyncGitHubPort,
+  input: {
+    taskId: string;
+    ref: RepoRef;
+    status: string;
+    head: string;
+    expected: string | null;
+    path: string | null;
+  }
+): Promise<'updated' | 'moved'> => {
+  const { taskId, status, head, expected, path } = input;
+  const own =
+    expected !== null &&
+    path !== null &&
+    (await isOwnStatusCommit(github, { ref: input.ref, head, expected, path, status }));
+  await appendTaskEvent(pool, {
+    taskId,
+    actor: ENGINE,
+    type: 'spec_status_set',
+    payload: own
+      ? { status, path, commitSha: head }
+      : { status, path: null, commitSha: null, branchMoved: head }
+  });
+  return own ? 'updated' : 'moved';
+};
+
 /**
  * Sets the spec's `Status:` line on the task branch, once per status. The builder cannot do it: it
  * does not know the pull request number when it pushes.
@@ -389,22 +445,14 @@ export const syncSpecStatus = async (
   }
   const facts = await github.pushFacts({ ...input.ref, base: input.base, branch: input.branch });
   const expected = await expectedHead(pool, input.taskId);
-  // The branch holds commits nobody verified: a status commit on top of them must not stand for
-  // the task's head. Recorded once, so the approval that follows sees the mismatch and skips.
-  if (facts.headSha !== expected) {
-    await appendTaskEvent(pool, {
-      taskId: input.taskId,
-      actor: ENGINE,
-      type: 'spec_status_set',
-      payload: { status: input.status, path: null, commitSha: null, branchMoved: facts.headSha }
-    });
-    return 'moved';
-  }
   const path = specPathIn(facts.changedPaths, input.specDir);
+  if (facts.headSha !== expected) {
+    return recordUnexpectedHead(pool, github, { ...input, head: facts.headSha, expected, path });
+  }
   if (!path) return 'no_spec';
   const file = await github.readFile({ ...input.ref, path, branch: input.branch });
   if (!file) return 'no_spec';
-  const text = file.text.replace(/^Status: .*$/m, `Status: ${input.status}`);
+  const text = withStatus(file.text, input.status);
   let commitSha: string | null = null;
   let unverified: string | null = null;
   if (text !== file.text) {

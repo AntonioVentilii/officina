@@ -9,6 +9,7 @@ import {
   endSession,
   listMemberProjects,
   loadRun,
+  markNotificationRead,
   memberForSession,
   redeemLoginLink,
   SESSION_TTL_MS,
@@ -33,6 +34,8 @@ import {
 import { checkAuthorization, consentRedirect } from './connector';
 import type { GitHubAccounts } from './github-accounts';
 import { decide as decideLearning, type LearningGitHub } from './learnings';
+import { notificationsView } from './notifications';
+import { inviteAgain, membersView } from './people';
 import type { BoardEvent, RealtimeHub } from './realtime';
 import {
   TaskCommandError,
@@ -469,6 +472,39 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
           },
           { id: params.learningId, ...input }
         );
+        return { ok: true };
+      })
+      .get('/api/projects/:projectId/members', async ({ request, params }) => {
+        const viewer = technicalViewer(viewerFor(await signedIn(request), params.projectId));
+        return { members: await membersView(pool, viewer.projectId, viewer.role) };
+      })
+      .post('/api/projects/:projectId/members/:memberId/link', async ({ request, params }) => {
+        mutation(request);
+        const viewer = viewerFor(await signedIn(request), params.projectId);
+        if (!z.uuid().safeParse(params.memberId).success)
+          throw new HttpError(404, 'member not found');
+        return {
+          url: await inviteAgain(pool, {
+            publicUrl: deps.publicUrl,
+            projectId: viewer.projectId,
+            viewerRole: viewer.role,
+            memberId: params.memberId
+          })
+        };
+      })
+      .get('/api/projects/:projectId/notifications', async ({ request, params }) => {
+        const viewer = viewerFor(await signedIn(request), params.projectId);
+        return {
+          notifications: await notificationsView(pool, viewer.memberId, viewer.projectId)
+        };
+      })
+      .post('/api/notifications/:notificationId/read', async ({ request, params }) => {
+        mutation(request);
+        const signed = await signedIn(request);
+        const found =
+          z.uuid().safeParse(params.notificationId).success &&
+          (await markNotificationRead(pool, signed.member.id, params.notificationId));
+        if (!found) throw new HttpError(404, 'notification not found');
         return { ok: true };
       })
       .post(

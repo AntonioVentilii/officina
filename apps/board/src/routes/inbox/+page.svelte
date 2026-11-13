@@ -1,10 +1,11 @@
 <script lang="ts">
-  import { CircleHelp, GitMerge, Inbox, ListChecks, Sparkles } from '@lucide/svelte';
+  import { Bell, CircleHelp, GitMerge, Inbox, ListChecks, Sparkles, X } from '@lucide/svelte';
   import LaneChip from '$lib/components/LaneChip.svelte';
   import MemberAvatar from '$lib/components/MemberAvatar.svelte';
   import { since } from '$lib/format';
   import { board } from '$lib/state/board.svelte';
   import { clock } from '$lib/state/clock.svelte';
+  import { toasts } from '$lib/state/toasts.svelte';
   import type { Card } from '$lib/types';
 
   const GROUPS = [
@@ -48,6 +49,9 @@
       )
     })).filter((group) => group.cards.length)
   );
+
+  const dismiss = (id: string) =>
+    board.dismiss(id).catch((error: Error) => toasts.show('error', error.message));
 </script>
 
 <div class="page">
@@ -56,7 +60,27 @@
     <p class="muted">Everything that is waiting on you, oldest first within each group.</p>
   </header>
 
-  {#if board.loaded && groups.length === 0}
+  {#if board.notices.length}
+    <section>
+      <h2><Bell size={18} />News<span class="count num">{board.notices.length}</span></h2>
+      <ul>
+        {#each board.notices as notice (notice.id)}
+          <li class="notice">
+            <span class="title">{notice.text}</span>
+            <span class="age num" title="When">{since(notice.createdAt, clock.now)}</span>
+            <button
+              class="btn ghost icon sm"
+              onclick={() => dismiss(notice.id)}
+              title="Mark as read"
+              aria-label="Mark as read"><X size={14} /></button
+            >
+          </li>
+        {/each}
+      </ul>
+    </section>
+  {/if}
+
+  {#if board.loaded && groups.length === 0 && board.notices.length === 0}
     <div class="clear">
       <Inbox size={28} />
       <h2>Nothing is waiting on you</h2>
@@ -165,6 +189,14 @@
     background: var(--hover);
   }
 
+  .notice {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 44px auto;
+    align-items: center;
+    gap: 14px;
+    padding: 9px 4px;
+  }
+
   .number {
     font-weight: 800;
   }
@@ -247,7 +279,8 @@
     background: var(--panel);
   }
 
-  :global([data-look='tecnica']) a {
+  :global([data-look='tecnica']) a,
+  :global([data-look='tecnica']) .notice {
     padding: 11px 12px;
   }
 
