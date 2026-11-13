@@ -12,6 +12,8 @@ export interface MemberActivity {
   readonly id: string;
   readonly name: string;
   readonly role: Role;
+  /** Approval domains such as `product`; what they may approve beyond their role. */
+  readonly domains: readonly string[];
   readonly firstSignedInAt: Date | null;
   /** The member's latest sign-in link, or null when none is on record. */
   readonly link: {
@@ -29,6 +31,7 @@ interface ActivityRow {
   id: string;
   name: string;
   role: Role;
+  domains: string[];
   first_signed_in_at: Date | null;
   link_state: LinkState | null;
   link_created_at: Date | null;
@@ -49,7 +52,7 @@ export const listMemberActivity = async (
 ): Promise<MemberActivity[]> =>
   (
     await db.query<ActivityRow>(
-      `select m.id, m.display_name as name, r.role, m.first_signed_in_at,
+      `select m.id, m.display_name as name, r.role, r.domains, m.first_signed_in_at,
               case when l.used_at is not null then 'used'
                    when l.expires_at <= now() then 'expired'
                    when l.created_at is not null then 'pending' end as link_state,
@@ -73,6 +76,7 @@ export const listMemberActivity = async (
     id: row.id,
     name: row.name,
     role: row.role,
+    domains: row.domains,
     firstSignedInAt: row.first_signed_in_at,
     link:
       row.link_state && row.link_created_at && row.link_expires_at

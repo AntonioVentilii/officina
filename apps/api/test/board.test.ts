@@ -270,6 +270,19 @@ describe.skipIf(!url)('board api', () => {
       merge: { by: 'person', who: ['Antonio'] }
     });
 
+    // Without an owner, the owner requirement is waived and the maintainer floor still shows.
+    await pool.query(`update project_roles set role = 'maintainer' where member_id = $1`, [
+      seeded.ownerId
+    ]);
+    const ownerless = await json(await call(tim, `/api/projects/${seeded.projectId}/tasks/1`));
+    expect(ownerless.people.gates[0].requirements).toEqual([
+      { label: 'an owner', who: [], waived: true, approvedBy: [] },
+      { label: 'a maintainer', who: ['Antonio'], waived: false, approvedBy: [] }
+    ]);
+    await pool.query(`update project_roles set role = 'owner' where member_id = $1`, [
+      seeded.ownerId
+    ]);
+
     // Once the change is user-visible, the product approver joins the result's check.
     await pool.query('update tasks set user_visible = true');
     const visible = await json(await call(tim, `/api/projects/${seeded.projectId}/tasks/1`));

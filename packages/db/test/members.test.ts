@@ -73,6 +73,7 @@ describe.skipIf(!url)('member activity', () => {
     expect(Mia!.link).toBeNull();
     expect(Object.keys(Antonio!).sort()).toEqual([
       'claudeConnected',
+      'domains',
       'firstSignedInAt',
       'id',
       'lastSeenAt',

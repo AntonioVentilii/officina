@@ -229,6 +229,7 @@ export interface MemberActivity {
   readonly id: string;
   readonly name: string;
   readonly role: Role;
+  readonly domains: readonly string[];
   readonly firstSignedInAt: string | null;
   readonly link: {
     readonly state: 'pending' | 'used' | 'expired';
