@@ -31,7 +31,8 @@ describe.skipIf(!url)('migrations', () => {
       '0009_onboarding.sql',
       '0010_learning_docs.sql',
       '0011_connector.sql',
-      '0012_webhook_handled.sql'
+      '0012_webhook_handled.sql',
+      '0013_member_activity.sql'
     ]);
     expect(await migrate(client)).toEqual([]);
   });
