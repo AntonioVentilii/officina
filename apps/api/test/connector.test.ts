@@ -291,7 +291,7 @@ describe.skipIf(!url)('connector for Claude', () => {
     expect(open.annotations.readOnlyHint).toBe(false);
 
     expect((await tool(token, 'list_projects')).content[0]!.text).toContain(
-      'vici-app (ViciApp/vici-app): you are owner'
+      'vici-app (ViciApp/vici-app): your role is owner, so you can do everything, including changing the project settings.'
     );
     const opened = await tool(token, 'open_request', {
       title: 'Rename the Wager button',
@@ -323,7 +323,7 @@ describe.skipIf(!url)('connector for Claude', () => {
     expect(invalid.isError).toBe(true);
   });
 
-  test('a watcher reads but cannot open requests', async () => {
+  test('a watcher reads but cannot open requests or comment', async () => {
     await invite(pool, {
       publicUrl: PUBLIC_URL,
       email: 'gio@example.com',
@@ -338,5 +338,8 @@ describe.skipIf(!url)('connector for Claude', () => {
     });
     expect(opened.isError).toBe(true);
     expect(opened.content[0]!.text).toContain('not open requests');
+    const commented = await tool(tokens.access_token, 'comment', { number: 1, text: 'Hello.' });
+    expect(commented.isError).toBe(true);
+    expect(commented.content[0]!.text).toContain('not comment');
   });
 });

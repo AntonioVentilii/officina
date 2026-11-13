@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { isActive } from '$lib/runs';
   import { ChevronRight, ExternalLink } from '@lucide/svelte';
   import { duration, money } from '$lib/format';
   import { STAGE_LABELS } from '$lib/stages';
@@ -15,7 +16,7 @@
 
   let { run, open = $bindable(false), showTask = false }: Props = $props();
 
-  const running = $derived(run.status === 'running' || run.status === 'queued');
+  const running = $derived(isActive(run));
 
   const STATUS = {
     queued: { label: 'Queued', tone: 'info' },

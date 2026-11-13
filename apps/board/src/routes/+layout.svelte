@@ -71,9 +71,11 @@
     void goto(page.url.pathname, { replaceState: true, noScroll: true });
   });
 
-  // The welcome guide, the first time someone signs in here.
+  // The welcome guide, the first time someone signs in here. Not over the connector's consent
+  // page: the person came to allow an app, and the guide waits for the next page they open.
   $effect(() => {
-    if (session.status === 'ready' && session.me) guide.showIfNew(session.me.member.id);
+    if (session.status === 'ready' && session.me && page.url.pathname !== '/connect')
+      guide.showIfNew(session.me.member.id);
   });
 
   let draft = $state<{ title: string; request: string } | null>(null);

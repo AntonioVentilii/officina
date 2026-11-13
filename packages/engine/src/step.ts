@@ -10,11 +10,9 @@ import {
 import type { Pool } from 'pg';
 import { claimStep, type ClaimedStep, type SkipReason } from './claim';
 import { runLearnerStep } from './learner';
-import { taskLink, type SyncGitHubPort } from './github-sync';
+import type { SyncGitHubPort } from './github-sync';
 import { applyResult, roleOutputOf, type StepOutcome } from './step-apply';
 import { gatherInputs, runSession } from './step-session';
-
-export { taskLink };
 
 export type GitHubPort = Pick<
   GitHubClient,
