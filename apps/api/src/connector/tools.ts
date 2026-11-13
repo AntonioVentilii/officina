@@ -70,8 +70,8 @@ const projectFor = (context: ToolContext, wanted: string | undefined): MemberPro
 const ROLE_CAN: Record<MemberProject['role'], string> = {
   watcher: 'read tasks and threads',
   contributor: 'open requests, answer questions, comment and check results',
-  maintainer: 'everything a contributor can, plus accept requests and approve plans',
-  owner: 'everything, including the project settings'
+  maintainer: 'do everything a contributor can, plus accept requests and approve plans',
+  owner: 'do everything, including changing the project settings'
 };
 
 const cardLine = (context: ToolContext, project: MemberProject, card: CardView) =>
@@ -130,7 +130,7 @@ export const TOOLS = [
         ? context.projects
             .map(
               (project) =>
-                `- ${project.name} (${project.repo}): you are ${project.role}, so you can ${ROLE_CAN[project.role]}.`
+                `- ${project.name} (${project.repo}): your role is ${project.role}, so you can ${ROLE_CAN[project.role]}.`
             )
             .join('\n')
         : 'You are not a member of any project yet. Ask an Officina owner to add you.'
