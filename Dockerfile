@@ -1,5 +1,8 @@
+# The Bun version `packageManager` in package.json names; `bun run lint` checks they match.
+ARG BUN_VERSION=1.3.14
+
 # The board is a static build; only its output reaches the runtime image.
-FROM oven/bun:1.3.14-alpine AS board
+FROM oven/bun:${BUN_VERSION}-alpine AS board
 WORKDIR /app
 COPY package.json bun.lock ./
 COPY packages/core/package.json packages/core/
@@ -13,7 +16,7 @@ RUN bun install --frozen-lockfile
 COPY apps/board apps/board
 RUN cd apps/board && bun run build
 
-FROM oven/bun:1.3.14-alpine
+FROM oven/bun:${BUN_VERSION}-alpine
 RUN apk add --no-cache su-exec
 WORKDIR /app
 

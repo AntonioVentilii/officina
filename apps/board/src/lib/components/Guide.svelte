@@ -106,7 +106,8 @@
       <p>Add Officina to Claude once, then make requests and answer questions from a chat.</p>
       <ol>
         <li>
-          In claude.ai open <strong>Settings &gt; Connectors &gt; Add custom connector</strong>.
+          In claude.ai open <strong>Customize &gt; Connectors</strong>, then
+          <strong>Add &gt; Add custom connector</strong>.
         </li>
         <li>
           Name it Officina and paste this address:
@@ -118,7 +119,8 @@
           </span>
         </li>
         <li>
-          Press <strong>Connect</strong>, then <strong>Allow</strong> on the page Officina opens.
+          Press <strong>Continue</strong> and <strong>Add</strong> (the sign-in it detects is
+          right), then <strong>Connect</strong>, and <strong>Allow</strong> on the page Officina opens.
         </li>
       </ol>
       <p class="faint">
