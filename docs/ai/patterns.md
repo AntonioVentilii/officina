@@ -15,7 +15,7 @@ The patterns Officina really uses, each with one place to copy from. [`../archit
 
 - **Expected failures are values, not exceptions.** Discriminated unions with `ok`: `Decision` (`packages/core/src/lifecycle.ts`), `ConfigResult` (`packages/core/src/config.ts`), `CommandResult`, `RunOutcome`. Error names are a closed union (`DecisionError`, `StoreError`) and the API turns them into words in one table: `ERROR_TEXT` in `apps/api/src/tasks.ts`.
 - **Exceptions are for the unexpected**, and a few named classes the caller handles: `SetupError` (`apps/api/src/setup.ts`), `TaskCommandError` (`apps/api/src/tasks.ts`), `GitHubError` (`packages/github/src/http.ts`). An unexpected error reaches the client only as `{"error":"internal"}`: the `onError` handler in `apps/api/src/app.ts`.
-- **Agent output is untrusted input.** Every role's result is parsed against its zod contract (`parseAgentOutput` in `packages/core/src/contracts.ts`), and project checks run through the `validate` hook of `executeRun` (`packages/runner/src/run.ts`), whose problems go back to the agent.
+- **Agent output is untrusted input.** Every role's result is parsed against its zod contract (`parseAgentOutput` in `packages/core/src/contracts.ts`), and project checks run through the `validate` hook of `executeRun` (`packages/runner/src/run.ts`), whose problems go back to the agent. What an agent should know about a field goes in the schema's `.describe()`, which reaches it in the `submit_result` tool, not in a second copy in its prompt (the preview kinds in `packages/core/src/questions.ts`).
 
 ## Seams
 
@@ -26,6 +26,7 @@ The patterns Officina really uses, each with one place to copy from. [`../archit
 ## API and board
 
 - **Realtime is a hint, never state.** Database triggers call `pg_notify` (`officina_notify` in `packages/db/migrations/0005_board.sql`), the API fans out "this changed" over server-sent events, and the board refetches (`refresh` in `apps/board/src/lib/state/board.svelte.ts`).
+- **Agent-written HTML is drawn only in a sandboxed frame**, sanitized and with a policy of its own (`OptionPreview.svelte`); Markdown only through `Markdown.svelte`.
 - **Every board write is a `POST` with the `x-officina-request` header** (`REQUEST_HEADER`, checked by `mutation` in `apps/api/src/api.ts`), so a cross-site form cannot make one.
 - **What a viewer may see is decided in the API**, by role, in the view builders of `apps/api/src/board.ts` (`PUBLIC_FIELDS` for event payloads). The board never hides data the API sent.
 - **Board state is one class instance per concern** with Svelte 5 runes, exported as a singleton from `apps/board/src/lib/state` (`board`, `session`, `look`, `live`, `clock`, `toasts`).

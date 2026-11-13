@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { createHash, randomBytes } from 'node:crypto';
-import { purgeConnectorCredentials } from '@officina/db';
+import { applyCommand, findTaskIdByNumber, purgeConnectorCredentials } from '@officina/db';
 import { Pool } from 'pg';
 import { resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
 import { createApp } from '../src/app';
@@ -321,6 +321,58 @@ describe.skipIf(!url)('connector for Claude', () => {
     expect(missing).toMatchObject({ isError: true });
     const invalid = await tool(token, 'show_task', { number: 'one' });
     expect(invalid.isError).toBe(true);
+  });
+
+  test('Claude sees a question with its options and previews and answers by letter', async () => {
+    const token = (await connect()).tokens.access_token as string;
+    await tool(token, 'open_request', { title: 'Hypothesis copy', request: 'Say it right.' });
+    const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
+    const asked = await applyCommand(pool, {
+      taskId,
+      actor: { kind: 'agent', role: 'interviewer', version: 1 },
+      command: {
+        type: 'block',
+        question: 'What should the public room say?',
+        askedOf: { memberId: seeded.ownerId },
+        options: [
+          {
+            label: 'Call it a hypothesis',
+            detail: 'Plain and honest.',
+            preview: { kind: 'text', before: 'Our thesis', after: 'Our hypothesis' }
+          },
+          {
+            label: 'Lead with evidence',
+            preview: { kind: 'html', body: '<h2>Evidence</h2><p>Three pilots.</p>' }
+          },
+          {
+            label: 'Show the build',
+            preview: { kind: 'link', url: 'https://preview.example.com/room', label: 'Preview' }
+          }
+        ]
+      }
+    });
+    expect(asked.ok).toBe(true);
+
+    const shown = (await tool(token, 'show_task', { number: 1 })).content[0]!.text;
+    expect(shown).toContain('(a) Call it a hypothesis: Plain and honest.');
+    expect(shown).toContain('Wording now: "Our thesis"\n   Wording after: "Our hypothesis"');
+    expect(shown).toContain('(b) Lead with evidence');
+    expect(shown).toContain('```html\n<h2>Evidence</h2><p>Three pilots.</p>\n```');
+    expect(shown).toContain('See it: https://preview.example.com/room (Preview)');
+
+    expect(await tool(token, 'answer_question', { number: 1 })).toMatchObject({ isError: true });
+    const unknown = await tool(token, 'answer_question', { number: 1, option: 'z' });
+    expect(unknown).toMatchObject({ isError: true });
+    expect(unknown.content[0]!.text).toContain('no such option');
+    const answered = await tool(token, 'answer_question', {
+      number: 1,
+      option: 'b',
+      answer: 'Keep it short.'
+    });
+    expect(answered.isError).toBe(false);
+    expect((await tool(token, 'show_task', { number: 1 })).content[0]!.text).toContain(
+      'Antonio: Option (b): Lead with evidence\n\nKeep it short.'
+    );
   });
 
   test('a watcher reads but cannot open requests or comment', async () => {

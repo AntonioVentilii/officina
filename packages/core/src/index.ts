@@ -4,5 +4,6 @@ export * from './config';
 export * from './policies';
 export * from './lifecycle';
 export * from './contracts';
+export * from './questions';
 export * from './steps';
 export * from './catalogs';

@@ -347,6 +347,23 @@ describe('permissions', () => {
     expect(task.blocked).toBeNull();
   });
 
+  test('a question keeps the options it offers, and an empty list is no options', () => {
+    const driver = createDriver([owner]);
+    const options = [{ label: 'Keep it' }, { label: 'Rename it' }];
+    const asked = driver.step(
+      newTask('t1', owner.id),
+      { type: 'block', question: 'Which?', askedOf: { memberId: owner.id }, options },
+      asAgent('interviewer')
+    );
+    expect(asked.blocked).toEqual({ question: 'Which?', askedOf: { memberId: owner.id }, options });
+    const plain = driver.step(
+      newTask('t2', owner.id),
+      { type: 'block', question: 'Which?', askedOf: { memberId: owner.id }, options: [] },
+      asAgent('interviewer')
+    );
+    expect(plain.blocked).toEqual({ question: 'Which?', askedOf: { memberId: owner.id } });
+  });
+
   test('submitting a request as is closes an open interview question', () => {
     const driver = createDriver([owner]);
     let task = newTask('t1', owner.id);
