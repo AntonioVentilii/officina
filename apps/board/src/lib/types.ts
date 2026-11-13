@@ -262,6 +262,9 @@ export interface Learning {
   readonly decisionNote: string | null;
   readonly prNumber: number | null;
   readonly prUrl: string | null;
+  /** The learner is rewriting an edit the default branch moved past, or could not. */
+  readonly rewrite: 'requested' | 'failed' | null;
+  readonly rewrittenAt: string | null;
   readonly createdAt: string;
   readonly canDecide: boolean;
 }

@@ -10,6 +10,7 @@ import {
   countOpenAgentWork,
   listActiveTaskIds,
   listTasksAwaitingLearning,
+  listTasksAwaitingRewrite,
   loadTaskContext
 } from '@officina/db';
 import { RUNNER_ROLES, type RunnerRole } from '@officina/runner';
@@ -71,9 +72,11 @@ export const collectDueSteps = async (
 
     dueFor(taskId, nextAgentRoles(task));
   }
-  for (const taskId of await listTasksAwaitingLearning(deps.pool, projectId)) {
-    due.push({ taskId, role: 'learner' });
-  }
+  const learning = new Set([
+    ...(await listTasksAwaitingLearning(deps.pool, projectId)),
+    ...(await listTasksAwaitingRewrite(deps.pool, projectId))
+  ]);
+  for (const taskId of learning) due.push({ taskId, role: 'learner' });
   return { dispatched, due };
 };
 

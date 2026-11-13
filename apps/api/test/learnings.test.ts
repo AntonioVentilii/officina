@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import type { LearningTarget } from '@officina/core';
-import { insertLearnings, listLearnings } from '@officina/db';
+import { failLearningRewrite, insertLearnings, listLearnings } from '@officina/db';
 import { Pool } from 'pg';
 import { createTaskInMerging, resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
 import { applyEdit, decide, type LearningGitHub } from '../src/learnings';
@@ -61,7 +61,7 @@ describe.skipIf(!url)('learning decisions', () => {
   });
 
   /** Remembers what each branch holds, so a second accept sees what the first one wrote. */
-  const fakeGitHub = (options: { failOpening?: number } = {}) => {
+  const fakeGitHub = (options: { failOpening?: number; base?: string } = {}) => {
     const calls: { method: string; args: Record<string, unknown> }[] = [];
     const written = new Map<string, string>();
     let failOpening = options.failOpening ?? 0;
@@ -70,7 +70,7 @@ describe.skipIf(!url)('learning decisions', () => {
       if (method === 'readFile') {
         const text = written.get(String(args.branch));
         return text === undefined
-          ? { text: '# Agents\n\n## Copy\n', sha: 'blob1' }
+          ? { text: options.base ?? '# Agents\n\n## Copy\n', sha: 'blob1' }
           : { text, sha: 'blob2' };
       }
       if (method === 'updateFile') written.set(String(args.branch), String(args.text));
@@ -227,6 +227,29 @@ describe.skipIf(!url)('learning decisions', () => {
     });
     expect(decided).toMatchObject({ status: 'accepted', prNumber: 77 });
     expect(github.calls.filter((call) => call.method === 'updateFile')).toHaveLength(1);
+  });
+
+  test('an edit the default branch moved past goes back to the learner instead of failing', async () => {
+    const learning = await propose('docs');
+    const github = fakeGitHub({ base: '# Agents\n\n## Copy and tone\n' });
+    const decided = await decide(pool, github.port, owner(), {
+      id: learning.id,
+      decision: 'accept'
+    });
+    expect(decided).toMatchObject({ status: 'proposed', rewrite: 'requested', prNumber: null });
+    expect(github.calls.map((call) => call.method)).toEqual(['readFile']);
+
+    await expect(
+      decide(pool, github.port, owner(), { id: learning.id, decision: 'accept' })
+    ).rejects.toThrow('the learner is rewriting this edit');
+
+    await failLearningRewrite(pool, learning.id);
+    await expect(
+      decide(pool, github.port, owner(), { id: learning.id, decision: 'accept' })
+    ).rejects.toThrow('could not rewrite it; reject it instead');
+    expect(
+      await decide(pool, github.port, owner(), { id: learning.id, decision: 'reject' })
+    ).toMatchObject({ status: 'rejected' });
   });
 
   test('agent learnings are recorded without touching the repository; contributors cannot decide', async () => {

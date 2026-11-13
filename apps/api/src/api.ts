@@ -488,7 +488,7 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
         if (!z.uuid().safeParse(params.learningId).success)
           throw new HttpError(404, 'learning not found');
         const input = parse(learningDecisionSchema, body);
-        await decideLearning(
+        const decided = await decideLearning(
           pool,
           deps.github,
           {
@@ -499,7 +499,7 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
           },
           { id: params.learningId, ...input }
         );
-        return { ok: true };
+        return { ok: true, rewriting: decided.rewrite === 'requested' };
       })
       .get('/api/projects/:projectId/members', async ({ request, params }) => {
         const viewer = technicalViewer(viewerFor(await signedIn(request), params.projectId));
