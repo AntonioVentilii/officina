@@ -5,6 +5,8 @@ import {
   applyCommand,
   createOnboardingTask,
   findTaskIdByNumber,
+  insertLearnings,
+  listLearnings,
   startRun
 } from '@officina/db';
 import { parseProjectConfig } from '@officina/core';
@@ -203,6 +205,68 @@ describe.skipIf(!url)('board api', () => {
     expect(task.events.map((event: { type: string }) => event.type)).toContain('stage_changed');
     expect(task.waitingOn).toMatchObject({ kind: 'agent', me: false });
     expect(task.actions).toEqual(['cancel', 'comment']);
+  });
+
+  test('every decision route refuses a request without the request header and changes nothing', async () => {
+    const cookie = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    await createRequest(pool, {
+      title: 'Rename settings',
+      request: 'Call it Preferences.',
+      skipInterview: true
+    });
+    const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
+    const run = await pool.query<{ id: string }>(
+      `insert into runs (task_id, stage, runner, agent_role, agent_version, status)
+       values ($1, 'done', 'managed_agents', 'learner', 1, 'succeeded') returning id`,
+      [taskId]
+    );
+    await insertLearnings(pool, {
+      projectId: seeded.projectId,
+      taskId,
+      runId: run.rows[0]!.id,
+      learnings: [
+        {
+          title: 'Check every locale',
+          lesson: 'Copy changes cover every live locale.',
+          evidence: 'Italian was missing.',
+          target: 'agent',
+          edit: { file: 'agents/builder.md', text: 'Check every locale.' }
+        }
+      ]
+    });
+    const learningId = (await listLearnings(pool, seeded.projectId))[0]!.id;
+    const project = `/api/projects/${seeded.projectId}`;
+    const routes: [string, unknown][] = [
+      [`${project}/tasks/1/actions`, { type: 'accept' }],
+      [`${project}/tasks/1/comments`, { body: 'Thanks!' }],
+      [`${project}/learnings/${learningId}`, { decision: 'reject' }],
+      [`${project}/tasks`, { title: 'Something new', request: 'Please.' }],
+      ['/auth/github/unlink', {}],
+      // Last: signing out ends the session the other requests use.
+      ['/auth/sign-out', {}]
+    ];
+    const state = async () =>
+      (
+        await pool.query(
+          `select (select json_agg(stage order by number) from tasks) as stages,
+                  (select count(*) from comments) as comments,
+                  (select json_agg(status) from learnings) as learnings,
+                  (select count(*) from sessions) as sessions`
+        )
+      ).rows[0];
+    const before = await state();
+
+    for (const [path, body] of routes) {
+      const refused = await call(cookie, path, body, false);
+      expect(refused.status).toBe(403);
+      expect(await json(refused)).toEqual({ error: 'missing request header' });
+    }
+    expect(await state()).toEqual(before);
+    expect((await call(cookie, '/api/me')).status).toBe(200);
+
+    // The same requests with the header go through, so the header is what refused them.
+    for (const [path, body] of routes) expect((await call(cookie, path, body)).status).toBe(200);
+    expect(await state()).not.toEqual(before);
   });
 
   test('watchers read but cannot act, and other projects stay invisible', async () => {

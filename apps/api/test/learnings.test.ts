@@ -36,6 +36,13 @@ describe('learning edits', () => {
       why: 'the file no longer exists'
     });
   });
+
+  test('replacement text with dollar signs lands exactly as written', () => {
+    expect(applyEdit('cost: X\n', { find: 'X', text: "$$5, $& and $' stay" })).toEqual({
+      ok: true,
+      text: "cost: $$5, $& and $' stay\n"
+    });
+  });
 });
 
 describe.skipIf(!url)('learning decisions', () => {
