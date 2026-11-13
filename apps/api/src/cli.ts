@@ -89,9 +89,15 @@ const main = async () => {
       name: { type: 'string' },
       role: { type: 'string' },
       domains: { type: 'string' },
-      'skip-interview': { type: 'boolean' }
+      'skip-interview': { type: 'boolean' },
+      help: { type: 'boolean', short: 'h' }
     }
   });
+  // `scripts/officina` with no arguments asks for this; it needs no database.
+  if (values.help) {
+    console.log(USAGE);
+    return;
+  }
   const [command, subcommand] = positionals;
   const pool = new Pool({ connectionString: required('DATABASE_URL') });
   const need = (value: string | undefined, flag: string): string => {
