@@ -21,6 +21,14 @@ To bring someone in, give them a role and send them the link it prints (valid 7 
 scripts/officina invite --email gio@example.com --name "Gio" --role contributor --domains product
 ```
 
+To see who accepted and who is active, list the project's members: their role, when they first signed in, when their latest link was sent and whether it was used, is still pending or expired, when they last opened the board and whether they added Officina to Claude. Pass `--repo <owner/name>` when there are several projects.
+
+```bash
+scripts/officina members --repo ViciApp/vici-app
+```
+
+On the board, owners and maintainers have the same list under **Members**, and an owner can make a fresh invite link there for someone who has not signed in yet. When someone signs in for the first time, the project's owners get a line in their **Inbox**.
+
 ## From Claude
 
 Add Officina to Claude once and do everything below from a chat, in plain words.

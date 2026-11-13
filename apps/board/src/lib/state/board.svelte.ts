@@ -1,6 +1,6 @@
-import { ApiError, get } from '$lib/api';
+import { ApiError, get, post } from '$lib/api';
 import { isActive } from '$lib/runs';
-import type { AgentRoleInfo, Card, Learning, Run } from '$lib/types';
+import type { AgentRoleInfo, Card, Learning, MemberActivity, Notice, Run } from '$lib/types';
 import { coalesce, live } from './live.svelte';
 import { session } from './session.svelte';
 
@@ -10,6 +10,8 @@ class Board {
   agents = $state<AgentRoleInfo[]>([]);
   roleLabels = $state<Record<string, string>>({});
   learnings = $state<Learning[]>([]);
+  members = $state<MemberActivity[]>([]);
+  notices = $state<Notice[]>([]);
   loaded = $state(false);
   /** Why the last load failed; cleared by the next one that succeeds. */
   error = $state<string | null>(null);
@@ -32,6 +34,8 @@ class Board {
     this.agents = [];
     this.roleLabels = {};
     this.learnings = [];
+    this.members = [];
+    this.notices = [];
     this.loaded = false;
     this.error = null;
     this.#unsubscribe?.();
@@ -46,10 +50,10 @@ class Board {
     if (!projectId) return;
     const generation = ++this.#generation;
     const stale = () => generation !== this.#generation || projectId !== this.#projectId;
-    // Runs and learnings are for maintainers and owners; the API refuses them to anyone else.
+    // Runs, learnings and members are for maintainers and owners; the API refuses them to anyone else.
     const technical = session.technical;
     try {
-      const [board, runs, learnings] = await Promise.all([
+      const [board, runs, learnings, members, notices] = await Promise.all([
         get<{ tasks: Card[]; roleLabels: Record<string, string> }>(
           `/api/projects/${projectId}/board`
         ),
@@ -58,7 +62,11 @@ class Board {
           : { runs: [], agents: [] },
         technical
           ? get<{ learnings: Learning[] }>(`/api/projects/${projectId}/learnings`)
-          : { learnings: [] }
+          : { learnings: [] },
+        technical
+          ? get<{ members: MemberActivity[] }>(`/api/projects/${projectId}/members`)
+          : { members: [] },
+        get<{ notifications: Notice[] }>(`/api/projects/${projectId}/notifications`)
       ]);
       if (stale()) return;
       this.tasks = board.tasks;
@@ -66,6 +74,8 @@ class Board {
       this.runs = runs.runs;
       this.agents = runs.agents;
       this.learnings = learnings.learnings;
+      this.members = members.members;
+      this.notices = notices.notifications;
       this.error = null;
       this.loaded = true;
     } catch (error) {
@@ -74,6 +84,12 @@ class Board {
       if (error instanceof ApiError && error.status === 401) session.status = 'signed-out';
       else this.error = (error as Error).message;
     }
+  }
+
+  /** Marks a notification read; it leaves the Inbox at once. */
+  async dismiss(id: string) {
+    await post(`/api/notifications/${id}/read`);
+    this.notices = this.notices.filter((notice) => notice.id !== id);
   }
 
   /** An agent role's name as the API gives it, or the role itself until the board has loaded. */

@@ -87,7 +87,7 @@ const peopleLines = ({ people }: TaskDetail) => [
           (requirement) =>
             `${requirement.label} (${requirement.waived ? 'nobody holds it, so it is waived' : requirement.who.join(', ') || 'nobody yet'}${requirement.approvedBy.length ? `; approved by ${requirement.approvedBy.join(', ')}` : ''})`
         )
-        .join(', ')}.`
+        .join(', ')}.${gate.asked.length ? ` Asked to check: ${gate.asked.join(', ')}.` : ''}`
   ),
   people.build.by === 'person'
     ? `Build: a developer, not the agents (${people.build.reason}). Who can claim it: ${people.build.who.join(', ') || 'nobody yet'}.`
