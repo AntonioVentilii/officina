@@ -1,4 +1,5 @@
 import {
+  HANDOFF_NEEDS,
   TOOL_LAYER_DOCS,
   isBuildRole,
   type ApprovalPlan,
@@ -59,6 +60,12 @@ const describe = (requirement: Requirement) =>
       ? `a \`${requirement.domain}\` approver${requirement.when ? ' (only if user-visible)' : ''}`
       : 'the requester';
 
+/** At spec review the chooser also decides whether a person builds it instead of the agent. */
+const buildChoice = (gate: Gate): string | null =>
+  gate === 'spec_review'
+    ? 'Set `approval.build` to `person`, with `approval.buildReason`, when the work is too big or too risky for the build agent: a large port of a design into the app, a change across many areas, anything that needs judgement on the spot. A maintainer then claims the build. Leave it `agent` otherwise. A plan that asked for a person keeps it.'
+    : null;
+
 const chooserSections = (context: ChooserContext): string[] => [
   `## Your decision: the approval plan for ${context.gate === 'spec_review' ? 'the spec' : 'the result'}`,
   [
@@ -75,12 +82,30 @@ const chooserSections = (context: ChooserContext): string[] => [
         ? 'This project lets GitHub merge a result on its own once the branch rules pass. Set `approval.merge` to `auto` only when nobody needs to choose the moment it lands: low risk, nothing to coordinate with it (a release, an announcement, a data migration) and easy to undo. Otherwise leave it `person`.'
         : 'In this project a person always merges: leave `approval.merge` as `person`.'
       : null,
+    buildChoice(context.gate),
     context.changedPaths.length ? `Files the change touches:\n${list(context.changedPaths)}` : null
   ]
     .filter(Boolean)
     .join('\n\n'),
   `## Project members\n\n${context.members.map((member) => `- \`${member.id}\` ${member.name}, ${member.role}${member.domains.length ? `, domains: ${member.domains.join(', ')}` : ''}`).join('\n')}`
 ];
+
+/** The roles that hand a task to a person when it needs what agents cannot do or decide. */
+const HANDOFF_ROLES: ReadonlySet<RunnerRole> = new Set([
+  'interviewer',
+  'spec',
+  'builder',
+  'onboarder'
+]);
+
+const handoffSection = (): string =>
+  [
+    '## What only a person can provide',
+    'If the task needs any of these, do not guess, work around it or stall: submit `needs_person` with the keys that apply, `why` in plain words, and `asks`, each thing the person must provide or decide. Officina sends it to the right person.',
+    Object.entries(HANDOFF_NEEDS)
+      .map(([key, need]) => `- \`${key}\`: ${need.label}`)
+      .join('\n')
+  ].join('\n\n');
 
 /** Wraps text written by people or other agents in a code fence it cannot close. */
 export const fence = (text: string): string => {
@@ -164,6 +189,8 @@ export const buildBrief = (input: BriefInput): string => {
   if (input.role === 'chooser' && input.chooser) {
     sections.push(...chooserSections(input.chooser));
   }
+
+  if (HANDOFF_ROLES.has(input.role)) sections.push(handoffSection());
 
   sections.push(`When you are done, call \`submit_result\` once.`);
   return sections.join('\n\n');

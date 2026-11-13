@@ -112,6 +112,7 @@ const sessionCookie = (value: string, maxAgeMs: number, secure: boolean) =>
 const actionSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('submit') }),
   z.strictObject({ type: z.literal('accept') }),
+  z.strictObject({ type: z.literal('claim') }),
   z.strictObject({ type: z.literal('approve') }),
   z.strictObject({ type: z.literal('changes'), note: z.string().trim().min(1).max(10_000) }),
   z.strictObject({ type: z.literal('answer'), text: z.string().trim().min(1).max(10_000) }),

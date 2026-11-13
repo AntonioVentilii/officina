@@ -1,6 +1,7 @@
 import {
   APPROVAL_FLOOR,
   GATE_ACTIONS,
+  HANDOFF_NEEDS,
   REVIEWER_ROLES,
   TERMINAL_STAGES,
   applicableRequirements,
@@ -10,6 +11,7 @@ import {
   evaluatePolicy,
   gateSubject,
   hasRole,
+  humanBuildReason,
   parseProjectConfig,
   policyContext,
   type Actor,
@@ -55,7 +57,15 @@ export interface WaitingOn {
 }
 
 export type BoardAction =
-  'submit' | 'accept' | 'decline' | 'approve' | 'changes' | 'answer' | 'cancel' | 'comment';
+  | 'submit'
+  | 'accept'
+  | 'decline'
+  | 'claim'
+  | 'approve'
+  | 'changes'
+  | 'answer'
+  | 'cancel'
+  | 'comment';
 
 export interface BoardViewer {
   readonly memberId: string;
@@ -219,6 +229,8 @@ interface ProjectFacts {
   readonly members: Awaited<ReturnType<typeof listProjectMembers>>;
   readonly names: ReadonlyMap<string, string>;
   readonly rawConfig: unknown;
+  /** The project's config, parsed once; `null` when it is invalid. */
+  readonly config: ProjectConfig | null;
   /** The open onboarding task's number: until it is done, no other task is built. */
   readonly onboarding: number | null;
 }
@@ -270,19 +282,27 @@ const canAnswer = (row: BoardTaskRow, viewer: BoardViewer) => {
   );
 };
 
+/** What a handoff to a person needs, in words. */
+const handoffNeeds = (blocked: Blocked): string[] =>
+  (blocked.handoff?.needs ?? []).map((need) => HANDOFF_NEEDS[need].label);
+
 const waitingOn = (
   row: BoardTaskRow,
   viewer: BoardViewer,
   approval: ApprovalState | null,
-  onboarding: number | null
+  facts: Pick<ProjectFacts, 'config' | 'onboarding'>
 ): WaitingOn => {
   const member = viewerMember(viewer);
   if (TERMINAL_STAGES.has(row.stage)) return { kind: 'nobody', label: row.stage, me: false };
   if (row.blocked) {
     const askedOf = row.blocked.askedOf;
+    const who = 'memberId' in askedOf ? 'a member' : article(askedOf.role);
+    const needs = handoffNeeds(row.blocked);
     return {
       kind: 'people',
-      label: `A question for ${'memberId' in askedOf ? 'a member' : article(askedOf.role)}`,
+      label: needs.length
+        ? `Agents cannot go on: needs ${who} for ${needs.join(', ')}`
+        : `A question for ${who}`,
       me: canAnswer(row, viewer)
     };
   }
@@ -325,14 +345,22 @@ const waitingOn = (
           (Boolean(asked) && pending.length > 0 && can(member, GATE_ACTIONS[row.stage]))
       };
     }
-    case 'ready':
-      return row.kind === 'request' && onboarding !== null
+    case 'ready': {
+      const byPerson = facts.config && humanBuildReason(facts.config, row);
+      if (byPerson)
+        return {
+          kind: 'people',
+          label: `Needs a developer: a maintainer claims the build. ${byPerson}`,
+          me: can(member, 'steer')
+        };
+      return row.kind === 'request' && facts.onboarding !== null
         ? {
             kind: 'agent',
-            label: `Builds once the agent docs of task ${onboarding} are merged`,
+            label: `Builds once the agent docs of task ${facts.onboarding} are merged`,
             me: false
           }
         : { kind: 'agent', label: 'Waiting for a build slot', me: false };
+    }
     case 'building':
       return row.assignee?.kind === 'member'
         ? {
@@ -373,6 +401,12 @@ const actionsFor = (row: BoardTaskRow, viewer: BoardViewer): BoardAction[] => {
     if (canAnswer(row, viewer)) actions.push('answer');
   } else if (!row.paused) {
     if (row.stage === 'triage' && can(member, 'triage')) actions.push('accept', 'decline');
+    // A maintainer may build it themselves: when it waits, or to take over from the agent.
+    if (
+      can(member, 'steer') &&
+      (row.stage === 'ready' || (row.stage === 'building' && row.assignee?.kind === 'agent'))
+    )
+      actions.push('claim');
     if (
       (row.stage === 'spec_review' || row.stage === 'verifying') &&
       can(member, GATE_ACTIONS[row.stage]) &&
@@ -392,10 +426,12 @@ const projectFacts = async (pool: Pool, viewer: BoardViewer): Promise<ProjectFac
     loadProjectConfig(pool, viewer.projectId),
     openOnboardingTask(pool, viewer.projectId)
   ]);
+  const parsed = parseProjectConfig(config);
   return {
     members,
     names,
     rawConfig: config,
+    config: parsed.ok ? parsed.config : null,
     onboarding: onboarding?.number ?? null
   };
 };
@@ -410,7 +446,9 @@ const cardView = (
   title: row.title,
   stage: row.stage,
   lane: row.lane,
-  blocked: row.blocked ? { question: questionFor(viewer, row.blocked) } : null,
+  blocked: row.blocked
+    ? { question: questionFor(viewer, row.blocked), needs: handoffNeeds(row.blocked) }
+    : null,
   paused: row.paused,
   userVisible: row.userVisible,
   requester: row.requesterName,
@@ -424,7 +462,7 @@ const cardView = (
   stageSince: row.stageSince,
   autoVerified: row.autoVerified,
   autoMergeOn: row.autoMergeOn,
-  waitingOn: waitingOn(row, viewer, approval, facts.onboarding)
+  waitingOn: waitingOn(row, viewer, approval, facts)
 });
 
 const DEPTH_LABELS = {
@@ -515,9 +553,16 @@ const peopleView = (row: BoardTaskRow, facts: ProjectFacts, approvals: readonly 
         };
       })
     : [];
+  const byPerson = facts.config && humanBuildReason(facts.config, row);
+  const maintainers = facts.members
+    .filter((member) => can(member, 'steer'))
+    .map((member) => name(member.id));
   return {
     requester: row.requesterName,
     gates,
+    build: byPerson
+      ? { by: 'person' as const, reason: byPerson, who: maintainers }
+      : { by: 'agent' as const, reason: null, who: [] },
     merge: {
       by: mergedBy(row.approvalPlans.verifying, config.ok ? config.config : null),
       who: facts.members.filter((member) => can(member, 'merge')).map((member) => name(member.id))
@@ -584,6 +629,7 @@ export const taskView = async (
     blocked: row.blocked
       ? {
           question: questionFor(viewer, row.blocked),
+          needs: handoffNeeds(row.blocked),
           askedOf:
             'memberId' in row.blocked.askedOf
               ? (facts.names.get(row.blocked.askedOf.memberId) ?? 'a member')

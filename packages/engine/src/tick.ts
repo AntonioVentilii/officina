@@ -1,4 +1,10 @@
-import { buildRoleFor, ENGINE, nextAgentRoles, parseProjectConfig } from '@officina/core';
+import {
+  buildRoleFor,
+  ENGINE,
+  humanBuildReason,
+  nextAgentRoles,
+  parseProjectConfig
+} from '@officina/core';
 import {
   applyCommand,
   countOpenAgentWork,
@@ -44,7 +50,8 @@ export const collectDueSteps = async (
 
     if (task.stage === 'ready' && task.lane && !task.blocked && !task.paused) {
       const config = parseProjectConfig(context.rawConfig);
-      if (config.ok && config.config.lanes[task.lane].agentsBuild) {
+      // A task a person must build waits for a maintainer to claim it.
+      if (config.ok && humanBuildReason(config.config, task) === null) {
         const result = await applyCommand(deps.pool, {
           taskId,
           command: {

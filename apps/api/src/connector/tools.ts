@@ -89,6 +89,9 @@ const peopleLines = ({ people }: TaskDetail) => [
         )
         .join(', ')}.`
   ),
+  people.build.by === 'person'
+    ? `Build: a developer, not the agents (${people.build.reason}). Who can claim it: ${people.build.who.join(', ') || 'nobody yet'}.`
+    : 'Build: the build agent.',
   people.merge.by === 'auto'
     ? 'Merge: GitHub merges it once its checks pass.'
     : `Merge: a person merges it on GitHub (${people.merge.who.join(', ') || 'nobody yet'}).`
@@ -103,6 +106,7 @@ const WHAT_TO_DO: Record<string, string> = {
   changes: 'ask for changes, saying what is wrong (review with decision "changes")',
   comment: 'add a comment (comment)',
   accept: 'accept or decline it on the board',
+  claim: 'claim the build, to build it yourself, on the board',
   submit: 'send it on as it is, on the board',
   cancel: 'cancel it on the board'
 };
@@ -270,7 +274,13 @@ After it is opened, tell the person the task link and that an agent may ask them
       ];
       if (task.pullRequestUrl) lines.push(`Pull request: ${task.pullRequestUrl}`);
       if (task.blocked)
-        lines.push('', `Open question for ${task.blocked.askedOf}:`, task.blocked.question);
+        lines.push(
+          '',
+          task.blocked.needs.length
+            ? `The agents cannot do this alone. It needs ${task.blocked.askedOf} for: ${task.blocked.needs.join('; ')}.`
+            : `Open question for ${task.blocked.askedOf}:`,
+          task.blocked.question
+        );
       if (task.request) lines.push('', `Request (${task.request.author}):`, task.request.body);
       const spec = task.specs.at(-1);
       if (spec) lines.push('', `Plan, version ${spec.version}:`, truncate(spec.body, 8_000));

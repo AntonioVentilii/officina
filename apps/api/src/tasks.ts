@@ -54,6 +54,7 @@ const ERROR_TEXT: Record<StoreError, string> = {
   no_head: 'nothing has been built yet',
   wip_limit: 'the lane is at its limit of concurrent work',
   agents_cannot_build_lane: 'agents may not build in this lane',
+  needs_developer: 'a person with the technical role builds this one; claim it',
   not_planned: 'the approval chooser has not yet decided who approves this; try again shortly',
   stale_head: 'that review is about an earlier version of the change',
   not_found: 'task not found',
@@ -162,6 +163,7 @@ export const commentAs = async (
 export type TaskAction =
   | { readonly type: 'submit' }
   | { readonly type: 'accept' }
+  | { readonly type: 'claim' }
   | { readonly type: 'approve' }
   | { readonly type: 'changes'; readonly note: string }
   | { readonly type: 'answer'; readonly text: string }
@@ -173,6 +175,7 @@ const toCommand = (action: TaskAction): Command => {
     case 'submit':
       return { type: 'submit_request' };
     case 'accept':
+    case 'claim':
     case 'approve':
       return { type: action.type };
     case 'changes':

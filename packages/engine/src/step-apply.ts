@@ -59,10 +59,12 @@ const recordAlongside =
       const body =
         interview.outcome === 'question'
           ? interview.question
-          : [
-              `**Summary.** ${interview.summary}`,
-              `**Done when:**\n${interview.acceptance.map((item) => `- ${item}`).join('\n')}`
-            ].join('\n\n');
+          : interview.outcome === 'needs_person'
+            ? `${interview.why}\n\n**Needed:**\n${interview.asks.map((ask) => `- ${ask}`).join('\n')}`
+            : [
+                `**Summary.** ${interview.summary}`,
+                `**Done when:**\n${interview.acceptance.map((item) => `- ${item}`).join('\n')}`
+              ].join('\n\n');
       await addComment(client, step.taskId, step.actor, body);
       if (interview.outcome === 'complete') {
         await setTaskTitle(client, step.taskId, interview.title);

@@ -99,7 +99,14 @@
       {#if task.waitingOn.me && look.current === 'tecnica'}<strong class="you-word">Question</strong
         >{:else}<CircleHelp size={18} />{/if}
       <div>
-        <div class="kicker caps">A question for {task.blocked.askedOf}</div>
+        <div class="kicker caps">
+          {task.blocked.needs.length
+            ? `Agents cannot go on: for ${task.blocked.askedOf}`
+            : `A question for ${task.blocked.askedOf}`}
+        </div>
+        {#if task.blocked.needs.length}
+          <p class="needs">Needs {task.blocked.needs.join(', ')}.</p>
+        {/if}
         <div class="question"><Markdown source={task.blocked.question} /></div>
       </div>
     </div>
@@ -253,6 +260,15 @@
             onclick={() => act({ type: 'accept' }, 'Accepted; an agent writes the plan next')}
           >
             Accept
+          </button>
+        {/if}
+        {#if can('claim')}
+          <button
+            class="btn primary"
+            disabled={busy}
+            onclick={() => act({ type: 'claim' }, 'Claimed; you build it')}
+          >
+            Claim the build
           </button>
         {/if}
         {#if can('approve') && gate}
@@ -460,6 +476,12 @@
 
   .question :global(.md) {
     font-size: 14px;
+  }
+
+  .needs {
+    margin: 4px 0 6px;
+    font-size: 13.5px;
+    font-weight: 700;
   }
 
   .agents {

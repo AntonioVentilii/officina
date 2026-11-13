@@ -23,6 +23,7 @@ const USAGE = `usage (on your machine, prefix with scripts/officina; on the serv
     task create   --title "<title>" --request "<what you want, in plain words>" [--skip-interview]
     task submit   --number <n>                 send a request to triage without more questions
     task accept   --number <n>
+    task claim    --number <n>                 build it yourself instead of the agent
     task approve  --number <n>
     task changes  --number <n> --note "<what to change>"
     task answer   --number <n> --text "<answer to the open question>"
@@ -143,6 +144,7 @@ const main = async () => {
         }
         case 'submit':
         case 'accept':
+        case 'claim':
         case 'approve':
         case 'changes':
         case 'answer':
