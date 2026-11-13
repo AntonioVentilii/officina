@@ -6,6 +6,7 @@ import {
   gateSubject,
   hasRole,
   isEligible,
+  isGate,
   parseProjectConfig,
   type Actor,
   type AgentRole,
@@ -198,7 +199,7 @@ const payloadFor = (
   return visible;
 };
 
-interface ApprovalState {
+export interface ApprovalState {
   readonly gate: Gate;
   readonly planned: boolean;
   readonly pending: readonly Requirement[];
@@ -214,25 +215,39 @@ interface ProjectFacts {
   readonly onboarding: number | null;
 }
 
-const approvalState = async (
+/**
+ * Where the task's gate stands: whether the approval chooser has planned its subject, who must
+ * still approve, and who has. `null` when the task is not at a gate. The board and `describeTask`
+ * both read it.
+ */
+export const approvalState = async (
   pool: Pool,
-  row: BoardTaskRow,
-  facts: ProjectFacts
+  task: Pick<
+    BoardTaskRow,
+    | 'id'
+    | 'stage'
+    | 'lane'
+    | 'approvalPlans'
+    | 'requesterId'
+    | 'userVisible'
+    | 'specVersion'
+    | 'headSha'
+  >,
+  facts: Pick<ProjectFacts, 'members' | 'names' | 'rawConfig'>
 ): Promise<ApprovalState | null> => {
-  if ((row.stage !== 'spec_review' && row.stage !== 'verifying') || !row.lane) return null;
+  if (!isGate(task.stage) || !task.lane) return null;
   const config = parseProjectConfig(facts.rawConfig);
   if (!config.ok) return null;
-  const gate: Gate = row.stage;
-  const subject = gateSubject(row, gate) ?? '';
-  const plan = row.approvalPlans[gate];
+  const gate = task.stage;
+  const subject = gateSubject(task, gate);
   // Until the approval chooser has planned this subject, nobody can approve it yet.
-  if (plan?.subject !== subject)
+  if (!subject || task.approvalPlans[gate]?.subject !== subject)
     return { gate, planned: false, pending: [], waived: [], approvedBy: [] };
-  const approvals = await listApprovedSubjects(pool, row.id);
-  const result = evaluatePolicy(effectivePolicy(config.config, row, gate), approvals, {
+  const approvals = await listApprovedSubjects(pool, task.id);
+  const result = evaluatePolicy(effectivePolicy(config.config, task, gate), approvals, {
     members: facts.members,
-    requesterId: row.requesterId,
-    userVisible: row.userVisible,
+    requesterId: task.requesterId,
+    userVisible: task.userVisible,
     subject
   });
   return {
@@ -364,7 +379,7 @@ const actionsFor = (row: BoardTaskRow, viewer: BoardViewer): BoardAction[] => {
   } else if (!row.paused) {
     if (row.stage === 'triage' && hasRole(member, 'maintainer')) actions.push('accept', 'decline');
     if (
-      (row.stage === 'spec_review' || row.stage === 'verifying') &&
+      isGate(row.stage) &&
       hasRole(member, 'contributor') &&
       row.approvalPlans[row.stage]?.subject === gateSubject(row, row.stage)
     )

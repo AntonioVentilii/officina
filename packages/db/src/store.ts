@@ -2,6 +2,7 @@ import {
   TERMINAL_STAGES,
   computeLane,
   gateSubject,
+  isGate,
   decide,
   ENGINE,
   parseProjectConfig,
@@ -299,7 +300,7 @@ export const applyCommand = (pool: Pool, input: ApplyInput): Promise<ApplyResult
       if (
         event.type === 'changes_requested' &&
         input.actor.kind === 'member' &&
-        (event.stage === 'spec_review' || event.stage === 'verifying')
+        isGate(event.stage)
       ) {
         await client.query(
           `insert into approvals (task_id, member_id, gate, subject, decision, note)

@@ -1,6 +1,7 @@
 import { describeUnlisted, unlistedFiles, type CatalogPages } from './catalogs';
 import {
   isAgentDocsPath,
+  isGate,
   type Gate,
   type Policy,
   type ProjectConfig,
@@ -513,7 +514,7 @@ export const decide = (
     }
 
     case 'approve': {
-      if (task.stage !== 'spec_review' && task.stage !== 'verifying') return fail('wrong_stage');
+      if (!isGate(task.stage)) return fail('wrong_stage');
       if (actor.kind !== 'member') return fail('agents_cannot_approve');
       const member = memberFor(actor, context);
       if (member === undefined || !hasRole(member, 'contributor')) return fail('not_allowed');
@@ -780,7 +781,8 @@ export const decide = (
       const allowed =
         (actor.kind === 'agent' && actor.role === 'chooser') || actor.kind === 'engine';
       if (!allowed) return fail('not_allowed');
-      const subject = `spec:${task.specVersion}`;
+      const subject = gateSubject(task, 'spec_review');
+      if (subject === null) return fail('no_head');
       const userVisible = task.userVisible || command.userVisible;
       const [planned, planEvent] = withPlan(task, 'spec_review', subject, command.plan, context);
       const events: DomainEvent[] =
