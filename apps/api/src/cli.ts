@@ -4,7 +4,7 @@ import { createGitHubClient } from '@officina/github';
 import { anthropicAuthFrom, createModelResolver } from '@officina/runner';
 import { Pool } from 'pg';
 import { createAgentsPort } from './engine';
-import { invite, loginLink } from './people';
+import { invite, loginLink, membersText } from './people';
 import { SetupError, addProject, setupAgents } from './setup';
 import {
   TaskCommandError,
@@ -36,6 +36,11 @@ const USAGE = `usage (on your machine, prefix with scripts/officina; on the serv
     login-link    [--email <email>]          one-time sign-in link to the board, valid 30 minutes
     invite        --email <email> --name "<name>" --role watcher|contributor|maintainer|owner
                   [--domains product,legal]  adds or updates a member; the link is valid 7 days
+    members                                  who is in the project, when they joined, whether their
+                                             latest link was used, when they were last seen and
+                                             whether they connected Claude
+
+    People commands also take --repo <owner/name> (optional with a single project).
 
   Setup
     setup-agents
@@ -179,6 +184,11 @@ const main = async () => {
           repo: values.repo
         })
       );
+      return;
+    }
+
+    if (command === 'members') {
+      console.log(await membersText(pool, { repo: values.repo }));
       return;
     }
 

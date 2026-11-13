@@ -5,6 +5,8 @@ import {
   applyCommand,
   createOnboardingTask,
   findTaskIdByNumber,
+  insertLearnings,
+  listLearnings,
   startRun
 } from '@officina/db';
 import { parseProjectConfig } from '@officina/core';
@@ -14,7 +16,7 @@ import { createApp } from '../src/app';
 import { logEntries } from '../src/board';
 import { invite, loginLink } from '../src/people';
 import { startRealtime, type BoardEvent } from '../src/realtime';
-import { createRequest } from '../src/tasks';
+import { createRequest, createRequestAs } from '../src/tasks';
 
 const url = process.env.TEST_DATABASE_URL;
 const PUBLIC_URL = 'https://officina.example';
@@ -205,6 +207,68 @@ describe.skipIf(!url)('board api', () => {
     expect(task.actions).toEqual(['cancel', 'comment']);
   });
 
+  test('every decision route refuses a request without the request header and changes nothing', async () => {
+    const cookie = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    await createRequest(pool, {
+      title: 'Rename settings',
+      request: 'Call it Preferences.',
+      skipInterview: true
+    });
+    const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
+    const run = await pool.query<{ id: string }>(
+      `insert into runs (task_id, stage, runner, agent_role, agent_version, status)
+       values ($1, 'done', 'managed_agents', 'learner', 1, 'succeeded') returning id`,
+      [taskId]
+    );
+    await insertLearnings(pool, {
+      projectId: seeded.projectId,
+      taskId,
+      runId: run.rows[0]!.id,
+      learnings: [
+        {
+          title: 'Check every locale',
+          lesson: 'Copy changes cover every live locale.',
+          evidence: 'Italian was missing.',
+          target: 'agent',
+          edit: { file: 'agents/builder.md', text: 'Check every locale.' }
+        }
+      ]
+    });
+    const learningId = (await listLearnings(pool, seeded.projectId))[0]!.id;
+    const project = `/api/projects/${seeded.projectId}`;
+    const routes: [string, unknown][] = [
+      [`${project}/tasks/1/actions`, { type: 'accept' }],
+      [`${project}/tasks/1/comments`, { body: 'Thanks!' }],
+      [`${project}/learnings/${learningId}`, { decision: 'reject' }],
+      [`${project}/tasks`, { title: 'Something new', request: 'Please.' }],
+      ['/auth/github/unlink', {}],
+      // Last: signing out ends the session the other requests use.
+      ['/auth/sign-out', {}]
+    ];
+    const state = async () =>
+      (
+        await pool.query(
+          `select (select json_agg(stage order by number) from tasks) as stages,
+                  (select count(*) from comments) as comments,
+                  (select json_agg(status) from learnings) as learnings,
+                  (select count(*) from sessions) as sessions`
+        )
+      ).rows[0];
+    const before = await state();
+
+    for (const [path, body] of routes) {
+      const refused = await call(cookie, path, body, false);
+      expect(refused.status).toBe(403);
+      expect(await json(refused)).toEqual({ error: 'missing request header' });
+    }
+    expect(await state()).toEqual(before);
+    expect((await call(cookie, '/api/me')).status).toBe(200);
+
+    // The same requests with the header go through, so the header is what refused them.
+    for (const [path, body] of routes) expect((await call(cookie, path, body)).status).toBe(200);
+    expect(await state()).not.toEqual(before);
+  });
+
   test('watchers read but cannot act, and other projects stay invisible', async () => {
     await createRequest(pool, {
       title: 'Rename settings',
@@ -292,6 +356,101 @@ describe.skipIf(!url)('board api', () => {
     const later = await json(await call(cookie, `/api/runs/${run.runId}/log?after=${log.cursor}`));
     expect(later.entries).toEqual([]);
     expect((await call(null, `/api/runs/${run.runId}/log`)).status).toBe(401);
+  });
+
+  test("an owner of one project cannot read, act on or decide another project's work", async () => {
+    const cookie = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    // A real second project in the same workspace, owned by someone else, with a task, a run and a learning.
+    const { rows } = await pool.query<{ project_id: string; member_id: string }>(
+      `with m as (insert into members (workspace_id, display_name, email)
+                  select workspace_id, 'Bianca', 'bianca@example.com' from projects where id = $1
+                  returning id, workspace_id),
+       p as (insert into projects (workspace_id, name, github_repo, config)
+             select m.workspace_id, 'other-app', 'ViciApp/other-app', config
+             from m, projects where projects.id = $1 returning id)
+       insert into project_roles (project_id, member_id, role)
+       select p.id, m.id, 'owner' from p, m returning project_id, member_id`,
+      [seeded.projectId]
+    );
+    const other = rows[0]!.project_id;
+    await createRequestAs(pool, {
+      projectId: other,
+      memberId: rows[0]!.member_id,
+      title: 'Their task',
+      request: 'Only for their project.',
+      skipInterview: true
+    });
+    const taskId = (await findTaskIdByNumber(pool, other, 1))!;
+    const run = await startRun(pool, {
+      taskId,
+      stage: 'speccing',
+      role: 'spec',
+      agentVersion: 1,
+      runner: 'managed_agents'
+    });
+    if (!run.ok) throw new Error('run not started');
+    await appendRunEvent(pool, run.runId, 'agent.message', {
+      content: [{ type: 'text', text: 'Hello' }]
+    });
+    await insertLearnings(pool, {
+      projectId: other,
+      taskId,
+      runId: run.runId,
+      learnings: [
+        {
+          title: 'Their lesson',
+          lesson: 'Only for their project.',
+          evidence: 'Seen in their task.',
+          target: 'agent',
+          edit: { file: 'agents/builder.md', text: 'Their rule.' }
+        }
+      ]
+    });
+    const learningId = (await listLearnings(pool, other))[0]!.id;
+    const theirs = `/api/projects/${other}`;
+    const reads = [
+      `${theirs}/board`,
+      `${theirs}/tasks/1`,
+      `${theirs}/runs`,
+      `${theirs}/learnings`,
+      `/api/runs/${run.runId}/log`
+    ];
+    const state = async () =>
+      (
+        await pool.query(
+          `select (select json_agg(stage) from tasks) as stages,
+                  (select count(*) from comments) as comments,
+                  (select json_agg(status) from learnings) as learnings`
+        )
+      ).rows[0];
+    const before = await state();
+    const decideThroughOwn = () =>
+      call(cookie, `/api/projects/${seeded.projectId}/learnings/${learningId}`, {
+        decision: 'accept'
+      });
+
+    for (const path of reads) expect((await call(cookie, path)).status).toBe(404);
+    expect((await call(cookie, `${theirs}/tasks/1/actions`, { type: 'accept' })).status).toBe(404);
+    expect((await call(cookie, `${theirs}/tasks/1/comments`, { body: 'Hi' })).status).toBe(404);
+    expect(
+      (await call(cookie, `${theirs}/learnings/${learningId}`, { decision: 'accept' })).status
+    ).toBe(404);
+    const crossed = await decideThroughOwn();
+    expect(crossed.status).toBe(409);
+    expect(await json(crossed)).toEqual({ error: 'learning not found' });
+    expect(await state()).toEqual(before);
+
+    // Once they are given a role there, the same requests work, so membership is what refused them;
+    // a learning is still decided only through the URL of the project it belongs to.
+    await pool.query(
+      `insert into project_roles (project_id, member_id, role) values ($1, $2, 'maintainer')`,
+      [other, seeded.ownerId]
+    );
+    for (const path of reads) expect((await call(cookie, path)).status).toBe(200);
+    expect((await decideThroughOwn()).status).toBe(409);
+    expect(
+      (await call(cookie, `${theirs}/learnings/${learningId}`, { decision: 'accept' })).status
+    ).toBe(200);
   });
 
   test('contributors get the decisions and the trail, not agent runs, costs or learnings', async () => {
@@ -426,6 +585,85 @@ describe.skipIf(!url)('board api', () => {
     expect((await json(await call(owner, `${project}/tasks/1`))).blocked.question).toContain(
       'SECRET2'
     );
+  });
+
+  test('owners and maintainers see who accepted their invite; only owners send a fresh link', async () => {
+    const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    const invited = (name: string, role: string) =>
+      invite(pool, {
+        publicUrl: PUBLIC_URL,
+        email: `${name.toLowerCase()}@example.com`,
+        name,
+        role,
+        domains: []
+      });
+    const maintainer = await signIn(await invited('Mia', 'maintainer'));
+    const contributor = await signIn(await invited('Carla', 'contributor'));
+    await invited('Tim', 'contributor');
+    const project = `/api/projects/${seeded.projectId}`;
+    interface Listed {
+      id: string;
+      name: string;
+      firstSignedInAt: string | null;
+      link: { state: string } | null;
+      invitable: boolean;
+    }
+    const members = async (cookie: string): Promise<Listed[]> =>
+      (await json(await call(cookie, `${project}/members`))).members;
+
+    const listed = await members(owner);
+    expect(listed.map((member) => [member.name, member.link?.state, member.invitable])).toEqual([
+      ['Antonio', 'used', false],
+      ['Mia', 'used', false],
+      ['Carla', 'used', false],
+      ['Tim', 'pending', true]
+    ]);
+    const tim = listed.find((member) => member.name === 'Tim')!;
+    expect(tim.firstSignedInAt).toBeNull();
+    expect(typeof listed[0]!.firstSignedInAt).toBe('string');
+
+    expect((await members(maintainer)).some((member) => member.invitable)).toBe(false);
+    expect((await call(contributor, `${project}/members`)).status).toBe(403);
+
+    const link = `${project}/members/${tim.id}/link`;
+    expect((await call(maintainer, link, {})).status).toBe(403);
+    expect((await call(owner, link, {}, false)).status).toBe(403);
+    const fresh = await call(owner, link, {});
+    expect(fresh.status).toBe(200);
+    const { url: freshUrl } = await json(fresh);
+    expect(freshUrl).toStartWith(`${PUBLIC_URL}/signin#`);
+    await signIn(freshUrl);
+    const again = await call(owner, link, {});
+    expect(again.status).toBe(409);
+    expect((await json(again)).error).toBe('Tim has already signed in');
+  });
+
+  test('an accepted invite reaches the owner Inbox and leaves it once read', async () => {
+    const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    const project = `/api/projects/${seeded.projectId}`;
+    expect((await json(await call(owner, `${project}/notifications`))).notifications).toEqual([]);
+    const tim = await signIn(
+      await invite(pool, {
+        publicUrl: PUBLIC_URL,
+        email: 'tim@example.com',
+        name: 'Tim',
+        role: 'contributor',
+        domains: []
+      })
+    );
+
+    const [notice] = (await json(await call(owner, `${project}/notifications`))).notifications;
+    expect(notice).toMatchObject({
+      kind: 'invite_accepted',
+      text: 'Tim accepted the invite to vici-app'
+    });
+    expect((await json(await call(tim, `${project}/notifications`))).notifications).toEqual([]);
+
+    const read = `/api/notifications/${notice.id}/read`;
+    expect((await call(owner, read, {}, false)).status).toBe(403);
+    expect((await call(tim, read, {})).status).toBe(404);
+    expect((await call(owner, read, {})).status).toBe(200);
+    expect((await json(await call(owner, `${project}/notifications`))).notifications).toEqual([]);
   });
 
   test('the stream sends a member only the events of their own projects', async () => {

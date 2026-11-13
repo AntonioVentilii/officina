@@ -10,7 +10,7 @@ Officina: a collaborative agent workshop. The design lives in [`docs/architectur
 
 - `bun install`
 - `bun run typecheck`, `bun run lint` (Prettier, ESLint, knip, jscpd, `scripts/check-repo.ts`), `bun run format`
-- `bun run test`: core, GitHub and runner tests, no network or database
+- `bun run test`: core, GitHub, runner and the API tests that need no database; no network
 - `bun run test:db`: database, engine and API tests against a throwaway Postgres container (needs Docker)
 - `bun run dev` then `bun run dev:board`: the board at `http://localhost:5173` against a throwaway Postgres with a demo workshop in every stage and simulated agents; the first command prints a sign-in link (needs Docker)
 - `bun run check:board`, `bun run build:board`: svelte-check and the static build of the board
@@ -27,7 +27,7 @@ Officina: a collaborative agent workshop. The design lives in [`docs/architectur
 - `packages/engine`: `runAgentStep` (claim through `claim.ts`, brief, run, verify the push, apply the result, open the pull request, each a named phase, ordered in `step.ts`, with the session in `step-session.ts` and the apply in `step-apply.ts`), `tick` (dispatch ready tasks, run due steps, holding every build while the project's onboarding task is open), `onboarding.ts` (the onboarding task and its spec) and `learner.ts` (looks back at each done task once and stores proposed learnings with checked edits).
 - `agents/`: one system prompt per agent role. Changing a prompt produces a new agent version on the next sync.
 - `apps/board`: the board, a SvelteKit single-page app built to static files that the API serves. It reads `/api/*`, listens to `/api/stream` (server-sent events that only say what changed, so views refetch) and sends decisions as `POST`s with the `x-officina-request` header. Agent-written text is rendered through `Markdown.svelte`, which sanitizes it.
-- `apps/api`: the Elysia HTTP server (`/health`, `/github/webhook`, the board API in `api.ts` and `board.ts`, sign-in links in `people.ts`, the Claude connector (OAuth authorization server, `/mcp` and its tools) in `connector/`, realtime in `realtime.ts`, the board's static files in `static.ts`). `main.ts` validates the environment, runs migrations and, when GitHub App and Anthropic credentials are present, starts the scheduler (`engine.ts`, `scheduler.ts`), failing runs orphaned by a previous process first and syncing the role agents to the resolved model. `setup.ts` and `cli.ts` register projects and sync agents.
+- `apps/api`: the Elysia HTTP server (`/health`, `/github/webhook`, the board API in `api.ts` and `board.ts`, sign-in links, invites and the members list in `people.ts`, Inbox notifications in `notifications.ts`, the Claude connector (OAuth authorization server, `/mcp` and its tools) in `connector/`, realtime in `realtime.ts`, the board's static files in `static.ts`). `main.ts` validates the environment, runs migrations and, when GitHub App and Anthropic credentials are present, starts the scheduler (`engine.ts`, `scheduler.ts`), failing runs orphaned by a previous process first and syncing the role agents to the resolved model. `setup.ts` and `cli.ts` register projects and sync agents.
 
 ## Where to look
 
