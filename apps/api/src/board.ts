@@ -12,6 +12,7 @@ import {
   gateSubject,
   hasRole,
   humanBuildReason,
+  optionKey,
   parseProjectConfig,
   policyContext,
   type Actor,
@@ -191,13 +192,20 @@ const HIDDEN_QUESTION =
  * Questions are often an agent's or Officina's own failure, quoting an error; people who can
  * neither answer them nor see the runs get only that one is open.
  */
-const questionFor = (viewer: BoardViewer, blocked: Blocked): string =>
+const seesQuestion = (viewer: BoardViewer, blocked: Blocked): boolean =>
   seesTechnical(viewer) ||
   ('memberId' in blocked.askedOf
     ? blocked.askedOf.memberId === viewer.memberId
-    : hasRole(viewerMember(viewer), blocked.askedOf.role))
-    ? blocked.question
-    : HIDDEN_QUESTION;
+    : hasRole(viewerMember(viewer), blocked.askedOf.role));
+
+const questionFor = (viewer: BoardViewer, blocked: Blocked): string =>
+  seesQuestion(viewer, blocked) ? blocked.question : HIDDEN_QUESTION;
+
+/** The options a question offers, by letter, to whoever may read the question itself. */
+const optionsFor = (viewer: BoardViewer, blocked: Blocked) =>
+  seesQuestion(viewer, blocked)
+    ? (blocked.options ?? []).map((option, index) => ({ key: optionKey(index), ...option }))
+    : [];
 
 const payloadFor = (
   viewer: BoardViewer,
@@ -646,6 +654,7 @@ export const taskView = async (
       ? {
           question: questionFor(viewer, row.blocked),
           needs: handoffNeeds(row.blocked),
+          options: optionsFor(viewer, row.blocked),
           askedOf:
             'memberId' in row.blocked.askedOf
               ? (facts.names.get(row.blocked.askedOf.memberId) ?? 'a member')
@@ -702,6 +711,8 @@ export const taskView = async (
     actions: actionsFor(row, viewer)
   };
 };
+
+export type TaskView = NonNullable<Awaited<ReturnType<typeof taskView>>>;
 
 const text = (value: unknown, max: number): string => {
   const raw =

@@ -1,6 +1,7 @@
 import {
   catalogPagesToRead,
   commandForOutput,
+  questionMarkdown,
   type AgentOutput,
   type RoleOutput,
   type Task
@@ -58,7 +59,7 @@ const recordAlongside =
       // The thread keeps the whole conversation, so the spec writer and people read it as one.
       const body =
         interview.outcome === 'question'
-          ? interview.question
+          ? questionMarkdown(interview.question, interview.options)
           : interview.outcome === 'needs_person'
             ? `${interview.why}\n\n**Needed:**\n${interview.asks.map((ask) => `- ${ask}`).join('\n')}`
             : [

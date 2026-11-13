@@ -10,6 +10,7 @@ import type { HandoffNeed } from './handoffs';
 import { computeLane, redPaths, stricterLane, type Lane } from './lanes';
 import { GATE_ACTIONS, can, type Action } from './permissions';
 import { evaluatePolicy, policyContext, type Approval } from './policies';
+import type { QuestionOption } from './questions';
 import { hasRole, type Member, type Role } from './roles';
 
 export const STAGES = [
@@ -81,6 +82,8 @@ export interface Blocked {
   readonly askedOf: { readonly memberId: string } | { readonly role: Role };
   /** Set when agents cannot go on without something only a person can provide or decide. */
   readonly handoff?: { readonly needs: readonly HandoffNeed[] };
+  /** Choices an agent offered, each with an optional preview; people may still answer freely. */
+  readonly options?: readonly QuestionOption[];
 }
 
 export interface Task {
@@ -209,6 +212,7 @@ export type Command =
       readonly question: string;
       readonly askedOf: Blocked['askedOf'];
       readonly handoff?: Blocked['handoff'];
+      readonly options?: Blocked['options'];
     }
   | { readonly type: 'answer'; readonly text: string }
   | { readonly type: 'pause' }
@@ -899,7 +903,8 @@ export const decide = (
       const blocked: Blocked = {
         question: command.question,
         askedOf: command.askedOf,
-        ...(handoff ? { handoff } : {})
+        ...(handoff ? { handoff } : {}),
+        ...(command.options?.length ? { options: command.options } : {})
       };
       return ok({ ...task, blocked }, [{ type: 'blocked', blocked }]);
     }

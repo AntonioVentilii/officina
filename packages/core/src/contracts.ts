@@ -9,6 +9,7 @@ import {
   type Command,
   type Task
 } from './lifecycle';
+import { questionOptionsSchema } from './questions';
 import { TASK_BRANCH_PREFIX } from './steps';
 
 /*
@@ -34,7 +35,11 @@ const blockedSchema = z.strictObject({
 });
 
 export const interviewerOutputSchema = z.discriminatedUnion('outcome', [
-  z.strictObject({ outcome: z.literal('question'), question: text.max(1500) }),
+  z.strictObject({
+    outcome: z.literal('question'),
+    question: text.max(1500),
+    options: questionOptionsSchema
+  }),
   needsPersonSchema,
   z.strictObject({
     outcome: z.literal('complete'),
@@ -51,7 +56,8 @@ export const specOutputSchema = z.discriminatedUnion('outcome', [
     predictedPaths: z.array(text).min(1),
     userVisible: z.boolean()
   }),
-  blockedSchema,
+  // A spec question is a decision people make, so it may offer options; a builder's is not.
+  blockedSchema.extend({ options: questionOptionsSchema }),
   needsPersonSchema
 ]);
 
@@ -234,11 +240,12 @@ export interface PushFacts {
 const blockCommand = (
   task: Task,
   question: string,
-  askedOf: z.infer<typeof askedOfSchema>
+  askedOf: z.infer<typeof askedOfSchema>,
+  options?: Blocked['options']
 ): Command => {
   const target: Blocked['askedOf'] =
     askedOf === 'requester' ? { memberId: task.requesterId } : { role: askedOf };
-  return { type: 'block', question, askedOf: target };
+  return { type: 'block', question, askedOf: target, ...(options ? { options } : {}) };
 };
 
 export type RoleOutput =
@@ -272,7 +279,10 @@ export const commandForOutput = (task: Task, result: RoleOutput): CommandResult 
     case 'interviewer': {
       const output = result.output;
       if (output.outcome === 'question') {
-        return { ok: true, command: blockCommand(task, output.question, 'requester') };
+        return {
+          ok: true,
+          command: blockCommand(task, output.question, 'requester', output.options)
+        };
       }
       if (output.outcome === 'needs_person') return { ok: true, command: handoffCommand(output) };
       return { ok: true, command: { type: 'submit_request' } };
@@ -280,7 +290,10 @@ export const commandForOutput = (task: Task, result: RoleOutput): CommandResult 
     case 'spec': {
       const output = result.output;
       if (output.outcome === 'blocked') {
-        return { ok: true, command: blockCommand(task, output.question, output.askedOf) };
+        return {
+          ok: true,
+          command: blockCommand(task, output.question, output.askedOf, output.options)
+        };
       }
       if (output.outcome === 'needs_person') return { ok: true, command: handoffCommand(output) };
       return {

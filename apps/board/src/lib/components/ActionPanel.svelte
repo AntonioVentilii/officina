@@ -7,6 +7,7 @@
   import type { TaskDetail } from '$lib/types';
   import AgentAvatar from './AgentAvatar.svelte';
   import Markdown from './Markdown.svelte';
+  import QuestionOptions from './QuestionOptions.svelte';
 
   interface Props {
     task: TaskDetail;
@@ -86,6 +87,10 @@
     if (value) void act({ type: 'answer', text: value }, 'Answer sent; the step runs again');
   };
 
+  // What is written in the answer box goes along as a note on the chosen option.
+  const choose = (option: string) =>
+    void act({ type: 'answer', option, text: text.trim() }, 'Answer sent; the step runs again');
+
   const PLACEHOLDERS: Record<Exclude<Mode, null>, string> = {
     changes: 'What should change? The agent works from exactly this.',
     decline: 'Why is this declined? The requester sees it.',
@@ -110,9 +115,22 @@
         <div class="question"><Markdown source={task.blocked.question} /></div>
       </div>
     </div>
+    {#if task.blocked.options.length}
+      <QuestionOptions
+        options={task.blocked.options}
+        onchoose={can('answer') ? choose : undefined}
+        {busy}
+      />
+    {/if}
     {#if can('answer')}
       <form onsubmit={answer}>
-        <textarea class="field" bind:value={text} rows="3" placeholder="Your answer"></textarea>
+        <textarea
+          class="field"
+          bind:value={text}
+          rows="3"
+          placeholder={task.blocked.options.length
+            ? 'Your own answer, or a note to send with the option you choose'
+            : 'Your answer'}></textarea>
         <div class="buttons">
           {#if can('submit')}
             <button type="button" class="btn ghost" disabled={busy} onclick={submitAsIs}
