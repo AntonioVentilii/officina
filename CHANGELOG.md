@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.4.0](https://github.com/AntonioVentilii/officina/compare/v1.3.0...v1.4.0) (2026-11-13)
+
+
+### Features
+
+* **core,api,board:** make roles and permissions explicit in one matrix ([#114](https://github.com/AntonioVentilii/officina/issues/114)) ([ffe7224](https://github.com/AntonioVentilii/officina/commit/ffe7224722912d30b834a7b7962953616b78b576))
+* **core,db,engine,api,board:** a security wall for secrets, access, publishing and confidential content ([#117](https://github.com/AntonioVentilii/officina/issues/117)) ([0971172](https://github.com/AntonioVentilii/officina/commit/097117273ec326901478f9e7ed75a07c8d3086fc))
+* **core,engine,api,board:** agents hand work to the right person, from the owner to a developer who builds it ([#116](https://github.com/AntonioVentilii/officina/issues/116)) ([b7c6c19](https://github.com/AntonioVentilii/officina/commit/b7c6c1946f27c21d00436320f67e0403331fd0e5))
+* **core,engine,api,board:** questions offer options with previews people choose from ([#115](https://github.com/AntonioVentilii/officina/issues/115)) ([9c532b8](https://github.com/AntonioVentilii/officina/commit/9c532b80d92d5867d73cef083161bedf4daaf2f4))
+
+
+### Build System
+
+* board`. ([9c532b8](https://github.com/AntonioVentilii/officina/commit/9c532b80d92d5867d73cef083161bedf4daaf2f4))
+
 ## [1.3.0](https://github.com/AntonioVentilii/officina/compare/v1.2.1...v1.3.0) (2026-11-13)
 
 
