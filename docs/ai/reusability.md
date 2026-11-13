@@ -73,16 +73,16 @@ Search here before writing a helper, a type, a component or a fake. When you add
 
 ## `apps/board`
 
-| Piece                                                                                                                                               | Path                                 | What it is                                            |
-| --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ | ----------------------------------------------------- |
-| `get`, `post`, `ApiError`                                                                                                                           | `src/lib/api.ts`                     | Every request to the API, with the request header     |
-| `since`, `ago`, `duration`, `money`, `dateTime`, `initials`                                                                                         | `src/lib/format.ts`                  | Formatting                                            |
-| `isActive`                                                                                                                                          | `src/lib/runs.ts`                    | Whether a run is queued or running                    |
-| `STAGE_LABELS`, `COLUMNS`, `TRACK`, `CLOSED`                                                                                                        | `src/lib/stages.ts`                  | Columns and stage words                               |
-| `board`, `session`, `look`, `LOOKS`, `live`, `coalesce`, `clock`, `guide`, `toasts`                                                                 | `src/lib/state/*.svelte.ts`          | Shared state                                          |
-| `ROLE_SHAPES`, `roleShape`, `roleCode`                                                                                                              | `src/lib/components/roles.ts`        | How each agent role is drawn                          |
-| `Markdown`                                                                                                                                          | `src/lib/components/Markdown.svelte` | The only way to render agent-written text (sanitized) |
-| `AgentAvatar`, `MemberAvatar`, `LaneChip`, `Modal`, `Checklist`, `ApprovalPlan`, `RunLog`, `RunRow`, `Timeline`, `StageTrack`, `TaskCard`, `Toasts` | `src/lib/components`                 | Building blocks of every surface                      |
+| Piece                                                                                                                                                             | Path                                 | What it is                                            |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ | ----------------------------------------------------- |
+| `get`, `post`, `ApiError`                                                                                                                                         | `src/lib/api.ts`                     | Every request to the API, with the request header     |
+| `since`, `ago`, `duration`, `money`, `dateTime`, `initials`                                                                                                       | `src/lib/format.ts`                  | Formatting                                            |
+| `isActive`                                                                                                                                                        | `src/lib/runs.ts`                    | Whether a run is queued or running                    |
+| `STAGE_LABELS`, `COLUMNS`, `TRACK`, `CLOSED`                                                                                                                      | `src/lib/stages.ts`                  | Columns and stage words                               |
+| `board`, `session`, `look`, `LOOKS`, `live`, `coalesce`, `clock`, `guide`, `toasts`                                                                               | `src/lib/state/*.svelte.ts`          | Shared state                                          |
+| `ROLE_SHAPES`, `roleShape`, `roleCode`                                                                                                                            | `src/lib/components/roles.ts`        | How each agent role is drawn                          |
+| `Markdown`                                                                                                                                                        | `src/lib/components/Markdown.svelte` | The only way to render agent-written text (sanitized) |
+| `AgentAvatar`, `MemberAvatar`, `LaneChip`, `Modal`, `Checklist`, `ApprovalPlan`, `TaskPeople`, `RunLog`, `RunRow`, `Timeline`, `StageTrack`, `TaskCard`, `Toasts` | `src/lib/components`                 | Building blocks of every surface                      |
 
 ## Test helpers
 
