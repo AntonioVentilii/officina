@@ -166,6 +166,8 @@ export interface TaskDetail extends Card {
   readonly blocked: {
     readonly question: string;
     readonly askedOf?: string;
+    /** What agents need from a person to go on; empty for an ordinary question. */
+    readonly needs: readonly string[];
     readonly options: readonly QuestionOption[];
   } | null;
   readonly repo: string | null;
