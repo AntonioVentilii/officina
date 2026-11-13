@@ -86,9 +86,42 @@ export const findTasksByPullRequest = async (
     )
   ).rows.map((row) => row.id);
 
-/** The id of the event that last moved the task into `merging`, in SQL for a task id `$1`. */
-const SINCE_MERGING = `coalesce((select max(id) from task_events where task_id = $1
-  and type = 'stage_changed' and payload->>'to' = 'merging'), 0)`;
+// The rules of the auto-merge and verification trail are SQL fragments over the task id in `task`
+// (a column such as `t.id`, or a parameter such as `$1`), so the board and the engine read the
+// trail the same way. Their aliases are their own, so they nest in any query.
+
+/** The id of the event that last moved the task into `merging`. */
+const sinceMerging = (task: string): string =>
+  `coalesce((select max(sm.id) from task_events sm where sm.task_id = ${task}
+    and sm.type = 'stage_changed' and sm.payload->>'to' = 'merging'), 0)`;
+
+/**
+ * Whether the event `event` (a `task_events` alias) may have turned auto-merge on: it was turned
+ * on, or an attempt failed in a way that may have turned it on anyway (a timeout after GitHub
+ * accepted it). Before auto-merge had events of its own it was recorded in `github_approved` as
+ * `merge: 'auto_merge'`; that payload is no longer written, but tasks from then still carry it,
+ * so it is still read.
+ */
+const turnedAutoMergeOn = (event: string): string =>
+  `(${event}.type in ('github_auto_merge', 'github_auto_merge_failed')
+    or (${event}.type = 'github_approved' and ${event}.payload->>'merge' = 'auto_merge'))`;
+
+/**
+ * Whether GitHub may merge the pull request on its own: since the task last reached merging,
+ * auto-merge was turned on or an attempt may have turned it on, and GitHub has not confirmed it
+ * off since. Either way a person must not be told to merge.
+ */
+export const autoMergeIsOn = (task: string): string =>
+  `exists (select 1 from task_events ao where ao.task_id = ${task}
+    and ${turnedAutoMergeOn('ao')} and ao.id > ${sinceMerging(task)}
+    and not exists (select 1 from task_events ac where ac.task_id = ${task}
+      and ac.type = 'github_auto_merge_cancelled' and ac.id > ao.id))`;
+
+/** Whether the task's latest way into merging skipped people's verification. */
+export const wasAutoVerified = (task: string): string =>
+  `exists (select 1 from task_events av where av.task_id = ${task} and av.type = 'auto_verified'
+    and av.id > coalesce((select max(sc.id) from task_events sc where sc.task_id = ${task}
+      and sc.type = 'stage_changed' and sc.payload->>'to' = 'choosing'), 0))`;
 
 /**
  * Whether one of these events was recorded since the task last reached merging: what the engine
@@ -103,7 +136,7 @@ export const hasEventSinceMerging = async (
     (
       await pool.query(
         `select 1 from task_events where task_id = $1 and type = any($2::text[])
-           and id > ${SINCE_MERGING}`,
+           and id > ${sinceMerging('$1')}`,
         [taskId, types]
       )
     ).rowCount
@@ -152,24 +185,10 @@ export const forwardedReviewIds = async (pool: Pool, taskId: string): Promise<nu
     )
   ).rows.map((row) => Number(row.review_id));
 
-/**
- * Whether GitHub may merge the pull request on its own since the task reached merging: auto-merge
- * was turned on, or an attempt failed in a way that may have turned it on anyway (a timeout after
- * GitHub accepted it) and was not yet confirmed off. Either way a person must not be told to merge.
- */
+/** Whether GitHub may merge the pull request on its own (`autoMergeIsOn`). */
 export const handedToGitHub = async (pool: Pool, taskId: string): Promise<boolean> =>
-  Boolean(
-    (
-      await pool.query(
-        `select 1 from task_events where task_id = $1 and id > ${SINCE_MERGING}
-           and (type = 'github_auto_merge'
-             or (type = 'github_auto_merge_failed' and not exists (
-               select 1 from task_events c where c.task_id = $1
-                 and c.type = 'github_auto_merge_cancelled' and c.id > task_events.id)))`,
-        [taskId]
-      )
-    ).rowCount
-  );
+  (await pool.query<{ handed: boolean }>(`select ${autoMergeIsOn('$1')} as handed`, [taskId]))
+    .rows[0]?.handed ?? false;
 
 /**
  * The tasks of a project whose trail may have auto-merge on (turned on, or an attempt with an
@@ -188,8 +207,7 @@ export const listStaleAutoMerges = async (
        cross join lateral (
          select
            coalesce((select max(e.id) from task_events e where e.task_id = t.id
-             and (e.type in ('github_auto_merge', 'github_auto_merge_failed')
-                  or (e.type = 'github_approved' and e.payload->>'merge' = 'auto_merge'))), 0)
+             and ${turnedAutoMergeOn('e')}), 0)
              as turned_on,
            coalesce((select max(e.id) from task_events e where e.task_id = t.id
              and e.type = 'github_auto_merge_cancelled'), 0) as cancelled
@@ -213,16 +231,8 @@ export const listStaleAutoMerges = async (
 
 /** Whether the task's latest way into merging skipped people's verification. */
 export const autoVerified = async (pool: Pool, taskId: string): Promise<boolean> =>
-  Boolean(
-    (
-      await pool.query(
-        `select 1 from task_events where task_id = $1 and type = 'auto_verified'
-           and id > coalesce((select max(id) from task_events where task_id = $1
-             and type = 'stage_changed' and payload->>'to' = 'choosing'), 0)`,
-        [taskId]
-      )
-    ).rowCount
-  );
+  (await pool.query<{ skipped: boolean }>(`select ${wasAutoVerified('$1')} as skipped`, [taskId]))
+    .rows[0]?.skipped ?? false;
 
 /**
  * Whether the task's last request for changes was an overview-only review by the same bot. Copilot

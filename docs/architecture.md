@@ -64,16 +64,16 @@ Roles are per project and live in Officina, never in repository permissions. A m
                              +--> self-hosted worker (later)
 ```
 
-| Component    | Responsibility                                                                                                                           |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| **Board**    | Every human surface (section 9). Installable PWA so approvals work from a phone.                                                         |
-| **API**      | Auth, members, tasks, threads, approvals, config; webhook intake from GitHub and from the runner.                                        |
-| **Engine**   | State machine, scheduler (priorities, WIP limits), dispatcher (starts runs), claim and lease handling, healer sweeps, policy evaluation. |
-| **Postgres** | Single source of orchestration state; append-only `task_events` is the audit log. `LISTEN/NOTIFY` feeds the realtime channel.            |
+| Component      | Responsibility                                                                                                                           |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| **Board**      | Every human surface (section 9). Installable PWA so approvals work from a phone.                                                         |
+| **API**        | Auth, members, tasks, threads, approvals, config; webhook intake from GitHub and from the runner.                                        |
+| **Engine**     | State machine, scheduler (priorities, WIP limits), dispatcher (starts runs), claim and lease handling, healer sweeps, policy evaluation. |
+| **Postgres**   | Single source of orchestration state; append-only `task_events` is the audit log. `LISTEN/NOTIFY` feeds the realtime channel.            |
+| **Runner**     | Executes one agent role for one task step and streams events back. Pluggable (section 7).                                                |
+| **GitHub App** | Installed per repository: reads code, pushes `officina/*` branches, opens PRs, mirrors comments, receives webhooks.                      |
 
 **Realtime.** Triggers on tasks, task events, comments, runs and run events call `pg_notify`, so every writer (engine, CLI, webhooks, API) reaches open boards without knowing about them. The API holds one `LISTEN` connection and fans changes out over server-sent events, filtered to the projects each viewer belongs to. Events only say what changed; the board refetches, so a missed event costs a refresh, never a wrong state. Server-sent events rather than WebSocket: the board only listens, and every action is an ordinary authenticated `POST`.
-| **Runner** | Executes one agent role for one task step and streams events back. Pluggable (section 7). |
-| **GitHub App** | Installed per repository: reads code, pushes `officina/*` branches, opens PRs, mirrors comments, receives webhooks. |
 
 Stack: Bun, Elysia, Postgres (raw `pg`), SvelteKit with Svelte 5 for the board, deployed on Fly.io. One boring stack; deviations need a reason.
 
@@ -131,7 +131,7 @@ The runner interface is small: `start(role, task, step) -> run`, a stream of nor
 
 | Officina concept               | Managed Agents object               | Notes                                                                                                |
 | ------------------------------ | ----------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| Agent role at a version        | Agent (versioned)                   | `agents/<role>.yaml` applied once per change; runs pin `{id, version}`                               |
+| Agent role at a version        | Agent (versioned)                   | `agents/<role>.md` applied once per change; runs pin `{id, version}`                                 |
 | Project build environment      | Environment                         | `limited` networking with package managers allowed; extra hosts listed per project                   |
 | One step of one task           | Session                             | `github_repository` resource checked out at the task branch; `initial_events` carries the step input |
 | Live log on the board          | Session event stream                | normalized into `run_events`; webhooks for state changes                                             |

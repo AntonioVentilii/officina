@@ -39,7 +39,8 @@ export const applyEdit = (
   if (current === null) return { ok: false, why: 'the file no longer exists' };
   const count = current.split(learning.find).length - 1;
   if (count !== 1) return { ok: false, why: `the text to replace now appears ${count} times` };
-  return { ok: true, text: current.replace(learning.find, learning.text) };
+  // A function replacer, so `$&` or `$$` in the text land as written rather than as patterns.
+  return { ok: true, text: current.replace(learning.find, () => learning.text) };
 };
 
 /** The one branch a learning's pull request is opened from, so a retry and a reject find it. */
