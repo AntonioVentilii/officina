@@ -241,6 +241,8 @@ describe.skipIf(!url)('board api', () => {
       [`${project}/tasks/1/comments`, { body: 'Thanks!' }],
       [`${project}/learnings/${learningId}`, { decision: 'reject' }],
       [`${project}/tasks`, { title: 'Something new', request: 'Please.' }],
+      ['/auth/github/unlink', {}],
+      // Last: signing out ends the session the other requests use.
       ['/auth/sign-out', {}]
     ];
     const state = async () =>
