@@ -16,7 +16,7 @@ import { createApp } from '../src/app';
 import { logEntries } from '../src/board';
 import { invite, loginLink } from '../src/people';
 import { startRealtime, type BoardEvent } from '../src/realtime';
-import { createRequest } from '../src/tasks';
+import { createRequest, createRequestAs } from '../src/tasks';
 
 const url = process.env.TEST_DATABASE_URL;
 const PUBLIC_URL = 'https://officina.example';
@@ -356,6 +356,101 @@ describe.skipIf(!url)('board api', () => {
     const later = await json(await call(cookie, `/api/runs/${run.runId}/log?after=${log.cursor}`));
     expect(later.entries).toEqual([]);
     expect((await call(null, `/api/runs/${run.runId}/log`)).status).toBe(401);
+  });
+
+  test("an owner of one project cannot read, act on or decide another project's work", async () => {
+    const cookie = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    // A real second project in the same workspace, owned by someone else, with a task, a run and a learning.
+    const { rows } = await pool.query<{ project_id: string; member_id: string }>(
+      `with m as (insert into members (workspace_id, display_name, email)
+                  select workspace_id, 'Bianca', 'bianca@example.com' from projects where id = $1
+                  returning id, workspace_id),
+       p as (insert into projects (workspace_id, name, github_repo, config)
+             select m.workspace_id, 'other-app', 'ViciApp/other-app', config
+             from m, projects where projects.id = $1 returning id)
+       insert into project_roles (project_id, member_id, role)
+       select p.id, m.id, 'owner' from p, m returning project_id, member_id`,
+      [seeded.projectId]
+    );
+    const other = rows[0]!.project_id;
+    await createRequestAs(pool, {
+      projectId: other,
+      memberId: rows[0]!.member_id,
+      title: 'Their task',
+      request: 'Only for their project.',
+      skipInterview: true
+    });
+    const taskId = (await findTaskIdByNumber(pool, other, 1))!;
+    const run = await startRun(pool, {
+      taskId,
+      stage: 'speccing',
+      role: 'spec',
+      agentVersion: 1,
+      runner: 'managed_agents'
+    });
+    if (!run.ok) throw new Error('run not started');
+    await appendRunEvent(pool, run.runId, 'agent.message', {
+      content: [{ type: 'text', text: 'Hello' }]
+    });
+    await insertLearnings(pool, {
+      projectId: other,
+      taskId,
+      runId: run.runId,
+      learnings: [
+        {
+          title: 'Their lesson',
+          lesson: 'Only for their project.',
+          evidence: 'Seen in their task.',
+          target: 'agent',
+          edit: { file: 'agents/builder.md', text: 'Their rule.' }
+        }
+      ]
+    });
+    const learningId = (await listLearnings(pool, other))[0]!.id;
+    const theirs = `/api/projects/${other}`;
+    const reads = [
+      `${theirs}/board`,
+      `${theirs}/tasks/1`,
+      `${theirs}/runs`,
+      `${theirs}/learnings`,
+      `/api/runs/${run.runId}/log`
+    ];
+    const state = async () =>
+      (
+        await pool.query(
+          `select (select json_agg(stage) from tasks) as stages,
+                  (select count(*) from comments) as comments,
+                  (select json_agg(status) from learnings) as learnings`
+        )
+      ).rows[0];
+    const before = await state();
+    const decideThroughOwn = () =>
+      call(cookie, `/api/projects/${seeded.projectId}/learnings/${learningId}`, {
+        decision: 'accept'
+      });
+
+    for (const path of reads) expect((await call(cookie, path)).status).toBe(404);
+    expect((await call(cookie, `${theirs}/tasks/1/actions`, { type: 'accept' })).status).toBe(404);
+    expect((await call(cookie, `${theirs}/tasks/1/comments`, { body: 'Hi' })).status).toBe(404);
+    expect(
+      (await call(cookie, `${theirs}/learnings/${learningId}`, { decision: 'accept' })).status
+    ).toBe(404);
+    const crossed = await decideThroughOwn();
+    expect(crossed.status).toBe(409);
+    expect(await json(crossed)).toEqual({ error: 'learning not found' });
+    expect(await state()).toEqual(before);
+
+    // Once they are given a role there, the same requests work, so membership is what refused them;
+    // a learning is still decided only through the URL of the project it belongs to.
+    await pool.query(
+      `insert into project_roles (project_id, member_id, role) values ($1, $2, 'maintainer')`,
+      [other, seeded.ownerId]
+    );
+    for (const path of reads) expect((await call(cookie, path)).status).toBe(200);
+    expect((await decideThroughOwn()).status).toBe(409);
+    expect(
+      (await call(cookie, `${theirs}/learnings/${learningId}`, { decision: 'accept' })).status
+    ).toBe(200);
   });
 
   test('contributors get the decisions and the trail, not agent runs, costs or learnings', async () => {
