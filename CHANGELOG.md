@@ -1,5 +1,94 @@
 # Changelog
 
+## [1.2.1](https://github.com/AntonioVentilii/officina/compare/v1.2.0...v1.2.1) (2026-11-13)
+
+
+### Bug Fixes
+
+* **api,db:** lock a learning from the first read to its decision ([#85](https://github.com/AntonioVentilii/officina/issues/85)) ([e6b59b9](https://github.com/AntonioVentilii/officina/commit/e6b59b9089ff3e19a6fad509a72e4c66466b0d84))
+* **api,db:** purge webhook deliveries too old to be redelivered ([#69](https://github.com/AntonioVentilii/officina/issues/69)) ([33eee78](https://github.com/AntonioVentilii/officina/commit/33eee7836b0705cdaecf69bfc08806db9024b078))
+* **api,db:** take a webhook delivery again when the process died handling it ([#60](https://github.com/AntonioVentilii/officina/issues/60)) ([e2ee473](https://github.com/AntonioVentilii/officina/commit/e2ee47396965e6f04bf51fb0f65aa2bf1f3be779))
+* **api:** answer --help in the CLI, which scripts/officina sends with no arguments ([#101](https://github.com/AntonioVentilii/officina/issues/101)) ([796cf92](https://github.com/AntonioVentilii/officina/commit/796cf92be4f413c71e7a14a03c26f6faa96333e7))
+* **api:** keep one customer's product out of the connector's tool descriptions ([#95](https://github.com/AntonioVentilii/officina/issues/95)) ([be3f3ab](https://github.com/AntonioVentilii/officina/commit/be3f3ab9a3a87c0cb38754434871b3fc24a6ef41))
+* **api:** word the connector's role sentence as people read it ([#100](https://github.com/AntonioVentilii/officina/issues/100)) ([cb4e290](https://github.com/AntonioVentilii/officina/commit/cb4e290018530de5c3c73d7c2ddf5465c024b7ae))
+* **board:** load the pre-paint script from a file the CSP allows ([#97](https://github.com/AntonioVentilii/officina/issues/97)) ([cff9bb9](https://github.com/AntonioVentilii/officina/commit/cff9bb9894a9b62b946a0f99444dec1a4568ee8d))
+* **board:** point the guide at claude.ai's Customize &gt; Connectors and keep it off the consent page ([#99](https://github.com/AntonioVentilii/officina/issues/99)) ([762942d](https://github.com/AntonioVentilii/officina/commit/762942d810bfaa4d6e34581af5b2498840b4ebcb))
+* **board:** recover from failed loads and a closed live stream ([#82](https://github.com/AntonioVentilii/officina/issues/82)) ([162d690](https://github.com/AntonioVentilii/officina/commit/162d6906a5601f4e14962f70eb9a8563c7860e62))
+* **db,api:** make three writes that take several steps all or nothing ([#75](https://github.com/AntonioVentilii/officina/issues/75)) ([8a6c00d](https://github.com/AntonioVentilii/officina/commit/8a6c00da1d4e155559d3855297d12f6764bcd6aa))
+* **db:** let two booting processes migrate at once ([#65](https://github.com/AntonioVentilii/officina/issues/65)) ([6a37675](https://github.com/AntonioVentilii/officina/commit/6a37675aee723fd69d060c4a3f10d84190710d4e))
+* **db:** mark a merged learning applied whatever the case of its repository ([#68](https://github.com/AntonioVentilii/officina/issues/68)) ([64765e2](https://github.com/AntonioVentilii/officina/commit/64765e2613177e232e99bb673cdc8a0a024caaac))
+* **db:** run the connector token rotation and the GitHub unlink in inTransaction ([#88](https://github.com/AntonioVentilii/officina/issues/88)) ([ca8c461](https://github.com/AntonioVentilii/officina/commit/ca8c46167e0ee3572946061ba043430c0b363782))
+* **engine,api:** name the project in every link to a task ([#83](https://github.com/AntonioVentilii/officina/issues/83)) ([33900c0](https://github.com/AntonioVentilii/officina/commit/33900c0f8b6ddba9ac533667c6079849d79e732d))
+* **engine:** finish each verified task on its own and record a refused token ([#79](https://github.com/AntonioVentilii/officina/issues/79)) ([7904253](https://github.com/AntonioVentilii/officina/commit/7904253a2f34d611286e60eb9706b6cd323d3225))
+* **engine:** open a task's pull request again when opening it failed after the round ([#66](https://github.com/AntonioVentilii/officina/issues/66)) ([da3b8ab](https://github.com/AntonioVentilii/officina/commit/da3b8ab7e05a9cfb935291e2aca14e0060db8858))
+* **engine:** record a checklist GitHub refuses instead of failing the chooser's run ([#80](https://github.com/AntonioVentilii/officina/issues/80)) ([a787fdd](https://github.com/AntonioVentilii/officina/commit/a787fdd83a837d8cf48e05d4a4947f09ab6129fc))
+* **github:** let a failed learning acceptance be accepted again ([#59](https://github.com/AntonioVentilii/officina/issues/59)) ([b83f56a](https://github.com/AntonioVentilii/officina/commit/b83f56afb5566f9917e6e7400b445f2dab482c39))
+* **github:** resolve the review threads on every page of a pull request ([#87](https://github.com/AntonioVentilii/officina/issues/87)) ([5f706b1](https://github.com/AntonioVentilii/officina/commit/5f706b158cf3015fdf8643fac335fcf8a3b15219))
+* **runner,api:** save each synced agent as soon as it is written ([#84](https://github.com/AntonioVentilii/officina/issues/84)) ([70c8371](https://github.com/AntonioVentilii/officina/commit/70c83711bc561a39500558478d002eabc56d7315))
+* **runner:** keep an accepted result whatever the agent submits after it ([#86](https://github.com/AntonioVentilii/officina/issues/86)) ([9a0bc71](https://github.com/AntonioVentilii/officina/commit/9a0bc7150d029c2eff5c59fa96373a4ccf0aae44))
+
+
+### Dependencies
+
+* **api:** drop the Anthropic SDK, which only the runner imports ([#64](https://github.com/AntonioVentilii/officina/issues/64)) ([422283c](https://github.com/AntonioVentilii/officina/commit/422283cf49d7f4a01b3108d6e679707dc5650aba))
+
+
+### Documentation
+
+* **ai:** point patterns at symbols instead of line numbers ([#67](https://github.com/AntonioVentilii/officina/issues/67)) ([b7eecdb](https://github.com/AntonioVentilii/officina/commit/b7eecdb13fbeeba2c01e4597793cbfbcf20414d0))
+* **ai:** point the catalog and the workflows at where the code now lives ([#81](https://github.com/AntonioVentilii/officina/issues/81)) ([d10d8d4](https://github.com/AntonioVentilii/officina/commit/d10d8d418bce57956d2b3e575903806ee08a7b28))
+* **repo:** list the tables the schema really has in the data model ([#63](https://github.com/AntonioVentilii/officina/issues/63)) ([71a264a](https://github.com/AntonioVentilii/officina/commit/71a264a3c887b3fa40bc93f0158cb693d0a2b4b7))
+
+
+### Code Refactoring
+
+* **api,db:** move the API's project and review lookups into packages/db ([#76](https://github.com/AntonioVentilii/officina/issues/76)) ([42ea76b](https://github.com/AntonioVentilii/officina/commit/42ea76b7ab6145fdd9e8dc3bfc1ace4663fd4946))
+* **api,db:** read the requester's role and the new task through packages/db ([#78](https://github.com/AntonioVentilii/officina/issues/78)) ([aede336](https://github.com/AntonioVentilii/officina/commit/aede3365c633f8af65f3d3813eb1df3c395e5b06))
+* **api:** decide who may open a request or comment in one place ([#91](https://github.com/AntonioVentilii/officina/issues/91)) ([2cdfb14](https://github.com/AntonioVentilii/officina/commit/2cdfb140a3aeafca74d02a912666d395b06eb38e))
+* **board:** drop the unused isClosed helper ([#58](https://github.com/AntonioVentilii/officina/issues/58)) ([0714318](https://github.com/AntonioVentilii/officina/commit/0714318d0122be94f1cb84ba1cc437ef77053fb2))
+* **board:** one isActive for runs and shared stage groups ([#92](https://github.com/AntonioVentilii/officina/issues/92)) ([d32f830](https://github.com/AntonioVentilii/officina/commit/d32f83089dc10b4d29f31d9d0bdaf45eaee7bfbb))
+* **core:** read the contract's branch prefix, check depths and merge modes from their owners ([#93](https://github.com/AntonioVentilii/officina/issues/93)) ([89cf4e6](https://github.com/AntonioVentilii/officina/commit/89cf4e6e3752babef1eef0aba9945bb335300219))
+* **db,api:** share inTransaction and register projects with it ([#72](https://github.com/AntonioVentilii/officina/issues/72)) ([f04dcb4](https://github.com/AntonioVentilii/officina/commit/f04dcb461d8c1413bdc8afa82d6e2677bcad2b61))
+* **db,core:** read the values packages/db respelled from where they live ([#89](https://github.com/AntonioVentilii/officina/issues/89)) ([6db83df](https://github.com/AntonioVentilii/officina/commit/6db83df2c067e1fccc1536c83774c963c3e5f394))
+* **engine,api:** one owner for the engine actor and the runner name ([#56](https://github.com/AntonioVentilii/officina/issues/56)) ([c7ee77f](https://github.com/AntonioVentilii/officina/commit/c7ee77f2bb0584c69ed8172684e1f8e27b7ff40f))
+* **engine,core,api:** drop the exports and the branch nothing reaches ([#90](https://github.com/AntonioVentilii/officina/issues/90)) ([a59a088](https://github.com/AntonioVentilii/officina/commit/a59a0880a065f8d4816bf116fffb88a0c8695bcb))
+* **engine,db:** move the GitHub mirroring queries into packages/db ([#73](https://github.com/AntonioVentilii/officina/issues/73)) ([75073c3](https://github.com/AntonioVentilii/officina/commit/75073c38aca835e9dc1f9e9458121c1c89ee14e5))
+* **engine,db:** move the interviewer and learner queries into packages/db ([#57](https://github.com/AntonioVentilii/officina/issues/57)) ([8dc231a](https://github.com/AntonioVentilii/officina/commit/8dc231ab15e0219f82b2c69ffbda8de10d51812c))
+* **engine:** move the result checks out of step.ts ([#74](https://github.com/AntonioVentilii/officina/issues/74)) ([6b4ca09](https://github.com/AntonioVentilii/officina/commit/6b4ca09f8cdf1c939fc5f854fb7881934bd31408))
+* **engine:** move the session and apply phases out of step.ts ([#77](https://github.com/AntonioVentilii/officina/issues/77)) ([16912f1](https://github.com/AntonioVentilii/officina/commit/16912f19a610520c1d1f6959d22277c8df6144d7))
+* **engine:** split runAgentStep into named phases ([#71](https://github.com/AntonioVentilii/officina/issues/71)) ([fe2e1be](https://github.com/AntonioVentilii/officina/commit/fe2e1be6b5269b97d207a3de7adbf6d628d357b9))
+* **github:** one merge-when-ready flow for the App and for a person ([#94](https://github.com/AntonioVentilii/officina/issues/94)) ([0dd9d29](https://github.com/AntonioVentilii/officina/commit/0dd9d29afbe68f2bd665d3d270d515afc905cb39))
+* **github:** one request helper for the App and for a person ([#70](https://github.com/AntonioVentilii/officina/issues/70)) ([652d465](https://github.com/AntonioVentilii/officina/commit/652d46505ab6b83ba73ae03deb68a8dd8f3c9f42))
+
+
+### Tests
+
+* **api:** the board stream sends a member only their own projects' events ([#98](https://github.com/AntonioVentilii/officina/issues/98)) ([9e3353e](https://github.com/AntonioVentilii/officina/commit/9e3353e03927f548924981e6b5bf51910a17912e))
+* db` (112 pass), `bun run check:board`: all green. ([c7ee77f](https://github.com/AntonioVentilii/officina/commit/c7ee77f2bb0584c69ed8172684e1f8e27b7ff40f))
+* db` (118 pass): all green. ([b83f56a](https://github.com/AntonioVentilii/officina/commit/b83f56afb5566f9917e6e7400b445f2dab482c39))
+* db` (119 pass, with main merged): all green. ([e2ee473](https://github.com/AntonioVentilii/officina/commit/e2ee47396965e6f04bf51fb0f65aa2bf1f3be779))
+* db` all pass locally. ([aede336](https://github.com/AntonioVentilii/officina/commit/aede3365c633f8af65f3d3813eb1df3c395e5b06))
+* db` pass locally. ([89cf4e6](https://github.com/AntonioVentilii/officina/commit/89cf4e6e3752babef1eef0aba9945bb335300219))
+* db` pass locally. ([2cdfb14](https://github.com/AntonioVentilii/officina/commit/2cdfb140a3aeafca74d02a912666d395b06eb38e))
+* db` pass locally. ([6db83df](https://github.com/AntonioVentilii/officina/commit/6db83df2c067e1fccc1536c83774c963c3e5f394))
+* db` pass locally. ([5f706b1](https://github.com/AntonioVentilii/officina/commit/5f706b158cf3015fdf8643fac335fcf8a3b15219))
+* db` pass locally. ([70c8371](https://github.com/AntonioVentilii/officina/commit/70c83711bc561a39500558478d002eabc56d7315))
+* db` pass locally. ([33900c0](https://github.com/AntonioVentilii/officina/commit/33900c0f8b6ddba9ac533667c6079849d79e732d))
+* db` pass locally. ([ca8c461](https://github.com/AntonioVentilii/officina/commit/ca8c46167e0ee3572946061ba043430c0b363782))
+* db` pass locally. ([e6b59b9](https://github.com/AntonioVentilii/officina/commit/e6b59b9089ff3e19a6fad509a72e4c66466b0d84))
+* db` pass locally. ([a787fdd](https://github.com/AntonioVentilii/officina/commit/a787fdd83a837d8cf48e05d4a4947f09ab6129fc))
+* db` pass locally. ([7904253](https://github.com/AntonioVentilii/officina/commit/7904253a2f34d611286e60eb9706b6cd323d3225))
+
+
+### Build System
+
+* **repo:** add ESLint, knip and jscpd to the quality gate ([#62](https://github.com/AntonioVentilii/officina/issues/62)) ([20e8c49](https://github.com/AntonioVentilii/officina/commit/20e8c496717d9b6c0e27a071d2ce8b34f1e1523e))
+
+
+### Continuous Integration
+
+* **repo:** set the Bun version and the database suites once, and check rule 14 ([#96](https://github.com/AntonioVentilii/officina/issues/96)) ([be4ea1a](https://github.com/AntonioVentilii/officina/commit/be4ea1abd01b2a85cadc280061f4f87e4e2d8e6a))
+
 ## [1.2.0](https://github.com/AntonioVentilii/officina/compare/v1.1.1...v1.2.0) (2026-11-12)
 
 
