@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { allowedActions } from '@officina/core';
+import type { HandInPort } from '@officina/engine';
 import {
   consumeOAuthState,
   createOAuthState,
@@ -42,6 +43,7 @@ import {
   actOnTaskAs,
   commentAs,
   createRequestAs,
+  handInAs,
   type TaskAction
 } from './tasks';
 
@@ -52,6 +54,8 @@ export interface BoardApiDependencies {
   readonly realtime?: RealtimeHub | undefined;
   /** Opens the pull requests of accepted learnings. */
   readonly github?: LearningGitHub | undefined;
+  /** Reads a developer's handed-in push and opens its pull request. */
+  readonly builds?: HandInPort | undefined;
   /** Linking members' GitHub accounts and signing in with GitHub; off when the app has no client secret. */
   readonly githubLogin?:
     | { readonly accounts: GitHubAccounts; readonly authorizeUrl: (state: string) => string }
@@ -115,6 +119,7 @@ const sessionCookie = (value: string, maxAgeMs: number, secure: boolean) =>
 const actionSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('submit') }),
   z.strictObject({ type: z.literal('accept') }),
+  z.strictObject({ type: z.literal('claim') }),
   z.strictObject({ type: z.literal('approve') }),
   z.strictObject({ type: z.literal('changes'), note: z.string().trim().min(1).max(10_000) }),
   // A free answer is its text; a picked option is its letter, with `text` as an optional note.
@@ -126,6 +131,12 @@ const actionSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('decline'), reason: z.string().trim().min(1).max(2_000) }),
   z.strictObject({ type: z.literal('cancel'), reason: z.string().trim().min(1).max(2_000) })
 ]);
+
+const handInSchema = z.strictObject({
+  prTitle: z.string().trim().min(3).max(120),
+  verified: z.array(z.string().trim().min(1).max(500)).max(20).default([]),
+  notVerified: z.array(z.string().trim().min(1).max(500)).max(20).default([])
+});
 
 const requestSchema = z.strictObject({
   title: z.string().trim().min(3).max(200),
@@ -368,7 +379,7 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
           // shows only what the API would accept.
           projects: signed.projects.map((project) => ({
             ...project,
-            can: allowedActions(project.role)
+            can: allowedActions(project)
           })),
           github: login ? { login } : null,
           githubAvailable: Boolean(deps.githubLogin)
@@ -454,6 +465,17 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
           memberId: viewer.memberId,
           number: taskNumber(params.number),
           action
+        });
+      })
+      .post('/api/projects/:projectId/tasks/:number/hand-in', async ({ request, params, body }) => {
+        mutation(request);
+        const viewer = viewerFor(await signedIn(request), params.projectId);
+        return handInAs(pool, deps.builds, {
+          projectId: viewer.projectId,
+          memberId: viewer.memberId,
+          number: taskNumber(params.number),
+          publicUrl: deps.publicUrl,
+          ...parse(handInSchema, body)
         });
       })
       .get('/api/projects/:projectId/learnings', async ({ request, params }) => {

@@ -267,6 +267,7 @@ describe.skipIf(!url)('board api', () => {
           asked: []
         }
       ],
+      build: { by: 'agent', reason: null, who: [] },
       merge: { by: 'person', who: ['Antonio'] }
     });
 
@@ -352,6 +353,118 @@ describe.skipIf(!url)('board api', () => {
     // The same requests with the header go through, so the header is what refused them.
     for (const [path, body] of routes) expect((await call(cookie, path, body)).status).toBe(200);
     expect(await state()).not.toEqual(before);
+  });
+
+  test('what agents cannot do, and what a developer must build, waits on the right person', async () => {
+    const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    const contributor = await signIn(
+      await invite(pool, {
+        publicUrl: PUBLIC_URL,
+        email: 'gio@example.com',
+        name: 'Gio',
+        role: 'contributor',
+        domains: []
+      })
+    );
+    await createRequest(pool, {
+      title: 'Publish the deck',
+      request: 'Put it on deck.example.app.',
+      skipInterview: true
+    });
+    const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
+    const engine = { kind: 'engine' } as const;
+    await applyCommand(pool, {
+      taskId,
+      command: {
+        type: 'block',
+        question: 'There is no such domain.\n\nNeeded:\n- Create deck.example.app',
+        askedOf: { role: 'owner' },
+        handoff: { needs: ['dns', 'publishing'] }
+      },
+      actor: engine
+    });
+    const path = `/api/projects/${seeded.projectId}/tasks/1`;
+    const held = await json(await call(contributor, path));
+    expect(held.waitingOn).toEqual({
+      kind: 'people',
+      label:
+        'Agents cannot go on: needs an owner for a domain or a DNS change, publishing or exposing content somewhere new',
+      me: false
+    });
+    expect(held.blocked.needs).toEqual([
+      'a domain or a DNS change',
+      'publishing or exposing content somewhere new'
+    ]);
+    expect((await json(await call(owner, path))).waitingOn.me).toBe(true);
+
+    // The owner answers; then the plan asks for a developer instead of the build agent.
+    await call(owner, `${path}/actions`, { type: 'answer', text: 'Created it.' });
+    await call(owner, `${path}/actions`, { type: 'accept' });
+    const asOwner = { kind: 'member', memberId: seeded.ownerId } as const;
+    await applyCommand(pool, {
+      taskId,
+      command: { type: 'post_spec', predictedPaths: ['src/deck.ts'], userVisible: true },
+      actor: { kind: 'agent', role: 'spec', version: 1 }
+    });
+    await applyCommand(pool, {
+      taskId,
+      command: {
+        type: 'plan_approval',
+        userVisible: true,
+        plan: {
+          depth: 'test',
+          rationale: 'A new public page.',
+          extra: [],
+          verifiers: [],
+          build: 'person',
+          buildReason: 'It needs the hosting set up by hand.'
+        }
+      },
+      actor: engine
+    });
+    await applyCommand(pool, { taskId, command: { type: 'approve' }, actor: asOwner });
+
+    const ready = await json(await call(owner, path));
+    expect(ready.waitingOn).toEqual({
+      kind: 'people',
+      label:
+        'Needs a developer: a developer claims the build. It needs the hosting set up by hand.',
+      me: true
+    });
+    expect(ready.actions).toContain('claim');
+    expect(ready.people.build).toEqual({
+      by: 'person',
+      reason: 'It needs the hosting set up by hand.',
+      who: ['Antonio']
+    });
+    expect((await json(await call(contributor, path))).actions).not.toContain('claim');
+    expect((await call(contributor, `${path}/actions`, { type: 'claim' })).status).toBe(409);
+
+    // A developer is a contributor with the `developer` domain: they claim it and hand it in.
+    const developer = await signIn(
+      await invite(pool, {
+        publicUrl: PUBLIC_URL,
+        email: 'dev@example.com',
+        name: 'Dev',
+        role: 'contributor',
+        domains: ['developer']
+      })
+    );
+    expect((await json(await call(developer, path))).people.build.who).toEqual(['Antonio', 'Dev']);
+    expect(await json(await call(developer, `${path}/actions`, { type: 'claim' }))).toEqual({
+      stage: 'building'
+    });
+    const building = await json(await call(developer, path));
+    expect(building.actions).toContain('hand_in');
+    expect(building.waitingOn).toEqual({
+      kind: 'people',
+      label: 'Dev is building it, then hands it in',
+      me: true
+    });
+    expect((await json(await call(owner, path))).actions).not.toContain('hand_in');
+    const handIn = await call(developer, `${path}/hand-in`, { prTitle: 'feat(deck): publish it' });
+    expect(handIn.status).toBe(503);
+    expect(await json(handIn)).toEqual({ error: 'the GitHub App is not configured' });
   });
 
   test('watchers read but cannot act, and other projects stay invisible', async () => {

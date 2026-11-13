@@ -40,6 +40,16 @@
     </dd>
   {/each}
 
+  <dt>Builds it</dt>
+  <dd>
+    {#if people.build.by === 'person'}
+      A developer{people.build.who.length ? `: ${people.build.who.join(', ')}` : ''}.
+      <span class="muted">{people.build.reason}</span>
+    {:else}
+      The build agent
+    {/if}
+  </dd>
+
   <dt>Merges it</dt>
   <dd>
     <GitMerge size={14} />
