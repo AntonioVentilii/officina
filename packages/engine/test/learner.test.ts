@@ -270,6 +270,38 @@ describe.skipIf(!url)('learner', () => {
     expect(agents.sessions).toHaveLength(0);
   });
 
+  const learnerRunStatus = async (taskId: string) =>
+    (
+      await pool.query<{ status: string }>(
+        'select status from runs where task_id = $1 and learning_id is not null',
+        [taskId]
+      )
+    ).rows.map((row) => row.status);
+
+  test('a rewrite run that ends without a result fails, and the learning stops waiting on it', async () => {
+    const { taskId } = await staleLearning();
+    const agents = createFakePort(() => [idle('end_turn')]);
+    const deps = { pool, github: fakeGitHub(), agents, publicUrl: 'x' };
+    expect(await runAgentStep(deps, taskId, 'learner')).toMatchObject({ status: 'discarded' });
+    expect(await learnerRunStatus(taskId)).toEqual(['failed']);
+    expect((await listLearnings(pool, seeded.projectId))[0]).toMatchObject({ rewrite: 'failed' });
+    expect((await collectDueSteps({ pool }, seeded.projectId)).due).toEqual([]);
+  });
+
+  test('a rewrite run that throws fails, and the learning stops waiting on it', async () => {
+    const { taskId } = await staleLearning();
+    const agents = createFakePort(() => [
+      async () => {
+        throw new Error('the stream broke');
+      }
+    ]);
+    const deps = { pool, github: fakeGitHub(), agents, publicUrl: 'x' };
+    await expect(runAgentStep(deps, taskId, 'learner')).rejects.toThrow('the stream broke');
+    expect(await learnerRunStatus(taskId)).toEqual(['failed']);
+    expect((await listLearnings(pool, seeded.projectId))[0]).toMatchObject({ rewrite: 'failed' });
+    expect((await collectDueSteps({ pool }, seeded.projectId)).due).toEqual([]);
+  });
+
   /** Waits until `ready` holds, as a step running in the background gets there. */
   const until = async (ready: () => boolean | Promise<boolean>) => {
     for (let wait = 0; !(await ready()); wait++) {
