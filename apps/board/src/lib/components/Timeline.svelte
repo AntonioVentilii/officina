@@ -41,10 +41,14 @@
       case 'assigned':
         return null;
       // Contributors and watchers get no paths, quoted text or error details (`payloadFor` in the API).
-      case 'pushed':
+      case 'pushed': {
+        const what = p.outside
+          ? `took in ${String(p.headSha).slice(0, 7)}, pushed on GitHub from outside Officina,`
+          : `pushed ${String(p.headSha).slice(0, 7)}`;
         return Array.isArray(p.changedPaths)
-          ? `pushed ${String(p.headSha).slice(0, 7)} (${p.diffLines} lines in ${p.changedPaths.length} files)`
-          : `pushed ${String(p.headSha).slice(0, 7)} (${p.diffLines} lines)`;
+          ? `${what} (${p.diffLines} lines in ${p.changedPaths.length} files)`
+          : `${what} (${p.diffLines} lines)`;
+      }
       case 'build_unchanged':
         return `checked the review and kept ${String(p.headSha).slice(0, 7)}: nothing needed a change`;
       case 'review_recorded':
@@ -102,14 +106,21 @@
     }
   };
 
+  /** The payload field each event's text below its sentence comes from. */
+  const DETAIL_FIELDS: Readonly<Record<string, string>> = {
+    changes_requested: 'note',
+    review_recorded: 'notes',
+    build_unchanged: 'note',
+    ci_failed: 'details'
+  };
+
   const detail = (event: TaskEvent): string | null => {
     const p = event.payload;
-    if (event.type === 'changes_requested') return String(p.note ?? '');
-    if (event.type === 'review_recorded') return p.notes ? String(p.notes) : null;
-    if (event.type === 'build_unchanged') return p.note ? String(p.note) : null;
     if (event.type === 'blocked')
       return String((p.blocked as { question?: string })?.question ?? '');
-    return null;
+    const field = DETAIL_FIELDS[event.type];
+    const value = field ? p[field] : undefined;
+    return value ? String(value) : null;
   };
 
   type Item =

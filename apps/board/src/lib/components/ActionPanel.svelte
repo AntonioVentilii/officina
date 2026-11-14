@@ -46,7 +46,7 @@
     gate === 'result' && Boolean(session.me?.github) && Boolean(task.pullRequest)
   );
 
-  const act = async (body: Record<string, string>, done: string) => {
+  const act = async (body: Record<string, string | number>, done: string) => {
     if (!session.projectId) return;
     busy = true;
     try {
@@ -88,9 +88,15 @@
     if (value) void act({ type: 'answer', text: value }, 'Answer sent; the step runs again');
   };
 
-  // What is written in the answer box goes along as a note on the chosen option.
-  const choose = (option: string) =>
-    void act({ type: 'answer', option, text: text.trim() }, 'Answer sent; the step runs again');
+  // What is written in the answer box goes along as a note on the chosen option, and the version
+  // pins the question on screen, so an option never answers a question asked since.
+  const choose = (option: string) => {
+    if (!task.blocked) return;
+    void act(
+      { type: 'answer', option, text: text.trim(), version: task.blocked.version },
+      'Answer sent; the step runs again'
+    );
+  };
 
   const PLACEHOLDERS: Record<Exclude<Mode, null>, string> = {
     changes: 'What should change? The agent works from exactly this.',
