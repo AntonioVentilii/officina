@@ -167,21 +167,124 @@ describe('GitHub client', () => {
     expect(calls.some((call) => call.url.endsWith('/compare/release%2F1...head1'))).toBe(true);
   });
 
-  test('a ref snapshot reads every page of tags', async () => {
-    const pages = [
-      Array.from({ length: 100 }, (_, i) => ({ ref: `refs/tags/v${i}`, object: { sha: `t${i}` } })),
-      [{ ref: 'refs/tags/v100', object: { sha: 't100' } }]
-    ];
-    const { fetchImpl } = fakeGitHub({
+  test('a ref snapshot reads every page of branches and of tags', async () => {
+    const page = (kind: string, from: number, count: number) =>
+      Array.from({ length: count }, (_, i) => ({
+        ref: `refs/${kind}/${kind === 'heads' ? 'officina/task-' : 'v'}${from + i}`,
+        object: { sha: `${kind}${from + i}` }
+      }));
+    const pages: Record<string, unknown[][]> = {
+      heads: [page('heads', 0, 100), page('heads', 100, 1)],
+      tags: [page('tags', 0, 100), page('tags', 100, 1)]
+    };
+    const { fetchImpl, calls } = fakeGitHub({
       'POST /app/installations/99/access_tokens': tokenRoute('2099-01-01T00:00:00Z'),
-      'GET /repos/ViciApp/vici-app/git/ref/heads/main': () => json({ object: { sha: 'main1' } }),
-      'GET /repos/ViciApp/vici-app/git/matching-refs/tags': () => json(pages.shift() ?? [])
+      'GET /repos/ViciApp/vici-app/git/matching-refs/heads': () => json(pages.heads!.shift() ?? []),
+      'GET /repos/ViciApp/vici-app/git/matching-refs/tags': () => json(pages.tags!.shift() ?? [])
     });
     const client = createGitHubClient({ appId: '1', privateKeyPem, fetch: fetchImpl });
-    const snapshot = await client.refSnapshot({ ...ref, defaultBranch: 'main' });
-    expect(snapshot.defaultHead).toBe('main1');
+    const snapshot = await client.refSnapshot(ref);
+    expect(Object.keys(snapshot.branches)).toHaveLength(101);
+    expect(snapshot.branches['officina/task-100']).toBe('heads100');
     expect(Object.keys(snapshot.tags)).toHaveLength(101);
-    expect(snapshot.tags['v100']).toBe('t100');
+    expect(snapshot.tags['v100']).toBe('tags100');
+    expect(calls.filter((call) => call.url.endsWith('/heads')).map((call) => call.query)).toEqual([
+      '?per_page=100&page=1',
+      '?per_page=100&page=2'
+    ]);
+  });
+
+  test('a run token is new for every run and is revoked with itself', async () => {
+    const { fetchImpl, calls } = fakeGitHub({
+      'POST /app/installations/99/access_tokens': tokenRoute('2099-01-01T00:00:00Z'),
+      'DELETE /installation/token': () => new Response(null, { status: 204 })
+    });
+    const client = createGitHubClient({ appId: '1', privateKeyPem, fetch: fetchImpl });
+    const cached = await client.installationToken(ref, { contents: 'write' });
+    const first = await client.runToken(ref, { contents: 'write' });
+    const second = await client.runToken(ref, { contents: 'write' });
+    expect(new Set([cached, first, second]).size).toBe(3);
+    expect(await client.installationToken(ref, { contents: 'write' })).toBe(cached);
+    expect(calls[1]!.body).toEqual({
+      repositories: ['vici-app'],
+      permissions: { contents: 'write' }
+    });
+
+    await client.revokeToken(first);
+    expect(calls.at(-1)).toMatchObject({
+      method: 'DELETE',
+      url: '/installation/token',
+      authorization: `Bearer ${first}`
+    });
+  });
+
+  test("the App's own login is read once, as GitHub shows its pushes", async () => {
+    const { fetchImpl, calls } = fakeGitHub({ 'GET /app': () => json({ slug: 'officina' }) });
+    const client = createGitHubClient({ appId: '1', privateKeyPem, fetch: fetchImpl });
+    expect(await client.appBotLogin()).toBe('officina[bot]');
+    expect(await client.appBotLogin()).toBe('officina[bot]');
+    expect(calls.filter((call) => call.url === '/app')).toHaveLength(1);
+  });
+
+  test("a branch's activity names who changed it since the run began, and says when it may be cut", async () => {
+    const nowMs = Date.parse('2026-11-14T12:00:00Z');
+    const since = new Date('2026-11-14T11:00:00Z');
+    const entry = (actor: string | null, after: string, timestamp: string) => ({
+      actor: actor === null ? null : { login: actor },
+      after,
+      timestamp
+    });
+    let page = [
+      entry('officina[bot]', 'evil', '2026-11-14T11:30:00Z'),
+      entry('octocat', 'person1', '2026-11-14T11:10:00Z'),
+      entry(null, 'ghost', '2026-11-14T11:05:00Z'),
+      entry('officina[bot]', 'older', '2026-11-14T10:00:00Z')
+    ];
+    const { fetchImpl, calls } = fakeGitHub({
+      'POST /app/installations/99/access_tokens': tokenRoute('2099-01-01T00:00:00Z'),
+      'GET /repos/ViciApp/vici-app/activity': () => json(page)
+    });
+    const client = createGitHubClient({
+      appId: '1',
+      privateKeyPem,
+      fetch: fetchImpl,
+      now: () => nowMs
+    });
+    const read = () => client.refActivity({ ...ref, refName: 'refs/heads/feature/x', since });
+
+    expect(await read()).toEqual({
+      activities: [
+        { actor: 'officina[bot]', after: 'evil' },
+        { actor: 'octocat', after: 'person1' },
+        { actor: null, after: 'ghost' }
+      ],
+      complete: true
+    });
+    const query = new URLSearchParams(calls.at(-1)!.query);
+    expect(query.get('ref')).toBe('refs/heads/feature/x');
+    expect(query.get('time_period')).toBe('day');
+    expect(query.get('per_page')).toBe('100');
+
+    page = Array.from({ length: 100 }, () => entry('octocat', 'person1', '2026-11-14T11:10:00Z'));
+    expect((await read()).complete).toBe(false);
+  });
+
+  test('a commit is on a branch when the branch is it or descends from it', async () => {
+    const check = async (answer: () => Response) => {
+      const { fetchImpl, calls } = fakeGitHub({
+        'POST /app/installations/99/access_tokens': tokenRoute('2099-01-01T00:00:00Z'),
+        'GET /repos/ViciApp/vici-app/compare/t1...main': answer
+      });
+      const client = createGitHubClient({ appId: '1', privateKeyPem, fetch: fetchImpl });
+      const on = await client.isOnBranch({ ...ref, sha: 't1', branch: 'main' });
+      expect(calls.at(-1)!.url).toBe('/repos/ViciApp/vici-app/compare/t1...main');
+      return on;
+    };
+    expect(await check(() => json({ status: 'identical' }))).toBe(true);
+    expect(await check(() => json({ status: 'ahead' }))).toBe(true);
+    expect(await check(() => json({ status: 'behind' }))).toBe(false);
+    expect(await check(() => json({ status: 'diverged' }))).toBe(false);
+    expect(await check(() => new Response('No common ancestor', { status: 404 }))).toBe(false);
   });
 
   test('only a pull request merged on top of the old head counts as a merge', async () => {

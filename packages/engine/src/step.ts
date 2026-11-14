@@ -7,7 +7,7 @@ import {
   type Task
 } from '@officina/core';
 import { applyCommand, finishRun } from '@officina/db';
-import { type GitHubClient, type RefSnapshot, type RepoRef } from '@officina/github';
+import { type GitHubClient, type RefSnapshot } from '@officina/github';
 import {
   type ManagedAgentsPort,
   type RunnerRole,
@@ -19,11 +19,20 @@ import { claimStep, type ClaimedStep, type SkipReason } from './claim';
 import { runLearnerStep } from './learner';
 import type { SyncGitHubPort } from './github-sync';
 import { applyResult, roleOutputOf, sameWork, type StepOutcome } from './step-apply';
+import { refChanges, runWindowStart } from './step-refs';
 import { gatherInputs, runSession, RunStoppedError } from './step-session';
 
 export type GitHubPort = Pick<
   GitHubClient,
-  'installationToken' | 'openPullRequest' | 'refSnapshot' | 'isPullRequestMerge'
+  | 'installationToken'
+  | 'runToken'
+  | 'revokeToken'
+  | 'openPullRequest'
+  | 'refSnapshot'
+  | 'refActivity'
+  | 'appBotLogin'
+  | 'isPullRequestMerge'
+  | 'isOnBranch'
 > &
   SyncGitHubPort;
 
@@ -54,41 +63,6 @@ const describeOutcome = (outcome: Exclude<RunOutcome, { kind: 'result' }>): stri
     case 'failed':
       return outcome.reason;
   }
-};
-
-/**
- * What changed outside the task's own branch while a builder held a token that can write any ref.
- * The default branch may move forward by a pull request merged meanwhile, which went through the
- * branch rules; any other move, and any tag created, moved or deleted, is reported.
- */
-const refChanges = async (
-  github: GitHubPort,
-  ref: RepoRef & { readonly defaultBranch: string },
-  before: RefSnapshot,
-  after: RefSnapshot
-): Promise<string[]> => {
-  const changes: string[] = [];
-  if (
-    before.defaultHead !== after.defaultHead &&
-    !(await github.isPullRequestMerge({
-      ...ref,
-      sha: after.defaultHead,
-      base: ref.defaultBranch,
-      since: before.defaultHead
-    }))
-  ) {
-    changes.push(
-      `${ref.defaultBranch} moved from ${before.defaultHead.slice(0, 7)} to ${after.defaultHead.slice(0, 7)}`
-    );
-  }
-  for (const [tag, sha] of Object.entries(after.tags)) {
-    if (!(tag in before.tags)) changes.push(`tag ${tag} was created`);
-    else if (before.tags[tag] !== sha) changes.push(`tag ${tag} was moved`);
-  }
-  for (const tag of Object.keys(before.tags)) {
-    if (!(tag in after.tags)) changes.push(`tag ${tag} was deleted`);
-  }
-  return changes;
 };
 
 /** Asks a maintainer; with a `guard`, only while the task is still in the state it allows. */
@@ -139,12 +113,11 @@ const failAndBlock = async (
 /** The refs a builder could have moved besides its own branch, checked after every build run. */
 const guardRefs = async (
   step: Step,
-  before: RefSnapshot,
+  before: { readonly refs: RefSnapshot; readonly since: Date },
   report: RunReport
 ): Promise<StepResult | null> => {
-  const guarded = { ...step.repoRef, defaultBranch: step.context.defaultBranch };
-  const after = await step.deps.github.refSnapshot(guarded);
-  const changes = await refChanges(step.deps.github, guarded, before, after);
+  const after = await step.deps.github.refSnapshot(step.repoRef);
+  const changes = await refChanges(step, before.refs, after, before.since);
   if (!changes.length) return null;
   const { role, taskBranch } = step;
   await finishRun(step.deps.pool, step.runId, {
@@ -156,7 +129,7 @@ const guardRefs = async (
   await blockTask(
     step.deps.pool,
     step.taskId,
-    `While the ${role} ran, ${changes.join('; ')}. The ${role} may only push ${taskBranch}. Check those refs on GitHub and restore them if the ${role} changed them; if a person made the change, answer to run the build again.`
+    `While the ${role} ran, ${changes.join('; ')}. The ${role} may only push ${taskBranch}. Check those refs on GitHub and restore them if the ${role} changed them, then answer to run the build again.`
   );
   return {
     status: 'blocked',
@@ -183,15 +156,17 @@ const outcomeOf = async (
 const runClaimed = async (step: Step): Promise<StepResult> => {
   const inputs = await gatherInputs(step);
   const { github } = step.deps;
-  // Only the build roles get a token that can push; every other role reads.
-  const token = await github.installationToken(step.repoRef, {
-    contents: step.builds ? 'write' : 'read'
-  });
+  // Only the build roles get a token that can push, minted for this run alone and revoked when
+  // the session ends, so nothing it pushes can land after the refs are checked.
+  const token = step.builds
+    ? await github.runToken(step.repoRef, { contents: 'write' })
+    : await github.installationToken(step.repoRef, { contents: 'read' });
   // Taken before the session starts, so nothing the builder does can land before it.
-  const refsBefore = step.builds
-    ? await github.refSnapshot({ ...step.repoRef, defaultBranch: step.context.defaultBranch })
-    : null;
-  const report = await runSession(step, inputs, token);
+  const since = runWindowStart(Date.now());
+  const refsBefore = step.builds ? { refs: await github.refSnapshot(step.repoRef), since } : null;
+  const report = await runSession(step, inputs, token).finally(async () => {
+    if (step.builds) await github.revokeToken(token);
+  });
   // Checked whatever the run reported: a failed run may still have pushed somewhere.
   const moved = refsBefore ? await guardRefs(step, refsBefore, report) : null;
   if (moved) return moved;

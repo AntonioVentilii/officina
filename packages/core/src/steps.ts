@@ -37,6 +37,18 @@ export const TASK_BRANCH_PREFIX = 'officina/';
 export const branchForTask = (taskNumber: number): string =>
   `${TASK_BRANCH_PREFIX}task-${taskNumber}`;
 
+/**
+ * The branch an accepted learning's edit is pushed to. A rewritten edit gets a branch of its own:
+ * one an accept left before the rewrite starts from an older default branch, while retries of the
+ * same edit keep reusing theirs.
+ */
+export const branchForLearning = (learning: {
+  readonly id: string;
+  readonly rewrittenAt: Date | null;
+}): string =>
+  `${TASK_BRANCH_PREFIX}learning-${learning.id.slice(0, 8)}` +
+  (learning.rewrittenAt ? `-${learning.rewrittenAt.getTime().toString(36)}` : '');
+
 /** Where the board opens a task. Task numbers are per project, so the link names the project. */
 export const taskUrl = (publicUrl: string, projectId: string, taskNumber: number): string =>
   `${publicUrl.replace(/\/$/, '')}/tasks/${taskNumber}?project=${projectId}`;

@@ -235,3 +235,23 @@ export const listRecentLearningTitles = async (db: Queryable, projectId: string)
       [projectId]
     )
   ).rows;
+
+/**
+ * The learnings of this run's project that people decided on at or after `since`: accepting one
+ * pushes its edit to its own branch with the App's identity, which the check after a build running
+ * alongside must not take for the builder's push.
+ */
+export const learningsDecidedDuring = async (
+  pool: Pool,
+  runId: string,
+  since: Date
+): Promise<{ id: string; rewrittenAt: Date | null }[]> =>
+  (
+    await pool.query<{ id: string; rewrittenAt: Date | null }>(
+      `select l.id, l.rewritten_at as "rewrittenAt" from runs r
+       join tasks t on t.id = r.task_id
+       join learnings l on l.project_id = t.project_id
+       where r.id = $1 and l.decided_at >= $2`,
+      [runId, since]
+    )
+  ).rows;

@@ -1,5 +1,12 @@
 import { createSign } from 'node:crypto';
 import type { PushFacts } from '@officina/core';
+import {
+  ACTIVITY_PAGE,
+  activityPeriod,
+  activitySince,
+  type ActivityItem,
+  type RefActivityLog
+} from './activity';
 import { failuresOn } from './checks';
 import { COMPARE_FILE_LIMIT, changeFingerprint, type ComparedFile } from './compare';
 import { GitHubError, githubRequest } from './http';
@@ -49,7 +56,8 @@ export interface RepoRef {
 }
 
 export interface RefSnapshot {
-  readonly defaultHead: string;
+  /** Branch name to the sha it points at. */
+  readonly branches: Readonly<Record<string, string>>;
   /** Tag name to the sha it points at. */
   readonly tags: Readonly<Record<string, string>>;
 }
@@ -86,22 +94,14 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
   const request = <T>(path: string, init: { method?: string; token: string; body?: unknown }) =>
     githubRequest<T>(http, init.token, path, init);
 
-  /**
-   * Installation tokens are scoped to the one repository being worked on, not everything the
-   * app is installed on, optionally narrowed to specific permissions (an agent that only reads gets
-   * a token that cannot push), and reused until shortly before they expire.
-   */
-  const installationToken = async (
+  /** A new installation token for one repository, never cached. */
+  const createToken = async (
     { installationId, repo }: RepoRef,
     permissions?: TokenPermissions
-  ): Promise<string> => {
-    const key = `${installationId}:${repo}:${JSON.stringify(permissions ?? {})}`;
-    const cached = tokens.get(key);
-    if (cached && cached.expiresAtMs - REFRESH_MARGIN_MS > now()) return cached.token;
-
+  ): Promise<{ token: string; expires_at: string }> => {
     const jwt = createAppJwt(options.appId, options.privateKeyPem, Math.floor(now() / 1000));
     const repoName = repo.split('/')[1];
-    const created = await request<{ token: string; expires_at: string }>(
+    return request<{ token: string; expires_at: string }>(
       `/app/installations/${installationId}/access_tokens`,
       {
         method: 'POST',
@@ -109,8 +109,35 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
         body: permissions ? { repositories: [repoName], permissions } : { repositories: [repoName] }
       }
     );
+  };
+
+  /**
+   * Installation tokens are scoped to the one repository being worked on, not everything the
+   * app is installed on, optionally narrowed to specific permissions (an agent that only reads gets
+   * a token that cannot push), and reused until shortly before they expire.
+   */
+  const installationToken = async (
+    ref: RepoRef,
+    permissions?: TokenPermissions
+  ): Promise<string> => {
+    const key = `${ref.installationId}:${ref.repo}:${JSON.stringify(permissions ?? {})}`;
+    const cached = tokens.get(key);
+    if (cached && cached.expiresAtMs - REFRESH_MARGIN_MS > now()) return cached.token;
+    const created = await createToken(ref, permissions);
     tokens.set(key, { token: created.token, expiresAtMs: Date.parse(created.expires_at) });
     return created.token;
+  };
+
+  /**
+   * A token for one agent run alone, shared with nothing else, so revoking it when the run ends
+   * leaves the agent nothing to write with.
+   */
+  const runToken = async (ref: RepoRef, permissions: TokenPermissions): Promise<string> =>
+    (await createToken(ref, permissions)).token;
+
+  /** Revokes an installation token at once, instead of waiting for its hour to pass. */
+  const revokeToken = async (token: string): Promise<void> => {
+    await request('/installation/token', { method: 'DELETE', token });
   };
 
   /**
@@ -153,34 +180,68 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     return changeFingerprint(comparison.files);
   };
 
-  /**
-   * The refs a builder's token could rewrite outside its own branch: the default branch head and
-   * every tag. Taken before and after a build run, so a push anywhere else is caught.
-   */
-  const refSnapshot = async (
-    ref: RepoRef & { readonly defaultBranch: string }
-  ): Promise<RefSnapshot> => {
-    const token = await installationToken(ref, { contents: 'read' });
-    const head = await request<{ object: { sha: string } }>(
-      `/repos/${ref.repo}/git/ref/heads/${encodeURIComponent(ref.defaultBranch)}`,
-      { token }
-    );
-    const tags: { ref: string; object: { sha: string } }[] = [];
-    // Every page: a tag on a page left unread could be rewritten unseen.
+  /** Every ref under a prefix (`heads`, `tags`), by name; every page, so none is left unread. */
+  const matchingRefs = async (
+    ref: RepoRef,
+    token: string,
+    prefix: string
+  ): Promise<Record<string, string>> => {
+    const refs: { ref: string; object: { sha: string } }[] = [];
     for (let page = 1; ; page++) {
-      const batch = await request<typeof tags>(
-        `/repos/${ref.repo}/git/matching-refs/tags?per_page=100&page=${page}`,
+      const batch = await request<typeof refs>(
+        `/repos/${ref.repo}/git/matching-refs/${prefix}?per_page=100&page=${page}`,
         { token }
       );
-      tags.push(...batch);
+      refs.push(...batch);
       if (batch.length < 100) break;
     }
+    return Object.fromEntries(
+      refs.map((each) => [each.ref.slice(`refs/${prefix}/`.length), each.object.sha])
+    );
+  };
+
+  /**
+   * The refs a builder's token could rewrite: every branch and every tag. Taken before and after a
+   * build run, so a push anywhere but the task's own branch is caught.
+   */
+  const refSnapshot = async (ref: RepoRef): Promise<RefSnapshot> => {
+    const token = await installationToken(ref, { contents: 'read' });
     return {
-      defaultHead: head.object.sha,
-      tags: Object.fromEntries(
-        tags.map((tag) => [tag.ref.replace(/^refs\/tags\//, ''), tag.object.sha])
-      )
+      branches: await matchingRefs(ref, token, 'heads'),
+      tags: await matchingRefs(ref, token, 'tags')
     };
+  };
+
+  let appLogin: Promise<string> | null = null;
+
+  /** The login GitHub shows for what this App does, `<app-slug>[bot]`; read once. */
+  const appBotLogin = (): Promise<string> => {
+    const jwt = createAppJwt(options.appId, options.privateKeyPem, Math.floor(now() / 1000));
+    appLogin ??= request<{ slug: string }>('/app', { token: jwt }).then(
+      (app) => `${app.slug}[bot]`,
+      (error: unknown) => {
+        appLogin = null;
+        throw error;
+      }
+    );
+    return appLogin;
+  };
+
+  /**
+   * Who changed one branch (`refName` is `refs/heads/<name>`) at or after `since`, from the
+   * repository's activity, which names the account behind each push, creation and deletion.
+   */
+  const refActivity = async (
+    ref: RepoRef & { readonly refName: string; readonly since: Date }
+  ): Promise<RefActivityLog> => {
+    const token = await installationToken(ref, { contents: 'read' });
+    const query = new URLSearchParams({
+      ref: ref.refName,
+      time_period: activityPeriod(ref.since, now()),
+      per_page: String(ACTIVITY_PAGE)
+    });
+    const items = await request<ActivityItem[]>(`/repos/${ref.repo}/activity?${query}`, { token });
+    return activitySince(items, ref.since);
   };
 
   /**
@@ -204,6 +265,28 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
       (pull) =>
         pull.merged_at !== null && pull.merge_commit_sha === ref.sha && pull.base.ref === ref.base
     );
+  };
+
+  /**
+   * Whether a commit is already on a branch: the branch is that commit or descends from it. A sha
+   * GitHub does not know as a commit counts as not on it.
+   */
+  const isOnBranch = async (
+    ref: RepoRef & { readonly sha: string; readonly branch: string }
+  ): Promise<boolean> => {
+    const token = await installationToken(ref, { contents: 'read' });
+    try {
+      const comparison = await request<{ status: string }>(
+        `/repos/${ref.repo}/compare/${ref.sha}...${encodeURIComponent(ref.branch)}`,
+        { token }
+      );
+      return comparison.status === 'identical' || comparison.status === 'ahead';
+    } catch (error) {
+      if (error instanceof GitHubError && (error.status === 404 || error.status === 422)) {
+        return false;
+      }
+      throw error;
+    }
   };
 
   /** A commit's parents and the paths it changes. */
@@ -539,6 +622,8 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
 
   return {
     installationToken,
+    runToken,
+    revokeToken,
     repoInstallationId,
     defaultBranch,
     fileContent,
@@ -548,7 +633,10 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     pushFacts,
     changeOf,
     refSnapshot,
+    appBotLogin,
+    refActivity,
     isPullRequestMerge,
+    isOnBranch,
     commitChanges,
     openPullRequest,
     closePullRequestsFrom,

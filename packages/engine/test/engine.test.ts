@@ -1,7 +1,16 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
-import { branchForTask, HANDOFF_NEED_KEYS, type AgentRole } from '@officina/core';
+import {
+  branchForLearning,
+  branchForTask,
+  ENGINE,
+  HANDOFF_NEED_KEYS,
+  type AgentRole
+} from '@officina/core';
 import {
   appendTaskEvent,
+  decideLearning,
+  insertLearnings,
+  listLearnings,
   recordHeadCarried,
   reviewedHead,
   markBotCommentsHandled,
@@ -12,6 +21,7 @@ import {
   failOrphanedRuns,
   failTakenOverRuns,
   feedbackSinceLastPush,
+  finishRun,
   linkPullRequest,
   loadTask,
   saveAgentVersion,
@@ -79,13 +89,25 @@ const succeed = (request: SessionRequest): ScriptItem[] => [
   idle('end_turn')
 ];
 
-const REFS: RefSnapshot = { defaultHead: 'main1', tags: { 'v1.0.0': 'tag1' } };
+const REFS: RefSnapshot = {
+  branches: { main: 'main1', 'officina/task-9': 'other1' },
+  tags: { 'v1.0.0': 'tag1' }
+};
+
+/** The login GitHub shows for what Officina's App does in these tests. */
+const APP_LOGIN = 'officina[bot]';
 
 /** `refs` are the snapshots returned in turn, the last one repeating; `merges` are the shas of merged pull requests. */
 const fakeGitHub = (
   options: {
     refs?: RefSnapshot[];
     merges?: string[];
+    /** Who GitHub's activity says pushed each branch, and the sha it left; by default the App. */
+    pushes?: Record<string, { actor: string; after: string } | null>;
+    /** Runs when the refs are read after the build, while its run still counts as running. */
+    afterBuild?: () => Promise<void>;
+    /** The shas already on the default branch. */
+    onDefault?: string[];
     branchHead?: string;
     addedPaths?: string[];
     written?: { commitSha: string; parentSha: string };
@@ -110,10 +132,24 @@ const fakeGitHub = (
   let updateFails = options.updateFails ?? 0;
   let branch = options.branchHead ?? 'sha1';
   const refs = [...(options.refs ?? [REFS])];
+  let snapshots = 0;
   const port = {
     refSnapshot: async (...args: unknown[]) => {
       calls.push({ method: 'refSnapshot', args });
+      if (++snapshots === 2) await options.afterBuild?.();
       return refs.length > 1 ? refs.shift()! : refs[0]!;
+    },
+    appBotLogin: async () => APP_LOGIN,
+    refActivity: async (...args: unknown[]) => {
+      calls.push({ method: 'refActivity', args });
+      const name = (args[0] as { refName: string }).refName.replace('refs/heads/', '');
+      const push = options.pushes?.[name];
+      if (push === null) return { activities: [], complete: true };
+      return { activities: [push ?? { actor: APP_LOGIN, after: 'evil' }], complete: true };
+    },
+    isOnBranch: async (...args: unknown[]) => {
+      calls.push({ method: 'isOnBranch', args });
+      return (options.onDefault ?? []).includes((args[0] as { sha: string }).sha);
     },
     isPullRequestMerge: async (...args: unknown[]) => {
       calls.push({ method: 'isPullRequestMerge', args });
@@ -122,6 +158,13 @@ const fakeGitHub = (
     installationToken: async (...args: unknown[]) => {
       calls.push({ method: 'installationToken', args });
       return `token-${(args[1] as { contents: string }).contents}`;
+    },
+    runToken: async (...args: unknown[]) => {
+      calls.push({ method: 'runToken', args });
+      return `token-${(args[1] as { contents: string }).contents}`;
+    },
+    revokeToken: async (...args: unknown[]) => {
+      calls.push({ method: 'revokeToken', args });
     },
     pushFacts: async (...args: unknown[]) => {
       calls.push({ method: 'pushFacts', args });
@@ -1062,7 +1105,10 @@ describe.skipIf(!url)('engine', () => {
 
   test('a builder that moves the default branch or a tag is blocked before its result counts', async () => {
     const github = fakeGitHub({
-      refs: [REFS, { defaultHead: 'evil', tags: { 'v1.0.0': 'tag1', 'v9.9.9': 'evil' } }]
+      refs: [
+        REFS,
+        { branches: { ...REFS.branches, main: 'evil' }, tags: { ...REFS.tags, 'v9.9.9': 'evil' } }
+      ]
     });
     const agents = createFakePort(succeed);
     const taskId = await taskInReady(github, agents);
@@ -1073,15 +1119,96 @@ describe.skipIf(!url)('engine', () => {
     expect(stored?.task.headSha).toBeNull();
     expect(stored?.task.blocked).toMatchObject({ askedOf: { role: 'maintainer' } });
     expect(stored?.task.blocked?.question).toContain('main moved from main1 to evil');
-    expect(stored?.task.blocked?.question).toContain('tag v9.9.9 was created');
+    expect(stored?.task.blocked?.question).toContain(
+      'tag v9.9.9 was created on a commit that is not on main'
+    );
     expect(github.calls.filter((call) => call.method === 'refSnapshot')).toHaveLength(2);
     expect(github.calls.some((call) => call.method === 'openPullRequest')).toBe(false);
     expect((await runStatuses(taskId)).at(-1)).toEqual({ agent_role: 'builder', status: 'failed' });
   });
 
+  /** A build during which the tags go from `REFS`' to `tags`, with `onDefault` already on main. */
+  const buildWithTags = async (tags: Record<string, string>, onDefault: string[] = []) => {
+    const github = fakeGitHub({
+      refs: [REFS, { branches: REFS.branches, tags }],
+      onDefault
+    });
+    const agents = createFakePort(succeed);
+    const taskId = await taskInReady(github, agents);
+    await tick({ pool, github: github.port, agents, publicUrl: PUBLIC_URL }, seeded.projectId);
+    return { task: (await loadTask(pool, taskId))?.task, github };
+  };
+
+  test('a new tag on a commit already on the default branch does not stop the build', async () => {
+    const { task, github } = await buildWithTags({ ...REFS.tags, 'v1.1.0': 'main1' }, ['main1']);
+
+    expect(task).toMatchObject({ stage: 'reviewing', blocked: null });
+    expect(github.calls.find((call) => call.method === 'isOnBranch')?.args[0]).toMatchObject({
+      sha: 'main1',
+      branch: 'main'
+    });
+  });
+
+  test('a new tag on a commit that is not on the default branch stops the build', async () => {
+    const { task } = await buildWithTags({ ...REFS.tags, 'v1.1.0': 'sha1' }, ['main1']);
+
+    expect(task?.blocked?.question).toContain(
+      'tag v1.1.0 was created on a commit that is not on main'
+    );
+  });
+
+  test('a tag moved during the build stops it, even onto the default branch', async () => {
+    const { task } = await buildWithTags({ 'v1.0.0': 'main1' }, ['main1']);
+
+    expect(task?.blocked?.question).toContain('tag v1.0.0 moved from tag1 to main1');
+  });
+
+  test("Officina's push of a learning people accepted during the build does not stop it", async () => {
+    const taskId = await taskInReady();
+    const { rows } = await pool.query<{ id: string }>(
+      'select id from runs where task_id = $1 limit 1',
+      [taskId]
+    );
+    await insertLearnings(pool, {
+      projectId: seeded.projectId,
+      taskId,
+      runId: rows[0]!.id,
+      learnings: [
+        {
+          title: 'Name settings copy',
+          lesson: 'Copy names the screen.',
+          evidence: 'The review asked for it.',
+          target: 'docs',
+          edit: { file: 'AGENTS.md', text: 'x\n' }
+        }
+      ]
+    });
+    const [learning] = await listLearnings(pool, seeded.projectId);
+    const branch = branchForLearning(learning!);
+    const github = fakeGitHub({
+      refs: [REFS, { branches: { ...REFS.branches, [branch]: 'main1' }, tags: REFS.tags }],
+      pushes: { [branch]: { actor: APP_LOGIN, after: 'main1' } },
+      afterBuild: async () => {
+        await decideLearning(pool, {
+          id: learning!.id,
+          status: 'accepted',
+          memberId: seeded.ownerId,
+          note: null
+        });
+      }
+    });
+    const agents = createFakePort(succeed);
+    await tick({ pool, github: github.port, agents, publicUrl: PUBLIC_URL }, seeded.projectId);
+
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({
+      stage: 'reviewing',
+      blocked: null
+    });
+  });
+
   test('a pull request merged into the default branch during a build is not a builder push', async () => {
     const github = fakeGitHub({
-      refs: [REFS, { defaultHead: 'merged1', tags: REFS.tags }],
+      refs: [REFS, { branches: { ...REFS.branches, main: 'merged1' }, tags: REFS.tags }],
       merges: ['merged1']
     });
     const agents = createFakePort(succeed);
@@ -1095,6 +1222,184 @@ describe.skipIf(!url)('engine', () => {
     expect(
       github.calls.find((call) => call.method === 'isPullRequestMerge')!.args[0]
     ).toMatchObject({ sha: 'merged1', base: 'main', since: 'main1' });
+  });
+
+  test('a builder pushes with a token of its own, revoked before the refs are checked', async () => {
+    const github = fakeGitHub();
+    const agents = createFakePort(succeed);
+    const taskId = await taskInReady(github, agents);
+    await tick({ pool, github: github.port, agents, publicUrl: PUBLIC_URL }, seeded.projectId);
+
+    expect((await loadTask(pool, taskId))?.task.stage).toBe('reviewing');
+    const order = github.calls
+      .map((call) => call.method)
+      .filter((method) => ['runToken', 'refSnapshot', 'revokeToken'].includes(method));
+    expect(order).toEqual(['runToken', 'refSnapshot', 'revokeToken', 'refSnapshot']);
+    expect(github.calls.find((call) => call.method === 'revokeToken')!.args).toEqual([
+      'token-write'
+    ]);
+  });
+
+  test('a builder that moves or creates any branch but its own is blocked', async () => {
+    const github = fakeGitHub({
+      refs: [
+        REFS,
+        {
+          branches: {
+            ...REFS.branches,
+            'officina/task-1': 'sha1',
+            'officina/task-9': 'evil',
+            'feature/x': 'evil'
+          },
+          tags: REFS.tags
+        }
+      ]
+    });
+    const agents = createFakePort(succeed);
+    const taskId = await taskInReady(github, agents);
+    await tick({ pool, github: github.port, agents, publicUrl: PUBLIC_URL }, seeded.projectId);
+
+    const question = (await loadTask(pool, taskId))?.task.blocked?.question;
+    expect(question).toContain(
+      "branch officina/task-9 moved from other1 to evil with Officina's GitHub App"
+    );
+    expect(question).toContain("branch feature/x was created with Officina's GitHub App");
+    expect(question).not.toContain('branch officina/task-1');
+    expect(github.calls.some((call) => call.method === 'openPullRequest')).toBe(false);
+  });
+
+  test('the branch of another task whose build runs alongside may move', async () => {
+    const github = fakeGitHub({
+      refs: [REFS, { branches: { ...REFS.branches, 'officina/task-2': 'theirs' }, tags: REFS.tags }]
+    });
+    const agents = createFakePort(succeed);
+    const taskId = await taskInReady(github, agents);
+    const other = await taskInSpeccing();
+    await startRun(pool, {
+      taskId: other,
+      stage: 'building',
+      role: 'builder',
+      agentVersion: 1,
+      runner: 'managed_agents'
+    });
+    await tick({ pool, github: github.port, agents, publicUrl: PUBLIC_URL }, seeded.projectId);
+
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({
+      stage: 'reviewing',
+      blocked: null
+    });
+  });
+
+  test('the branch of another task whose build ended before this one began may not move', async () => {
+    const github = fakeGitHub({
+      refs: [REFS, { branches: { ...REFS.branches, 'officina/task-2': 'evil' }, tags: REFS.tags }]
+    });
+    const agents = createFakePort(succeed);
+    const taskId = await taskInReady(github, agents);
+    const other = await taskInSpeccing();
+    const earlier = await startRun(pool, {
+      taskId: other,
+      stage: 'building',
+      role: 'builder',
+      agentVersion: 1,
+      runner: 'managed_agents'
+    });
+    if (!earlier.ok) throw new Error(earlier.error);
+    await finishRun(pool, earlier.runId, { status: 'succeeded', costCents: null, result: {} });
+    await tick({ pool, github: github.port, agents, publicUrl: PUBLIC_URL }, seeded.projectId);
+
+    expect((await loadTask(pool, taskId))?.task.blocked?.question).toContain(
+      'branch officina/task-2 was created'
+    );
+  });
+
+  test('a person or another bot moving a branch during the build does not stop it', async () => {
+    const github = fakeGitHub({
+      refs: [
+        REFS,
+        {
+          branches: {
+            ...REFS.branches,
+            'officina/task-9': 'deps1',
+            'feature/x': 'person1',
+            'release-please--branches--main': 'release1'
+          },
+          tags: REFS.tags
+        }
+      ],
+      pushes: {
+        'officina/task-9': { actor: 'dependabot[bot]', after: 'deps1' },
+        'feature/x': { actor: 'octocat', after: 'person1' },
+        'release-please--branches--main': { actor: 'release-please[bot]', after: 'release1' }
+      }
+    });
+    const agents = createFakePort(succeed);
+    const taskId = await taskInReady(github, agents);
+    await tick({ pool, github: github.port, agents, publicUrl: PUBLIC_URL }, seeded.projectId);
+
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({
+      stage: 'reviewing',
+      blocked: null
+    });
+    const asked = github.calls.filter((call) => call.method === 'refActivity');
+    expect(asked.map((call) => (call.args[0] as { refName: string }).refName).sort()).toEqual([
+      'refs/heads/feature/x',
+      'refs/heads/officina/task-9',
+      'refs/heads/release-please--branches--main'
+    ]);
+  });
+
+  test('a branch that moved with no pusher GitHub can name stops the build', async () => {
+    const github = fakeGitHub({
+      refs: [REFS, { branches: { ...REFS.branches, 'feature/x': 'ghost' }, tags: REFS.tags }],
+      pushes: { 'feature/x': null }
+    });
+    const agents = createFakePort(succeed);
+    const taskId = await taskInReady(github, agents);
+    await tick({ pool, github: github.port, agents, publicUrl: PUBLIC_URL }, seeded.projectId);
+
+    expect((await loadTask(pool, taskId))?.task.blocked?.question).toContain(
+      'branch feature/x was created and GitHub shows no one who did it'
+    );
+  });
+
+  /**
+   * A build during which Officina records its own status commit `status9` on another task's
+   * branch, while the App's push of it shows on `movedOn` (by default that same branch).
+   */
+  const buildBesideOwnStatusCommit = async (movedOn?: string) => {
+    let other = '';
+    const otherBranch = branchForTask(2);
+    const moved = movedOn ?? otherBranch;
+    const before = { branches: { ...REFS.branches, [otherBranch]: 'theirs1' }, tags: REFS.tags };
+    const github = fakeGitHub({
+      refs: [before, { branches: { ...before.branches, [moved]: 'status9' }, tags: REFS.tags }],
+      pushes: { [moved]: { actor: APP_LOGIN, after: 'status9' } },
+      afterBuild: () =>
+        appendTaskEvent(pool, {
+          taskId: other,
+          actor: ENGINE,
+          type: 'spec_status_set',
+          payload: { status: 'Implemented (#7)', path: SPEC, commitSha: 'status9' }
+        })
+    });
+    const agents = createFakePort(succeed);
+    const taskId = await taskInReady(github, agents);
+    other = await taskInSpeccing();
+    await tick({ pool, github: github.port, agents, publicUrl: PUBLIC_URL }, seeded.projectId);
+    return (await loadTask(pool, taskId))?.task;
+  };
+
+  test("Officina's own status commit on another task's branch during the build does not stop it", async () => {
+    expect(await buildBesideOwnStatusCommit()).toMatchObject({ stage: 'reviewing', blocked: null });
+  });
+
+  test("Officina's status commit counts as its own only on the branch it was recorded for", async () => {
+    const task = await buildBesideOwnStatusCommit('feature/x');
+
+    expect(task?.blocked?.question).toContain(
+      "branch feature/x was created with Officina's GitHub App"
+    );
   });
 
   test('a spec status commit stands for the verified head only when it sits right on it', async () => {

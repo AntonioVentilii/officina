@@ -1,4 +1,4 @@
-import { can, editsProject, type Role } from '@officina/core';
+import { branchForLearning, can, editsProject, type Role } from '@officina/core';
 import {
   decideLearning,
   inTransaction,
@@ -61,14 +61,6 @@ const titleFor = (learning: LearningRow) => {
 };
 
 /**
- * A rewritten edit gets a branch of its own: one an accept left before the rewrite starts from an
- * older default branch, while retries of the same edit keep reusing theirs.
- */
-const branchFor = (learning: LearningRow) =>
-  `officina/learning-${learning.id.slice(0, 8)}` +
-  (learning.rewrittenAt ? `-${learning.rewrittenAt.getTime().toString(36)}` : '');
-
-/**
  * Opens the pull request with exactly the edit people saw; a branch an earlier attempt left is
  * reused. When the default branch changed so the edit no longer applies, nothing is written.
  */
@@ -88,7 +80,7 @@ const openLearningPullRequest = async (
   });
   const edited = applyEdit(current?.text ?? null, learning);
   if (!edited.ok) return edited;
-  const branch = branchFor(learning);
+  const branch = branchForLearning(learning);
   const title = titleFor(learning);
   await github.createBranch({ ...ref, branch, from: project.defaultBranch });
   // A branch an earlier attempt left may already hold the edit; writing it again is skipped.
@@ -176,7 +168,10 @@ const closeLeftPullRequest = async (
   const project = (await loadProject(client, projectId))!;
   if (project.installationId === null) return;
   // The branch of the edit as it stands, and the first one, which an accept before a rewrite used.
-  const branches = new Set([branchFor(learning), branchFor({ ...learning, rewrittenAt: null })]);
+  const branches = new Set([
+    branchForLearning(learning),
+    branchForLearning({ ...learning, rewrittenAt: null })
+  ]);
   for (const branch of branches)
     await github.closePullRequestsFrom({
       installationId: project.installationId,

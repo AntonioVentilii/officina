@@ -30,7 +30,11 @@ const ONBOARDED = {
 const fakeGitHub = (changedPaths: readonly string[]) => {
   const opened: { title: string; body: string }[] = [];
   const port = {
-    refSnapshot: async () => ({ defaultHead: 'main1', tags: {} }),
+    refSnapshot: async () => ({ branches: { main: 'main1' }, tags: {} }),
+    runToken: async () => 'token',
+    appBotLogin: async () => 'officina[bot]',
+    refActivity: async () => ({ activities: [], complete: true }),
+    revokeToken: async () => undefined,
     isPullRequestMerge: async () => false,
     installationToken: async () => 'token',
     pushFacts: async () => ({ headSha: 'sha1', changedPaths, diffLines: 200 }),

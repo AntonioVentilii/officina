@@ -86,6 +86,53 @@ export const latestBuild = async (
   ).rows[0] ?? null;
 
 /**
+ * The numbers of the other tasks of the same project whose run of one of these roles overlapped
+ * this run, so far: their own branches could move while this run went on.
+ */
+export const overlappingRunTasks = async (
+  pool: Pool,
+  runId: string,
+  roles: readonly string[]
+): Promise<number[]> =>
+  (
+    await pool.query<{ number: number }>(
+      `select distinct other_task.number from runs mine
+       join tasks my_task on my_task.id = mine.task_id
+       join tasks other_task on other_task.project_id = my_task.project_id
+         and other_task.id <> my_task.id
+       join runs other on other.task_id = other_task.id
+       where mine.id = $1 and other.agent_role = any($2::text[])
+         and other.started_at is not null
+         and (other.finished_at is null or other.finished_at >= mine.started_at)
+       order by other_task.number`,
+      [runId, roles]
+    )
+  ).rows.map((row) => row.number);
+
+/**
+ * The spec status commits Officina itself wrote on the task branches of this run's project since
+ * the run started, with the number of the task whose branch each is on: Officina pushes them with
+ * the App's identity, like a builder's token would, so they are told apart by sha and branch.
+ */
+export const ownStatusCommitsDuring = async (
+  pool: Pool,
+  runId: string
+): Promise<{ taskNumber: number; sha: string }[]> =>
+  (
+    await pool.query<{ taskNumber: number; sha: string }>(
+      `select t.number as "taskNumber",
+              coalesce(e.payload->>'commitSha', e.payload->>'unverified') as sha
+       from runs mine
+       join tasks my_task on my_task.id = mine.task_id
+       join tasks t on t.project_id = my_task.project_id
+       join task_events e on e.task_id = t.id
+       where mine.id = $1 and e.type = 'spec_status_set' and e.created_at >= mine.started_at
+         and coalesce(e.payload->>'commitSha', e.payload->>'unverified') is not null`,
+      [runId]
+    )
+  ).rows;
+
+/**
  * Records one event of a run. Agent messages, tool output and rejected results all pass through
  * here before anyone can read them in the run log, so secrets are redacted on the way in.
  */
