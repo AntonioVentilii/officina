@@ -23,4 +23,5 @@ What the board shows is decided and tested in the API views (`apps/api/test/boar
 
 - A test name says the behaviour in a sentence: "an agent that touches red paths is stopped and the owner is asked".
 - Fakes implement the port the code depends on (`GitHubPort`, `ManagedAgentsPort`, `LearningGitHub`) and record calls, so a test asserts what was sent.
+- A race between two transactions waits until one waits on the other's lock (`untilWaitingOn` in `packages/db/test/locks.ts`), never for a fixed sleep.
 - Tests may spell out the values they expect; production code never copies them from a test.

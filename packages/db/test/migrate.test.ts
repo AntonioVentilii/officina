@@ -10,6 +10,7 @@ import {
   TASK_KINDS
 } from '@officina/core';
 import { migrate, upsertWorkspace } from '../src';
+import { backendPid, untilWaitingOn } from './locks';
 
 const url = process.env.TEST_DATABASE_URL;
 
@@ -161,7 +162,7 @@ describe.skipIf(!url)('migrations', () => {
       const created = await upsertWorkspace(first, 'atlas');
       const racing = upsertWorkspace(second, 'atlas');
       // The second registration is in flight, waiting on the first, when the first commits.
-      await Bun.sleep(50);
+      await untilWaitingOn(client, await backendPid(first));
       await first.query('commit');
       expect(await racing).toBe(created);
       await second.query('commit');
