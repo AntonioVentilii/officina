@@ -20,6 +20,8 @@
   let request = $state(untrack(() => draft?.request ?? ''));
   let busy = $state(false);
   let interview = $state(true);
+  // One per form: sending it again, after an error that hid a request already opened, opens nothing new.
+  const requestId = crypto.randomUUID();
 
   const ready = $derived(title.trim().length >= 3 && request.trim().length > 0);
 
@@ -31,7 +33,8 @@
       const created = await post<{ number: number }>(`/api/projects/${session.projectId}/tasks`, {
         title: title.trim(),
         request: request.trim(),
-        interview
+        interview,
+        requestId
       });
       toasts.show('ok', `Request #${created.number} opened`);
       // The request exists now: a failed refresh must not leave the form open to be sent twice.

@@ -152,7 +152,8 @@ const handInSchema = z.strictObject({
 const requestSchema = z.strictObject({
   title: z.string().trim().min(INPUT_LIMITS.title.min).max(INPUT_LIMITS.title.max),
   request: z.string().trim().min(1).max(INPUT_LIMITS.request),
-  interview: z.boolean().optional()
+  interview: z.boolean().optional(),
+  requestId: z.string().trim().min(1).max(INPUT_LIMITS.requestId).optional()
 });
 
 const commentSchema = z.strictObject({ body: z.string().trim().min(1).max(INPUT_LIMITS.comment) });

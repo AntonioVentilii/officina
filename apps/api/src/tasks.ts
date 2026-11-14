@@ -20,6 +20,7 @@ import {
   addComment,
   applyCommand,
   applyCommandIn,
+  findRequestedTask,
   findTaskIdByNumber,
   inTransaction,
   insertTask,
@@ -33,6 +34,7 @@ import {
   loadTask,
   loadTaskContext,
   lockProjectConfig,
+  nameRequestedTask,
   resolveProjectId,
   resolveProjectMember,
   type StoreError
@@ -48,7 +50,7 @@ import {
   questionFor,
   type ApprovalState
 } from './board';
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 
 /** A refused task command, with the HTTP status the API answers it with. */
 export class TaskCommandError extends Error {
@@ -118,6 +120,11 @@ interface RequestInput {
   readonly request: string;
   /** Skip the interviewer and go straight to triage; the project's config can also turn it off. */
   readonly skipInterview?: boolean | undefined;
+  /**
+   * The client's name for this request, the same each time it sends it again: a repeat from the
+   * same person finds the task the first one opened, rather than opening and interviewing twice.
+   */
+  readonly requestId?: string | undefined;
 }
 
 /**
@@ -132,7 +139,8 @@ export const createRequest = async (
     ...(await resolve(pool, input)),
     title: input.title,
     request: input.request,
-    skipInterview: input.skipInterview
+    skipInterview: input.skipInterview,
+    requestId: input.requestId
   });
 
 export const createRequestAs = async (
@@ -150,9 +158,12 @@ export const createRequestAs = async (
     );
   // The task, its request and a skipped interview land together, and all of them are decided
   // from one read of the config, taken under the project's lock: a task never exists without its
-  // request, and one that skips the interviewer is never seen waiting for it.
+  // request, and one that skips the interviewer is never seen waiting for it. The same lock makes
+  // a repeat of this request wait for the first and then find its task.
   const opened = await inTransaction(pool, async (client) => {
     const config = parseProjectConfig(await lockProjectConfig(client, projectId));
+    const before = await openedBefore(client, input);
+    if (before) return before;
     const { guards, hold } = guardRequest(config, member, input);
     const { task } = await insertTask(client, {
       projectId,
@@ -162,6 +173,7 @@ export const createRequestAs = async (
       guards,
       ...(hold ? { hold } : {})
     });
+    if (input.requestId) await nameRequestedTask(client, task.id, input.requestId);
     const interview = !input.skipInterview && (!config.ok || config.config.intake.interview);
     if (interview || hold) return task;
     const submitted = await applyCommandIn(client, {
@@ -175,6 +187,16 @@ export const createRequestAs = async (
   const { number } = (await loadTaskContext(pool, opened.id))!;
   return { number, stage: opened.stage };
 };
+
+/** The task an earlier send of this same request opened, when the client named the request. */
+const openedBefore = (client: PoolClient, input: ProjectActor & RequestInput) =>
+  input.requestId
+    ? findRequestedTask(client, {
+        projectId: input.projectId,
+        requesterId: input.memberId,
+        requestId: input.requestId
+      })
+    : null;
 
 /**
  * By rule, never a model's reading: words about secrets, access, publishing or the project's

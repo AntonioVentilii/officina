@@ -345,6 +345,17 @@ describe.skipIf(!url)('connector for Claude', () => {
     expect(missing).toMatchObject({ isError: true });
     const invalid = await tool(token, 'show_task', { number: 'one' });
     expect(invalid.isError).toBe(true);
+
+    const retried = {
+      title: 'Rename the Cancel button',
+      request: 'It should say Close.',
+      request_id: 'call-7'
+    };
+    const first = await tool(token, 'open_request', retried);
+    const again = await tool(token, 'open_request', retried);
+    expect(first.content[0]!.text).toContain('Opened task 2 in vici-app');
+    expect(again.content[0]!.text).toEqual(first.content[0]!.text);
+    expect((await pool.query('select id from tasks')).rows).toHaveLength(2);
   });
 
   test('every member sees every task in progress, with who asked and who approves', async () => {

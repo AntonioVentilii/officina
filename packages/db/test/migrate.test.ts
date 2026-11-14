@@ -51,7 +51,8 @@ describe.skipIf(!url)('migrations', () => {
       '0021_run_learning.sql',
       '0022_run_refs.sql',
       '0023_learning_branch_commit.sql',
-      '0024_access_event_project.sql'
+      '0024_access_event_project.sql',
+      '0026_task_request_id.sql'
     ]);
     expect(await migrate(client)).toEqual([]);
   });
