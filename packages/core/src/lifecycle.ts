@@ -167,6 +167,19 @@ export const newTask = (id: string, requesterId: string, kind: TaskKind = 'reque
   guards: []
 });
 
+/** What the real diff of a pushed head says, read from GitHub, never from an agent. */
+export interface PushedHead {
+  readonly headSha: string;
+  readonly changedPaths: readonly string[];
+  readonly addedPaths: readonly string[];
+  /** The catalog pages the added files fall under, as pushed, for the catalog check. */
+  readonly catalogPages: CatalogPages;
+  readonly diffLines: number;
+}
+
+/** Where feedback left on GitHub came from: a review, or a comment on the pull request. */
+export type GitHubFeedbackSource = { readonly reviewId: number } | { readonly commentId: number };
+
 export type Command =
   | { readonly type: 'submit_request' }
   | { readonly type: 'accept' }
@@ -185,33 +198,31 @@ export type Command =
     }
   | { readonly type: 'claim' }
   | { readonly type: 'release' }
-  | {
-      readonly type: 'push';
-      readonly headSha: string;
-      readonly changedPaths: readonly string[];
-      readonly addedPaths: readonly string[];
-      /** The catalog pages the added files fall under, as pushed, for the catalog check. */
-      readonly catalogPages: CatalogPages;
-      readonly diffLines: number;
-    }
+  | ({ readonly type: 'push' } & PushedHead)
   /** The builder answered a GitHub review and found nothing to change, so the head stays. */
   | { readonly type: 'unchanged'; readonly note: string }
   | { readonly type: 'review'; readonly verdict: 'approve' | 'changes'; readonly notes: string }
   | { readonly type: 'plan_approval'; readonly userVisible: boolean; readonly plan: PlanInput }
   | { readonly type: 'choose'; readonly userVisible: boolean; readonly plan: PlanInput }
   | { readonly type: 'merged' }
-  | { readonly type: 'ci_failed'; readonly details: string }
+  /** A check or a commit status failed on `headSha`, the task's head in its own terms. */
+  | { readonly type: 'ci_failed'; readonly headSha: string; readonly details: string }
   /** The task's pull request was closed on GitHub without being merged. */
   | { readonly type: 'pull_request_closed'; readonly pullRequest: number }
   | {
       readonly type: 'github_review';
       readonly headSha: string;
       readonly by: string;
-      readonly reviewId: number;
+      readonly source: GitHubFeedbackSource;
       readonly notes: string;
-      /** A bot review that left nothing on the code, only its verdict and overview. */
+      /** A bot review or comment that left nothing on the code, only its verdict and overview. */
       readonly overviewOnly: boolean;
     }
+  /**
+   * The task branch moved on GitHub to a head Officina did not push: a review bot's fix, a person's
+   * commit, an update from the default branch. The new head is taken in like a build round's push.
+   */
+  | ({ readonly type: 'outside_push' } & PushedHead)
   | {
       readonly type: 'block';
       readonly question: string;
@@ -255,6 +266,8 @@ export type DomainEvent =
       readonly headSha: string;
       readonly changedPaths: readonly string[];
       readonly diffLines: number;
+      /** Pushed on GitHub by someone other than the task's builder. */
+      readonly outside?: true;
     }
   | { readonly type: 'build_unchanged'; readonly headSha: string; readonly note: string }
   | {
@@ -265,10 +278,11 @@ export type DomainEvent =
       readonly notes: string;
       readonly by?: string;
       readonly githubReviewId?: number;
+      readonly githubCommentId?: number;
       readonly overviewOnly?: boolean;
     }
   | { readonly type: 'guardrail_tripped'; readonly guardrail: Guardrail; readonly details: string }
-  | { readonly type: 'ci_failed'; readonly details: string }
+  | { readonly type: 'ci_failed'; readonly headSha: string; readonly details: string }
   | { readonly type: 'pull_request_closed'; readonly pullRequest: number }
   | { readonly type: 'blocked'; readonly blocked: Blocked }
   | { readonly type: 'unblocked'; readonly answer: string }
@@ -520,8 +534,136 @@ const backToBuilding = (task: Task, context: DecideContext, ...why: DomainEvent[
   return ok(moved, [...why, stageEvent]);
 };
 
-/** Stages where the pull request exists and a review left on it can still change the outcome. */
-const GITHUB_REVIEWABLE: ReadonlySet<Stage> = new Set([
+const pushedEvent = (head: PushedHead): Extract<DomainEvent, { type: 'pushed' }> => ({
+  type: 'pushed',
+  headSha: head.headSha,
+  changedPaths: head.changedPaths,
+  diffLines: head.diffLines
+});
+
+/** A guardrail that holds a pushed head for a person, what it found, and whom it asks. */
+interface Hold {
+  readonly guardrail: Extract<Guardrail, 'secret_files' | 'red_paths' | 'outside_agent_docs'>;
+  readonly found: readonly string[];
+  readonly question: string;
+  readonly askedOf: Role;
+}
+
+/**
+ * The guardrail a pushed head trips that only a person can clear, if any. Secrets hold whoever
+ * pushed; the paths an agent may not change, and the agent docs an onboarder must keep to, hold
+ * while an agent carries the work on, since it is who would build on that head.
+ */
+const holdFor = (task: Task, head: PushedHead, context: DecideContext, lane: Lane): Hold | null => {
+  // A secret committed to the branch must never reach a pull request people or bots read.
+  const secrets = secretFiles(head.changedPaths);
+  if (secrets.length)
+    return {
+      guardrail: 'secret_files',
+      found: secrets,
+      askedOf: 'owner',
+      question: `The branch adds or changes files that hold secrets: ${secrets.join(', ')}. Remove them from the branch and its history, rotate anything exposed, then build again or cancel.`
+    };
+  if (task.assignee?.kind !== 'agent') return null;
+  if (!context.config.lanes[lane].agentsBuild) {
+    const touched = redPaths(head.changedPaths, context.config.laneMatcher);
+    return {
+      guardrail: 'red_paths',
+      found: touched,
+      askedOf: 'owner',
+      question: `The branch changes paths an agent may not change: ${touched.join(', ')}. Claim the task or cancel it.`
+    };
+  }
+  const outside =
+    task.kind === 'onboarding'
+      ? head.changedPaths.filter((path) => !isAgentDocsPath(context.config, path))
+      : [];
+  if (outside.length === 0) return null;
+  return {
+    guardrail: 'outside_agent_docs',
+    found: outside,
+    askedOf: 'maintainer',
+    question: `The branch changes files outside the agent docs: ${outside.join(', ')}. Re-dispatch, claim the task, or cancel it.`
+  };
+};
+
+/**
+ * Takes a pushed head into a task that is building: the lane from the real diff (the stricter
+ * one wins), then the guardrails, then review. The task's assignee decides which guardrails apply,
+ * since it is who carries the work on: the paths an agent may not change, and the agent docs an
+ * onboarder must keep to, hold for whoever pushed.
+ */
+const landPush = (
+  task: Task,
+  head: PushedHead,
+  context: DecideContext,
+  ...before: DomainEvent[]
+): Decision => {
+  const actual = computeLane(head.changedPaths, context.config.laneMatcher);
+  const lane = stricterLane(task.lane ?? 'standard', actual);
+  const [guards, guardEvents] = guardedBy(task, context, head.changedPaths);
+  const pushed: DomainEvent[] = [...before];
+  if (lane !== task.lane) pushed.push({ type: 'lane_changed', from: task.lane, to: lane });
+  pushed.push(...guardEvents);
+  task = { ...task, guards };
+
+  const held = holdFor(task, head, context, lane);
+  if (held) {
+    const blocked: Blocked = { question: held.question, askedOf: { role: held.askedOf } };
+    const [moved, stageEvent] = moveTo(task, 'ready', { lane, assignee: null, blocked });
+    return ok(moved, [
+      ...pushed,
+      { type: 'guardrail_tripped', guardrail: held.guardrail, details: held.found.join(', ') },
+      stageEvent,
+      { type: 'assigned', assignee: null },
+      { type: 'blocked', blocked }
+    ]);
+  }
+
+  const maxLines = context.config.lanes[lane].diffLines;
+  if (head.diffLines > maxLines) {
+    const blocked: Blocked = {
+      question: `The change has ${head.diffLines} lines, over the ${lane} lane limit of ${maxLines}. Split the spec or reduce the change.`,
+      askedOf: { role: 'maintainer' }
+    };
+    return ok({ ...task, lane, blocked }, [
+      ...pushed,
+      {
+        type: 'guardrail_tripped',
+        guardrail: 'diff_too_large',
+        details: `${head.diffLines} > ${maxLines}`
+      },
+      { type: 'blocked', blocked }
+    ]);
+  }
+
+  // A new shared file nobody listed is the duplication of tomorrow: the builder lists it first.
+  const unlisted = unlistedFiles(
+    context.config.docs.standards.catalogs,
+    head.addedPaths,
+    head.catalogPages
+  );
+  if (unlisted.length) {
+    return backToBuilding({ ...task, lane, headSha: head.headSha }, context, ...pushed, {
+      type: 'guardrail_tripped',
+      guardrail: 'unlisted_files',
+      details: describeUnlisted(unlisted)
+    });
+  }
+
+  const [moved, stageEvent] = moveTo(task, 'reviewing', {
+    lane,
+    headSha: head.headSha,
+    reviews: {}
+  });
+  return ok(moved, [...pushed, stageEvent]);
+};
+
+/**
+ * Stages where the pull request holds a head Officina took in, so feedback on it (a review, a
+ * failed check, a push from outside) can still change the outcome.
+ */
+export const GITHUB_REVIEWABLE: ReadonlySet<Stage> = new Set([
   'reviewing',
   'choosing',
   'verifying',
@@ -721,127 +863,7 @@ export const decide = (
       const assignee = task.assignee;
       if (assignee === null || !isAssignee(assignee, actor)) return fail('not_allowed');
 
-      const pushed: DomainEvent = {
-        type: 'pushed',
-        headSha: command.headSha,
-        changedPaths: command.changedPaths,
-        diffLines: command.diffLines
-      };
-      const actual = computeLane(command.changedPaths, context.config.laneMatcher);
-      const lane = stricterLane(task.lane ?? 'standard', actual);
-      const [guards, guardEvents] = guardedBy(task, context, command.changedPaths);
-      const laneEvents: DomainEvent[] = [
-        ...(lane !== task.lane
-          ? [{ type: 'lane_changed', from: task.lane, to: lane } as const]
-          : []),
-        ...guardEvents
-      ];
-      task = { ...task, guards };
-
-      // A secret committed to the branch must never reach a pull request people or bots read.
-      const secrets = secretFiles(command.changedPaths);
-      if (secrets.length) {
-        const blocked: Blocked = {
-          question: `The branch adds or changes files that hold secrets: ${secrets.join(', ')}. Remove them from the branch and its history, rotate anything exposed, then build again or cancel.`,
-          askedOf: { role: 'owner' }
-        };
-        const [moved, stageEvent] = moveTo(task, 'ready', { lane, assignee: null, blocked });
-        return ok(moved, [
-          pushed,
-          ...laneEvents,
-          { type: 'guardrail_tripped', guardrail: 'secret_files', details: secrets.join(', ') },
-          stageEvent,
-          { type: 'assigned', assignee: null },
-          { type: 'blocked', blocked }
-        ]);
-      }
-
-      if (assignee.kind === 'agent' && !context.config.lanes[lane].agentsBuild) {
-        const touched = redPaths(command.changedPaths, context.config.laneMatcher);
-        const blocked: Blocked = {
-          question: `An agent changed paths an agent may not change: ${touched.join(', ')}. Claim the task or cancel it.`,
-          askedOf: { role: 'owner' }
-        };
-        const [moved, stageEvent] = moveTo(task, 'ready', { lane, assignee: null, blocked });
-        return ok(moved, [
-          pushed,
-          ...laneEvents,
-          { type: 'guardrail_tripped', guardrail: 'red_paths', details: touched.join(', ') },
-          stageEvent,
-          { type: 'assigned', assignee: null },
-          { type: 'blocked', blocked }
-        ]);
-      }
-
-      if (assignee.kind === 'agent' && task.kind === 'onboarding') {
-        const outside = command.changedPaths.filter(
-          (path) => !isAgentDocsPath(context.config, path)
-        );
-        if (outside.length) {
-          const blocked: Blocked = {
-            question: `The onboarder changed files outside the agent docs: ${outside.join(', ')}. Re-dispatch, claim the task, or cancel it.`,
-            askedOf: { role: 'maintainer' }
-          };
-          const [moved, stageEvent] = moveTo(task, 'ready', { lane, assignee: null, blocked });
-          return ok(moved, [
-            pushed,
-            ...laneEvents,
-            {
-              type: 'guardrail_tripped',
-              guardrail: 'outside_agent_docs',
-              details: outside.join(', ')
-            },
-            stageEvent,
-            { type: 'assigned', assignee: null },
-            { type: 'blocked', blocked }
-          ]);
-        }
-      }
-
-      const maxLines = context.config.lanes[lane].diffLines;
-      if (command.diffLines > maxLines) {
-        const blocked: Blocked = {
-          question: `The change has ${command.diffLines} lines, over the ${lane} lane limit of ${maxLines}. Split the spec or reduce the change.`,
-          askedOf: { role: 'maintainer' }
-        };
-        return ok({ ...task, lane, blocked }, [
-          pushed,
-          ...laneEvents,
-          {
-            type: 'guardrail_tripped',
-            guardrail: 'diff_too_large',
-            details: `${command.diffLines} > ${maxLines}`
-          },
-          { type: 'blocked', blocked }
-        ]);
-      }
-
-      // A new shared file nobody listed is the duplication of tomorrow: the builder lists it first.
-      const unlisted = unlistedFiles(
-        context.config.docs.standards.catalogs,
-        command.addedPaths,
-        command.catalogPages
-      );
-      if (unlisted.length) {
-        return backToBuilding(
-          { ...task, lane, headSha: command.headSha },
-          context,
-          pushed,
-          ...laneEvents,
-          {
-            type: 'guardrail_tripped',
-            guardrail: 'unlisted_files',
-            details: describeUnlisted(unlisted)
-          }
-        );
-      }
-
-      const [moved, stageEvent] = moveTo(task, 'reviewing', {
-        lane,
-        headSha: command.headSha,
-        reviews: {}
-      });
-      return ok(moved, [pushed, ...laneEvents, stageEvent]);
+      return landPush(task, command, context, pushedEvent(command));
     }
 
     case 'unchanged': {
@@ -930,9 +952,15 @@ export const decide = (
     }
 
     case 'ci_failed': {
-      if (task.stage !== 'merging') return fail('wrong_stage');
+      // Before merging too: nobody should review, plan or verify a head whose checks are red.
+      if (!GITHUB_REVIEWABLE.has(task.stage)) return fail('wrong_stage');
       if (actor.kind !== 'engine') return fail('not_allowed');
-      return backToBuilding(task, context, { type: 'ci_failed', details: command.details });
+      if (command.headSha !== task.headSha) return fail('stale_head');
+      return backToBuilding(task, context, {
+        type: 'ci_failed',
+        headSha: command.headSha,
+        details: command.details
+      });
     }
 
     case 'pull_request_closed': {
@@ -971,8 +999,23 @@ export const decide = (
         verdict: 'changes',
         notes: command.notes,
         by: command.by,
-        githubReviewId: command.reviewId,
+        ...('reviewId' in command.source
+          ? { githubReviewId: command.source.reviewId }
+          : { githubCommentId: command.source.commentId }),
         overviewOnly: command.overviewOnly
+      });
+    }
+
+    case 'outside_push': {
+      if (!GITHUB_REVIEWABLE.has(task.stage)) return fail('wrong_stage');
+      if (actor.kind !== 'engine') return fail('not_allowed');
+      if (command.headSha === task.headSha) return fail('stale_head');
+      // Back to the build stage first, so the new head goes through the same checks as the
+      // builder's own push; reviews, plans and approvals of the old head no longer stand for it.
+      const [building, stageEvent] = moveTo(task, 'building');
+      return landPush(building, command, context, stageEvent, {
+        ...pushedEvent(command),
+        outside: true
       });
     }
 

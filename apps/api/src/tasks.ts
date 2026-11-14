@@ -17,17 +17,19 @@ import {
 import {
   addComment,
   applyCommand,
-  createTask,
+  applyCommandIn,
   findTaskIdByNumber,
+  inTransaction,
+  insertTask,
   latestChooserResult,
   listProjectMemberProfiles,
   listProjectMembers,
   listRuns,
   listTaskSummaries,
-  loadProjectConfig,
   loadProjectMember,
   loadTask,
   loadTaskContext,
+  lockProjectConfig,
   resolveProjectId,
   resolveProjectMember,
   type StoreError
@@ -143,27 +145,32 @@ export const createRequestAs = async (
       'watchers can read but not open requests; an owner can give the contributor role',
       403
     );
-  const config = parseProjectConfig(await loadProjectConfig(pool, projectId));
-  const { guards, hold } = guardRequest(config, member, input);
-  // The task and the request it carries land together: a task never exists without its request.
-  const { task } = await createTask(pool, {
-    projectId,
-    title: input.title,
-    requesterId: memberId,
-    request: input.request,
-    guards,
-    ...(hold ? { hold } : {})
+  // The task, its request and a skipped interview land together, and all of them are decided
+  // from one read of the config, taken under the project's lock: a task never exists without its
+  // request, and one that skips the interviewer is never seen waiting for it.
+  const opened = await inTransaction(pool, async (client) => {
+    const config = parseProjectConfig(await lockProjectConfig(client, projectId));
+    const { guards, hold } = guardRequest(config, member, input);
+    const { task } = await insertTask(client, {
+      projectId,
+      title: input.title,
+      requesterId: memberId,
+      request: input.request,
+      guards,
+      ...(hold ? { hold } : {})
+    });
+    const interview = !input.skipInterview && (!config.ok || config.config.intake.interview);
+    if (interview || hold) return task;
+    const submitted = await applyCommandIn(client, {
+      taskId: task.id,
+      command: { type: 'submit_request' },
+      actor
+    });
+    if (!submitted.ok) throw new TaskCommandError(ERROR_TEXT[submitted.error]);
+    return submitted.task;
   });
-  const { number } = (await loadTaskContext(pool, task.id))!;
-  const interview = !input.skipInterview && (!config.ok || config.config.intake.interview);
-  if (interview || hold) return { number, stage: task.stage };
-  const submitted = await applyCommand(pool, {
-    taskId: task.id,
-    command: { type: 'submit_request' },
-    actor
-  });
-  if (!submitted.ok) throw new TaskCommandError(ERROR_TEXT[submitted.error]);
-  return { number, stage: submitted.task.stage };
+  const { number } = (await loadTaskContext(pool, opened.id))!;
+  return { number, stage: opened.stage };
 };
 
 /**
@@ -211,8 +218,16 @@ export type TaskAction =
   | { readonly type: 'claim' }
   | { readonly type: 'approve' }
   | { readonly type: 'changes'; readonly note: string }
-  /** With `option`, the letter of an option the question offers, and `text` an optional note. */
-  | { readonly type: 'answer'; readonly text: string; readonly option?: string | undefined }
+  /**
+   * With `option`, the letter of an option the question offers, `version` the task version the
+   * question was read at, and `text` an optional note.
+   */
+  | {
+      readonly type: 'answer';
+      readonly text: string;
+      readonly option?: string | undefined;
+      readonly version?: number | undefined;
+    }
   | { readonly type: 'cancel'; readonly reason: string }
   | { readonly type: 'decline'; readonly reason: string };
 
@@ -234,10 +249,32 @@ const toCommand = (action: TaskAction): Command => {
   }
 };
 
+const QUESTION_CHANGED =
+  'the task changed since you read this question; look at it again and choose again';
+
+/** The option picked from the question as the person read it, refused once the task moved on. */
+const pickedOption = async (
+  pool: Pool,
+  taskId: string,
+  key: string,
+  version: number | undefined
+) => {
+  if (version === undefined)
+    throw new TaskCommandError(
+      'a picked option needs the version of the question it was read at',
+      400
+    );
+  const stored = await loadTask(pool, taskId);
+  if (stored && stored.version !== version) throw new TaskCommandError(QUESTION_CHANGED);
+  const option = findOption(stored?.task.blocked?.options, key);
+  if (!option) throw new TaskCommandError('the open question offers no such option');
+  return { option, version };
+};
+
 /**
  * The answer as the thread keeps it. A picked option is written out by its letter and label, and
- * holds only for the task version it was read from, so a question asked meanwhile, even with the
- * same words, is never answered by it.
+ * holds only for the task version the person read the question at, so a question asked meanwhile,
+ * even with the same words, is never answered by it.
  */
 const resolveAnswer = async (
   pool: Pool,
@@ -249,12 +286,10 @@ const resolveAnswer = async (
     if (!action.text.trim()) throw new TaskCommandError('write an answer or pick an option', 400);
     return { action };
   }
-  const stored = await loadTask(pool, taskId);
-  const option = findOption(stored?.task.blocked?.options, action.option);
-  if (!stored || !option) throw new TaskCommandError('the open question offers no such option');
+  const { option, version } = await pickedOption(pool, taskId, action.option, action.version);
   return {
     action: { type: 'answer', text: optionAnswer(action.option, option, action.text) },
-    expectedVersion: stored.version
+    expectedVersion: version
   };
 };
 

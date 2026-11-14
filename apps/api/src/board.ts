@@ -720,6 +720,8 @@ export const taskView = async (
           question: shown.text(questionFor(viewerMember(viewer), row.blocked)),
           needs: handoffNeeds(row.blocked),
           options: shown.value(optionsFor(viewerMember(viewer), row.blocked)) ?? [],
+          // An option picked from this question holds only for the version it was read at.
+          version: row.version,
           askedOf: askedOfLabel(row.blocked.askedOf, facts.names)
         }
       : null,

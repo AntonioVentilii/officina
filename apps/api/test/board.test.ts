@@ -700,9 +700,16 @@ describe.skipIf(!url)('board api', () => {
     expect(JSON.stringify(other)).not.toContain('OPTION_A');
 
     const actions = `${project}/tasks/1/actions`;
+    const version = seen.blocked.version;
     expect((await call(owner, actions, { type: 'answer' })).status).toBe(400);
-    expect((await call(owner, actions, { type: 'answer', option: 'c' })).status).toBe(409);
-    const answered = await call(owner, actions, { type: 'answer', option: 'b', text: 'Short.' });
+    expect((await call(owner, actions, { type: 'answer', option: 'b' })).status).toBe(400);
+    expect((await call(owner, actions, { type: 'answer', option: 'c', version })).status).toBe(409);
+    const answered = await call(owner, actions, {
+      type: 'answer',
+      option: 'b',
+      text: 'Short.',
+      version
+    });
     expect(answered.status).toBe(200);
     const after = await json(await call(owner, `${project}/tasks/1`));
     expect(after.blocked).toBeNull();
@@ -710,6 +717,50 @@ describe.skipIf(!url)('board api', () => {
       author: 'Antonio',
       body: 'Option (b): Lead with evidence\n\nShort.'
     });
+  });
+
+  test('an option picked on a screen that shows an older question answers nothing', async () => {
+    const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    await createRequest(pool, { title: 'Hypothesis copy', request: 'Say it right.' });
+    const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
+    const ask = (question: string) =>
+      applyCommand(pool, {
+        taskId,
+        actor: { kind: 'agent', role: 'interviewer', version: 1 },
+        command: {
+          type: 'block',
+          question,
+          askedOf: { memberId: seeded.ownerId },
+          options: [{ label: 'Yes' }, { label: 'No' }]
+        }
+      });
+    const project = `/api/projects/${seeded.projectId}`;
+    await ask('Keep the old name?');
+    const stale = (await json(await call(owner, `${project}/tasks/1`))).blocked.version;
+
+    // Meanwhile the question is answered elsewhere and a new one with the same letters arrives.
+    await applyCommand(pool, {
+      taskId,
+      actor: seeded.owner,
+      command: { type: 'answer', text: 'Keep it.' }
+    });
+    await ask('Delete the archive?');
+    const actions = `${project}/tasks/1/actions`;
+    const refused = await call(owner, actions, { type: 'answer', option: 'a', version: stale });
+    expect(refused.status).toBe(409);
+    expect((await json(refused)).error).toContain('changed since you read this question');
+    const open = await json(await call(owner, `${project}/tasks/1`));
+    expect(open.blocked.question).toBe('Delete the archive?');
+
+    const answered = await call(owner, actions, {
+      type: 'answer',
+      option: 'b',
+      version: open.blocked.version
+    });
+    expect(answered.status).toBe(200);
+    expect((await json(await call(owner, `${project}/tasks/1`))).comments.at(-1).body).toBe(
+      'Option (b): No'
+    );
   });
 
   test("an owner of one project cannot read, act on or decide another project's work", async () => {
