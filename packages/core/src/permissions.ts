@@ -23,7 +23,8 @@ export const ACTIONS = [
   'merge',
   'see_confidential',
   'publish',
-  'manage_members'
+  'manage_members',
+  'see_access_log'
 ] as const;
 export type Action = (typeof ACTIONS)[number];
 
@@ -47,7 +48,8 @@ export const PERMISSIONS = {
   merge: 'maintainer',
   see_confidential: 'maintainer',
   publish: 'owner',
-  manage_members: 'owner'
+  manage_members: 'owner',
+  see_access_log: 'owner'
 } as const satisfies Readonly<Record<Action, Role>>;
 
 /**
@@ -81,7 +83,8 @@ export const ACTION_LABELS: Readonly<Record<Action, string>> = {
   see_confidential:
     "read and approve tasks that touch the project's confidential content (also anyone with the `confidential` domain)",
   publish: 'approve anything that publishes, deploys, changes access or touches secrets',
-  manage_members: 'invite members and change their roles'
+  manage_members: 'invite members and change their roles',
+  see_access_log: 'see who signed in, who sent sign-in links and which apps each member connected'
 };
 
 /** The action a member takes at each human gate. */

@@ -4,7 +4,7 @@ import { createGitHubClient } from '@officina/github';
 import { anthropicAuthFrom, createModelResolver } from '@officina/runner';
 import { Pool } from 'pg';
 import { createAgentsPort } from './engine';
-import { invite, loginLink, membersText } from './people';
+import { accessLogText, invite, loginLink, membersText } from './people';
 import { SetupError, addProject, setupAgents } from './setup';
 import {
   TaskCommandError,
@@ -40,6 +40,8 @@ const USAGE = `usage (on your machine, prefix with scripts/officina; on the serv
     members                                  who is in the project, when they joined, whether their
                                              latest link was used, when they were last seen and
                                              whether they connected Claude
+    access-log                               who signed in or out, who sent sign-in links, which
+                                             GitHub accounts and Claude apps each member connected
 
     People commands also take --repo <owner/name> (optional with a single project).
 
@@ -191,6 +193,11 @@ const main = async () => {
 
     if (command === 'members') {
       console.log(await membersText(pool, { repo: values.repo }));
+      return;
+    }
+
+    if (command === 'access-log') {
+      console.log(await accessLogText(pool, { repo: values.repo }));
       return;
     }
 

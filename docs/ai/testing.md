@@ -8,7 +8,7 @@
 | `bun run test:db`     | `packages/db`, `packages/engine` and `apps/api` against a throwaway Postgres (`packages/db/test/with-postgres.ts`)         | Docker  |
 | `bun run check:board` | svelte-check on the board, warnings fail it                                                                                | nothing |
 
-What the board shows is decided and tested in the API views (`apps/api/test/board.test.ts`). Its own pure logic is tested in `apps/board/test` (formatting in `format.test.ts`), importing from `src/lib` directly; Markdown sanitizing and run log folding are not covered yet.
+What the board shows is decided and tested in the API views (`apps/api/test/board.test.ts`). Its own pure logic is tested in `apps/board/test` (formatting in `format.test.ts`, overlapping loads in `latest.test.ts`), importing from `src/lib` directly; Markdown sanitizing and run log folding are not covered yet.
 
 ## Where a test goes
 

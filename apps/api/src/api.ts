@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { allowedActions } from '@officina/core';
+import { allowedActions, can } from '@officina/core';
 import type { HandInPort } from '@officina/engine';
 import {
   consumeOAuthState,
@@ -11,6 +11,7 @@ import {
   listMemberProjects,
   loadRun,
   markNotificationRead,
+  recordAccessEvent,
   memberForSession,
   redeemLoginLink,
   SESSION_TTL_MS,
@@ -36,7 +37,7 @@ import { checkAuthorization, consentRedirect } from './connector';
 import type { GitHubAccounts } from './github-accounts';
 import { decide as decideLearning, type LearningGitHub } from './learnings';
 import { notificationsView } from './notifications';
-import { inviteAgain, membersView } from './people';
+import { accessLogView, inviteAgain, membersView } from './people';
 import type { BoardEvent, RealtimeHub } from './realtime';
 import {
   TaskCommandError,
@@ -305,7 +306,9 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
       .post('/auth/sign-out', async ({ request, set }) => {
         mutation(request);
         const token = readCookie(request);
+        const member = token ? await memberForSession(pool, token) : null;
         if (token) await endSession(pool, token);
+        if (member) await recordAccessEvent(pool, { memberId: member.id, type: 'signed_out' });
         set.headers['set-cookie'] = sessionCookie('', 0, secure);
         return { ok: true };
       })
@@ -358,6 +361,11 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
           );
           if (!result.ok) return fail(result.why);
           const session = await createSession(pool, result.memberId);
+          await recordAccessEvent(pool, {
+            memberId: result.memberId,
+            type: 'signed_in',
+            detail: { method: 'github', login: result.login }
+          });
           return redirect(next, [clear, clearNext, sessionCookie(session, SESSION_TTL_MS, secure)]);
         }
         const consumed = await consumeOAuthState(pool, state);
@@ -369,7 +377,14 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
       .post('/auth/github/unlink', async ({ request }) => {
         mutation(request);
         const signed = await signedIn(request);
+        const login = await githubLoginOf(pool, signed.member.id);
         await unlinkGitHubAccount(pool, signed.member.id);
+        if (login)
+          await recordAccessEvent(pool, {
+            memberId: signed.member.id,
+            type: 'github_unlinked',
+            detail: { login }
+          });
         return { ok: true };
       })
       .get('/api/me', async ({ request }) => {
@@ -416,14 +431,18 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
           if (checked.redirectable) return { redirect: checked.redirect };
           throw new HttpError(400, checked.message);
         }
-        return {
-          redirect: await consentRedirect(
-            pool,
-            deps.publicUrl,
-            checked.request,
-            allow ? { allow: true, memberId: signed.member.id } : { allow: false }
-          )
-        };
+        const back = await consentRedirect(
+          pool,
+          deps.publicUrl,
+          checked.request,
+          allow ? { allow: true, memberId: signed.member.id } : { allow: false }
+        );
+        await recordAccessEvent(pool, {
+          memberId: signed.member.id,
+          type: allow ? 'connector_allowed' : 'connector_refused',
+          detail: { client: checked.request.client.name }
+        });
+        return { redirect: back };
       })
       .get('/api/stream', async ({ request }) => stream(await signedIn(request), request))
       .get('/api/projects/:projectId/board', async ({ request, params }) => {
@@ -521,9 +540,16 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
             publicUrl: deps.publicUrl,
             projectId: viewer.projectId,
             viewerRole: viewer.role,
+            viewerId: viewer.memberId,
             memberId: params.memberId
           })
         };
+      })
+      .get('/api/projects/:projectId/access-log', async ({ request, params }) => {
+        const viewer = viewerFor(await signedIn(request), params.projectId);
+        if (!can(viewer, 'see_access_log'))
+          throw new HttpError(403, 'only owners see who signed in and what they connected');
+        return { events: await accessLogView(pool, viewer.projectId) };
       })
       .get('/api/projects/:projectId/notifications', async ({ request, params }) => {
         const viewer = viewerFor(await signedIn(request), params.projectId);
