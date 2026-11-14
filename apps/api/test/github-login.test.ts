@@ -185,7 +185,8 @@ describe.skipIf(!url)('GitHub sign-in', () => {
     expect(linked.headers.get('location')).toBe('/?github=linked');
     expect(await accounts.tokenFor(seeded.ownerId)).toEqual({
       token: 'ghu_access',
-      login: 'antonio'
+      login: 'antonio',
+      userId: 42
     });
     const stored = await pool.query('select access_token_enc from github_accounts');
     expect(stored.rows[0].access_token_enc).not.toContain('ghu_access');
@@ -255,7 +256,7 @@ describe.skipIf(!url)('GitHub sign-in', () => {
     );
     expect(await accounts.complete('c', seeded.ownerId)).toMatchObject({ ok: true });
 
-    const fresh = { token: 'ghu_new', login: 'antonio' };
+    const fresh = { token: 'ghu_new', login: 'antonio', userId: 42 };
     expect(await accounts.tokenFor(seeded.ownerId)).toEqual(fresh);
     expect(await accounts.tokenFor(seeded.ownerId)).toEqual(fresh);
     expect(refreshedWith).toEqual(['ghr_old']);

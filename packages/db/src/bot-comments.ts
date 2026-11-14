@@ -1,6 +1,7 @@
 import { ENGINE } from '@officina/core';
 import type { Pool } from 'pg';
-import { SINCE_LAST_BUILD, appendTaskEvent } from './runs';
+import { SINCE_LAST_BUILD } from './runs';
+import { appendTaskEvent } from './task-history';
 
 /** A review bot's comment on a task's pull request, as it read when GitHub last reported it. */
 export interface BotComment {
