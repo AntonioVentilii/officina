@@ -1336,17 +1336,25 @@ describe.skipIf(!url)('board api', () => {
   /** Far longer than a notification takes, so only a lost one ever reaches it. */
   const EVENT_DEADLINE_MS = 10_000;
 
-  /** The first event the hub sends, or a failure once the deadline passes. */
+  /**
+   * The first event the hub sends, or a failure once the deadline passes. `unsubscribe` also
+   * stops the deadline, so a test that fails before awaiting `event` leaves no rejection behind.
+   */
   const nextEvent = (hub: { subscribe(listener: (event: BoardEvent) => void): () => void }) => {
-    let unsubscribe = () => {};
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let stopListening = () => {};
     const event = new Promise<BoardEvent>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('no event arrived')), EVENT_DEADLINE_MS);
-      unsubscribe = hub.subscribe((received) => {
+      timer = setTimeout(() => reject(new Error('no event arrived')), EVENT_DEADLINE_MS);
+      stopListening = hub.subscribe((received) => {
         clearTimeout(timer);
         resolve(received);
       });
     });
-    return { event, unsubscribe: () => unsubscribe() };
+    const unsubscribe = () => {
+      clearTimeout(timer);
+      stopListening();
+    };
+    return { event, unsubscribe };
   };
 
   /** Polls `read` until it holds, failing once the deadline passes. */
