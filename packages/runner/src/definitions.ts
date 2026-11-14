@@ -1,10 +1,9 @@
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
 import { AGENT_ROLES, OUTPUT_SCHEMAS, isBuildRole, type AgentRole } from '@officina/core';
 import type { AgentCreateParams } from '@anthropic-ai/sdk/resources/beta/agents/agents';
 import { z } from 'zod';
 import { PINNED_MODELS } from './models';
-import { loadStandard, withStandard } from './standard';
+import { loadPrompt, loadStandard, withStandard } from './standard';
 
 export type AgentTools = NonNullable<AgentCreateParams['tools']>;
 type AgentToolConfig = NonNullable<
@@ -101,11 +100,7 @@ export const loadDefinitions = async (
   const standard = await loadStandard();
   return Promise.all(
     RUNNER_ROLES.map(async (role) =>
-      buildDefinition(
-        role,
-        withStandard(await Bun.file(join(promptsDir, `${role}.md`)).text(), standard),
-        modelId
-      )
+      buildDefinition(role, withStandard(await loadPrompt(promptsDir, role), standard), modelId)
     )
   );
 };

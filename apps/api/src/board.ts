@@ -15,6 +15,7 @@ import {
   humanBuildReason,
   isGate,
   optionKey,
+  outranks,
   parseProjectConfig,
   policyContext,
   readsTask,
@@ -115,18 +116,11 @@ export const agentsView = () =>
 const article = (word: string) => (/^[aeiou]/i.test(word) ? `an ${word}` : `a ${word}`);
 
 /**
- * The maintainer floor adds nothing to read when an owner or maintainer is already required, since
- * that approval meets both.
+ * A requirement adds nothing to read when one it is outranked by is pending too, since that
+ * approval meets both: the maintainer floor folds into an owner requirement.
  */
 const readable = (pending: readonly Requirement[]) =>
-  pending.filter(
-    (requirement) =>
-      !(
-        'role' in requirement &&
-        requirement.role === 'maintainer' &&
-        pending.some((other) => other !== requirement && 'role' in other && other.role === 'owner')
-      )
-  );
+  pending.filter((requirement) => !pending.some((other) => outranks(other, requirement)));
 
 export const describeRequirement = (requirement: Requirement): string =>
   'role' in requirement
