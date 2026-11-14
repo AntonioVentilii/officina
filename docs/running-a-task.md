@@ -135,7 +135,9 @@ To stop a task at any time: `scripts/officina task cancel --number 1 --reason "W
   why; ask for the review on GitHub by hand.
 - **Other review bots.** A bot that comments on the code (CodeRabbit's inline comments, for example)
   sends the task back like Copilot. A bot that only writes a summary, as a review or as a comment on
-  the pull request, counts once the project lists it in `pull_request.review_bots`.
+  the pull request, counts once the project lists it in `pull_request.review_bots`. A comment
+  reaches the builder a few minutes after the bot last edited it, so a "working on it" placeholder
+  is never what the builder reads.
 - **Failing checks.** A check suite or a commit status that fails on the pull request's head sends
   the task back to the builder with what failed, at any point from review to merge.
 - **Commits from outside Officina.** When a bot, a person or GitHub's "Update branch" pushes to the

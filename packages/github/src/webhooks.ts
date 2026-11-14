@@ -55,6 +55,7 @@ export type WebhookAction =
       readonly details: string;
     };
 
+const COMMENT_ACTIONS: ReadonlySet<string> = new Set(['created', 'edited']);
 const TRUSTED_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
 
 interface RepoPayload {
@@ -147,7 +148,9 @@ export const parseWebhookEvent = (event: string | null, payload: unknown): Webho
     };
     const comment = body.comment;
     // A person's comment may only be a question; what a person wants changed comes as a review.
-    if (body.action !== 'created' || !body.issue?.pull_request || !body.issue.number) return null;
+    // An edit counts like a new comment: bots post a placeholder and edit it as they work.
+    if (!COMMENT_ACTIONS.has(body.action ?? '') || !body.issue?.pull_request || !body.issue.number)
+      return null;
     if (!comment?.id || !comment.user?.login || comment.user.type !== 'Bot') return null;
     return {
       kind: 'pull_request_commented',

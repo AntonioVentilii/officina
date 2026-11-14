@@ -261,7 +261,7 @@ export const autoVerified = async (pool: Pool, taskId: string): Promise<boolean>
 
 /**
  * Whether the task's last request for changes was an overview-only review or comment by the same
- * bot. A bot may review every push, and its overview of the builder's answer would otherwise send
+ * bot (comments of several bots forwarded together name each, comma-separated). A bot may review every push, and its overview of the builder's answer would otherwise send
  * the task back again and again; a review asking for changes on the code, or any other reviewer's,
  * still counts.
  */
@@ -273,7 +273,8 @@ export const answeredOverviewLast = async (
   Boolean(
     (
       await pool.query<{ last: boolean }>(
-        `select (payload->>'reviewer' = 'github' and payload->>'by' = $2
+        `select (payload->>'reviewer' = 'github'
+                 and $2 = any(string_to_array(payload->>'by', ', '))
                  and (payload->>'overviewOnly')::boolean is true) as last
          from task_events
          where task_id = $1 and type = 'review_recorded' and payload->>'verdict' = 'changes'

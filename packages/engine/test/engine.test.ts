@@ -4,6 +4,8 @@ import {
   appendTaskEvent,
   recordHeadCarried,
   reviewedHead,
+  markBotCommentsHandled,
+  recordBotComment,
   applyCommand,
   createTask,
   expectedHead,
@@ -31,6 +33,7 @@ import {
   adoptOutsidePushes,
   cancelStaleAutoMerges,
   finishVerifiedSpecs,
+  forwardSettledComments,
   openMissingPullRequests,
   requestCopilotReviews,
   runAgentStep,
@@ -1657,6 +1660,98 @@ describe.skipIf(!url)('engine', () => {
       stage: 'building',
       headSha: 'abc'
     });
+  });
+
+  test("a review bot's comment reaches the builder once it stops changing, as it last read", async () => {
+    await pool.query(
+      `update projects set config = jsonb_set(config, '{pull_request}', '{"review_bots": ["claude[bot]"]}')
+       where id = $1`,
+      [seeded.projectId]
+    );
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    const seen = (by: string, body: string, minutesAgo: number, commentId = 31) =>
+      pool.query(
+        `insert into task_events (task_id, actor, type, payload, created_at)
+         values ($1, '{"kind":"engine"}', 'github_comment_seen', $2, now() - make_interval(mins => $3))`,
+        [taskId, JSON.stringify({ commentId, by, body }), minutesAgo]
+      );
+    const github = fakeGitHub();
+
+    // A placeholder the bot just edited again is not settled yet.
+    await seen('claude[bot]', 'Claude is working...', 10);
+    await seen('claude[bot]', 'Two findings in the cache.', 0);
+    await forwardSettledComments(pool, github.port, [taskId]);
+    expect((await loadTask(pool, taskId))?.task.stage).toBe('merging');
+
+    // Settled: forwarded with its last text only, and auto-merge off as it leaves merging.
+    await pool.query(
+      `insert into task_events (task_id, actor, type, payload, created_at)
+       values ($1, '{"kind":"engine"}', 'github_comment_seen', $2, now() - interval '5 minutes')`,
+      [taskId, JSON.stringify({ commentId: 31, by: 'claude[bot]', body: 'Final: one finding.' })]
+    );
+    await seen('vercel[bot]', 'Preview ready.', 10, 32);
+    await forwardSettledComments(pool, github.port, [taskId]);
+    await forwardSettledComments(pool, github.port, [taskId]);
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({ stage: 'building', fixRounds: 1 });
+    const forwarded = await pool.query<{ notes: string; comment: string }>(
+      `select payload->>'notes' as notes, payload->>'githubCommentId' as comment from task_events
+       where task_id = $1 and type = 'review_recorded' and payload->>'reviewer' = 'github'`,
+      [taskId]
+    );
+    expect(forwarded.rows).toHaveLength(1);
+    expect(forwarded.rows[0]!.comment).toBe('31');
+    expect(forwarded.rows[0]!.notes).toContain('Final: one finding.');
+    expect(forwarded.rows[0]!.notes).not.toContain('working');
+    expect(forwarded.rows[0]!.notes).not.toContain('Preview ready');
+    expect(github.calls.filter((call) => call.method === 'cancelAutoMerge')).toHaveLength(1);
+
+    // The builder answers; each bot's next comment on that answer is left out, bot by bot.
+    await applyCommand(pool, {
+      taskId,
+      command: { type: 'unchanged', note: 'The cache is fine.' },
+      actor: { kind: 'agent', role: 'builder', version: 1 }
+    });
+    await pool.query(
+      `insert into task_events (task_id, actor, type, payload, created_at)
+       values ($1, '{"kind":"engine"}', 'github_comment_seen', $2, now() - interval '5 minutes')`,
+      [taskId, JSON.stringify({ commentId: 33, by: 'claude[bot]', body: 'Still one finding.' })]
+    );
+    await forwardSettledComments(pool, github.port, [taskId]);
+    expect((await loadTask(pool, taskId))?.task.stage).toBe('reviewing');
+    const handled = await pool.query(
+      `select 1 from task_events where task_id = $1 and type = 'github_comment_handled'
+         and payload->>'commentId' = '33'`,
+      [taskId]
+    );
+    expect(handled.rowCount).toBe(1);
+  });
+
+  test('a review bot comment still settling holds the merge handoff until it is dealt with', async () => {
+    await pool.query(
+      `update projects set config = jsonb_set(config, '{pull_request}', '{"review_bots": ["claude[bot]"]}')
+       where id = $1`,
+      [seeded.projectId]
+    );
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    await recordBotComment(pool, taskId, { commentId: 41, by: 'claude[bot]', body: 'Working...' });
+    const github = fakeGitHub({
+      branchHead: 'abc',
+      written: { commitSha: 'abc2', parentSha: 'abc' }
+    });
+    const awaiting = async () =>
+      (
+        await pool.query(
+          `select 1 from task_events where task_id = $1 and type = 'awaiting_merge'`,
+          [taskId]
+        )
+      ).rowCount;
+    await finishVerifiedSpecs(pool, github.port, [taskId]);
+    expect(await awaiting()).toBe(0);
+    await markBotCommentsHandled(pool, taskId, [41]);
+    await finishVerifiedSpecs(pool, github.port, [taskId]);
+    expect(await awaiting()).toBe(1);
   });
 
   test("Officina's own status commit on the verified head is not a push from outside", async () => {
