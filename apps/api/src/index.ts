@@ -1,5 +1,6 @@
 export { createApp, type App, type AppDependencies } from './app';
 export {
+  collectEachProject,
   nextPassDelay,
   startScheduler,
   type DueWork,

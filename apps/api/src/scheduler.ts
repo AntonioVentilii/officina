@@ -27,6 +27,26 @@ export interface Scheduler {
 }
 
 /**
+ * Collects the due work of each project in turn. A project whose pass throws is logged and left out
+ * of this pass only, so one broken project never holds back the others.
+ */
+export const collectEachProject = async (
+  projectIds: readonly string[],
+  collectOne: (projectId: string) => Promise<readonly DueWork[]>,
+  log: (message: string, details?: Record<string, unknown>) => void
+): Promise<DueWork[]> => {
+  const due: DueWork[] = [];
+  for (const projectId of projectIds) {
+    try {
+      due.push(...(await collectOne(projectId)));
+    } catch (error) {
+      log('project pass failed', { projectId, error: (error as Error).message });
+    }
+  }
+  return due;
+};
+
+/**
  * Polls for due work and starts each step without waiting for it, because an agent session can run
  * for many minutes. A step already running in this process is never started again; the database
  * claim guards against other processes. A failing pass or step is logged and never stops the loop;
