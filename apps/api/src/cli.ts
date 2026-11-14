@@ -4,13 +4,14 @@ import { createGitHubClient } from '@officina/github';
 import { anthropicAuthFrom, createModelResolver } from '@officina/runner';
 import { Pool } from 'pg';
 import { createAgentsPort } from './engine';
-import { invite, loginLink, membersText } from './people';
+import { accessLogText, invite, loginLink, membersText } from './people';
 import { SetupError, addProject, setupAgents } from './setup';
 import {
   TaskCommandError,
   actOnTask,
   createRequest,
   describeTask,
+  handIn,
   listTasksText,
   type TaskAction
 } from './tasks';
@@ -24,6 +25,8 @@ const USAGE = `usage (on your machine, prefix with scripts/officina; on the serv
     task submit   --number <n>                 send a request to triage without more questions
     task accept   --number <n>
     task claim    --number <n>                 build it yourself instead of the agent
+    task hand-in  --number <n> --title "<pull request title>" [--checked "<what you checked>" ...]
+                                               after pushing officina/task-<n>: send your build to review
     task approve  --number <n>
     task changes  --number <n> --note "<what to change>"
     task answer   --number <n> --text "<answer to the open question>"
@@ -40,6 +43,8 @@ const USAGE = `usage (on your machine, prefix with scripts/officina; on the serv
     members                                  who is in the project, when they joined, whether their
                                              latest link was used, when they were last seen and
                                              whether they connected Claude
+    access-log                               who signed in or out, who sent sign-in links, which
+                                             GitHub accounts and Claude apps each member connected
 
     People commands also take --repo <owner/name> (optional with a single project).
 
@@ -74,6 +79,13 @@ const agentsPort = () => {
   return createAgentsPort(auth);
 };
 
+/** The GitHub App's client, for the commands that read or write GitHub. */
+const githubClient = () =>
+  createGitHubClient({
+    appId: required('GITHUB_APP_ID'),
+    privateKeyPem: required('GITHUB_APP_PRIVATE_KEY')
+  });
+
 const main = async () => {
   const { positionals, values } = parseArgs({
     args: decodeArgs(Bun.argv.slice(2)),
@@ -95,6 +107,7 @@ const main = async () => {
       name: { type: 'string' },
       role: { type: 'string' },
       domains: { type: 'string' },
+      checked: { type: 'string', multiple: true },
       'skip-interview': { type: 'boolean' },
       help: { type: 'boolean', short: 'h' }
     }
@@ -147,6 +160,20 @@ const main = async () => {
           );
           return;
         }
+        case 'hand-in': {
+          const handedIn = await handIn(pool, githubClient(), {
+            ...target,
+            number: number(),
+            prTitle: need(values.title, 'title'),
+            verified: values.checked ?? [],
+            notVerified: [],
+            publicUrl: required('OFFICINA_PUBLIC_URL')
+          });
+          console.log(
+            `Task #${values.number} handed in, now ${handedIn.stage}${handedIn.pullRequest ? `, pull request #${handedIn.pullRequest}` : ''}.`
+          );
+          return;
+        }
         case 'submit':
         case 'accept':
         case 'claim':
@@ -194,6 +221,11 @@ const main = async () => {
       return;
     }
 
+    if (command === 'access-log') {
+      console.log(await accessLogText(pool, { repo: values.repo }));
+      return;
+    }
+
     if (command === 'invite') {
       console.log(
         await invite(pool, {
@@ -234,13 +266,9 @@ const main = async () => {
         'config-file': configFile
       } = values;
       if (!workspace || !repo || !email || !name) throw new SetupError(USAGE);
-      const github = createGitHubClient({
-        appId: required('GITHUB_APP_ID'),
-        privateKeyPem: required('GITHUB_APP_PRIVATE_KEY')
-      });
       const result = await addProject(
         pool,
-        { github, agents: agentsPort() },
+        { github: githubClient(), agents: agentsPort() },
         {
           workspace,
           repo,

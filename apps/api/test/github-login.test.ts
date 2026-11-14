@@ -1,11 +1,12 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { randomBytes } from 'node:crypto';
+import { findMemberByEmail } from '@officina/db';
 import { createGitHubAsUser, type UserTokens } from '@officina/github';
 import { Pool } from 'pg';
 import { resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
 import { createApp } from '../src/app';
 import { createGitHubAccounts } from '../src/github-accounts';
-import { loginLink } from '../src/people';
+import { accessLogView, invite, loginLink } from '../src/people';
 import { createTokenBox } from '../src/token-box';
 
 const url = process.env.TEST_DATABASE_URL;
@@ -207,6 +208,33 @@ describe.skipIf(!url)('GitHub sign-in', () => {
 
     const replay = await callback(app, second.state, second.oauth);
     expect(replay.headers.get('location')).toContain('/signin?error=');
+  });
+
+  test('linking an account another member had moves it, and the log says who lost it', async () => {
+    await invite(pool, {
+      publicUrl: 'https://officina.example',
+      email: 'gio@example.com',
+      name: 'Gio',
+      role: 'contributor',
+      domains: []
+    });
+    const gio = (await findMemberByEmail(pool, 'gio@example.com'))!.id;
+    const accounts = githubAs({ id: 42, login: 'antonio' });
+    expect(await accounts.complete('c', seeded.ownerId)).toMatchObject({ ok: true });
+    // Signing in with the account stores fresh tokens but links nothing new.
+    expect(await accounts.complete('c', null)).toMatchObject({ ok: true });
+    expect(await accounts.complete('c', gio)).toMatchObject({ ok: true, memberId: gio });
+
+    expect(await accounts.tokenFor(seeded.ownerId)).toBeNull();
+    const github = (await accessLogView(pool, seeded.projectId))
+      .filter((event) => event.type.startsWith('github_'))
+      .map((event) => `${event.member} ${event.text}`)
+      .reverse();
+    expect(github).toEqual([
+      'Antonio connected GitHub as @antonio',
+      'Antonio lost GitHub @antonio: it was connected by Gio',
+      'Gio connected GitHub as @antonio'
+    ]);
   });
 
   test('after a GitHub sign-in a member returns only to a path on this site', async () => {

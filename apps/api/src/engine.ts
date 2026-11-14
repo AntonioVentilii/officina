@@ -17,6 +17,7 @@ import {
   listSchedulableProjectIds,
   purgeConnectorCredentials,
   purgeExpiredCredentials,
+  purgeOldAccessEvents,
   purgeOldDeliveries
 } from '@officina/db';
 import type { GitHubClient } from '@officina/github';
@@ -54,6 +55,34 @@ export const createAgentsPort = (
   auth: AnthropicAuth,
   onRefreshError?: (error: unknown) => void
 ): ManagedAgentsPort => createSdkPort(createAnthropicClient(auth, onRefreshError));
+
+/** Rows that are only kept for a while: expired credentials, old access events and webhook deliveries. */
+const purgeStaleRows = async (
+  pool: Pool,
+  log: (message: string, details?: Record<string, unknown>) => void
+) => {
+  const purged = await purgeExpiredCredentials(pool).catch((error: unknown) => {
+    log('credential purge failed', { error: (error as Error).message });
+    return null;
+  });
+  if (purged && purged.loginLinks + purged.sessions + purged.oauthStates > 0)
+    log('expired credentials purged', purged);
+  const oldAccess = await purgeOldAccessEvents(pool).catch((error: unknown) => {
+    log('access log purge failed', { error: (error as Error).message });
+    return 0;
+  });
+  if (oldAccess > 0) log('access events older than a year purged', { rows: oldAccess });
+  const connector = await purgeConnectorCredentials(pool).catch((error: unknown) => {
+    log('connector credential purge failed', { error: (error as Error).message });
+    return 0;
+  });
+  if (connector > 0) log('expired connector credentials purged', { rows: connector });
+  const deliveries = await purgeOldDeliveries(pool).catch((error: unknown) => {
+    log('webhook delivery purge failed', { error: (error as Error).message });
+    return 0;
+  });
+  if (deliveries > 0) log('old webhook deliveries purged', { rows: deliveries });
+};
 
 /**
  * Starts the engine inside this process. Runs orphaned by a previous process are failed first, and
@@ -108,22 +137,7 @@ export const startEngine = async (input: {
       // Hourly is plenty: expired rows are already refused, they only take up space.
       if (Date.now() - lastPurge >= PURGE_INTERVAL_MS) {
         lastPurge = Date.now();
-        const purged = await purgeExpiredCredentials(input.pool).catch((error: unknown) => {
-          input.log('credential purge failed', { error: (error as Error).message });
-          return null;
-        });
-        if (purged && purged.loginLinks + purged.sessions + purged.oauthStates > 0)
-          input.log('expired credentials purged', purged);
-        const connector = await purgeConnectorCredentials(input.pool).catch((error: unknown) => {
-          input.log('connector credential purge failed', { error: (error as Error).message });
-          return 0;
-        });
-        if (connector > 0) input.log('expired connector credentials purged', { rows: connector });
-        const deliveries = await purgeOldDeliveries(input.pool).catch((error: unknown) => {
-          input.log('webhook delivery purge failed', { error: (error as Error).message });
-          return 0;
-        });
-        if (deliveries > 0) input.log('old webhook deliveries purged', { rows: deliveries });
+        await purgeStaleRows(input.pool, input.log);
       }
       // A member who takes a build over stops the agent's session, which would only spend now.
       const takenOver = await failTakenOverRuns(input.pool).catch((error: unknown) => {

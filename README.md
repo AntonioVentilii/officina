@@ -146,7 +146,7 @@ bun run test:db    # database, engine and API against a throwaway Postgres
 
 ## Bring your own repository
 
-1. Create a GitHub App with contents, issues and pull requests read/write, checks and metadata read-only (no Actions, Workflows or Administration), subscribed to `check_suite`, `issue_comment`, `issues`, `pull_request`, `pull_request_review` and `push`, and install it on the repositories you want.
+1. Create a GitHub App with contents, issues and pull requests read/write, checks, commit statuses and metadata read-only (no Actions, Workflows or Administration), subscribed to `check_suite`, `issue_comment`, `issues`, `pull_request`, `pull_request_review`, `push` and `status`, and install it on the repositories you want.
 2. Deploy the API (a `Dockerfile` and `fly.toml` are included) with the secrets listed in [docs/deployment.md](./docs/deployment.md).
 3. Add a `.github/officina.yml` to the repository: docs entry point, verify commands and the lanes with their approval policies ([format](./docs/architecture.md#11-project-config)).
 4. Register it and invite your team:

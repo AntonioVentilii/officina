@@ -325,7 +325,7 @@ describe.skipIf(!url)('board api', () => {
     const routes: [string, unknown][] = [
       [`${project}/tasks/1/actions`, { type: 'accept' }],
       [`${project}/tasks/1/comments`, { body: 'Thanks!' }],
-      [`${project}/learnings/${learningId}`, { decision: 'reject' }],
+      [`${project}/learnings/${learningId}`, { decision: 'reject', rewrittenAt: null }],
       [`${project}/tasks`, { title: 'Something new', request: 'Please.' }],
       ['/auth/github/unlink', {}],
       // Last: signing out ends the session the other requests use.
@@ -831,14 +831,20 @@ describe.skipIf(!url)('board api', () => {
     const before = await state();
     const decideThroughOwn = () =>
       call(cookie, `/api/projects/${seeded.projectId}/learnings/${learningId}`, {
-        decision: 'accept'
+        decision: 'accept',
+        rewrittenAt: null
       });
 
     for (const path of reads) expect((await call(cookie, path)).status).toBe(404);
     expect((await call(cookie, `${theirs}/tasks/1/actions`, { type: 'accept' })).status).toBe(404);
     expect((await call(cookie, `${theirs}/tasks/1/comments`, { body: 'Hi' })).status).toBe(404);
     expect(
-      (await call(cookie, `${theirs}/learnings/${learningId}`, { decision: 'accept' })).status
+      (
+        await call(cookie, `${theirs}/learnings/${learningId}`, {
+          decision: 'accept',
+          rewrittenAt: null
+        })
+      ).status
     ).toBe(404);
     const crossed = await decideThroughOwn();
     expect(crossed.status).toBe(409);
@@ -854,7 +860,12 @@ describe.skipIf(!url)('board api', () => {
     for (const path of reads) expect((await call(cookie, path)).status).toBe(200);
     expect((await decideThroughOwn()).status).toBe(409);
     expect(
-      (await call(cookie, `${theirs}/learnings/${learningId}`, { decision: 'accept' })).status
+      (
+        await call(cookie, `${theirs}/learnings/${learningId}`, {
+          decision: 'accept',
+          rewrittenAt: null
+        })
+      ).status
     ).toBe(200);
   });
 

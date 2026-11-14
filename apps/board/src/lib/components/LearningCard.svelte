@@ -39,7 +39,12 @@
     try {
       const { rewriting } = await post<{ rewriting: boolean }>(
         `/api/projects/${session.projectId}/learnings/${learning.id}`,
-        { decision, ...(note.trim() ? { note: note.trim() } : {}) }
+        {
+          decision,
+          // The edit shown here: one rewritten since is never accepted unseen.
+          rewrittenAt: learning.rewrittenAt,
+          ...(note.trim() ? { note: note.trim() } : {})
+        }
       );
       toasts.show(
         'ok',
