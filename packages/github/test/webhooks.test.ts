@@ -120,7 +120,12 @@ describe('webhook events', () => {
     const comment = (type: string, extra: Record<string, unknown> = {}) => ({
       action: 'created',
       issue: { number: 7, pull_request: { url: 'https://api.github.com/repos/x/pulls/7' } },
-      comment: { id: 31, body: 'Two problems found.', user: { login: 'coderabbitai[bot]', type } },
+      comment: {
+        id: 31,
+        body: 'Two problems found.',
+        updated_at: '2026-11-14T10:00:00Z',
+        user: { login: 'coderabbitai[bot]', type }
+      },
       repository,
       ...extra
     });
@@ -130,7 +135,8 @@ describe('webhook events', () => {
       prNumber: 7,
       commentId: 31,
       by: 'coderabbitai[bot]',
-      body: 'Two problems found.'
+      body: 'Two problems found.',
+      updatedAt: '2026-11-14T10:00:00Z'
     });
     expect(parseWebhookEvent('issue_comment', comment('User'))).toBeNull();
     // A bot editing its placeholder as it works: the edit is read like a new comment.

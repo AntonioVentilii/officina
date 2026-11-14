@@ -2177,7 +2177,12 @@ describe.skipIf(!url)('engine', () => {
     );
     const taskId = await createTaskInMerging(pool, seeded);
     await linkPullRequest(pool, taskId, 42);
-    await recordBotComment(pool, taskId, { commentId: 41, by: 'claude[bot]', body: 'Working...' });
+    await recordBotComment(pool, taskId, {
+      commentId: 41,
+      by: 'claude[bot]',
+      body: 'Working...',
+      updatedAt: null
+    });
     const github = fakeGitHub({
       branchHead: 'abc',
       written: { commitSha: 'abc2', parentSha: 'abc' }
