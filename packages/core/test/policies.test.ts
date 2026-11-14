@@ -1,5 +1,12 @@
 import { describe, expect, test } from 'bun:test';
-import { eligibleMembers, evaluatePolicy, type Member, type Policy } from '../src';
+import {
+  APPROVAL_FLOOR,
+  eligibleMembers,
+  evaluatePolicy,
+  outranks,
+  type Member,
+  type Policy
+} from '../src';
 import { owner, productContributor, watcher } from './fixtures';
 
 const policy: Policy = [{ requester: true }, { domain: 'product' }];
@@ -94,6 +101,14 @@ describe('approval policies', () => {
   test('a gate counts only members the permission matrix lets take its action', () => {
     const context = { ...gate, members: [owner, watcher], requesterId: 'visitor' };
     expect(eligibleMembers({ requester: true }, context)).toEqual([]);
+  });
+
+  test('an owner requirement outranks the maintainer floor, and nothing else outranks anything', () => {
+    expect(outranks({ role: 'owner' }, APPROVAL_FLOOR)).toBe(true);
+    expect(outranks(APPROVAL_FLOOR, { role: 'owner' })).toBe(false);
+    expect(outranks(APPROVAL_FLOOR, { role: 'maintainer' })).toBe(false);
+    expect(outranks({ role: 'owner' }, { domain: 'product' })).toBe(false);
+    expect(outranks({ role: 'owner' }, { requester: true })).toBe(false);
   });
 });
 

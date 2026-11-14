@@ -1,5 +1,3 @@
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import {
   computeLane,
   editsProject,
@@ -29,7 +27,7 @@ import {
   type StoredTaskContext,
   type TaskEventRow
 } from '@officina/db';
-import { RUNNER_ROLES, type RunnerRole } from '@officina/runner';
+import { RUNNER_ROLES, loadPrompt, type RunnerRole } from '@officina/runner';
 import { DATA_NOTICE, closingSections, fence } from './brief';
 import { PROJECT_SKIP_REASONS, claimStep, type SkipReason } from './claim';
 import { learnerRun } from './learner-run';
@@ -222,9 +220,7 @@ export const learningProblems =
           continue;
         }
         if (input.deps.promptsDir)
-          content = await readFile(join(input.deps.promptsDir, `${role}.md`), 'utf8').catch(
-            () => null
-          );
+          content = await loadPrompt(input.deps.promptsDir, role).catch(() => null);
       }
       if (find && content !== null && occurrences(content, find) !== 1) {
         problems.push(

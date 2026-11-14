@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { GuardPaths } from './guards';
 import { compileLaneMatcher, type Lane, type LaneMatcher } from './lanes';
+import { APPROVER_ROLES } from './roles';
 
 /** The board's two looks. A member's own pick wins over the project's default. */
 export const BOARD_LOOKS = ['modernista', 'tecnica'] as const;
@@ -39,12 +40,13 @@ const repoPath = z
 const markdownPage = repoPath.refine((path) => path.endsWith('.md'), 'must be a Markdown page');
 
 const requirementSchema = z.union([
-  z.strictObject({ role: z.enum(['maintainer', 'owner']) }),
+  z.strictObject({ role: z.enum(APPROVER_ROLES) }),
   z.strictObject({ domain: z.string().min(1), when: z.literal('user_visible').optional() }),
   z.strictObject({ requester: z.literal(true) })
 ]);
 
-const policySchema = z.array(requirementSchema);
+/** A gate's policy in a lane, left out to keep the default. */
+const policySchema = z.array(requirementSchema).optional();
 
 const laneSchema = z.strictObject({
   /** Ignored for `standard`, which is whatever is neither red nor green. */
@@ -56,9 +58,7 @@ const laneSchema = z.strictObject({
   fix_rounds: z.number().int().nonnegative().optional(),
   /** Green only: a result skips a person's check when nothing about it calls for one. */
   auto_verify: z.boolean().optional(),
-  approvals: z
-    .strictObject({ spec_review: policySchema.optional(), verifying: policySchema.optional() })
-    .optional()
+  approvals: z.strictObject({ spec_review: policySchema, verifying: policySchema }).optional()
 });
 
 const projectConfigSchema = z

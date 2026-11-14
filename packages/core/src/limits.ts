@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { TASK_BRANCH_PREFIX } from './steps';
 
 /**
  * How long each field a person or an agent hands in may be, in characters, and how many items a
@@ -30,3 +31,19 @@ export const INPUT_LIMITS = {
 export const checksSchema = z
   .array(z.string().trim().min(1).max(INPUT_LIMITS.check))
   .max(INPUT_LIMITS.checks);
+
+/** What every push hands back, the builder's and the onboarder's alike. */
+export const pushedFields = {
+  outcome: z.literal('pushed'),
+  // A pattern, not a refinement, so the agent's tool schema shows it too.
+  branch: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .regex(new RegExp(`^${TASK_BRANCH_PREFIX}`), `branch must start with ${TASK_BRANCH_PREFIX}`),
+  /** The pull request title, in the repository's required format. */
+  prTitle: z.string().trim().min(1).max(INPUT_LIMITS.prTitle.max),
+  verified: checksSchema,
+  notVerified: checksSchema
+};

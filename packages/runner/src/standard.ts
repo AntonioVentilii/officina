@@ -11,6 +11,13 @@ export const STANDARD_URL =
 export const loadStandard = (path: string = STANDARD_PATH): Promise<string> =>
   Bun.file(path).text();
 
+/** Officina's role prompts in this checkout, one `<role>.md` each. */
+export const PROMPTS_DIR = join(import.meta.dir, '..', '..', '..', 'agents');
+
+/** A role's prompt, read from a folder of role prompts (`PROMPTS_DIR` in production). */
+export const loadPrompt = (promptsDir: string, role: string): Promise<string> =>
+  Bun.file(join(promptsDir, `${role}.md`)).text();
+
 /**
  * A role's system prompt followed by the standard, so every role holds the code it specs, writes,
  * reviews or learns from to the same rules, and a change to the standard becomes a new agent version.
