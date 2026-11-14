@@ -507,7 +507,8 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
       })
       .get('/api/projects/:projectId/runs', async ({ request, params }) => {
         const viewer = technicalViewer(viewerFor(await signedIn(request), params.projectId));
-        return { runs: await runsView(pool, viewer, deps.consoleWorkspace), agents: agentsView() };
+        const runs = await runsView(pool, viewer, deps.consoleWorkspace);
+        return { runs, ...agentsView(runs) };
       })
       .get('/api/projects/:projectId/tasks/:number', async ({ request, params }) => {
         const viewer = viewerFor(await signedIn(request), params.projectId);

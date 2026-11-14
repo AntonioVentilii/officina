@@ -116,10 +116,16 @@ export interface Card {
 }
 
 /** A role on the Agents page, named and described by the API. */
+/** A role on the Agents page, with its numbers over the runs the page lists. */
 export interface AgentRoleInfo {
   readonly role: string;
   readonly label: string;
   readonly does: string;
+  readonly running: boolean;
+  readonly runs: number;
+  /** The share of its finished runs that succeeded, in percent; null before one finishes. */
+  readonly success: number | null;
+  readonly costCents: number;
 }
 
 export interface Run {
@@ -130,7 +136,7 @@ export interface Run {
   readonly label: string;
   readonly agentVersion: number;
   readonly stage: string;
-  readonly status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+  readonly status: 'running' | 'succeeded' | 'failed' | 'cancelled';
   readonly costCents: number | null;
   readonly startedAt: string | null;
   readonly finishedAt: string | null;

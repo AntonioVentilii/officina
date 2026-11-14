@@ -19,7 +19,6 @@
   const running = $derived(isActive(run));
 
   const STATUS = {
-    queued: { label: 'Queued', tone: 'info' },
     running: { label: 'Running', tone: 'accent' },
     succeeded: { label: 'Done', tone: 'ok' },
     failed: { label: 'Failed', tone: 'danger' },

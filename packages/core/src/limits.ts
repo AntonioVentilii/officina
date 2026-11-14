@@ -27,6 +27,10 @@ export const INPUT_LIMITS = {
   checks: 30
 } as const;
 
+/** Text cut to `max` characters, saying how many were left out, for a brief or a log to show. */
+export const clip = (text: string, max: number): string =>
+  text.length > max ? `${text.slice(0, max)} … (${text.length - max} more characters)` : text;
+
 /** What a hand-in lists as checked or left unchecked, the same for a person and the builder. */
 export const checksSchema = z
   .array(z.string().trim().min(1).max(INPUT_LIMITS.check))

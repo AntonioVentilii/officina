@@ -8,6 +8,7 @@ import {
   applicableRequirements,
   can,
   canAnswer,
+  clip,
   effectivePolicy,
   eligibleMembers,
   evaluatePolicy,
@@ -49,6 +50,7 @@ import {
   loadTaskContext,
   openOnboardingTask,
   memberNames,
+  stillRunning,
   type BoardTaskRow,
   type RunEventRow,
   type RunRow,
@@ -110,8 +112,32 @@ const AGENTS_PAGE: readonly { readonly role: AgentRole; readonly does: string }[
   { role: 'onboarder', does: "Writes a new project's agent docs before anything else is built" }
 ];
 
-export const agentsView = () =>
-  AGENTS_PAGE.map(({ role, does }) => ({ role, label: roleLabel(role), does }));
+const costOf = (runs: readonly RunView[]) =>
+  runs.reduce((sum, run) => sum + (run.costCents ?? 0), 0);
+
+/** The share of a role's finished runs that succeeded, in percent; none before one finishes. */
+const successRate = (runs: readonly RunView[]) => {
+  const finished = runs.filter((run) => run.status === 'succeeded' || run.status === 'failed');
+  const succeeded = finished.filter((run) => run.status === 'succeeded').length;
+  return finished.length ? Math.round((succeeded / finished.length) * 100) : null;
+};
+
+/** The Agents page: each role it lists with its numbers over the runs the page shows, and their cost. */
+export const agentsView = (runs: readonly RunView[]) => ({
+  agents: AGENTS_PAGE.map(({ role, does }) => {
+    const own = runs.filter((run) => run.role === role);
+    return {
+      role,
+      label: roleLabel(role),
+      does,
+      running: own.some(stillRunning),
+      runs: own.length,
+      success: successRate(own),
+      costCents: costOf(own)
+    };
+  }),
+  costCents: costOf(runs)
+});
 
 const article = (word: string) => (/^[aeiou]/i.test(word) ? `an ${word}` : `a ${word}`);
 
@@ -665,6 +691,8 @@ export const consoleUrl = (workspace: string | undefined, sessionId: string | nu
     ? `https://platform.claude.com/workspaces/${workspace}/sessions/${sessionId}`
     : null;
 
+type RunView = ReturnType<typeof runView>;
+
 const runView = (run: RunRow, consoleWorkspace: string | undefined) => ({
   id: run.id,
   taskNumber: run.taskNumber,
@@ -808,7 +836,7 @@ const text = (value: unknown, max: number): string => {
             )
             .join('')
         : '';
-  return raw.length > max ? `${raw.slice(0, max)}\n… (${raw.length - max} more characters)` : raw;
+  return clip(raw, max);
 };
 
 const toolSummary = (name: string, input: Record<string, unknown>): string => {

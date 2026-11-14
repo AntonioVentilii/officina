@@ -5,7 +5,7 @@ import { runJson } from './run-json';
 import { RUN_IS_ACTIVE } from './run-status';
 import { loadTask } from './store';
 
-export type RunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+export type RunStatus = 'running' | 'succeeded' | 'failed' | 'cancelled';
 
 const UNIQUE_VIOLATION = '23505';
 
@@ -167,7 +167,7 @@ export const finishRun = async (
   pool: Pool,
   runId: string,
   input: {
-    status: Exclude<RunStatus, 'queued' | 'running'>;
+    status: Exclude<RunStatus, 'running'>;
     costCents: number | null;
     result: unknown;
   }

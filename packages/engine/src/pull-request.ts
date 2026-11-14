@@ -18,6 +18,7 @@ import {
   latestBuild,
   linkPullRequest,
   loadTaskContext,
+  stillRunning,
   type StoredTaskContext
 } from '@officina/db';
 import type { GitHubClient, RepoRef } from '@officina/github';
@@ -61,7 +62,7 @@ const awaitsPullRequest = (context: StoredTaskContext | null): context is Stored
 
 /** The pushed result a finished build recorded, if it left one to open the pull request from. */
 const recordedPush = (run: { status: string; result: unknown } | null): PushedBuild | null => {
-  if (!run || run.status === 'running') return null;
+  if (!run || stillRunning(run)) return null;
   const built = run.result as Partial<PushedBuild> | null;
   return built?.outcome === 'pushed' && built.prTitle ? (built as PushedBuild) : null;
 };
@@ -264,7 +265,8 @@ export const adoptOutsidePushes = async (
     const context = await loadTaskContext(pool, taskId);
     if (!movableFromOutside(context)) continue;
     const { task } = context;
-    if ((await latestBuild(pool, taskId, BUILD_ROLES))?.status === 'running') continue;
+    const build = await latestBuild(pool, taskId, BUILD_ROLES);
+    if (build && stillRunning(build)) continue;
     const ref = { installationId: context.installationId, repo: context.repo };
     const expected = await expectedHead(pool, taskId);
     const prHead = (await github.pullRequest({ ...ref, pullRequest: context.pullRequest })).head
