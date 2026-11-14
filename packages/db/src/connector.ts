@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import { hashToken, newToken } from './auth';
+import { recordAccessEvent, recordConnectorUse } from './access';
 import { inTransaction } from './store';
 
 type Queryable = Pool | PoolClient;
@@ -122,8 +123,18 @@ export const issueConnectorTokens = async (
       input.refreshTtlMs / 1000
     ]
   );
+  // A token is issued when the app first connects and each time it refreshes while in use.
+  await recordConnectorUse(db, {
+    memberId: input.memberId,
+    clientId: input.clientId,
+    clientName: await clientName(db, input.clientId)
+  });
   return { accessToken, refreshToken };
 };
+
+const clientName = async (db: Queryable, clientId: string): Promise<string> =>
+  (await db.query<{ name: string }>('select name from connector_clients where id = $1', [clientId]))
+    .rows[0]?.name ?? 'an app';
 
 /**
  * Rotates a refresh token of the given client: spends it and issues the grant's next access and
@@ -156,6 +167,11 @@ export const rotateConnectorRefreshToken = async (
     if (!found) return null;
     if (found.spent) {
       await client.query('delete from connector_tokens where grant_id = $1', [found.grantId]);
+      await recordAccessEvent(client, {
+        memberId: found.memberId,
+        type: 'connector_revoked',
+        detail: { client: await clientName(client, input.clientId), reason: 'replayed_token' }
+      });
       return null;
     }
     await client.query('update connector_tokens set used_at = now() where token_hash = $1', [

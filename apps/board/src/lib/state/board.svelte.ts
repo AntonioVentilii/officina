@@ -1,4 +1,5 @@
 import { ApiError, get, post } from '$lib/api';
+import { latestOnly } from '$lib/latest';
 import { isActive } from '$lib/runs';
 import type { AgentRoleInfo, Card, Learning, MemberActivity, Notice, Run } from '$lib/types';
 import { coalesce, live } from './live.svelte';
@@ -18,7 +19,7 @@ class Board {
   #projectId: string | null = null;
   #unsubscribe: (() => void) | null = null;
   // Refreshes can overlap; only the latest one may set what the board shows.
-  #generation = 0;
+  #latest = latestOnly();
 
   waitingOnMe = $derived(this.tasks.filter((task) => task.waitingOn.me));
   proposedLearnings = $derived(this.learnings.filter((item) => item.status === 'proposed'));
@@ -48,8 +49,8 @@ class Board {
   async refresh() {
     const projectId = this.#projectId;
     if (!projectId) return;
-    const generation = ++this.#generation;
-    const stale = () => generation !== this.#generation || projectId !== this.#projectId;
+    const newer = this.#latest();
+    const stale = () => newer() || projectId !== this.#projectId;
     // Runs, learnings and members are for maintainers and owners; the API refuses them to anyone else.
     const technical = session.technical;
     try {

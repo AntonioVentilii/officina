@@ -43,7 +43,9 @@ describe.skipIf(!url)('migrations', () => {
       '0013_member_activity.sql',
       '0014_task_guards.sql',
       '0015_learning_rewrite.sql',
-      '0016_workspace_name_unique.sql'
+      '0016_workspace_name_unique.sql',
+      '0017_access_events.sql',
+      '0018_connector_use_daily.sql'
     ]);
     expect(await migrate(client)).toEqual([]);
   });
