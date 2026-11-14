@@ -16,3 +16,5 @@ export * from './members';
 export * from './notifications';
 export * from './access';
 export * from './bot-comments';
+export * from './changes';
+export * from './demo';

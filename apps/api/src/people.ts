@@ -19,8 +19,11 @@ import {
 import type { Pool } from 'pg';
 import { TaskCommandError } from './tasks';
 
-const SIGN_IN_TTL_MS = 30 * 60 * 1000;
-const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+/** How long a sign-in link and an invite link each work; the CLI help states both lifetimes. */
+export const SIGN_IN_TTL_MINUTES = 30;
+export const INVITE_TTL_DAYS = 7;
+const SIGN_IN_TTL_MS = SIGN_IN_TTL_MINUTES * 60 * 1000;
+const INVITE_TTL_MS = INVITE_TTL_DAYS * 24 * 60 * 60 * 1000;
 
 /** The token rides in the fragment, which browsers never send to servers or put in referrers. */
 export const signInUrl = (publicUrl: string, token: string) =>
@@ -216,7 +219,9 @@ const ACCESS_SENTENCES: Readonly<Record<AccessEventType, (d: Detail, by: string)
   github_unlinked: (d, by) =>
     d.reason === 'moved'
       ? `lost GitHub @${d.login}: it was connected${by}`
-      : `disconnected GitHub @${d.login}`,
+      : d.reason === 'refresh_lost'
+        ? `lost GitHub @${d.login}: its renewed token could not be kept, so it must reconnect`
+        : `disconnected GitHub @${d.login}`,
   connector_allowed: (d) => `allowed ${d.client} to use Officina as them`,
   connector_refused: (d) => `refused ${d.client}`,
   connector_used: (d) => `used Officina from ${d.client}`,

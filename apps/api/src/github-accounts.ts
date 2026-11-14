@@ -1,8 +1,10 @@
 import {
+  forgetSpentGitHubAccount,
   linkGitHubAccount,
   loadGitHubAccount,
   memberForGitHubUser,
   saveGitHubAccount,
+  saveRefreshedGitHubTokens,
   type GitHubAccountRow
 } from '@officina/db';
 import type { GitHubAsUser, GitHubUserAuth, UserTokens } from '@officina/github';
@@ -18,6 +20,21 @@ export type GitHubSignInProblem =
 
 /** Refresh a little before GitHub would refuse the token. */
 const REFRESH_MARGIN_MS = 5 * 60 * 1000;
+
+/**
+ * The account a failed refresh save left dead could not be forgotten either. It goes to the server
+ * log, so the save's own error is the one the caller gets.
+ */
+const logForgetFailure = (memberId: string) => (error: unknown) => {
+  console.error(
+    JSON.stringify({
+      at: new Date().toISOString(),
+      message: 'could not forget a GitHub account whose renewed tokens were lost',
+      memberId,
+      error: error instanceof Error ? error.message : String(error)
+    })
+  );
+};
 
 /** Members' linked GitHub accounts: linking, signing in, and a fresh token when acting for them. */
 export const createGitHubAccounts = (deps: {
@@ -71,6 +88,32 @@ export const createGitHubAccounts = (deps: {
     return { ok: true, memberId, login: user.login };
   };
 
+  /**
+   * Stores the tokens a refresh gave over the account the refresh started from, so a refresh never
+   * overwrites a newer connection; `false` when the member disconnected or reconnected meanwhile.
+   * GitHub spent the old refresh token in giving them, so a save that fails leaves the account dead:
+   * it is forgotten and the member told to reconnect, and the save's error still reaches the caller.
+   */
+  const keepRefreshed = async (
+    account: GitHubAccountRow,
+    spentRefreshEnc: string,
+    tokens: UserTokens
+  ): Promise<boolean> => {
+    const user = { id: account.githubUserId, login: account.login };
+    try {
+      return await saveRefreshedGitHubTokens(
+        pool,
+        sealed(account.memberId, user, tokens),
+        spentRefreshEnc
+      );
+    } catch (error) {
+      await forgetSpentGitHubAccount(pool, account.memberId, spentRefreshEnc).catch(
+        logForgetFailure(account.memberId)
+      );
+      throw error;
+    }
+  };
+
   const expired = (at: Date | null) => at !== null && at.getTime() - REFRESH_MARGIN_MS < Date.now();
 
   /** A usable token for acting as the member, refreshed when needed; `null` when not linked or revoked. */
@@ -88,11 +131,7 @@ export const createGitHubAccounts = (deps: {
     }
     if (!account.refreshTokenEnc || expired(account.refreshExpiresAt)) return null;
     const tokens = await deps.auth.refresh(box.open(account.refreshTokenEnc));
-    const saved = await saveGitHubAccount(
-      pool,
-      sealed(memberId, { id: account.githubUserId, login: account.login }, tokens)
-    );
-    if (!saved.ok) return null;
+    if (!(await keepRefreshed(account, account.refreshTokenEnc, tokens))) return null;
     return { token: tokens.accessToken, login: account.login, userId: account.githubUserId };
   };
 

@@ -11,14 +11,19 @@ import {
   addComment,
   appendRunEvent,
   applyCommand,
+  backdateDemoRunStart,
   createLoginLink,
   createTask,
   finishRun,
   insertLearnings,
   linkPullRequest,
+  listRunningDemoRuns,
   migrate,
+  resetDemoSchema,
   saveSpecVersion,
+  setDemoRunDuration,
   setProjectRole,
+  spreadDemoHistory,
   startRun,
   upsertMember,
   upsertProject,
@@ -168,10 +173,7 @@ const run = async (
     runner: RUNNER
   });
   if (!claim.ok) throw new Error('run not started');
-  await demo.pool.query(
-    "update runs set external_id = $2, started_at = now() - interval '6 minutes' where id = $1",
-    [claim.runId, `sesn_demo_${claim.runId.slice(0, 8)}`]
-  );
+  await backdateDemoRunStart(demo.pool, claim.runId, `sesn_demo_${claim.runId.slice(0, 8)}`);
   await appendRunEvent(
     demo.pool,
     claim.runId,
@@ -191,10 +193,7 @@ const run = async (
     costCents: options.cost ?? 60,
     result: options.result ?? {}
   });
-  await demo.pool.query(
-    "update runs set finished_at = started_at + interval '4 minutes 12 seconds' where id = $1",
-    [claim.runId]
-  );
+  await setDemoRunDuration(demo.pool, claim.runId);
   return claim.runId;
 };
 
@@ -645,37 +644,7 @@ const seedDemo = async (pool: Pool) => {
     owner
   );
 
-  // Spread each task's history over the last days, keeping its order and ending before now. The
-  // audit tables refuse updates, so this throwaway database skips their triggers for the rewrite.
-  const client = await pool.connect();
-  try {
-    await client.query('set session_replication_role = replica');
-    await client.query(`
-      update tasks set created_at = now() - interval '10 hours' - random() * interval '4 days'`);
-    await client.query(`
-      with ordered as (
-        select e.id, t.created_at
-          + row_number() over (partition by e.task_id order by e.id) * interval '23 minutes' as at
-        from task_events e join tasks t on t.id = e.task_id
-      )
-      update task_events e set created_at = o.at from ordered o where o.id = e.id`);
-    await client.query(`
-      update comments c set created_at = t.created_at from tasks t where t.id = c.task_id`);
-    await client.query(`
-      update spec_versions s set created_at = t.created_at + interval '40 minutes'
-      from tasks t where t.id = s.task_id`);
-    await client.query(`
-      update runs r set
-        created_at = t.created_at + interval '30 minutes',
-        started_at = case when r.status = 'running' then now() - interval '6 minutes'
-                          else t.created_at + interval '30 minutes' end,
-        finished_at = case when r.status = 'running' then null
-                           else t.created_at + interval '34 minutes 12 seconds' end
-      from tasks t where t.id = r.task_id`);
-  } finally {
-    await client.query('reset session_replication_role');
-    client.release();
-  }
+  await spreadDemoHistory(pool);
   return { ownerId };
 };
 
@@ -683,12 +652,9 @@ const seedDemo = async (pool: Pool) => {
 const simulate = (pool: Pool) => {
   let step = 0;
   return setInterval(async () => {
-    const { rows } = await pool.query<{ id: string }>(
-      "select id from runs where status = 'running'"
-    );
-    for (const row of rows) {
-      const [type, payload] = SCRIPT[(step + row.id.charCodeAt(0)) % SCRIPT.length]!;
-      await appendRunEvent(pool, row.id, type, payload);
+    for (const runId of await listRunningDemoRuns(pool)) {
+      const [type, payload] = SCRIPT[(step + runId.charCodeAt(0)) % SCRIPT.length]!;
+      await appendRunEvent(pool, runId, type, payload);
     }
     step++;
   }, 1400);
@@ -699,7 +665,7 @@ if (import.meta.main) {
   if (!/@(localhost|127\.0\.0\.1)[:/]/.test(url))
     throw new Error('dev only resets a local database');
   const pool = new Pool({ connectionString: url });
-  await pool.query('drop schema public cascade; create schema public;');
+  await resetDemoSchema(pool);
   const client = await pool.connect();
   try {
     await migrate(client);

@@ -1,10 +1,16 @@
-import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { createGitHubClient } from '@officina/github';
-import { anthropicAuthFrom, createModelResolver } from '@officina/runner';
+import { PROMPTS_DIR, anthropicAuthFrom, createModelResolver } from '@officina/runner';
 import { Pool } from 'pg';
 import { createAgentsPort } from './engine';
-import { accessLogText, invite, loginLink, membersText } from './people';
+import {
+  INVITE_TTL_DAYS,
+  SIGN_IN_TTL_MINUTES,
+  accessLogText,
+  invite,
+  loginLink,
+  membersText
+} from './people';
 import { SetupError, addProject, setupAgents } from './setup';
 import {
   TaskCommandError,
@@ -37,9 +43,9 @@ const USAGE = `usage (on your machine, prefix with scripts/officina; on the serv
     and --as <email> (defaults to the project owner).
 
   People
-    login-link    [--email <email>]          one-time sign-in link to the board, valid 30 minutes
+    login-link    [--email <email>]          one-time sign-in link to the board, valid ${SIGN_IN_TTL_MINUTES} minutes
     invite        --email <email> --name "<name>" --role watcher|contributor|maintainer|owner
-                  [--domains product,legal]  adds or updates a member; the link is valid 7 days
+                  [--domains product,legal]  adds or updates a member; the link is valid ${INVITE_TTL_DAYS} days
     members                                  who is in the project, when they joined, whether their
                                              latest link was used, when they were last seen and
                                              whether they connected Claude
@@ -57,8 +63,6 @@ const required = (name: string): string => {
   if (!value) throw new SetupError(`${name} is not set`);
   return value;
 };
-
-const PROMPTS_DIR = join(import.meta.dir, '..', '..', '..', 'agents');
 
 /**
  * Arguments may arrive base64-encoded as one JSON array (`--b64 <data>`), which is how the local
