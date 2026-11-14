@@ -163,9 +163,17 @@ describe.skipIf(!url)('learning decisions', () => {
         return github.port.openPullRequest(input);
       }
     };
-    const accepting = decide(pool, slow, owner(), { id: learning.id, decision: 'accept' });
+    const accepting = decide(pool, slow, owner(), {
+      id: learning.id,
+      decision: 'accept',
+      rewrittenAt: null
+    });
     while (!github.calls.some((call) => call.method === 'updateFile')) await Bun.sleep(5);
-    const rejecting = decide(pool, github.port, owner(), { id: learning.id, decision: 'reject' });
+    const rejecting = decide(pool, github.port, owner(), {
+      id: learning.id,
+      decision: 'reject',
+      rewrittenAt: null
+    });
     await Bun.sleep(50);
     release();
 
@@ -178,7 +186,8 @@ describe.skipIf(!url)('learning decisions', () => {
     const github = fakeGitHub();
     const decided = await decide(pool, github.port, owner(), {
       id: learning.id,
-      decision: 'accept'
+      decision: 'accept',
+      rewrittenAt: null
     });
 
     expect(decided).toMatchObject({ status: 'accepted', prNumber: 77 });
@@ -205,7 +214,7 @@ describe.skipIf(!url)('learning decisions', () => {
     expect(body).not.toMatch(/(^|\s)#1\b/);
 
     await expect(
-      decide(pool, github.port, owner(), { id: learning.id, decision: 'reject' })
+      decide(pool, github.port, owner(), { id: learning.id, decision: 'reject', rewrittenAt: null })
     ).rejects.toThrow('already decided');
 
     await handleWebhookAction(pool, {
@@ -218,7 +227,11 @@ describe.skipIf(!url)('learning decisions', () => {
 
   test('a merged learning pull request is applied whatever the case of the repository name', async () => {
     const learning = await propose('docs');
-    await decide(pool, fakeGitHub().port, owner(), { id: learning.id, decision: 'accept' });
+    await decide(pool, fakeGitHub().port, owner(), {
+      id: learning.id,
+      decision: 'accept',
+      rewrittenAt: null
+    });
     await handleWebhookAction(pool, {
       kind: 'pull_request_merged',
       repo: 'viciapp/VICI-APP',
@@ -230,7 +243,11 @@ describe.skipIf(!url)('learning decisions', () => {
   test('a learning for another project doc lands as a learning pull request', async () => {
     const learning = await propose('project');
     const github = fakeGitHub();
-    await decide(pool, github.port, owner(), { id: learning.id, decision: 'accept' });
+    await decide(pool, github.port, owner(), {
+      id: learning.id,
+      decision: 'accept',
+      rewrittenAt: null
+    });
     expect(github.calls[3]!.args).toMatchObject({
       path: 'docs/copy.md',
       message: 'docs(learning): update every live locale'
@@ -241,13 +258,14 @@ describe.skipIf(!url)('learning decisions', () => {
     const learning = await propose('docs');
     const github = fakeGitHub({ failOpening: 1 });
     await expect(
-      decide(pool, github.port, owner(), { id: learning.id, decision: 'accept' })
+      decide(pool, github.port, owner(), { id: learning.id, decision: 'accept', rewrittenAt: null })
     ).rejects.toThrow('GitHub 502');
     expect((await listLearnings(pool, seeded.projectId))[0]!.status).toBe('proposed');
 
     const decided = await decide(pool, github.port, owner(), {
       id: learning.id,
-      decision: 'accept'
+      decision: 'accept',
+      rewrittenAt: null
     });
     expect(decided).toMatchObject({ status: 'accepted', prNumber: 77 });
     expect(github.calls.filter((call) => call.method === 'updateFile')).toHaveLength(1);
@@ -257,14 +275,15 @@ describe.skipIf(!url)('learning decisions', () => {
     const learning = await propose('docs');
     const github = fakeGitHub({ failOpening: 1 });
     await expect(
-      decide(pool, github.port, owner(), { id: learning.id, decision: 'accept' })
+      decide(pool, github.port, owner(), { id: learning.id, decision: 'accept', rewrittenAt: null })
     ).rejects.toThrow('GitHub 502');
     const branch = `officina/learning-${learning.id.slice(0, 8)}`;
     expect([...github.open]).toEqual([branch]);
 
     const decided = await decide(pool, github.port, owner(), {
       id: learning.id,
-      decision: 'reject'
+      decision: 'reject',
+      rewrittenAt: null
     });
     expect(decided).toMatchObject({ status: 'rejected', prNumber: null });
     expect(github.open.size).toBe(0);
@@ -279,22 +298,61 @@ describe.skipIf(!url)('learning decisions', () => {
     const github = fakeGitHub({ base: '# Agents\n\n## Copy and tone\n' });
     const decided = await decide(pool, github.port, owner(), {
       id: learning.id,
-      decision: 'accept'
+      decision: 'accept',
+      rewrittenAt: null
     });
     expect(decided).toMatchObject({ status: 'proposed', rewrite: 'requested', prNumber: null });
     expect(github.calls.map((call) => call.method)).toEqual(['readFile']);
 
     await expect(
-      decide(pool, github.port, owner(), { id: learning.id, decision: 'accept' })
+      decide(pool, github.port, owner(), { id: learning.id, decision: 'accept', rewrittenAt: null })
     ).rejects.toThrow('the learner is rewriting this edit');
 
     await failLearningRewrite(pool, learning.id);
     await expect(
-      decide(pool, github.port, owner(), { id: learning.id, decision: 'accept' })
+      decide(pool, github.port, owner(), { id: learning.id, decision: 'accept', rewrittenAt: null })
     ).rejects.toThrow('could not rewrite it; reject it instead');
     expect(
-      await decide(pool, github.port, owner(), { id: learning.id, decision: 'reject' })
+      await decide(pool, github.port, owner(), {
+        id: learning.id,
+        decision: 'reject',
+        rewrittenAt: null
+      })
     ).toMatchObject({ status: 'rejected' });
+  });
+
+  test('an edit is accepted only as the person read it, never once it was rewritten since', async () => {
+    const learning = await propose('docs');
+    await requestLearningRewrite(pool, learning.id);
+    await rewriteLearningEdit(pool, learning.id, {
+      file: 'AGENTS.md',
+      find: '## Copy\n',
+      text: '## Copy\n\nEvery live locale.\n'
+    });
+    const github = fakeGitHub();
+    // A tab opened before the rewrite still shows the first edit.
+    await expect(
+      decide(pool, github.port, owner(), { id: learning.id, decision: 'accept', rewrittenAt: null })
+    ).rejects.toThrow('the edit was rewritten since you read it');
+    expect(github.calls).toEqual([]);
+    expect((await listLearnings(pool, seeded.projectId))[0]!.status).toBe('proposed');
+
+    const rewritten = (await listLearnings(pool, seeded.projectId))[0]!;
+    const seen = rewritten.rewrittenAt!.toISOString();
+    await expect(
+      decide(pool, github.port, owner(), {
+        id: learning.id,
+        decision: 'accept',
+        rewrittenAt: new Date(Date.parse(seen) - 1).toISOString()
+      })
+    ).rejects.toThrow('the edit was rewritten since you read it');
+    expect(
+      await decide(pool, github.port, owner(), {
+        id: learning.id,
+        decision: 'accept',
+        rewrittenAt: seen
+      })
+    ).toMatchObject({ status: 'accepted' });
   });
 
   test('a rewritten edit opens its pull request from a branch of its own', async () => {
@@ -306,7 +364,12 @@ describe.skipIf(!url)('learning decisions', () => {
       text: '## Copy\n\nEvery live locale.\n'
     });
     const github = fakeGitHub();
-    await decide(pool, github.port, owner(), { id: learning.id, decision: 'accept' });
+    const [rewritten] = await listLearnings(pool, seeded.projectId);
+    await decide(pool, github.port, owner(), {
+      id: learning.id,
+      decision: 'accept',
+      rewrittenAt: rewritten!.rewrittenAt!.toISOString()
+    });
     const created = github.calls.find((call) => call.method === 'createBranch')!;
     expect(String(created.args.branch)).toMatch(
       new RegExp(`^officina/learning-${learning.id.slice(0, 8)}-[0-9a-z]+$`)
@@ -322,7 +385,11 @@ describe.skipIf(!url)('learning decisions', () => {
       text: '## Copy\n\nEvery live locale.\n'
     });
     const github = fakeGitHub();
-    await decide(pool, github.port, owner(), { id: learning.id, decision: 'reject' });
+    await decide(pool, github.port, owner(), {
+      id: learning.id,
+      decision: 'reject',
+      rewrittenAt: null
+    });
     const closed = github.calls
       .filter((call) => call.method === 'closePullRequestsFrom')
       .map((call) => String(call.args.branch));
@@ -351,13 +418,14 @@ describe.skipIf(!url)('learning decisions', () => {
         pool,
         github.port,
         { ...owner(), memberId: gio, role: 'contributor' },
-        { id: learning.id, decision: 'accept' }
+        { id: learning.id, decision: 'accept', rewrittenAt: null }
       )
     ).rejects.toBeInstanceOf(TaskCommandError);
 
     const decided = await decide(pool, github.port, owner(), {
       id: learning.id,
       decision: 'accept',
+      rewrittenAt: null,
       note: 'Good catch'
     });
     expect(decided).toMatchObject({
