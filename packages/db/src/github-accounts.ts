@@ -115,7 +115,34 @@ const writeGitHubAccount = async (
   return { ok: true };
 };
 
-/** Stores fresh tokens for a member's GitHub account, as a sign-in or a refresh gets them. */
+/**
+ * Stores the tokens a refresh gave, only over the account that refresh started from: the same
+ * GitHub user, still holding the refresh token it spent. A member who disconnected or reconnected
+ * while GitHub answered keeps that newer state, and `false` says the fresh tokens were not kept.
+ */
+export const saveRefreshedGitHubTokens = async (
+  db: Queryable,
+  account: GitHubAccountRow,
+  spentRefreshTokenEnc: string
+): Promise<boolean> =>
+  (
+    await db.query(
+      `update github_accounts set access_token_enc = $4, access_expires_at = $5,
+         refresh_token_enc = $6, refresh_expires_at = $7, updated_at = now()
+       where member_id = $1 and github_user_id = $2 and refresh_token_enc = $3`,
+      [
+        account.memberId,
+        account.githubUserId,
+        spentRefreshTokenEnc,
+        account.accessTokenEnc,
+        account.accessExpiresAt,
+        account.refreshTokenEnc,
+        account.refreshExpiresAt
+      ]
+    )
+  ).rowCount === 1;
+
+/** Stores fresh tokens for a member's GitHub account, as a sign-in gets them. */
 export const saveGitHubAccount = (
   pool: Pool,
   account: GitHubAccountRow
