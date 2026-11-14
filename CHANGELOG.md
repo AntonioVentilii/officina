@@ -1,5 +1,35 @@
 # Changelog
 
+## [1.7.3](https://github.com/AntonioVentilii/officina/compare/v1.7.2...v1.7.3) (2026-11-14)
+
+
+### Bug Fixes
+
+* **api,board:** return after sign-in only to a path that stays on this site (GHSA-fvrw-vmpg-vj88) ([02e0ef2](https://github.com/AntonioVentilii/officina/commit/02e0ef217a92b15ef34af673cca9968625a2d4af))
+* **db,api:** ask a member to reconnect GitHub when its renewed tokens could not be stored ([#163](https://github.com/AntonioVentilii/officina/issues/163)) ([e4b36e2](https://github.com/AntonioVentilii/officina/commit/e4b36e2ab9416b20a254f99c2103bbd26061cafe))
+* **db,api:** show an access event about one project only in that project's log (GHSA-hq84-4v24-5vrg) ([02e0ef2](https://github.com/AntonioVentilii/officina/commit/02e0ef217a92b15ef34af673cca9968625a2d4af))
+* **db,engine:** settle a learning rewrite the project cannot run or whose run was lost twice ([#166](https://github.com/AntonioVentilii/officina/issues/166)) ([c9e11d7](https://github.com/AntonioVentilii/officina/commit/c9e11d789deb729ef47ad86bb6c389eaacbbfc6d))
+* **engine,api:** let a learning's branch move during a build only by the commit Officina wrote (GHSA-2fw3-r47f-8fp6) ([02e0ef2](https://github.com/AntonioVentilii/officina/commit/02e0ef217a92b15ef34af673cca9968625a2d4af))
+* **engine,db:** check a build's refs however its run ends, and after a restart (GHSA-6p5m-vr93-v439) ([02e0ef2](https://github.com/AntonioVentilii/officina/commit/02e0ef217a92b15ef34af673cca9968625a2d4af))
+* **github:** read the token answer before parsing it, so an error page is a GitHub error ([#160](https://github.com/AntonioVentilii/officina/issues/160)) ([2e23e3b](https://github.com/AntonioVentilii/officina/commit/2e23e3b8f74e02f6270fe6452fac1c30e56aac9c))
+
+
+### Documentation
+
+* **ai:** say that github.ts writes a task's pull request link ([d883d18](https://github.com/AntonioVentilii/officina/commit/d883d182666ecd5779f6adf189bd6e33d5ab6fb4))
+* **repo:** list the four advisories fixed in 1.7.3 ([02e0ef2](https://github.com/AntonioVentilii/officina/commit/02e0ef217a92b15ef34af673cca9968625a2d4af))
+* **repo:** make the architecture and AGENTS.md match the code again ([#162](https://github.com/AntonioVentilii/officina/issues/162)) ([89629e5](https://github.com/AntonioVentilii/officina/commit/89629e504e933c6c639708750e8985aa56c7e29f))
+
+
+### Code Refactoring
+
+* **api:** read the link lifetimes in the cli help from people.ts ([#168](https://github.com/AntonioVentilii/officina/issues/168)) ([c97371b](https://github.com/AntonioVentilii/officina/commit/c97371bf70f203a8cf224edc3f5efe7ff7b2cfc9))
+* **core,api:** read every input limit from one set in core ([#161](https://github.com/AntonioVentilii/officina/issues/161)) ([4c5a5b6](https://github.com/AntonioVentilii/officina/commit/4c5a5b6e0e44048701ece84bfcc90d8336bf49f6))
+* **core,api:** write the approver roles and their floor rule once, in core ([#164](https://github.com/AntonioVentilii/officina/issues/164)) ([85f2557](https://github.com/AntonioVentilii/officina/commit/85f25574a5e7c57942dd2c9aa22448ad882566d4))
+* **db,api:** keep the api's remaining sql in packages/db ([#169](https://github.com/AntonioVentilii/officina/issues/169)) ([811ec90](https://github.com/AntonioVentilii/officina/commit/811ec90109632b0669ad1ab6fec79f5febae3195))
+* **db:** keep the run json and run recovery helpers in modules of their own ([02e0ef2](https://github.com/AntonioVentilii/officina/commit/02e0ef217a92b15ef34af673cca9968625a2d4af))
+* **runner,engine,api:** find and read the role prompts in one place ([#165](https://github.com/AntonioVentilii/officina/issues/165)) ([4688630](https://github.com/AntonioVentilii/officina/commit/46886300e60deff0b8b57ed719d92ab3e69aab30))
+
 ## [1.7.2](https://github.com/AntonioVentilii/officina/compare/v1.7.1...v1.7.2) (2026-11-14)
 
 
