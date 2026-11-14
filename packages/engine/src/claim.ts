@@ -10,14 +10,16 @@ import type { RepoRef } from '@officina/github';
 import { RUNNER, type RunnerRole } from '@officina/runner';
 import type { Pool } from 'pg';
 
-export type SkipReason =
-  | 'not_found'
-  | 'not_due'
-  | 'not_installed'
-  | 'no_environment'
-  | 'agent_not_synced'
-  | 'invalid_config'
-  | 'already_running';
+/** Why a step cannot run that lies in the project's setup, not the task: no later pass clears it alone. */
+export const PROJECT_SKIP_REASONS = [
+  'not_installed',
+  'no_environment',
+  'agent_not_synced',
+  'invalid_config'
+] as const;
+export type ProjectSkipReason = (typeof PROJECT_SKIP_REASONS)[number];
+
+export type SkipReason = 'not_found' | 'not_due' | ProjectSkipReason | 'already_running';
 
 /** A run claimed for one role on one task, with everything every step needs to start it. */
 export interface ClaimedStep {

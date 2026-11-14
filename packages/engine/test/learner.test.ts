@@ -3,6 +3,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  failOrphanedRuns,
   insertLearnings,
   listLearnings,
   requestLearningRewrite,
@@ -249,6 +250,49 @@ describe.skipIf(!url)('learner', () => {
       status: 'skipped',
       reason: 'not_due'
     });
+  });
+
+  test('a rewrite the project cannot run fails instead of waiting on every pass', async () => {
+    const { taskId } = await staleLearning();
+    await pool.query('update projects set agent_environment_id = null where id = $1', [
+      seeded.projectId
+    ]);
+    const agents = createFakePort(() => []);
+    const deps = { pool, github: fakeGitHub(), agents, publicUrl: 'x' };
+    expect(await runAgentStep(deps, taskId, 'learner')).toEqual({
+      status: 'skipped',
+      reason: 'no_environment'
+    });
+    expect((await listLearnings(pool, seeded.projectId))[0]).toMatchObject({ rewrite: 'failed' });
+    expect((await collectDueSteps({ pool }, seeded.projectId)).due).toEqual([]);
+    expect(agents.sessions).toHaveLength(0);
+  });
+
+  test('a rewrite whose run the engine lost is tried once more, then fails', async () => {
+    const { taskId } = await staleLearning();
+    // A session that never ends, as one whose engine restarted would look from the database.
+    const agents = createFakePort(() => [() => new Promise<void>(() => {})]);
+    const deps = { pool, github: fakeGitHub(), agents, publicUrl: 'x' };
+    const loseARun = async (sessions: number) => {
+      void runAgentStep(deps, taskId, 'learner');
+      for (let wait = 0; agents.sessions.length < sessions; wait++) {
+        if (wait > 200) throw new Error('the rewrite never started a session');
+        await Bun.sleep(10);
+      }
+      expect(await failOrphanedRuns(pool)).toHaveLength(1);
+    };
+
+    await loseARun(1);
+    expect((await listLearnings(pool, seeded.projectId))[0]).toMatchObject({
+      rewrite: 'requested'
+    });
+    await loseARun(2);
+    expect(await runAgentStep(deps, taskId, 'learner')).toEqual({
+      status: 'skipped',
+      reason: 'not_due'
+    });
+    expect((await listLearnings(pool, seeded.projectId))[0]).toMatchObject({ rewrite: 'failed' });
+    expect(agents.sessions).toHaveLength(2);
   });
 
   test('a task that is not done is never looked back at', async () => {

@@ -101,7 +101,7 @@ export const loadLearning = async (
 /** Hands a proposed learning whose edit no longer applies back to the learner; asking twice is a no-op. */
 export const requestLearningRewrite = async (db: Queryable, id: string) => {
   await db.query(
-    `update learnings set rewrite = 'requested'
+    `update learnings set rewrite = 'requested', rewrite_attempts = 0
      where id = $1 and status = 'proposed' and rewrite is null`,
     [id]
   );
@@ -133,6 +133,36 @@ export const listTasksAwaitingRewrite = async (
       [projectId]
     )
   ).rows.map((row) => row.id);
+
+/** Counts one more run given to a learning's rewrite, once that run is claimed. */
+export const countLearningRewriteAttempt = async (db: Queryable, id: string) => {
+  await db.query(
+    `update learnings set rewrite_attempts = rewrite_attempts + 1
+     where id = $1 and status = 'proposed' and rewrite = 'requested'`,
+    [id]
+  );
+};
+
+/**
+ * Fails the rewrites of a task that already had `attempts` runs, all lost, so no further session is
+ * spent on them. Only while no learner run is in progress on the task, since that run may still
+ * deliver.
+ */
+export const failExhaustedLearningRewrites = async (
+  db: Queryable,
+  taskId: string,
+  attempts: number
+) => {
+  await db.query(
+    `update learnings l set rewrite = 'failed'
+     where l.task_id = $1 and l.status = 'proposed' and l.rewrite = 'requested'
+       and l.rewrite_attempts >= $2
+       and not exists (
+         select 1 from runs r
+         where r.task_id = l.task_id and r.agent_role = 'learner' and r.status ${RUN_IS_ACTIVE})`,
+    [taskId, attempts]
+  );
+};
 
 /** Replaces the edit of a learning waiting for its rewrite; people decide it again from here. */
 export const rewriteLearningEdit = async (db: Queryable, id: string, edit: NewLearning['edit']) => {
