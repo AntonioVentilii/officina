@@ -151,6 +151,8 @@ describe.skipIf(!url)('board api', () => {
     expect(me.projects).toEqual([
       expect.objectContaining({ id: seeded.projectId, repo: 'ViciApp/vici-app', role: 'owner' })
     ]);
+    expect(me.limits.title).toEqual({ min: 3, max: 200 });
+    expect(me.limits.prTitle).toEqual({ min: 3, max: 120 });
 
     const again = await call(null, '/auth/redeem', { token: tokenFrom(link) });
     expect(again.status).toBe(410);
@@ -1166,8 +1168,9 @@ describe.skipIf(!url)('board api', () => {
     expect((await call(owner, link, {}, false)).status).toBe(403);
     const fresh = await call(owner, link, {});
     expect(fresh.status).toBe(200);
-    const { url: freshUrl } = await json(fresh);
+    const { url: freshUrl, validDays } = await json(fresh);
     expect(freshUrl).toStartWith(`${PUBLIC_URL}/signin#`);
+    expect(validDays).toBe(7);
     await signIn(freshUrl);
     const again = await call(owner, link, {});
     expect(again.status).toBe(409);

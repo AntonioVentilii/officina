@@ -15,6 +15,9 @@
   let checked = $state('');
   let busy = $state(false);
 
+  const limits = $derived(session.me?.limits.prTitle);
+  const ready = $derived(limits !== undefined && title.trim().length >= limits.min);
+
   const lines = (text: string) =>
     text
       .split('\n')
@@ -23,7 +26,7 @@
 
   const handIn = async (event: SubmitEvent) => {
     event.preventDefault();
-    if (!session.projectId || title.trim().length < 3) return;
+    if (!session.projectId || !ready) return;
     busy = true;
     try {
       await post(`/api/projects/${session.projectId}/tasks/${number}/hand-in`, {
@@ -53,7 +56,7 @@
       class="field"
       bind:value={title}
       placeholder="feat(scope): what it does"
-      maxlength="120"
+      maxlength={limits?.max}
     />
     <label class="caps" for="hand-in-checked-{number}">What you checked (optional)</label>
     <textarea
@@ -64,7 +67,7 @@
       placeholder="One item per line"></textarea>
     <div class="buttons">
       <button type="button" class="btn ghost" onclick={() => (open = false)}>Back</button>
-      <button class="btn primary" disabled={busy || title.trim().length < 3}>Hand in</button>
+      <button class="btn primary" disabled={busy || !ready}>Hand in</button>
     </div>
   </form>
 {:else}
