@@ -238,6 +238,7 @@ describe.skipIf(!url)('approving on GitHub for the verifier', () => {
       await askCopilotToReview(pool, onBehalf, ask(taskId));
 
       expect(calls).toEqual([
+        { method: 'reviews', args: [`token-${seeded.ownerId}`, 'ViciApp/vici-app', 42] },
         {
           method: 'requestCopilotReview',
           args: [`token-${seeded.ownerId}`, 'ViciApp/vici-app', 42]
@@ -252,13 +253,38 @@ describe.skipIf(!url)('approving on GitHub for the verifier', () => {
       ]);
     });
 
+    test('a review Copilot already left, from an attempt whose record was lost, is recorded instead of asked again', async () => {
+      const taskId = await createTaskInMerging(pool, seeded);
+      const { onBehalf, calls } = fake({
+        reviews: [
+          {
+            userId: 9,
+            login: 'copilot-pull-request-reviewer[bot]',
+            state: 'COMMENTED',
+            commitId: 'abc'
+          }
+        ]
+      });
+      await askCopilotToReview(pool, onBehalf, ask(taskId));
+      await askCopilotToReview(pool, onBehalf, ask(taskId));
+
+      expect(calls.map((call) => call.method)).toEqual(['reviews']);
+      expect(await events(taskId)).toEqual([
+        {
+          type: 'github_copilot_review_requested',
+          payload: { pullRequest: 42, login: 'antonio', outcome: 'already_reviewed' },
+          member: seeded.ownerId
+        }
+      ]);
+    });
+
     test('a refusal from GitHub is recorded once and never thrown', async () => {
       const taskId = await createTaskInMerging(pool, seeded);
       const { onBehalf, calls } = fake({ noSeat: true });
       await askCopilotToReview(pool, onBehalf, ask(taskId));
       await askCopilotToReview(pool, onBehalf, ask(taskId));
 
-      expect(calls).toHaveLength(1);
+      expect(calls.filter((call) => call.method === 'requestCopilotReview')).toHaveLength(1);
       expect(await events(taskId)).toEqual([
         {
           type: 'github_copilot_review_failed',
