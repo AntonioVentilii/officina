@@ -20,15 +20,25 @@ describe.skipIf(!url)('approving on GitHub for the verifier', () => {
   });
 
   const fake = (
-    options: { linked?: boolean; fail?: boolean; head?: string; noSeat?: boolean } = {}
+    options: {
+      linked?: boolean;
+      fail?: boolean;
+      head?: string;
+      noSeat?: boolean;
+      reviews?: { userId: number; login: string; state: string; commitId: string | null }[];
+    } = {}
   ) => {
     const calls: { method: string; args: unknown[] }[] = [];
     // The reviews on GitHub: an approval the fake accepted is there on the next read.
-    const reviews: { login: string; state: string; commitId: string | null }[] = [];
+    const reviews: { userId: number; login: string; state: string; commitId: string | null }[] = [
+      ...(options.reviews ?? [])
+    ];
     const onBehalf: OnBehalf = {
       publicUrl: 'https://o.example',
       tokenFor: async (memberId) =>
-        options.linked === false ? null : { token: `token-${memberId}`, login: 'antonio' },
+        options.linked === false
+          ? null
+          : { token: `token-${memberId}`, login: 'antonio', userId: 7 },
       asUser: {
         pullRequest: async (...args) => {
           calls.push({ method: 'pullRequest', args });
@@ -46,7 +56,7 @@ describe.skipIf(!url)('approving on GitHub for the verifier', () => {
         approve: async (...args) => {
           calls.push({ method: 'approve', args });
           if (options.fail) throw new Error('Review cannot be requested from the author');
-          reviews.push({ login: 'Antonio', state: 'APPROVED', commitId: args[3] });
+          reviews.push({ userId: 7, login: 'Antonio', state: 'APPROVED', commitId: args[3] });
           return {};
         },
         mergeWhenReady: async (...args) => {
@@ -153,6 +163,30 @@ describe.skipIf(!url)('approving on GitHub for the verifier', () => {
         member: seeded.ownerId
       }
     ]);
+  });
+
+  test('an approval under a login renamed since is recognised by the GitHub user id', async () => {
+    const taskId = await createTaskInMerging(pool, seeded);
+    const { onBehalf, calls } = fake({
+      reviews: [{ userId: 7, login: 'antonio-old', state: 'APPROVED', commitId: 'abc' }]
+    });
+    await approveOnGitHub(pool, onBehalf, input(taskId));
+    expect(calls.map((call) => call.method)).toEqual(['pullRequest', 'reviews']);
+    expect((await events(taskId)).map((event) => event.type)).toEqual(['github_approved']);
+  });
+
+  test('an approval the member later replaced with a request for changes is approved again', async () => {
+    const taskId = await createTaskInMerging(pool, seeded);
+    const { onBehalf, calls } = fake({
+      reviews: [
+        { userId: 7, login: 'antonio', state: 'APPROVED', commitId: 'abc' },
+        { userId: 7, login: 'antonio', state: 'CHANGES_REQUESTED', commitId: 'abc' },
+        { userId: 7, login: 'antonio', state: 'COMMENTED', commitId: 'abc' },
+        { userId: 8, login: 'someone', state: 'APPROVED', commitId: 'abc' }
+      ]
+    });
+    await approveOnGitHub(pool, onBehalf, input(taskId));
+    expect(calls.map((call) => call.method)).toEqual(['pullRequest', 'reviews', 'approve']);
   });
 
   test('a head pushed after the verification is recorded and never approved', async () => {

@@ -25,7 +25,8 @@ export const taskLink = (publicUrl: string, projectId: string, taskNumber: numbe
 /** Acting on GitHub as a member (the verifier, the requester), with their own linked account. */
 export interface OnBehalf {
   readonly publicUrl: string;
-  tokenFor(memberId: string): Promise<{ token: string; login: string } | null>;
+  /** The member's token, login and GitHub's stable user id, which survives a renamed login. */
+  tokenFor(memberId: string): Promise<{ token: string; login: string; userId: number } | null>;
   readonly asUser: Pick<
     GitHubAsUser,
     'pullRequest' | 'reviews' | 'approve' | 'mergeWhenReady' | 'requestCopilotReview'
@@ -76,17 +77,21 @@ const approvingAccount = async (pool: Pool, onBehalf: OnBehalf, taskId: string) 
  */
 const approveOnce = async (
   onBehalf: OnBehalf,
-  account: { token: string; login: string },
+  account: { token: string; login: string; userId: number },
   input: { repo: string; pullRequest: number; headSha: string; body: string }
 ) => {
   const reviews = await onBehalf.asUser.reviews(account.token, input.repo, input.pullRequest);
-  const approved = reviews.some(
-    (review) =>
-      review.state === 'APPROVED' &&
-      review.commitId === input.headSha &&
-      review.login.toLowerCase() === account.login.toLowerCase()
-  );
-  if (approved) return;
+  // The member's latest review of this head is what stands: an approval later followed by a
+  // request for changes is not one. Comments change nothing, so they are left out.
+  const latest = reviews
+    .filter(
+      (review) =>
+        review.userId === account.userId &&
+        review.commitId === input.headSha &&
+        review.state !== 'COMMENTED'
+    )
+    .at(-1);
+  if (latest?.state === 'APPROVED') return;
   await onBehalf.asUser.approve(
     account.token,
     input.repo,
