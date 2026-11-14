@@ -6,19 +6,34 @@ import {
   purgeConnectorCredentials,
   purgeOldAccessEvents
 } from '@officina/db';
+import type { HandInPort } from '@officina/engine';
 import { Pool } from 'pg';
-import { resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
+import { PLAN, applyOrThrow, resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
 import { createApp } from '../src/app';
 import { accessLogView, invite, loginLink } from '../src/people';
 
 const url = process.env.TEST_DATABASE_URL;
 const PUBLIC_URL = 'https://officina.example';
 const CALLBACK = 'https://claude.ai/api/mcp/auth_callback';
+const COPY = 'src/lib/constants/messages/en.ts';
+
+/** A GitHub that reads one pushed copy change and opens pull request 9 for it. */
+const builds = {
+  pushFacts: async () => ({ headSha: 'dev1', changedPaths: [COPY], addedPaths: [], diffLines: 2 }),
+  readFile: async () => null,
+  openPullRequest: async () => ({ number: 9, url: 'https://github.com/ViciApp/vici-app/pull/9' }),
+  updateFile: async () => undefined,
+  commentOnIssue: async () => undefined
+} as unknown as HandInPort;
 
 describe.skipIf(!url)('connector for Claude', () => {
   const pool = new Pool({ connectionString: url });
   let seeded: Seeded;
-  const app = createApp({ pool, webhookSecret: 'x'.repeat(32), board: { publicUrl: PUBLIC_URL } });
+  const app = createApp({
+    pool,
+    webhookSecret: 'x'.repeat(32),
+    board: { publicUrl: PUBLIC_URL, builds }
+  });
 
   beforeEach(async () => {
     seeded = await resetAndSeed(pool);
@@ -58,20 +73,25 @@ describe.skipIf(!url)('connector for Claude', () => {
       body: new URLSearchParams(fields).toString()
     });
 
-  /** The whole dance Claude does: register, authorize, consent on the board, exchange the code. */
-  const connect = async (email?: string) => {
-    const client = await json(await register());
+  /** The authorization request a client sends, with the verifier its challenge is made from. */
+  const authorizationRequest = (clientId: string, redirectUri = CALLBACK) => {
     const verifier = randomBytes(32).toString('base64url');
     const query = new URLSearchParams({
       response_type: 'code',
-      client_id: client.client_id,
-      redirect_uri: CALLBACK,
+      client_id: clientId,
+      redirect_uri: redirectUri,
       code_challenge: createHash('sha256').update(verifier).digest('base64url'),
       code_challenge_method: 'S256',
       state: 'xyz',
       resource: `${PUBLIC_URL}/mcp`,
       scope: 'officina'
     });
+    return { verifier, query };
+  };
+
+  /** Authorize, then consent on the board as the member: the code the client gets back. */
+  const authorizeCode = async (clientId: string, email?: string) => {
+    const { verifier, query } = authorizationRequest(clientId);
     const authorize = await handle(`/oauth/authorize?${query}`);
     expect(authorize.status).toBe(302);
     expect(authorize.headers.get('location')).toBe(`${PUBLIC_URL}/connect?${query}`);
@@ -92,15 +112,24 @@ describe.skipIf(!url)('connector for Claude', () => {
     expect(back.origin + back.pathname).toBe(CALLBACK);
     expect(back.searchParams.get('state')).toBe('xyz');
     expect(back.searchParams.get('iss')).toBe(PUBLIC_URL);
-    const code = back.searchParams.get('code')!;
-    const exchange = {
-      grant_type: 'authorization_code',
-      code,
-      code_verifier: verifier,
-      client_id: client.client_id,
-      redirect_uri: CALLBACK,
-      resource: `${PUBLIC_URL}/mcp`
-    };
+    return { code: back.searchParams.get('code')!, verifier };
+  };
+
+  /** The token request for a code. */
+  const codeExchange = (clientId: string, code: string, verifier: string) => ({
+    grant_type: 'authorization_code',
+    code,
+    code_verifier: verifier,
+    client_id: clientId,
+    redirect_uri: CALLBACK,
+    resource: `${PUBLIC_URL}/mcp`
+  });
+
+  /** The whole dance Claude does: register, authorize, consent on the board, exchange the code. */
+  const connect = async (email?: string) => {
+    const client = await json(await register());
+    const { code, verifier } = await authorizeCode(client.client_id, email);
+    const exchange = codeExchange(client.client_id, code, verifier);
     const tokens = await json(await form(exchange));
     expect(tokens).toMatchObject({ token_type: 'Bearer', expires_in: 3600, scope: 'officina' });
     return { tokens, clientId: client.client_id as string, exchange };
@@ -211,6 +240,63 @@ describe.skipIf(!url)('connector for Claude', () => {
     // The spent code is purged; a second purge finds nothing more to do.
     expect(await purgeConnectorCredentials(pool)).toBeGreaterThan(0);
     expect(await purgeConnectorCredentials(pool)).toBe(0);
+  });
+
+  test('a loopback redirect may use any port, and nothing else about it may differ', async () => {
+    const client = await json(await register(['http://127.0.0.1:1234/cb']));
+    const authorize = async (redirectUri: string) => {
+      const { query } = authorizationRequest(client.client_id, redirectUri);
+      const response = await handle(`/oauth/authorize?${query}`);
+      return { location: response.headers.get('location'), query };
+    };
+    const otherPort = await authorize('http://127.0.0.1:5555/cb');
+    expect(otherPort.location).toBe(`${PUBLIC_URL}/connect?${otherPort.query}`);
+    for (const redirect of [
+      'http://127.0.0.1:5555/other',
+      'https://127.0.0.1:5555/cb',
+      'http://localhost:1234/cb'
+    ])
+      expect((await authorize(redirect)).location).toBe(
+        `${PUBLIC_URL}/connect?error=unregistered_redirect`
+      );
+  });
+
+  test('a code and a refresh token work only for the client they were issued to', async () => {
+    const a = (await json(await register())).client_id as string;
+    const b = (await json(await register())).client_id as string;
+    const { code, verifier } = await authorizeCode(a);
+
+    // Another client cannot spend the code, so it stays usable by its own.
+    expect((await json(await form(codeExchange(b, code, verifier)))).error).toBe('invalid_grant');
+    const tokens = await json(await form(codeExchange(a, code, verifier)));
+    expect(tokens.access_token).toBeString();
+
+    const refresh = (clientId: string) =>
+      form({
+        grant_type: 'refresh_token',
+        refresh_token: tokens.refresh_token,
+        client_id: clientId
+      });
+    expect((await json(await refresh(b))).error).toBe('invalid_grant');
+    expect((await json(await refresh(a))).access_token).toBeString();
+  });
+
+  test('a code is refused for another redirect or another resource', async () => {
+    const clientId = (await json(await register())).client_id as string;
+    const first = await authorizeCode(clientId);
+    const elsewhere = await form({
+      ...codeExchange(clientId, first.code, first.verifier),
+      redirect_uri: 'https://claude.ai/other'
+    });
+    expect((await json(elsewhere)).error).toBe('invalid_grant');
+
+    const second = await authorizeCode(clientId);
+    const otherResource = await form({
+      ...codeExchange(clientId, second.code, second.verifier),
+      resource: 'https://other.example/mcp'
+    });
+    expect(otherResource.status).toBe(400);
+    expect((await json(otherResource)).error).toBe('invalid_target');
   });
 
   test('two concurrent uses of one refresh token never both rotate it', async () => {
@@ -345,6 +431,89 @@ describe.skipIf(!url)('connector for Claude', () => {
     expect(missing).toMatchObject({ isError: true });
     const invalid = await tool(token, 'show_task', { number: 'one' });
     expect(invalid.isError).toBe(true);
+  });
+
+  /** Opens task 1 on the copy path and takes it to `spec_review`, planned by the chooser. */
+  const taskInSpecReview = async (token: string) => {
+    await tool(token, 'open_request', {
+      title: 'Rename the Wager button',
+      request: 'It should say Prediction.',
+      skip_interview: true
+    });
+    const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
+    await applyOrThrow(pool, taskId, { type: 'accept' }, seeded.owner);
+    await applyOrThrow(
+      pool,
+      taskId,
+      { type: 'post_spec', predictedPaths: [COPY], userVisible: true },
+      { kind: 'agent', role: 'spec', version: 1 }
+    );
+    await applyOrThrow(
+      pool,
+      taskId,
+      { type: 'plan_approval', userVisible: true, plan: PLAN },
+      { kind: 'agent', role: 'chooser', version: 1 }
+    );
+    return taskId;
+  };
+
+  const stageOf = async (taskId: string) =>
+    (await pool.query<{ stage: string }>('select stage from tasks where id = $1', [taskId])).rows[0]
+      ?.stage;
+
+  test('Claude approves a plan that still needs another approval, then asks for changes', async () => {
+    const token = (await connect()).tokens.access_token as string;
+    // A product approver exists, so the requester's approval is not enough on the copy lane.
+    await invite(pool, {
+      publicUrl: PUBLIC_URL,
+      email: 'tim@example.com',
+      name: 'Tim',
+      role: 'contributor',
+      domains: ['product']
+    });
+    const taskId = await taskInSpecReview(token);
+
+    const approved = await tool(token, 'review', { number: 1, decision: 'approve' });
+    expect(approved.isError).toBe(false);
+    expect(approved.content[0]!.text).toBe(
+      `Your approval is recorded; more approvals are still needed. Task 1: ${PUBLIC_URL}/tasks/1?project=${seeded.projectId}`
+    );
+    expect(await stageOf(taskId)).toBe('spec_review');
+    const recorded = await pool.query(
+      `select 1 from task_events where task_id = $1 and type = 'approval_recorded'`,
+      [taskId]
+    );
+    expect(recorded.rowCount).toBe(1);
+
+    const changes = await tool(token, 'review', {
+      number: 1,
+      decision: 'changes',
+      note: 'Cover Italian too.'
+    });
+    expect(changes.isError).toBe(false);
+    expect(changes.content[0]!.text).toStartWith('Changes requested; the agents work on it again.');
+    expect(await stageOf(taskId)).toBe('speccing');
+  });
+
+  test('Claude hands in a build the member claimed and pushed, and the pull request opens', async () => {
+    await pool.query('update projects set github_installation_id = 99 where id = $1', [
+      seeded.projectId
+    ]);
+    const token = (await connect()).tokens.access_token as string;
+    const taskId = await taskInSpecReview(token);
+    await applyOrThrow(pool, taskId, { type: 'approve' }, seeded.owner);
+    await applyOrThrow(pool, taskId, { type: 'claim' }, seeded.owner);
+
+    const handedIn = await tool(token, 'hand_in_build', {
+      number: 1,
+      pr_title: 'fix(copy): prediction wording',
+      verified: ['npm run check']
+    });
+    expect(handedIn.isError).toBe(false);
+    expect(handedIn.content[0]!.text).toBe(
+      `Handed in; task 1 is now reviewing, pull request #9: ${PUBLIC_URL}/tasks/1?project=${seeded.projectId}`
+    );
+    expect(await stageOf(taskId)).toBe('reviewing');
   });
 
   test('every member sees every task in progress, with who asked and who approves', async () => {
