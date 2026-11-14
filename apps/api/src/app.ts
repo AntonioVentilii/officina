@@ -18,10 +18,18 @@ export interface AppDependencies {
   readonly boardDir?: string;
 }
 
+/**
+ * The largest request body the server reads. Bodies are read before anyone is authenticated (a
+ * webhook before its signature is checked, the connector's OAuth endpoints, sign-in), so without a
+ * cap a few large requests could exhaust memory. GitHub's webhook payloads are the largest that
+ * arrive, and pushes and pull request events stay far below this.
+ */
+export const MAX_REQUEST_BYTES = 10 * 1024 * 1024;
+
 export const createApp = ({ pool, webhookSecret, github, board, boardDir }: AppDependencies) => {
   const serveBoard = boardDir ? createBoardServer(boardDir) : null;
   return (
-    new Elysia()
+    new Elysia({ serve: { maxRequestBodySize: MAX_REQUEST_BYTES } })
       // Registered before the routes so it covers all of them. An unexpected error's message can
       // quote a GitHub response body or a query, so it stays in the server log.
       .onError(({ code, error, request, set }) => {

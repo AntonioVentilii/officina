@@ -15,6 +15,7 @@ import {
   createTask,
   finishRun,
   insertLearnings,
+  linkPullRequest,
   migrate,
   saveSpecVersion,
   setProjectRole,
@@ -208,13 +209,9 @@ const seed = async (
   const { task } = await createTask(demo.pool, {
     projectId: demo.projectId,
     title: input.title,
-    requesterId
+    requesterId,
+    request: input.request
   });
-  await demo.pool.query('insert into comments (task_id, author, body) values ($1, $2, $3)', [
-    task.id,
-    JSON.stringify(input.by),
-    input.request
-  ]);
   await apply(demo, task.id, { type: 'submit_request' }, input.by);
   const giuliaId = demo.giulia.kind === 'member' ? demo.giulia.memberId : '';
   const planFor = (paths: readonly string[]) =>
@@ -304,10 +301,7 @@ const seed = async (
         },
         agent('builder')
       );
-      await demo.pool.query('update tasks set github_pr = $2 where id = $1', [
-        task.id,
-        1300 + Math.floor(Math.random() * 60)
-      ]);
+      await linkPullRequest(demo.pool, task.id, 1300 + Math.floor(Math.random() * 60));
     },
     review: async (running = false) => {
       if (running) {

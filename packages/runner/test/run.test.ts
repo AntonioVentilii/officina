@@ -14,11 +14,21 @@ const session: SessionRequest = {
 
 const approve = { outcome: 'approve', summary: 'Checked the diff against the spec.' } as const;
 
-const run = (script: readonly ScriptItem[], costCents: number | null = 12) => {
-  const port = createFakePort(() => script, costCents);
+type Validate = Parameters<typeof executeRun>[1]['validate'];
+
+const run = (
+  script: readonly ScriptItem[],
+  options: { readonly costCents?: number | null; readonly validate?: Validate } = {}
+) => {
+  const port = createFakePort(() => script, options.costCents);
   return {
     port,
-    report: executeRun(port, { role: 'reviewer_spec', session, brief: 'Review it.' })
+    report: executeRun(port, {
+      role: 'reviewer_spec',
+      session,
+      brief: 'Review it.',
+      validate: options.validate
+    })
   };
 };
 
@@ -58,6 +68,47 @@ describe('executeRun', () => {
     expect(results).toHaveLength(2);
     expect(results[0]).toMatchObject({ isError: true });
     expect((results[0] as { text: string }).text).toContain('summary');
+  });
+
+  test("returns the project's problems with a result to the agent and accepts a fixed one", async () => {
+    const checked: unknown[] = [];
+    const vague = { outcome: 'approve', summary: 'Looks fine.' } as const;
+    const { port, report } = run(
+      [
+        toolUse({ outcome: 'approve' }),
+        toolUse(vague),
+        idle('requires_action'),
+        toolUse(approve),
+        idle('end_turn')
+      ],
+      {
+        validate: async (output) => {
+          checked.push(output);
+          const specific = 'summary' in output && output.summary === approve.summary;
+          return specific ? [] : ['summary: name the spec items checked'];
+        }
+      }
+    );
+    expect((await report).outcome).toEqual({ kind: 'result', output: approve });
+    // Only a result that meets the contract reaches the project's checks.
+    expect(checked).toEqual([vague, approve]);
+    expect(toolResults(port.sent)).toMatchObject([
+      { isError: true },
+      { isError: true, text: 'Result rejected:\n- summary: name the spec items checked' },
+      { isError: false, text: 'Result accepted. Stop here.' }
+    ]);
+  });
+
+  test("three results the project's checks refuse end the run with their problems", async () => {
+    const { port, report } = run(
+      [toolUse(approve), toolUse(approve), toolUse(approve), idle('end_turn')],
+      { validate: () => ['summary: name the spec items checked'] }
+    );
+    expect((await report).outcome).toEqual({
+      kind: 'invalid_result',
+      errors: ['summary: name the spec items checked']
+    });
+    expect(port.sent.at(-1)!.events).toEqual([{ type: 'user.interrupt' }]);
   });
 
   test('interrupts after three invalid results', async () => {
@@ -115,7 +166,7 @@ describe('executeRun', () => {
   });
 
   test('a result submitted before the budget pause still counts', async () => {
-    const { report } = run([toolUse(approve), idle('budget_reached')], null);
+    const { report } = run([toolUse(approve), idle('budget_reached')], { costCents: null });
     expect(await report).toMatchObject({ costCents: null, outcome: { kind: 'result' } });
   });
 });

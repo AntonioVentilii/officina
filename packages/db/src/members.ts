@@ -1,6 +1,6 @@
 import { ROLES, type Role } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
-import type { NotificationKind } from './notifications';
+import { notifyInviteAccepted } from './notifications';
 
 type Queryable = Pool | PoolClient;
 
@@ -91,29 +91,20 @@ export const listMemberActivity = async (
     claudeConnected: row.claude_connected
   }));
 
-const INVITE_ACCEPTED: NotificationKind = 'invite_accepted';
-
 /**
- * Records a member's first sign-in and tells the owners of each of their projects, other than the
- * member, that the invite was accepted. Only the first call finds the column empty, so a repeat
- * notifies nobody. Returns how many notifications went out.
+ * Records a member's first sign-in and tells whoever may invite members to each of their projects
+ * that the invite was accepted. Only the first call finds the column empty, so a repeat notifies
+ * nobody. It takes the caller's transaction (a client, never the pool), as `redeemLoginLink`
+ * gives it, so the sign-in and its notifications land together or not at all. Returns how many
+ * notifications went out.
  */
-export const recordFirstSignIn = async (db: Queryable, memberId: string): Promise<number> =>
-  (
-    await db.query(
-      `with first as (
-         update members set first_signed_in_at = now()
-         where id = $1 and first_signed_in_at is null
-         returning id, display_name
-       )
-       insert into notifications (member_id, project_id, kind, payload)
-       select owner.member_id, p.id, $2,
-              jsonb_build_object('memberName', first.display_name, 'projectName', p.name)
-       from first
-       join project_roles mine on mine.member_id = first.id
-       join projects p on p.id = mine.project_id
-       join project_roles owner
-         on owner.project_id = p.id and owner.role = 'owner' and owner.member_id <> first.id`,
-      [memberId, INVITE_ACCEPTED]
-    )
-  ).rowCount ?? 0;
+export const recordFirstSignIn = async (client: PoolClient, memberId: string): Promise<number> => {
+  const { rows } = await client.query<{ display_name: string }>(
+    `update members set first_signed_in_at = now()
+     where id = $1 and first_signed_in_at is null
+     returning display_name`,
+    [memberId]
+  );
+  const first = rows[0];
+  return first ? notifyInviteAccepted(client, { id: memberId, name: first.display_name }) : 0;
+};

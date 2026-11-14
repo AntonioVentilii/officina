@@ -1,11 +1,12 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
-import { branchForTask, type AgentRole } from '@officina/core';
+import { branchForTask, HANDOFF_NEED_KEYS, type AgentRole } from '@officina/core';
 import {
   appendTaskEvent,
   applyCommand,
   createTask,
   expectedHead,
   failOrphanedRuns,
+  failTakenOverRuns,
   feedbackSinceLastPush,
   linkPullRequest,
   loadTask,
@@ -25,6 +26,7 @@ import {
 } from '../../db/test/seed';
 import { createFakePort, idle, toolUse, type ScriptItem } from '../../runner/test/fake-port';
 import {
+  adoptOutsidePushes,
   cancelStaleAutoMerges,
   finishVerifiedSpecs,
   openMissingPullRequests,
@@ -33,6 +35,7 @@ import {
   type OnBehalf,
   syncSpecStatus,
   tick,
+  type AdoptPort,
   type GitHubPort
 } from '../src';
 
@@ -84,6 +87,8 @@ const fakeGitHub = (
     /** The pull request's head; by default the branch head after any status commit written. */
     prHead?: string;
     mergeFails?: boolean;
+    /** What `failedChecks` reports as already failed on a commit. */
+    failed?: string[];
     /** How many times opening the pull request fails before it works. */
     openFails?: number;
     /** How many times writing a file (the spec status) fails before it works. */
@@ -155,8 +160,12 @@ const fakeGitHub = (
     },
     cancelAutoMerge: async (...args: unknown[]) => {
       calls.push({ method: 'cancelAutoMerge', args });
+    },
+    failedChecks: async (...args: unknown[]) => {
+      calls.push({ method: 'failedChecks', args });
+      return options.failed ?? [];
     }
-  } as unknown as GitHubPort;
+  } as unknown as GitHubPort & AdoptPort;
   return { port, calls };
 };
 
@@ -436,9 +445,10 @@ describe.skipIf(!url)('engine', () => {
     };
     const onBehalf: OnBehalf = {
       publicUrl: PUBLIC_URL,
-      tokenFor: async (memberId) => ({ token: `token-${memberId}`, login: 'antonio' }),
+      tokenFor: async (memberId) => ({ token: `token-${memberId}`, login: 'antonio', userId: 1 }),
       asUser: {
         pullRequest: notExpected,
+        reviews: notExpected,
         approve: notExpected,
         mergeWhenReady: notExpected,
         requestCopilotReview: async (...args) => {
@@ -568,7 +578,7 @@ describe.skipIf(!url)('engine', () => {
         type: 'github_review',
         headSha: 'abc',
         by: 'copilot',
-        reviewId: 5,
+        source: { reviewId: 5 },
         notes: 'Typo.',
         overviewOnly: false
       },
@@ -607,7 +617,7 @@ describe.skipIf(!url)('engine', () => {
         type: 'github_review',
         headSha: 'def',
         by: 'copilot',
-        reviewId: 6,
+        source: { reviewId: 6 },
         notes: 'Again.',
         overviewOnly: false
       },
@@ -684,7 +694,7 @@ describe.skipIf(!url)('engine', () => {
         type: 'github_review',
         headSha: head,
         by: 'copilot-pull-request-reviewer[bot]',
-        reviewId: 8,
+        source: { reviewId: 8 },
         notes: '### 🔵 Needs a closer look\n\nThe functions build was unavailable.',
         overviewOnly: true
       },
@@ -823,6 +833,190 @@ describe.skipIf(!url)('engine', () => {
         }
       ]
     });
+  });
+
+  // What a builder's run can end with after a member took the build over while it ran.
+  const lateEndings: [string, ScriptItem[]][] = [
+    ['a block', [toolUse({ outcome: 'blocked', question: 'Which title?' }), idle('end_turn')]],
+    ['a failure', [toolUse({ outcome: 'failed', why: 'tests fail' }), idle('end_turn')]],
+    [
+      'a handoff',
+      [
+        toolUse({
+          outcome: 'needs_person',
+          needs: [HANDOFF_NEED_KEYS[0]],
+          why: 'A person must decide.',
+          asks: ['Decide.']
+        }),
+        idle('end_turn')
+      ]
+    ],
+    ['no result', [idle('end_turn')]]
+  ];
+  for (const [ending, items] of lateEndings) {
+    test(`a build a member took over while the agent ran stays theirs, whatever the run ends with: ${ending}`, async () => {
+      let taskId = '';
+      const github = fakeGitHub();
+      const agents = createFakePort((request) =>
+        request.metadata.role === 'builder'
+          ? [
+              async () => void (await applyOrThrow(pool, taskId, { type: 'claim' }, seeded.owner)),
+              ...items
+            ]
+          : succeed(request)
+      );
+      taskId = await taskInReady(github, agents);
+      await tick({ pool, github: github.port, agents, publicUrl: PUBLIC_URL }, seeded.projectId);
+
+      expect((await loadTask(pool, taskId))?.task).toMatchObject({
+        stage: 'building',
+        assignee: { kind: 'member', memberId: seeded.ownerId },
+        blocked: null
+      });
+      expect((await runStatuses(taskId)).at(-1)).toEqual({
+        agent_role: 'builder',
+        status: 'failed'
+      });
+    });
+  }
+
+  test('a build released after a takeover and given to the agent again ignores the old run', async () => {
+    let taskId = '';
+    const github = fakeGitHub();
+    const agents = createFakePort((request) =>
+      request.metadata.role === 'builder'
+        ? [
+            async () => {
+              // Taken over, stopped by the scheduler, let go, and dispatched to the builder again.
+              await applyOrThrow(pool, taskId, { type: 'claim' }, seeded.owner);
+              await failTakenOverRuns(pool);
+              await applyOrThrow(pool, taskId, { type: 'release' }, seeded.owner);
+              await applyOrThrow(
+                pool,
+                taskId,
+                { type: 'dispatch', assignee: { kind: 'agent', role: 'builder' }, openInLane: 0 },
+                { kind: 'engine' }
+              );
+            },
+            toolUse({ outcome: 'blocked', question: 'Which title?' }),
+            idle('end_turn')
+          ]
+        : succeed(request)
+    );
+    taskId = await taskInReady(github, agents);
+    const report = await tick(
+      { pool, github: github.port, agents, publicUrl: PUBLIC_URL },
+      seeded.projectId
+    );
+
+    expect(report.steps.find((step) => step.role === 'builder')?.result).toMatchObject({
+      status: 'discarded'
+    });
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({
+      stage: 'building',
+      assignee: { kind: 'agent', role: 'builder' },
+      blocked: null
+    });
+    expect((await runStatuses(taskId)).at(-1)).toEqual({ agent_role: 'builder', status: 'failed' });
+  });
+
+  test('a build taken over before its session started is stopped as soon as the session exists', async () => {
+    let taskId = '';
+    const github = fakeGitHub();
+    const agents = createFakePort(succeed);
+    taskId = await taskInReady(github, agents);
+    const createSession = agents.createSession.bind(agents);
+    agents.createSession = async (request) => {
+      if (request.metadata.role === 'builder') {
+        // The member claims, and the scheduler stops the run, while it has no session yet.
+        await applyOrThrow(pool, taskId, { type: 'claim' }, seeded.owner);
+        expect(await failTakenOverRuns(pool)).toEqual([
+          { id: request.metadata.run_id!, externalId: null }
+        ]);
+      }
+      return createSession(request);
+    };
+    const report = await tick(
+      { pool, github: github.port, agents, publicUrl: PUBLIC_URL },
+      seeded.projectId
+    );
+    expect(report.steps.find((step) => step.role === 'builder')?.result).toEqual({
+      status: 'discarded',
+      reason: 'the run was stopped before its session started'
+    });
+
+    const session = `sesn_${agents.sessions.length}`;
+    expect(agents.sent.filter((sent) => sent.sessionId === session)).toEqual([
+      { sessionId: session, events: [{ type: 'user.interrupt' }] }
+    ]);
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({
+      stage: 'building',
+      assignee: { kind: 'member', memberId: seeded.ownerId },
+      blocked: null
+    });
+    const { rows } = await pool.query<{ status: string; error: string }>(
+      `select status, result->>'error' as error from runs where task_id = $1
+         and agent_role = 'builder'`,
+      [taskId]
+    );
+    expect(rows).toEqual([
+      { status: 'failed', error: 'a member took the build over while this run was in progress' }
+    ]);
+  });
+
+  test('a member who takes a build over stops the agent run, once, whatever stage their work reached, and only on their task', async () => {
+    const taken = await taskInReady();
+    const handedIn = await taskInReady();
+    const kept = await taskInReady();
+    for (const taskId of [taken, handedIn, kept]) {
+      await applyOrThrow(
+        pool,
+        taskId,
+        { type: 'dispatch', assignee: { kind: 'agent', role: 'builder' }, openInLane: 0 },
+        { kind: 'engine' }
+      );
+    }
+    const runs: Record<string, string> = {};
+    for (const taskId of [taken, handedIn, kept]) {
+      const run = await startRun(pool, {
+        taskId,
+        stage: 'building',
+        role: 'builder',
+        agentVersion: 1,
+        runner: 'managed-agents'
+      });
+      if (!run.ok) throw new Error(run.error);
+      runs[taskId] = run.runId;
+    }
+    await pool.query("update runs set external_id = 'sesn_taken' where id = $1", [runs[taken]]);
+    await applyOrThrow(pool, taken, { type: 'claim' }, seeded.owner);
+    await applyOrThrow(pool, handedIn, { type: 'claim' }, seeded.owner);
+    // Handed in before the scheduler's next pass: the member's build is in review already.
+    await applyOrThrow(
+      pool,
+      handedIn,
+      {
+        type: 'push',
+        headSha: 'dev1',
+        changedPaths: ['src/app.ts'],
+        addedPaths: [],
+        catalogPages: {},
+        diffLines: 3
+      },
+      seeded.owner
+    );
+    expect((await loadTask(pool, handedIn))?.task.stage).toBe('reviewing');
+
+    expect((await failTakenOverRuns(pool)).sort((a, b) => a.id.localeCompare(b.id))).toEqual(
+      [
+        { id: runs[taken]!, externalId: 'sesn_taken' },
+        { id: runs[handedIn]!, externalId: null }
+      ].sort((a, b) => a.id.localeCompare(b.id))
+    );
+    expect(await failTakenOverRuns(pool)).toEqual([]);
+    expect(await runStatuses(taken)).toContainEqual({ agent_role: 'builder', status: 'failed' });
+    expect(await runStatuses(handedIn)).toContainEqual({ agent_role: 'builder', status: 'failed' });
+    expect(await runStatuses(kept)).toContainEqual({ agent_role: 'builder', status: 'running' });
   });
 
   test('a push to any other branch blocks the task and opens no pull request', async () => {
@@ -1009,7 +1203,7 @@ describe.skipIf(!url)('engine', () => {
     const userCalls: string[] = [];
     const onBehalf = {
       publicUrl: PUBLIC_URL,
-      tokenFor: async () => ({ token: 't', login: 'antonio' }),
+      tokenFor: async () => ({ token: 't', login: 'antonio', userId: 1 }),
       asUser: {
         pullRequest: async () => ({
           node_id: 'PR',
@@ -1017,6 +1211,7 @@ describe.skipIf(!url)('engine', () => {
           merged: false,
           head: { sha: 'abc' }
         }),
+        reviews: async () => [],
         approve: async () => {
           userCalls.push('approve');
           return {};
@@ -1242,6 +1437,85 @@ describe.skipIf(!url)('engine', () => {
       [clean]
     );
     expect(await mergeEvents(clean)).toEqual(['awaiting_merge']);
+  });
+
+  test('a head pushed from outside Officina is taken in and reviewed again, once', async () => {
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    // While a build is still going its own push is not recorded yet: nothing is taken in.
+    const { runId } = (await startRun(pool, {
+      taskId,
+      stage: 'merging',
+      role: 'builder',
+      agentVersion: 1,
+      runner: 'managed_agents'
+    })) as { ok: true; runId: string };
+    const bot = fakeGitHub({ branchHead: 'bot1' });
+    await adoptOutsidePushes(pool, bot.port, [taskId]);
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({
+      stage: 'merging',
+      headSha: 'abc'
+    });
+    await pool.query(`update runs set status = 'succeeded' where id = $1`, [runId]);
+
+    await adoptOutsidePushes(pool, bot.port, [taskId]);
+    await adoptOutsidePushes(pool, bot.port, [taskId]);
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({
+      stage: 'reviewing',
+      headSha: 'bot1',
+      reviews: {}
+    });
+    const pushed = await pool.query<{ payload: Record<string, unknown> }>(
+      `select payload from task_events where task_id = $1 and type = 'pushed' order by id`,
+      [taskId]
+    );
+    expect(pushed.rows.map((row) => row.payload)).toEqual([
+      expect.not.objectContaining({ outside: true }),
+      expect.objectContaining({ headSha: 'bot1', outside: true })
+    ]);
+    // The second pass found the head it had taken in and read nothing more.
+    expect(bot.calls.filter((call) => call.method === 'pushFacts')).toHaveLength(1);
+    // It left merging, so auto-merge is off even if a person turned it on, with no trail here.
+    expect(bot.calls.filter((call) => call.method === 'cancelAutoMerge')).toHaveLength(1);
+    const cancelled = await pool.query(
+      `select 1 from task_events where task_id = $1 and type = 'github_auto_merge_cancelled'`,
+      [taskId]
+    );
+    expect(cancelled.rowCount).toBe(1);
+  });
+
+  test('checks already red on a head taken in from outside send it back to the builder', async () => {
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    const bot = fakeGitHub({ branchHead: 'bot1', failed: ['GitHub Actions: failure'] });
+    await adoptOutsidePushes(pool, bot.port, [taskId]);
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({
+      stage: 'building',
+      headSha: 'bot1'
+    });
+    expect(bot.calls.find((call) => call.method === 'failedChecks')?.args[0]).toMatchObject({
+      sha: 'bot1'
+    });
+    const failed = await pool.query<{ details: string }>(
+      `select payload->>'details' as details from task_events where task_id = $1 and type = 'ci_failed'`,
+      [taskId]
+    );
+    expect(failed.rows.map((row) => row.details)).toEqual(['GitHub Actions: failure']);
+  });
+
+  test("Officina's own status commit on the verified head is not a push from outside", async () => {
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    const github = fakeGitHub({
+      branchHead: 'abc',
+      written: { commitSha: 'abc2', parentSha: 'abc' }
+    });
+    await finishVerifiedSpecs(pool, github.port, [taskId]);
+    await adoptOutsidePushes(pool, github.port, [taskId]);
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({
+      stage: 'merging',
+      headSha: 'abc'
+    });
   });
 
   test('repeated invalid results fail the run and ask a maintainer', async () => {

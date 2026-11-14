@@ -1,4 +1,5 @@
 import {
+  adoptOutsidePushes,
   collectDueSteps,
   cancelStaleAutoMerges,
   finishVerifiedSpecs,
@@ -10,6 +11,7 @@ import {
 } from '@officina/engine';
 import {
   failOrphanedRuns,
+  failTakenOverRuns,
   listActiveTaskIds,
   listSchedulableProjectIds,
   purgeConnectorCredentials,
@@ -30,6 +32,21 @@ import { startScheduler, type Scheduler } from './scheduler';
 import { setupAgents } from './setup';
 
 const PURGE_INTERVAL_MS = 60 * 60 * 1000;
+
+/** Interrupts the sessions of runs failed outside their step, best-effort: the run is failed already. */
+const interruptSessions = async (
+  agents: ManagedAgentsPort,
+  runs: readonly { id: string; externalId: string | null }[],
+  log: (message: string, details?: Record<string, unknown>) => void,
+  message: string
+) => {
+  for (const run of runs) {
+    log(message, run);
+    if (run.externalId) {
+      await agents.send(run.externalId, [{ type: 'user.interrupt' }]).catch(() => {});
+    }
+  }
+};
 
 export const createAgentsPort = (
   auth: AnthropicAuth,
@@ -61,12 +78,12 @@ export const startEngine = async (input: {
     promptsDir: input.promptsDir
   };
 
-  for (const run of await failOrphanedRuns(input.pool)) {
-    input.log('orphaned run failed', run);
-    if (run.externalId) {
-      await input.agents.send(run.externalId, [{ type: 'user.interrupt' }]).catch(() => {});
-    }
-  }
+  await interruptSessions(
+    input.agents,
+    await failOrphanedRuns(input.pool),
+    input.log,
+    'orphaned run failed'
+  );
 
   if (input.promptsDir) {
     // A failed sync must not keep the board down: the versions recorded last time still run.
@@ -106,13 +123,25 @@ export const startEngine = async (input: {
         });
         if (deliveries > 0) input.log('old webhook deliveries purged', { rows: deliveries });
       }
+      // A member who takes a build over stops the agent's session, which would only spend now.
+      const takenOver = await failTakenOverRuns(input.pool).catch((error: unknown) => {
+        input.log('taken over run stop failed', { error: (error as Error).message });
+        return [];
+      });
+      await interruptSessions(input.agents, takenOver, input.log, 'taken over run stopped');
       const due = [];
       for (const projectId of await listSchedulableProjectIds(input.pool)) {
+        const active = await listActiveTaskIds(input.pool, projectId);
+        // Before the due steps, so they follow the head taken in, and before the merge work below,
+        // which writes Officina's own status commit on the branch.
+        await adoptOutsidePushes(input.pool, input.github, active).catch((error: unknown) =>
+          input.log('outside push check failed', { projectId, error: (error as Error).message })
+        );
         due.push(...(await collectDueSteps(deps, projectId)).due);
         const unfinished = await finishVerifiedSpecs(
           input.pool,
           input.github,
-          await listActiveTaskIds(input.pool, projectId),
+          active,
           input.onBehalf
         ).catch((error: unknown) => [{ error: (error as Error).message }]);
         for (const failure of unfinished) {

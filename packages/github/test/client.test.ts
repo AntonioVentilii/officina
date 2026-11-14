@@ -5,7 +5,8 @@ import {
   GitHubError,
   createAppJwt,
   createGitHubAsUser,
-  createGitHubClient
+  createGitHubClient,
+  createGitHubUserAuth
 } from '../src';
 
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
@@ -426,6 +427,34 @@ describe('GitHub client', () => {
       { id: 'T4' }
     ]);
   });
+
+  test("reads a review's comments on every page, at the original line when the line is gone", async () => {
+    const comments = Array.from({ length: 101 }, (_, index) => ({
+      path: `src/${index}.ts`,
+      line: index === 100 ? null : index + 1,
+      original_line: index === 100 ? 7 : null,
+      body: `Comment ${index}`
+    }));
+    const { fetchImpl, calls } = fakeGitHub({
+      'POST /app/installations/99/access_tokens': tokenRoute('2099-01-01T00:00:00Z'),
+      'GET /repos/ViciApp/vici-app/pulls/42/reviews/7/comments': () => {
+        const query = new URLSearchParams(calls.at(-1)!.query);
+        expect(query.get('per_page')).toBe('100');
+        const page = Number(query.get('page'));
+        return json(comments.slice((page - 1) * 100, page * 100));
+      }
+    });
+    const client = createGitHubClient({ appId: '1', privateKeyPem, fetch: fetchImpl });
+
+    const read = await client.reviewComments({ ...ref, pullRequest: 42, reviewId: 7 });
+    expect(read).toHaveLength(101);
+    expect(read[0]).toEqual({ path: 'src/0.ts', line: 1, body: 'Comment 0' });
+    expect(read[100]).toEqual({ path: 'src/100.ts', line: 7, body: 'Comment 100' });
+    expect(calls.slice(1).map((call) => new URLSearchParams(call.query).get('page'))).toEqual([
+      '1',
+      '2'
+    ]);
+  });
 });
 
 describe('merge when ready', () => {
@@ -488,6 +517,37 @@ describe('merge when ready', () => {
 });
 
 describe('GitHub as a person', () => {
+  test('lists every page of reviews with the person token, leaving out deleted accounts', async () => {
+    const page = (count: number, offset: number) =>
+      Array.from({ length: count }, (_, index) => ({
+        user:
+          index === 0 && offset > 0
+            ? null
+            : { id: offset + index, login: `reviewer${offset + index}` },
+        state: 'APPROVED',
+        commit_id: 'abc'
+      }));
+    let served = 0;
+    const { fetchImpl, calls } = fakeGitHub({
+      'GET /repos/ViciApp/vici-app/pulls/42/reviews': () =>
+        json(served++ === 0 ? page(100, 0) : page(2, 100))
+    });
+    const asUser = createGitHubAsUser({ fetch: fetchImpl });
+
+    const reviews = await asUser.reviews('gho_person', 'ViciApp/vici-app', 42);
+    expect(reviews).toHaveLength(101);
+    expect(reviews.at(-1)).toEqual({
+      userId: 101,
+      login: 'reviewer101',
+      state: 'APPROVED',
+      commitId: 'abc'
+    });
+    expect(calls.map((call) => [call.query, call.authorization])).toEqual([
+      ['?per_page=100&page=1', 'Bearer gho_person'],
+      ['?per_page=100&page=2', 'Bearer gho_person']
+    ]);
+  });
+
   test('asks Copilot to review with the person token, and a pending review is not an error', async () => {
     const path = '/repos/ViciApp/vici-app/pulls';
     const { fetchImpl, calls } = fakeGitHub({
@@ -513,5 +573,78 @@ describe('GitHub as a person', () => {
     const refused = asUser.requestCopilotReview('ghu_1', 'ViciApp/vici-app', 3);
     await expect(refused).rejects.toBeInstanceOf(GitHubError);
     await expect(refused).rejects.toThrow('ACTOR_NOT_ELIGIBLE');
+  });
+});
+
+describe('GitHub user authorization', () => {
+  const TOKEN_PATH = '/login/oauth/access_token';
+  const authWith = (answer: () => Response) => {
+    const { fetchImpl, calls } = fakeGitHub({ [`POST ${TOKEN_PATH}`]: answer });
+    const auth = createGitHubUserAuth({
+      clientId: 'Iv1.app',
+      clientSecret: 'app-secret',
+      redirectUri: 'https://officina.example/auth/github/callback',
+      fetch: fetchImpl
+    });
+    return { auth, calls };
+  };
+
+  test('exchanges a code for tokens whose lifetimes count from the answer', async () => {
+    const { auth, calls } = authWith(() =>
+      json({
+        access_token: 'ghu_access',
+        expires_in: 28_800,
+        refresh_token: 'ghr_refresh',
+        refresh_token_expires_in: 15_897_600
+      })
+    );
+    const before = Date.now();
+    const tokens = await auth.exchangeCode('the-code');
+    const after = Date.now();
+
+    expect(calls[0]!.body).toEqual({
+      client_id: 'Iv1.app',
+      client_secret: 'app-secret',
+      code: 'the-code',
+      redirect_uri: 'https://officina.example/auth/github/callback'
+    });
+    expect(tokens).toMatchObject({ accessToken: 'ghu_access', refreshToken: 'ghr_refresh' });
+    const accessAt = tokens.accessExpiresAt!.getTime();
+    expect(accessAt).toBeGreaterThanOrEqual(before + 28_800_000);
+    expect(accessAt).toBeLessThanOrEqual(after + 28_800_000);
+    expect(tokens.refreshExpiresAt!.getTime() - accessAt).toBe((15_897_600 - 28_800) * 1000);
+  });
+
+  test('a token GitHub gives without lifetimes never expires and has no refresh token', async () => {
+    const { auth } = authWith(() =>
+      json({ access_token: 'ghu_forever', expires_in: 0, refresh_token_expires_in: 'soon' })
+    );
+    expect(await auth.exchangeCode('the-code')).toEqual({
+      accessToken: 'ghu_forever',
+      accessExpiresAt: null,
+      refreshToken: null,
+      refreshExpiresAt: null
+    });
+  });
+
+  test('refreshes with the refresh token grant', async () => {
+    const { auth, calls } = authWith(() => json({ access_token: 'ghu_new' }));
+    expect((await auth.refresh('ghr_old')).accessToken).toBe('ghu_new');
+    expect(calls[0]!.body).toEqual({
+      client_id: 'Iv1.app',
+      client_secret: 'app-secret',
+      grant_type: 'refresh_token',
+      refresh_token: 'ghr_old'
+    });
+  });
+
+  test("an answer with no token is a GitHub error carrying GitHub's reason", async () => {
+    // GitHub answers a bad code with 200 and an `error` field, not with an error status.
+    const refused = authWith(() => json({ error: 'bad_verification_code' })).auth.exchangeCode('x');
+    await expect(refused).rejects.toBeInstanceOf(GitHubError);
+    await expect(refused).rejects.toThrow(`GitHub 200 on ${TOKEN_PATH}: bad_verification_code`);
+
+    const failed = authWith(() => json({ access_token: 'ghu_ignored' }, 500)).auth.refresh('ghr');
+    await expect(failed).rejects.toThrow(`GitHub 500 on ${TOKEN_PATH}: no token`);
   });
 });

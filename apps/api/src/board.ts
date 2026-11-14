@@ -737,6 +737,8 @@ export const taskView = async (
           question: shown.text(questionFor(viewer, row.blocked)),
           needs: handoffNeeds(row.blocked),
           options: shown.value(optionsFor(viewer, row.blocked)) ?? [],
+          // An option picked from this question holds only for the version it was read at.
+          version: row.version,
           askedOf:
             'memberId' in row.blocked.askedOf
               ? (facts.names.get(row.blocked.askedOf.memberId) ?? 'a member')
