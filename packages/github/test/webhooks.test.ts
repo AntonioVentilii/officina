@@ -133,7 +133,12 @@ describe('webhook events', () => {
       body: 'Two problems found.'
     });
     expect(parseWebhookEvent('issue_comment', comment('User'))).toBeNull();
-    expect(parseWebhookEvent('issue_comment', comment('Bot', { action: 'edited' }))).toBeNull();
+    // A bot editing its placeholder as it works: the edit is read like a new comment.
+    expect(parseWebhookEvent('issue_comment', comment('Bot', { action: 'edited' }))).toMatchObject({
+      kind: 'pull_request_commented',
+      commentId: 31
+    });
+    expect(parseWebhookEvent('issue_comment', comment('Bot', { action: 'deleted' }))).toBeNull();
     // A comment on an issue, not a pull request.
     expect(parseWebhookEvent('issue_comment', comment('Bot', { issue: { number: 7 } }))).toBeNull();
   });

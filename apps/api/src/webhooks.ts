@@ -1,23 +1,25 @@
+import { ENGINE, parseProjectConfigYaml } from '@officina/core';
 import {
-  ENGINE,
-  parseProjectConfig,
-  parseProjectConfigYaml,
-  type GitHubFeedbackSource
-} from '@officina/core';
-import {
-  answeredOverviewLast,
   applyCommand,
   findProjectsByRepo,
   findTasksByCommit,
   findTasksByPullRequest,
   loadTaskContext,
   markLearningsApplied,
+  recordBotComment,
   reviewedHead,
   unlinkPullRequest,
   updateProjectConfig,
   type ApplyResult
 } from '@officina/db';
-import { stopAutoMergeOnLeaving } from '@officina/engine';
+import {
+  forwardFeedback,
+  holdAutoMerge,
+  overviewNotes,
+  reviewBotsIn,
+  stopAutoMergeOnLeaving,
+  type ReviewNotes
+} from '@officina/engine';
 import {
   COPILOT_REVIEWERS,
   copilotVerdict,
@@ -74,22 +76,6 @@ const refreshConfigs = async (
   return outcomes;
 };
 
-type ReviewNotes = { readonly notes: string; readonly overviewOnly: boolean };
-
-/** The bots a task's project lists as its own reviewers (`pull_request.review_bots`). */
-const reviewBotsOf = async (pool: Pool, taskId: string): Promise<ReadonlySet<string>> => {
-  const context = await loadTaskContext(pool, taskId);
-  const config = context ? parseProjectConfig(context.rawConfig) : null;
-  return new Set(config?.ok ? config.config.pullRequest.reviewBots : []);
-};
-
-/** Notes for the builder about feedback that left nothing on the code: a verdict, an overview. */
-const overviewNotes = (what: string, by: string, body: string): string =>
-  [
-    `${what} by @${by} on the pull request, with no comment on the code. Check each point of it against the code: change what is right, and say in \`reviewReply\` what you checked and why the rest needs no change. Finish \`unchanged\` when nothing does.`,
-    body.trim()
-  ].join('\n\n');
-
 /**
  * A review left on the pull request becomes notes for the builder. A bot counts when it left inline
  * comments; with none, Copilot counts when it gave a verdict (a green or blue one can still name a
@@ -130,6 +116,10 @@ const reviewNotes = async (
   return { notes, overviewOnly: false };
 };
 
+/** The auto-merge call, when this deployment's GitHub client has one. */
+const cancelPort = (github: ConfigReader | undefined) =>
+  github?.cancelAutoMerge ? { cancelAutoMerge: github.cancelAutoMerge } : undefined;
+
 /** Turns auto-merge off when the command moved the task out of `merging` (`stopAutoMergeOnLeaving`). */
 const stopAutoMerge = async (
   pool: Pool,
@@ -148,40 +138,6 @@ const stopAutoMerge = async (
     },
     result
   );
-};
-
-/** Sends one task back to its builder with feedback left on GitHub, once per answer. */
-const forwardFeedback = async (
-  pool: Pool,
-  github: ConfigReader,
-  input: {
-    taskId: string;
-    installationId: number;
-    repo: string;
-    prNumber: number;
-    by: string;
-    headSha: string;
-    source: GitHubFeedbackSource;
-    review: ReviewNotes;
-  }
-): Promise<WebhookOutcome> => {
-  const { taskId, review } = input;
-  if (review.overviewOnly && (await answeredOverviewLast(pool, taskId, input.by)))
-    return { taskId, ok: false, error: 'overview_already_answered' };
-  const result = await applyCommand(pool, {
-    taskId,
-    command: {
-      type: 'github_review',
-      headSha: input.headSha,
-      by: input.by,
-      source: input.source,
-      notes: review.notes,
-      overviewOnly: review.overviewOnly
-    },
-    actor: ENGINE
-  });
-  await stopAutoMerge(pool, github, input, result);
-  return result.ok ? { taskId, ok: true } : { taskId, ok: false, error: result.error };
 };
 
 /** The installation the repository's project is reached through, if it has one. */
@@ -205,55 +161,52 @@ const handleReview = async (
       github,
       installationId,
       action,
-      await reviewBotsOf(pool, taskId)
+      reviewBotsIn(await loadTaskContext(pool, taskId))
     );
     if (!review) continue;
-    outcomes.push(
-      await forwardFeedback(pool, github, {
-        taskId,
-        installationId,
-        repo: action.repo,
-        prNumber: action.prNumber,
-        by: action.by,
-        headSha: await reviewedHead(pool, taskId, action.commitId),
-        source: { reviewId: action.reviewId },
-        review
-      })
-    );
+    const forwarded = await forwardFeedback(pool, cancelPort(github), {
+      taskId,
+      ref: { installationId, repo: action.repo },
+      pullRequest: action.prNumber,
+      by: action.by,
+      headSha: await reviewedHead(pool, taskId, action.commitId),
+      source: { reviewId: action.reviewId },
+      review
+    });
+    outcomes.push({ taskId, ...forwarded });
   }
   return outcomes;
 };
 
 /**
  * A comment on the pull request from a bot the project lists as a reviewer, such as a review
- * action's summary, reaches the builder like a review that left nothing on the code. A comment is
- * tied to no commit, so it is taken to be about the head the task holds when it arrives.
+ * action's summary, is recorded with every edit; the scheduler hands it to the builder once it
+ * stops changing (`forwardSettledComments`), so a placeholder the bot edits as it works is never
+ * what the builder reads.
  */
 const handleComment = async (
   pool: Pool,
   github: ConfigReader | undefined,
   action: Extract<WebhookAction, { kind: 'pull_request_commented' }>
 ): Promise<WebhookOutcome[]> => {
-  if (!github || action.body.trim() === '') return [];
-  const installationId = await installationOf(pool, action.repo);
-  if (!installationId) return [];
   const outcomes: WebhookOutcome[] = [];
   for (const taskId of await findTasksByPullRequest(pool, action.repo, action.prNumber)) {
-    if (!(await reviewBotsOf(pool, taskId)).has(action.by)) continue;
-    const headSha = (await loadTaskContext(pool, taskId))?.task.headSha;
-    if (!headSha) continue;
-    outcomes.push(
-      await forwardFeedback(pool, github, {
+    const context = await loadTaskContext(pool, taskId);
+    if (!context || !reviewBotsIn(context).has(action.by)) continue;
+    await recordBotComment(pool, taskId, {
+      commentId: action.commentId,
+      by: action.by,
+      body: action.body
+    });
+    // GitHub must not merge while the comment settles: it may send the work back.
+    const cancel = cancelPort(github);
+    if (cancel && context.task.stage === 'merging' && context.installationId)
+      await holdAutoMerge(pool, cancel, {
         taskId,
-        installationId,
-        repo: action.repo,
-        prNumber: action.prNumber,
-        by: action.by,
-        headSha,
-        source: { commentId: action.commentId },
-        review: { notes: overviewNotes('Comment', action.by, action.body), overviewOnly: true }
-      })
-    );
+        ref: { installationId: context.installationId, repo: action.repo },
+        pullRequest: action.prNumber
+      });
+    outcomes.push({ taskId, ok: true });
   }
   return outcomes;
 };
