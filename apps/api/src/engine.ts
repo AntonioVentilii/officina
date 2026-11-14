@@ -14,6 +14,7 @@ import {
   listSchedulableProjectIds,
   purgeConnectorCredentials,
   purgeExpiredCredentials,
+  purgeOldAccessEvents,
   purgeOldDeliveries
 } from '@officina/db';
 import type { GitHubClient } from '@officina/github';
@@ -95,6 +96,11 @@ export const startEngine = async (input: {
         });
         if (purged && purged.loginLinks + purged.sessions + purged.oauthStates > 0)
           input.log('expired credentials purged', purged);
+        const oldAccess = await purgeOldAccessEvents(input.pool).catch((error: unknown) => {
+          input.log('access log purge failed', { error: (error as Error).message });
+          return 0;
+        });
+        if (oldAccess > 0) input.log('access events older than a year purged', { rows: oldAccess });
         const connector = await purgeConnectorCredentials(input.pool).catch((error: unknown) => {
           input.log('connector credential purge failed', { error: (error as Error).message });
           return 0;

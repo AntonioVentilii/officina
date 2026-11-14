@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { DEFAULT_BOARD_LOOK, type BoardLook, type Role } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
+import { recordAccessEvent } from './access';
 import { recordFirstSignIn } from './members';
 import { inTransaction } from './store';
 
@@ -71,6 +72,7 @@ export const redeemLoginLink = (
     const memberId = rows[0]?.member_id;
     if (!memberId) return null;
     await recordFirstSignIn(client, memberId);
+    await recordAccessEvent(client, { memberId, type: 'signed_in', detail: { method: 'link' } });
     return { sessionToken: await createSession(client, memberId), memberId };
   });
 

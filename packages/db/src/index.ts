@@ -13,3 +13,4 @@ export * from './github-accounts';
 export * from './connector';
 export * from './members';
 export * from './notifications';
+export * from './access';

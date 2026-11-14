@@ -1,6 +1,11 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { createHash, randomBytes } from 'node:crypto';
-import { applyCommand, findTaskIdByNumber, purgeConnectorCredentials } from '@officina/db';
+import {
+  applyCommand,
+  findTaskIdByNumber,
+  purgeConnectorCredentials,
+  purgeOldAccessEvents
+} from '@officina/db';
 import { Pool } from 'pg';
 import { resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
 import { createApp } from '../src/app';
@@ -436,6 +441,63 @@ describe.skipIf(!url)('connector for Claude', () => {
     expect((await tool(token, 'show_task', { number: 1 })).content[0]!.text).toContain(
       'Antonio: Option (b): Lead with evidence\n\nKeep it short.'
     );
+  });
+
+  test('owners read who signed in, who sent links and which apps act for whom', async () => {
+    await invite(pool, {
+      publicUrl: PUBLIC_URL,
+      email: 'gio@example.com',
+      name: 'Gio',
+      role: 'contributor',
+      domains: []
+    });
+    // Gio connects Claude; the app refreshes, then a spent refresh token is presented again.
+    const { tokens, clientId } = await connect('gio@example.com');
+    const refresh = { grant_type: 'refresh_token', client_id: clientId };
+    await form({ ...refresh, refresh_token: tokens.refresh_token });
+    await form({ ...refresh, refresh_token: tokens.refresh_token });
+
+    const owner = await signIn();
+    await handle('/auth/sign-out', {
+      method: 'POST',
+      headers: { cookie: owner, 'x-officina-request': '1' }
+    });
+    const cookie = await signIn();
+    const log = await json(
+      await handle(`/api/projects/${seeded.projectId}/access-log`, { headers: { cookie } })
+    );
+    const lines = (log.events as { member: string; text: string }[])
+      .map((event) => `${event.member} ${event.text}`)
+      .reverse();
+    expect(lines).toEqual([
+      'Gio was invited to ViciApp/vici-app as contributor from the server CLI',
+      'Gio was sent a sign-in link from the server CLI',
+      'Gio signed in with a sign-in link',
+      'Gio allowed Claude to use Officina as them',
+      // Once a day, although the connection and the refresh both issued tokens.
+      'Gio used Officina from Claude',
+      "Gio lost Claude's access: a spent token was presented again, so it must reconnect",
+      'Antonio was sent a sign-in link from the server CLI',
+      'Antonio signed in with a sign-in link',
+      'Antonio signed out',
+      'Antonio was sent a sign-in link from the server CLI',
+      'Antonio signed in with a sign-in link'
+    ]);
+
+    // A contributor cannot read it.
+    const gio = await signIn('gio@example.com');
+    const refused = await handle(`/api/projects/${seeded.projectId}/access-log`, {
+      headers: { cookie: gio }
+    });
+    expect(refused.status).toBe(403);
+
+    // A year on, it is purged; nothing newer is touched.
+    await pool.query(
+      `update access_events set created_at = now() - interval '13 months'
+       where type = 'invited'`
+    );
+    expect(await purgeOldAccessEvents(pool)).toBe(1);
+    expect(await purgeOldAccessEvents(pool)).toBe(0);
   });
 
   test('a watcher reads but cannot open requests or comment', async () => {

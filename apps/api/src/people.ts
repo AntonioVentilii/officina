@@ -3,12 +3,16 @@ import {
   createInviteLink,
   createLoginLink,
   findMemberByEmail,
+  listAccessEvents,
   listMemberActivity,
+  recordAccessEvent,
   resolveProjectId,
   resolveProjectMember,
   setProjectRole,
   upsertMember,
   loadProject,
+  type AccessEventRow,
+  type AccessEventType,
   type MemberActivity
 } from '@officina/db';
 import type { Pool } from 'pg';
@@ -43,7 +47,10 @@ export const loginLink = async (
     memberId = await resolveProjectMember(pool, projectId);
   }
   if (!memberId) throw new TaskCommandError(`${input.email ?? 'the owner'} is not a member`);
-  return signInUrl(input.publicUrl, await createLoginLink(pool, memberId, SIGN_IN_TTL_MS));
+  const token = await createLoginLink(pool, memberId, SIGN_IN_TTL_MS);
+  // Only the CLI on the server mints these: it is how someone who can reach the server gets in.
+  await recordAccessEvent(pool, { memberId, type: 'sign_in_link_created', actor: 'cli' });
+  return signInUrl(input.publicUrl, token);
 };
 
 /** Adds a person to a project with a role (or changes it) and returns their first sign-in link. */
@@ -72,7 +79,14 @@ export const invite = async (
     role: input.role as Role,
     domains: input.domains
   });
-  return signInUrl(input.publicUrl, await createLoginLink(pool, memberId, INVITE_TTL_MS));
+  const token = await createLoginLink(pool, memberId, INVITE_TTL_MS);
+  await recordAccessEvent(pool, {
+    memberId,
+    type: 'invited',
+    detail: { role: input.role, project: (await loadProject(pool, projectId))!.repo },
+    actor: 'cli'
+  });
+  return signInUrl(input.publicUrl, token);
 };
 
 export interface MemberView extends MemberActivity {
@@ -101,12 +115,25 @@ export const membersView = async (
 /** A fresh invite link for a member who has not signed in yet, valid as long as a first invite. */
 export const inviteAgain = async (
   pool: Pool,
-  input: { publicUrl: string; projectId: string; viewerRole: Role; memberId: string }
+  input: {
+    publicUrl: string;
+    projectId: string;
+    viewerRole: Role;
+    viewerId: string;
+    memberId: string;
+  }
 ): Promise<string> => {
   if (!can({ role: input.viewerRole }, 'manage_members'))
     throw new TaskCommandError('only owners send invite links', 403);
   const result = await createInviteLink(pool, { ...input, ttlMs: INVITE_TTL_MS });
-  if (result.ok) return signInUrl(input.publicUrl, result.token);
+  if (result.ok) {
+    await recordAccessEvent(pool, {
+      memberId: input.memberId,
+      type: 'sign_in_link_created',
+      actor: { memberId: input.viewerId }
+    });
+    return signInUrl(input.publicUrl, result.token);
+  }
   if (result.error === 'not_member') throw new TaskCommandError('member not found', 404);
   throw new TaskCommandError(`${result.name} has already signed in`);
 };
@@ -151,5 +178,62 @@ export const membersText = async (pool: Pool, input: { repo?: string | undefined
       member.lastSeenAt ? at(member.lastSeenAt) : '-',
       member.claudeConnected ? 'connected' : 'no'
     ])
+  ]);
+};
+
+/** How many access events the board and the CLI show: enough for a few weeks of a small team. */
+const ACCESS_LOG_LIMIT = 200;
+
+const METHODS: Readonly<Record<string, string>> = {
+  link: 'with a sign-in link',
+  github: 'with GitHub'
+};
+
+type Detail = AccessEventRow['detail'];
+
+/** Each kind of access event as words about its member; `by` names who did it for them, if anyone. */
+const ACCESS_SENTENCES: Readonly<Record<AccessEventType, (d: Detail, by: string) => string>> = {
+  signed_in: (d) =>
+    `signed in ${METHODS[d.method ?? ''] ?? ''}${d.login ? ` (@${d.login})` : ''}`.trim(),
+  signed_out: () => 'signed out',
+  invited: (d, by) => `was invited to ${d.project} as ${d.role}${by}`,
+  sign_in_link_created: (_, by) => `was sent a sign-in link${by}`,
+  github_linked: (d) => `connected GitHub as @${d.login}`,
+  github_unlinked: (d) => `disconnected GitHub @${d.login}`,
+  connector_allowed: (d) => `allowed ${d.client} to use Officina as them`,
+  connector_refused: (d) => `refused ${d.client}`,
+  connector_used: (d) => `used Officina from ${d.client}`,
+  connector_revoked: (d) =>
+    `lost ${d.client}'s access: a spent token was presented again, so it must reconnect`
+};
+
+/** One access event as a sentence about its member, for the board and the CLI alike. */
+export const describeAccessEvent = (event: AccessEventRow): string => {
+  const by = event.actor
+    ? ` by ${event.actor}`
+    : event.detail.via === 'cli'
+      ? ' from the server CLI'
+      : '';
+  return ACCESS_SENTENCES[event.type](event.detail, by);
+};
+
+/** The project's access log, newest first, as the owners' Members page shows it. */
+export const accessLogView = async (pool: Pool, projectId: string) =>
+  (await listAccessEvents(pool, projectId, ACCESS_LOG_LIMIT)).map((event) => ({
+    id: event.id,
+    at: event.at,
+    type: event.type,
+    member: event.member,
+    text: describeAccessEvent(event)
+  }));
+
+/** The `access-log` command: the same log for owners at the server. */
+export const accessLogText = async (pool: Pool, input: { repo?: string | undefined }) => {
+  const { projectId } = await projectFor(pool, input.repo);
+  const events = await accessLogView(pool, projectId);
+  if (events.length === 0) return 'No access events yet.';
+  return table([
+    ['WHEN', 'WHO', 'WHAT'],
+    ...events.map((event) => [at(event.at), event.member, event.text])
   ]);
 };

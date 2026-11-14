@@ -31,7 +31,16 @@ export type Permission =
   | 'merge'
   | 'see_confidential'
   | 'publish'
-  | 'manage_members';
+  | 'manage_members'
+  | 'see_access_log';
+
+/** One line of the owners' access log: when, whose access, and what happened in words. */
+export interface AccessEvent {
+  readonly id: string;
+  readonly at: string;
+  readonly member: string;
+  readonly text: string;
+}
 export type BoardAction =
   | 'submit'
   | 'accept'
