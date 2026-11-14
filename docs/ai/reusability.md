@@ -25,7 +25,7 @@ Search here before writing a helper, a type, a component or a fake. When you add
 | `GATES`, `isGate`, `Gate`                                                                                                 | `src/config.ts`      | The stages where people approve, and the guard that narrows a stage to one                                           |
 | `catalogPagesToRead`, `unlistedFiles`, `describeUnlisted`                                                                 | `src/catalogs.ts`    | Which catalog pages a push must list its new files in                                                                |
 | `OUTPUT_SCHEMAS`, `parseAgentOutput`, `commandForOutput`, `PushFacts`                                                     | `src/contracts.ts`   | Role contracts and the command each result maps to                                                                   |
-| `INPUT_LIMITS`, `checksSchema`                                                                                            | `src/limits.ts`      | How long each field a person or an agent hands in may be; the board's API, the connector and the contracts read them |
+| `INPUT_LIMITS`, `CHECKLIST_LIMITS`, `checksSchema`                                                                        | `src/limits.ts`      | How long each field a person or an agent hands in may be, and the chooser's checklist; the API and contracts read it |
 | `QuestionOption`, `Preview`, `optionKey`, `findOption`, `questionMarkdown`, `optionAnswer`                                | `src/questions.ts`   | The options and previews a question offers, their letters, and the answer a picked one stands for                    |
 
 ## `packages/db`
