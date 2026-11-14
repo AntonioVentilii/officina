@@ -59,17 +59,29 @@ export const recordRunResult = async (pool: Pool, runId: string, result: unknown
   await pool.query('update runs set result = $2 where id = $1', [runId, JSON.stringify(result)]);
 };
 
-/** The latest run of these roles on a task, whatever its status, with the result it recorded. */
-export const latestBuildRun = async (
+/** The task event a developer's hand-in records, with the build it handed in as its payload. */
+export const HAND_IN_EVENT = 'build_handed_in';
+
+/**
+ * The latest build of a task, whoever made it: a run of these roles, whatever its status, with the
+ * result it recorded, or a developer's hand-in (`HAND_IN_EVENT`), which has no run and counts as a
+ * finished one.
+ */
+export const latestBuild = async (
   pool: Pool,
   taskId: string,
   roles: readonly string[]
 ): Promise<{ status: RunStatus; result: unknown } | null> =>
   (
     await pool.query<{ status: RunStatus; result: unknown }>(
-      `select status, result from runs where task_id = $1 and agent_role = any($2::text[])
-       order by created_at desc limit 1`,
-      [taskId, roles]
+      `select status, result from (
+         select status, result, created_at from runs
+         where task_id = $1 and agent_role = any($2::text[])
+         union all
+         select 'succeeded', payload, created_at from task_events
+         where task_id = $1 and type = $3
+       ) build order by created_at desc limit 1`,
+      [taskId, roles, HAND_IN_EVENT]
     )
   ).rows[0] ?? null;
 

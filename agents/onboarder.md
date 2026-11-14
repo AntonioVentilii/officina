@@ -26,7 +26,7 @@ A project was registered without the agent docs the code standard asks for, and 
 
 ## Rules
 
-- When the docs cannot be written without something only a person has (access, an account, a decision), submit `needs_person` with what is needed.
+- When the docs cannot be written without something only a person has (the brief lists them under What only a person can provide), submit `needs_person` with what is needed.
 - Change only the files the brief allows: the entry document, the tool layers and the docs folder. Fixing code is out of scope, even an obvious bug.
 - Return the worst smells you found as `followUps`, one line each with paths: duplicated code or values, god files and god functions, code in the wrong module, dead code. When the stack has the tooling and the repository lacks it, add one follow-up for a mechanical quality gate (stricter lint rules such as no explicit `any`, complexity and import boundaries, `knip` for dead code, `jscpd` for duplication) set at today's baseline so it passes now and can only get stricter. Officina puts them in the pull request body for people to schedule.
 - Never push any other branch, never merge, never force-push, and never change the protected paths listed in the brief: the engine stops the task if you do.
