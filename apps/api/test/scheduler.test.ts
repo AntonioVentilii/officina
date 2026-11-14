@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { startScheduler, type DueWork } from '../src';
+import { nextPassDelay, startScheduler, type DueWork } from '../src';
 
 const waitFor = async (condition: () => boolean, timeoutMs = 2000) => {
   const deadline = Date.now() + timeoutMs;
@@ -69,5 +69,30 @@ describe('scheduler', () => {
     await waitFor(() => scheduler.inFlight() === 1);
     await scheduler.stop({ waitForSteps: true });
     expect(settled).toBe(true);
+  });
+
+  test('passes that keep failing wait longer each time, and one that succeeds resets the wait', async () => {
+    let collects = 0;
+    const scheduler = startScheduler({
+      intervalMs: 5,
+      collect: async () => {
+        collects += 1;
+        if (collects <= 4) throw new Error('database unavailable');
+        return [];
+      },
+      runStep: async () => {}
+    });
+    // Waits of 10, 20 and 40 ms after the first three failures: a fixed 5 ms would give a dozen.
+    await Bun.sleep(60);
+    expect(scheduler.passes()).toBeLessThan(5);
+    await waitFor(() => scheduler.passes() >= 14);
+    await scheduler.stop();
+  });
+
+  test('the wait after failed passes never grows past five minutes', () => {
+    expect(nextPassDelay(15_000, 0)).toBe(15_000);
+    expect(nextPassDelay(15_000, 2)).toBe(60_000);
+    expect(nextPassDelay(15_000, 30)).toBe(5 * 60 * 1000);
+    expect(nextPassDelay(10 * 60 * 1000, 3)).toBe(10 * 60 * 1000);
   });
 });
