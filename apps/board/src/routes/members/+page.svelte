@@ -4,6 +4,7 @@
   import { get, post } from '$lib/api';
   import MemberAvatar from '$lib/components/MemberAvatar.svelte';
   import { ago, dateTime } from '$lib/format';
+  import { latestOnly } from '$lib/latest';
   import { board } from '$lib/state/board.svelte';
   import { clock } from '$lib/state/clock.svelte';
   import { session } from '$lib/state/session.svelte';
@@ -48,15 +49,20 @@
 
   // Owners only: who signed in, who sent links and which apps act for whom.
   let accessLog = $state<readonly AccessEvent[] | null>(null);
+  // A slow answer for a project no longer selected must not replace the selected one's log.
+  const latestLog = latestOnly();
   $effect(() => {
     const projectId = session.projectId;
-    if (!projectId || !session.can('see_access_log')) {
-      accessLog = null;
-      return;
-    }
+    const stale = latestLog();
+    accessLog = null;
+    if (!projectId || !session.can('see_access_log')) return;
     get<{ events: AccessEvent[] }>(`/api/projects/${projectId}/access-log`)
-      .then((answer) => (accessLog = answer.events))
-      .catch((error: Error) => toasts.show('error', error.message));
+      .then((answer) => {
+        if (!stale()) accessLog = answer.events;
+      })
+      .catch((error: Error) => {
+        if (!stale()) toasts.show('error', error.message);
+      });
   });
 
   // Maintainers' page: the API refuses its data to anyone else.
