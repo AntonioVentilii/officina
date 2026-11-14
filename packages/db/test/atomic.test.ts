@@ -3,6 +3,8 @@ import { Pool } from 'pg';
 import {
   createLoginLink,
   createTask,
+  linkGitHubAccount,
+  loadGitHubAccount,
   redeemLoginLink,
   saveGitHubAccount,
   unlinkGitHubAccount
@@ -86,6 +88,30 @@ describe.skipIf(!url)('writes in several steps', () => {
     expect(await count('github_accounts')).toBe(0);
     await healInsertsInto('identities');
     await saveGitHubAccount(pool, account);
+    expect(await count('github_accounts')).toBe(1);
+  });
+
+  test('a GitHub account whose move could not be logged stays with the member who had it', async () => {
+    const account = {
+      memberId: seeded.ownerId,
+      githubUserId: 42,
+      login: 'antonio',
+      accessTokenEnc: 'sealed',
+      accessExpiresAt: null,
+      refreshTokenEnc: null,
+      refreshExpiresAt: null
+    };
+    await linkGitHubAccount(pool, account);
+    const { rows } = await pool.query<{ id: string }>(
+      `insert into members (workspace_id, email, display_name)
+       select workspace_id, 'gio@example.com', 'Gio' from members where id = $1 returning id`,
+      [seeded.ownerId]
+    );
+    await failInsertsInto('access_events');
+    await expect(linkGitHubAccount(pool, { ...account, memberId: rows[0]!.id })).rejects.toThrow(
+      'insert into access_events failed'
+    );
+    expect(await loadGitHubAccount(pool, seeded.ownerId)).toMatchObject({ githubUserId: 42 });
     expect(await count('github_accounts')).toBe(1);
   });
 

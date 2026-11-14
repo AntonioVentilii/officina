@@ -372,11 +372,6 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
         if (!consumed) return expired();
         const result = await deps.githubLogin.accounts.complete(code, consumed.memberId);
         if (!result.ok) return fail(result.why);
-        await recordAccessEvent(pool, {
-          memberId: result.memberId,
-          type: 'github_linked',
-          detail: { login: result.login }
-        });
         return redirect('/?github=linked', [clear]);
       })
       .post('/auth/github/unlink', async ({ request }) => {

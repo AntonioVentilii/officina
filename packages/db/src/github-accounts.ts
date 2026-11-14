@@ -1,4 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
+import { recordAccessEvent } from './access';
 import { hashToken } from './auth';
 import { inTransaction } from './store';
 
@@ -65,39 +66,67 @@ const COLUMNS = `member_id as "memberId", github_user_id::float8 as "githubUserI
   refresh_token_enc as "refreshTokenEnc", refresh_expires_at as "refreshExpiresAt"`;
 
 /**
- * Links a GitHub account to a member: moves it from any other member, stores its tokens and its
- * identity, all or nothing.
+ * Stores a member's GitHub account, its tokens and its identity, moving it from any other member;
+ * returns whom it was moved from.
  */
-export const saveGitHubAccount = (pool: Pool, account: GitHubAccountRow) =>
-  inTransaction(pool, async (db) => {
-    // A GitHub account belongs to one member: linking it elsewhere moves it.
-    await db.query('delete from github_accounts where github_user_id = $1 and member_id <> $2', [
-      account.githubUserId,
-      account.memberId
-    ]);
-    await db.query(
-      `insert into github_accounts (member_id, github_user_id, login, access_token_enc, access_expires_at,
+const writeGitHubAccount = async (db: PoolClient, account: GitHubAccountRow) => {
+  // A GitHub account belongs to one member: linking it elsewhere moves it.
+  const moved = await db.query<{ member_id: string; login: string }>(
+    `delete from github_accounts where github_user_id = $1 and member_id <> $2
+     returning member_id, login`,
+    [account.githubUserId, account.memberId]
+  );
+  await db.query(
+    `insert into github_accounts (member_id, github_user_id, login, access_token_enc, access_expires_at,
        refresh_token_enc, refresh_expires_at, updated_at)
      values ($1, $2, $3, $4, $5, $6, $7, now())
      on conflict (member_id) do update set github_user_id = excluded.github_user_id,
        login = excluded.login, access_token_enc = excluded.access_token_enc,
        access_expires_at = excluded.access_expires_at, refresh_token_enc = excluded.refresh_token_enc,
        refresh_expires_at = excluded.refresh_expires_at, updated_at = now()`,
-      [
-        account.memberId,
-        account.githubUserId,
-        account.login,
-        account.accessTokenEnc,
-        account.accessExpiresAt,
-        account.refreshTokenEnc,
-        account.refreshExpiresAt
-      ]
-    );
-    await db.query(
-      `insert into identities (provider, subject, member_id) values ('github', $1, $2)
+    [
+      account.memberId,
+      account.githubUserId,
+      account.login,
+      account.accessTokenEnc,
+      account.accessExpiresAt,
+      account.refreshTokenEnc,
+      account.refreshExpiresAt
+    ]
+  );
+  await db.query(
+    `insert into identities (provider, subject, member_id) values ('github', $1, $2)
      on conflict (provider, subject) do update set member_id = excluded.member_id`,
-      [String(account.githubUserId), account.memberId]
-    );
+    [String(account.githubUserId), account.memberId]
+  );
+  return moved.rows;
+};
+
+/** Stores fresh tokens for a member's GitHub account, as a sign-in or a refresh gets them. */
+export const saveGitHubAccount = (pool: Pool, account: GitHubAccountRow) =>
+  inTransaction(pool, async (db) => {
+    await writeGitHubAccount(db, account);
+  });
+
+/**
+ * Links a GitHub account to a member, all or nothing: moves it from any other member and records
+ * both in the access log, the link for the member and its loss for whoever had it.
+ */
+export const linkGitHubAccount = (pool: Pool, account: GitHubAccountRow) =>
+  inTransaction(pool, async (db) => {
+    for (const previous of await writeGitHubAccount(db, account)) {
+      await recordAccessEvent(db, {
+        memberId: previous.member_id,
+        type: 'github_unlinked',
+        detail: { login: previous.login, reason: 'moved' },
+        actor: { memberId: account.memberId }
+      });
+    }
+    await recordAccessEvent(db, {
+      memberId: account.memberId,
+      type: 'github_linked',
+      detail: { login: account.login }
+    });
   });
 
 export const loadGitHubAccount = async (
