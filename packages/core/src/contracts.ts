@@ -28,9 +28,14 @@ const askedOfSchema = z.enum(['requester', 'maintainer', 'owner']);
  */
 const reviewReply = text.max(4000);
 
+/*
+ * Every field has a ceiling that fits real use: a result is stored, shown and partly posted on
+ * GitHub, whose comments and pull request bodies hold at most 65,536 characters.
+ */
+
 const blockedSchema = z.strictObject({
   outcome: z.literal('blocked'),
-  question: text,
+  question: text.max(1500),
   askedOf: askedOfSchema.default('maintainer')
 });
 
@@ -52,8 +57,8 @@ export const interviewerOutputSchema = z.discriminatedUnion('outcome', [
 export const specOutputSchema = z.discriminatedUnion('outcome', [
   z.strictObject({
     outcome: z.literal('specced'),
-    spec: text,
-    predictedPaths: z.array(text).min(1),
+    spec: text.max(40_000),
+    predictedPaths: z.array(text.max(300)).min(1).max(200),
     userVisible: z.boolean()
   }),
   // A spec question is a decision people make, so it may offer options; a builder's is not.
@@ -65,14 +70,13 @@ export const specOutputSchema = z.discriminatedUnion('outcome', [
 const pushedFields = {
   outcome: z.literal('pushed'),
   // A pattern, not a refinement, so the agent's tool schema shows it too.
-  branch: text.regex(
-    new RegExp(`^${TASK_BRANCH_PREFIX}`),
-    `branch must start with ${TASK_BRANCH_PREFIX}`
-  ),
+  branch: text
+    .max(200)
+    .regex(new RegExp(`^${TASK_BRANCH_PREFIX}`), `branch must start with ${TASK_BRANCH_PREFIX}`),
   /** The pull request title, in the repository's required format. */
   prTitle: text.max(120),
-  verified: z.array(text),
-  notVerified: z.array(text)
+  verified: z.array(text.max(500)).max(30),
+  notVerified: z.array(text.max(500)).max(30)
 };
 
 export const builderOutputSchema = z.discriminatedUnion('outcome', [
@@ -83,10 +87,10 @@ export const builderOutputSchema = z.discriminatedUnion('outcome', [
   /** A fix round answering a GitHub review whose points all turned out to need no change. */
   z.strictObject({
     outcome: z.literal('unchanged'),
-    why: text,
+    why: text.max(4000),
     reviewReply: reviewReply.optional()
   }),
-  z.strictObject({ outcome: z.literal('failed'), why: text }),
+  z.strictObject({ outcome: z.literal('failed'), why: text.max(2000) }),
   blockedSchema,
   needsPersonSchema
 ]);
@@ -100,36 +104,42 @@ export const onboarderOutputSchema = z.discriminatedUnion('outcome', [
     ...pushedFields,
     followUps: z.array(text.max(500)).max(15)
   }),
-  z.strictObject({ outcome: z.literal('failed'), why: text }),
+  z.strictObject({ outcome: z.literal('failed'), why: text.max(2000) }),
   blockedSchema,
   needsPersonSchema
 ]);
 
+const reviewItemSchema = z.strictObject({
+  file: text.max(300),
+  line: z.number().int().positive().optional(),
+  /** The rule the change breaks: a numbered rule of the code standard or a project docs page. */
+  rule: text.max(200).optional(),
+  issue: text.max(2000)
+});
+
 export const reviewerOutputSchema = z.discriminatedUnion('outcome', [
-  z.strictObject({ outcome: z.literal('approve'), summary: text }),
+  z.strictObject({ outcome: z.literal('approve'), summary: text.max(4000) }),
   z.strictObject({
     outcome: z.literal('changes'),
-    items: z
-      .array(
-        z.strictObject({
-          file: text,
-          line: z.number().int().positive().optional(),
-          /** The rule the change breaks: a numbered rule of the code standard or a project docs page. */
-          rule: text.max(200).optional(),
-          issue: text
-        })
-      )
-      .min(1)
+    items: z.array(reviewItemSchema).min(1).max(30)
   })
 ]);
 
 const extraApprovalSchema = z.union([
   z.strictObject({
-    domain: text.regex(/^[a-z][a-z0-9-]*$/, 'a lowercase domain name'),
-    reason: text
+    domain: text.max(50).regex(/^[a-z][a-z0-9-]*$/, 'a lowercase domain name'),
+    reason: text.max(300)
   }),
-  z.strictObject({ role: z.enum(['maintainer', 'owner']), reason: text })
+  z.strictObject({ role: z.enum(['maintainer', 'owner']), reason: text.max(300) })
 ]);
+
+/** One wording change people check, as it reads before and after. */
+const beforeAfterSchema = z.strictObject({
+  key: text.max(120),
+  locale: text.max(35),
+  before: z.string().max(350),
+  after: z.string().max(350)
+});
 
 /**
  * The approval chooser runs at each human gate. At spec review it plans who approves the spec; at
@@ -151,11 +161,12 @@ export const chooserOutputSchema = z.strictObject({
       ...buildChoice
     })
     .refine(buildReasonGiven, BUILD_REASON_MISSING),
-  /** Required at verification, where the engine checks it is not empty. */
-  checklist: z.array(text).default([]),
-  beforeAfter: z
-    .array(z.strictObject({ key: text, locale: text, before: z.string(), after: z.string() }))
-    .default([])
+  /**
+   * Required at verification, where the engine checks it is not empty. With the before/after table
+   * it is posted as one comment, so together they stay under GitHub's limit at any size.
+   */
+  checklist: z.array(text.max(300)).max(30).default([]),
+  beforeAfter: z.array(beforeAfterSchema).max(30).default([])
 });
 
 /**

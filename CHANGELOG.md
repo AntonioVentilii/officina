@@ -1,5 +1,36 @@
 # Changelog
 
+## [1.6.1](https://github.com/AntonioVentilii/officina/compare/v1.6.0...v1.6.1) (2026-11-14)
+
+
+### Bug Fixes
+
+* **api:** picking an answer option pins the question the person saw ([#137](https://github.com/AntonioVentilii/officina/issues/137)) ([0293314](https://github.com/AntonioVentilii/officina/commit/02933147d21e83a877badec87eed1a931e91042c))
+* **board:** relative times never point to the future ([#142](https://github.com/AntonioVentilii/officina/issues/142)) ([faca526](https://github.com/AntonioVentilii/officina/commit/faca52622fbe8c01fc9d919da98fa0f6cab93f69))
+* **db,engine,api:** a build a member takes over stops the agent's run and its late result ([#141](https://github.com/AntonioVentilii/officina/issues/141)) ([3f0f792](https://github.com/AntonioVentilii/officina/commit/3f0f7921d4f06770141e9162e1aba7a051f5e1cf))
+* **db,engine:** open a hand-in's pull request later when it fails to open ([#144](https://github.com/AntonioVentilii/officina/issues/144)) ([918d237](https://github.com/AntonioVentilii/officina/commit/918d237d515b401221b2a791788553ecde42c905))
+* **github,engine,api:** catch up a pull request merged or closed whose webhook was missed ([#129](https://github.com/AntonioVentilii/officina/issues/129)) ([8a24c60](https://github.com/AntonioVentilii/officina/commit/8a24c600d67b9cd224b109973102f0d318f9979b))
+* **github,engine:** approve a pull request once when the record of the approval is lost ([#136](https://github.com/AntonioVentilii/officina/issues/136)) ([1c450bf](https://github.com/AntonioVentilii/officina/commit/1c450bf74233b51e23552b9ec83f2d6e9b89f426))
+
+
+### Documentation
+
+* **repo:** the prompts and the architecture match the code ([#143](https://github.com/AntonioVentilii/officina/issues/143)) ([4b6a36a](https://github.com/AntonioVentilii/officina/commit/4b6a36a80225bde887046b9192394229eb495972))
+
+
+### Code Refactoring
+
+* **api,engine:** the webhook turns auto-merge off through the engine ([#138](https://github.com/AntonioVentilii/officina/issues/138)) ([82c4e91](https://github.com/AntonioVentilii/officina/commit/82c4e91f0b8fdc9b437a614de833b0c069347eca))
+* **api:** the dev demo writes through the db functions ([#139](https://github.com/AntonioVentilii/officina/issues/139)) ([cced8e7](https://github.com/AntonioVentilii/officina/commit/cced8e73ea71ceffd86861cc40380676fbdc9884))
+* **core,api:** who may answer a question, and who reads a confidential task, are each decided in one place ([#131](https://github.com/AntonioVentilii/officina/issues/131)) ([1e07a76](https://github.com/AntonioVentilii/officina/commit/1e07a76afeb0e110e163e13f41e040e95efcc535))
+* **db:** write the same rows from one place ([#135](https://github.com/AntonioVentilii/officina/issues/135)) ([5d06627](https://github.com/AntonioVentilii/officina/commit/5d066276e81d865d9238f29b22ed90116fe68de0))
+* **runner:** the session stream without a cast ([#140](https://github.com/AntonioVentilii/officina/issues/140)) ([47ef9d1](https://github.com/AntonioVentilii/officina/commit/47ef9d1df6863fb88b1690d55a0a4292e6a8769b))
+
+
+### Tests
+
+* **engine,runner:** cover the project's result checks and the empty checklist at verification ([#133](https://github.com/AntonioVentilii/officina/issues/133)) ([4dc0c31](https://github.com/AntonioVentilii/officina/commit/4dc0c31e25d300a790718681848fc12fc01800a6))
+
 ## [1.6.0](https://github.com/AntonioVentilii/officina/compare/v1.5.1...v1.6.0) (2026-11-14)
 
 

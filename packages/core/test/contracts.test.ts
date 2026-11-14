@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { commandForOutput, newTask, parseAgentOutput } from '../src';
+import { commandForOutput, newTask, parseAgentOutput, type ContractRole } from '../src';
 
 const task = newTask('t1', 'gio');
 
@@ -42,6 +42,106 @@ describe('agent output contracts', () => {
         learnings: Array(4).fill({ text: 'a', proposedChange: 'b', evidence: 'c' })
       }).ok
     ).toBe(false);
+  });
+
+  test('every field of a result has a ceiling, and a result at the ceiling still parses', () => {
+    const chars = (count: number) => 'x'.repeat(count);
+    const many = <T>(count: number, item: T) => Array.from({ length: count }, () => item);
+    /** A result accepted at each field's ceiling, refused one past it. */
+    const edges: [ContractRole, (over: number) => unknown][] = [
+      [
+        'spec',
+        (over) => ({
+          outcome: 'specced',
+          spec: chars(40_000 + over),
+          predictedPaths: many(200, chars(300)),
+          userVisible: false
+        })
+      ],
+      [
+        'spec',
+        (over) => ({
+          outcome: 'specced',
+          spec: '# Spec',
+          predictedPaths: many(200 + over, 'src/a.ts'),
+          userVisible: false
+        })
+      ],
+      ['spec', (over) => ({ outcome: 'blocked', question: chars(1500 + over) })],
+      [
+        'builder',
+        (over) => ({
+          outcome: 'pushed',
+          branch: 'officina/task-1',
+          prTitle: 'fix: a',
+          verified: many(30 + over, chars(500)),
+          notVerified: many(30, chars(500))
+        })
+      ],
+      [
+        'builder',
+        (over) => ({
+          outcome: 'pushed',
+          branch: 'officina/task-1',
+          prTitle: 'fix: a',
+          verified: [],
+          notVerified: [chars(500 + over)]
+        })
+      ],
+      ['builder', (over) => ({ outcome: 'unchanged', why: chars(4000 + over) })],
+      ['builder', (over) => ({ outcome: 'failed', why: chars(2000 + over) })],
+      ['reviewer_spec', (over) => ({ outcome: 'approve', summary: chars(4000 + over) })],
+      [
+        'reviewer_correctness',
+        (over) => ({
+          outcome: 'changes',
+          items: many(30 + over, { file: chars(300), issue: chars(2000) })
+        })
+      ],
+      [
+        'reviewer_correctness',
+        (over) => ({ outcome: 'changes', items: [{ file: 'a.ts', issue: chars(2000 + over) }] })
+      ],
+      [
+        'chooser',
+        (over) => ({
+          userVisible: true,
+          approval: {
+            depth: 'test',
+            rationale: 'Copy.',
+            extraApprovals: [{ domain: 'legal', reason: chars(300 + over) }]
+          },
+          checklist: many(30, chars(300)),
+          beforeAfter: many(30, {
+            key: chars(120),
+            locale: chars(35),
+            before: chars(350),
+            after: chars(350)
+          })
+        })
+      ],
+      [
+        'chooser',
+        (over) => ({
+          userVisible: true,
+          approval: { depth: 'test', rationale: 'Copy.' },
+          checklist: many(30 + over, 'Open settings.')
+        })
+      ],
+      [
+        'chooser',
+        (over) => ({
+          userVisible: true,
+          approval: { depth: 'test', rationale: 'Copy.' },
+          checklist: ['Open settings.'],
+          beforeAfter: [{ key: 'a', locale: 'en', before: '', after: chars(350 + over) }]
+        })
+      ]
+    ];
+    for (const [role, result] of edges) {
+      expect(parseAgentOutput(role, result(0)).ok).toBe(true);
+      expect(parseAgentOutput(role, result(1)).ok).toBe(false);
+    }
   });
 
   test('a builder push needs facts established by the engine, never the agent', () => {

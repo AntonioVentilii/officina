@@ -20,7 +20,8 @@
       "project": ["src/**/*.ts", "test/**/*.ts"]
     },
     "apps/board": {
-      "project": ["src/**/*.{ts,svelte}"],
+      "entry": ["test/**/*.test.ts"],
+      "project": ["src/**/*.{ts,svelte}", "test/**/*.ts"],
       // Imported from src/app.css, which knip does not read.
       "ignoreDependencies": ["@fontsource-variable/.+", "@fontsource/.+"]
     }
