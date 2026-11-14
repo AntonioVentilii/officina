@@ -15,6 +15,7 @@ import {
 } from '@officina/db';
 import type { GitHubAsUser, GitHubClient, RepoRef } from '@officina/github';
 import type { Pool } from 'pg';
+import { cancelTaskAutoMerge } from './auto-merge';
 
 /**
  * A markdown link to a task. A bare `#N` would link the repository's issue or pull request N.
@@ -375,17 +376,7 @@ export const cancelStaleAutoMerges = async (
   const failures: string[] = [];
   for (const task of stale) {
     try {
-      await github.cancelAutoMerge({
-        installationId: task.installationId,
-        repo: task.repo,
-        pullRequest: task.pullRequest
-      });
-      await appendTaskEvent(pool, {
-        taskId: task.id,
-        actor: ENGINE,
-        type: 'github_auto_merge_cancelled',
-        payload: { pullRequest: task.pullRequest }
-      });
+      await cancelTaskAutoMerge(pool, github, task);
     } catch (error) {
       failures.push(`${task.repo}#${task.pullRequest}: ${(error as Error).message}`);
     }
