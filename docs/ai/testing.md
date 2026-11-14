@@ -2,13 +2,13 @@
 
 `bun test`, no other framework. Tests live in each package's `test/` folder, never next to the source.
 
-| Command               | Runs                                                                                                               | Needs   |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------ | ------- |
-| `bun run test`        | `packages/core`, `packages/github`, `packages/runner` and the parts of `apps/api` that need no database            | nothing |
-| `bun run test:db`     | `packages/db`, `packages/engine` and `apps/api` against a throwaway Postgres (`packages/db/test/with-postgres.ts`) | Docker  |
-| `bun run check:board` | svelte-check on the board, warnings fail it                                                                        | nothing |
+| Command               | Runs                                                                                                                       | Needs   |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `bun run test`        | `packages/core`, `packages/github`, `packages/runner`, the parts of `apps/api` that need no database and `apps/board/test` | nothing |
+| `bun run test:db`     | `packages/db`, `packages/engine` and `apps/api` against a throwaway Postgres (`packages/db/test/with-postgres.ts`)         | Docker  |
+| `bun run check:board` | svelte-check on the board, warnings fail it                                                                                | nothing |
 
-The board has no unit tests: what it shows is decided and tested in the API views (`apps/api/test/board.test.ts`). Its own logic (Markdown sanitizing, formatting, run log folding) is not covered yet.
+What the board shows is decided and tested in the API views (`apps/api/test/board.test.ts`). Its own pure logic is tested in `apps/board/test` (formatting in `format.test.ts`), importing from `src/lib` directly; Markdown sanitizing and run log folding are not covered yet.
 
 ## Where a test goes
 
