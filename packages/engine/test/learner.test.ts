@@ -147,6 +147,8 @@ describe.skipIf(!url)('learner', () => {
     expect(brief).toContain('review approve by reviewer_spec');
     expect(brief).toContain("- `docs`: the project's agent docs");
     expect(brief).toContain('  - `docs/ai/reusability.md`');
+    expect(brief).toContain('## Security rules');
+    expect(brief).toEndWith('When you are done, call `submit_result` once.');
     expect(agents.sessions[0]!.repository).toMatchObject({ token: 'token-read', branch: 'main' });
 
     const learnings = await listLearnings(pool, seeded.projectId);
@@ -211,6 +213,8 @@ describe.skipIf(!url)('learner', () => {
     const brief = (agents.sent[0]!.events[0] as { text: string }).text;
     expect(brief).toContain('role: learner, rewriting one edit');
     expect(brief).toContain('## Copy, short');
+    expect(brief).toContain('## Security rules');
+    expect(brief).toEndWith('When you are done, call `submit_result` once.');
     const feedback = JSON.stringify(agents.sent);
     expect(feedback).toContain('return this one learning rewritten, or none');
     expect(feedback).toContain('keep the target docs');

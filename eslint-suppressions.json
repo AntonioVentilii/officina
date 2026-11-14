@@ -64,11 +64,6 @@
       "count": 1
     }
   },
-  "apps/api/src/webhooks.ts": {
-    "complexity": {
-      "count": 1
-    }
-  },
   "apps/api/test/board.test.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 1
