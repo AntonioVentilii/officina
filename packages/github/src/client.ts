@@ -1,11 +1,11 @@
 import { createSign } from 'node:crypto';
 import type { PushFacts } from '@officina/core';
 import { failuresOn } from './checks';
+import { COMPARE_FILE_LIMIT, changeFingerprint, type ComparedFile } from './compare';
 import { GitHubError, githubRequest } from './http';
 import { mergeWhenReadyWith } from './merge';
 
-/** GitHub's compare endpoint lists at most this many files; a full page means the list may be cut. */
-export const COMPARE_FILE_LIMIT = 300;
+export { COMPARE_FILE_LIMIT } from './compare';
 
 /** Compare statuses of a file that is new at its path on the branch. */
 const ADDED_STATUSES: ReadonlySet<string> = new Set(['added', 'copied', 'renamed']);
@@ -141,6 +141,16 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
       ? Number.MAX_SAFE_INTEGER
       : files.reduce((total, file) => total + file.changes, 0);
     return { headSha, changedPaths, addedPaths, diffLines };
+  };
+
+  /** What a head changes against the base (`changeFingerprint`). */
+  const changeOf = async (ref: RepoRef & { readonly base: string; readonly head: string }) => {
+    const token = await installationToken(ref);
+    const comparison = await request<{ files?: ComparedFile[] }>(
+      `/repos/${ref.repo}/compare/${encodeURIComponent(ref.base)}...${ref.head}`,
+      { token }
+    );
+    return changeFingerprint(comparison.files);
   };
 
   /**
@@ -536,6 +546,7 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     updateFile,
     createBranch,
     pushFacts,
+    changeOf,
     refSnapshot,
     isPullRequestMerge,
     commitChanges,

@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { branchForTask, HANDOFF_NEED_KEYS, type AgentRole } from '@officina/core';
 import {
   appendTaskEvent,
+  reviewedHead,
   applyCommand,
   createTask,
   expectedHead,
@@ -91,6 +92,8 @@ const fakeGitHub = (
     mergeFails?: boolean;
     /** What `failedChecks` reports as already failed on a commit. */
     failed?: string[];
+    /** Heads whose change is the same as the verified one's; any other head's change differs. */
+    sameChangeAs?: string[];
     /** How many times opening the pull request fails before it works. */
     openFails?: number;
     /** How many times writing a file (the spec status) fails before it works. */
@@ -170,6 +173,13 @@ const fakeGitHub = (
     failedChecks: async (...args: unknown[]) => {
       calls.push({ method: 'failedChecks', args });
       return options.failed ?? [];
+    },
+    changeOf: async (...args: unknown[]) => {
+      calls.push({ method: 'changeOf', args });
+      const { head } = args[0] as { head: string };
+      return head === 'abc' || options.sameChangeAs?.includes(head)
+        ? 'change of abc'
+        : `change of ${head}`;
     }
   } as unknown as GitHubPort & AdoptPort;
   return { port, calls };
@@ -1558,6 +1568,61 @@ describe.skipIf(!url)('engine', () => {
       [taskId]
     );
     expect(failed.rows.map((row) => row.details)).toEqual(['GitHub Actions: failure']);
+  });
+
+  test('an update from the default branch with the same change keeps the verification, and merges as the new head', async () => {
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    const updated = fakeGitHub({ branchHead: 'upd1', sameChangeAs: ['upd1'] });
+    await adoptOutsidePushes(pool, updated.port, [taskId]);
+    await adoptOutsidePushes(pool, updated.port, [taskId]);
+    // Nothing to review or verify again: the task keeps its stage and head.
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({
+      stage: 'merging',
+      headSha: 'abc'
+    });
+    expect(await expectedHead(pool, taskId)).toBe('upd1');
+    expect(await reviewedHead(pool, taskId, 'upd1')).toBe('abc');
+    const carried = await pool.query<{ payload: Record<string, unknown> }>(
+      `select payload from task_events where task_id = $1 and type = 'head_carried'`,
+      [taskId]
+    );
+    expect(carried.rows.map((row) => row.payload)).toEqual([{ headSha: 'upd1', from: 'abc' }]);
+    // Auto-merge pinned to the old commit goes off; the merge handoff runs again for the new one.
+    expect(updated.calls.filter((call) => call.method === 'cancelAutoMerge')).toHaveLength(1);
+    expect(updated.calls.some((call) => call.method === 'pushFacts')).toBe(false);
+    await finishVerifiedSpecs(pool, updated.port, [taskId]);
+    const handoff = await pool.query<{ type: string }>(
+      `select type from task_events where task_id = $1
+         and type in ('awaiting_merge', 'merge_held') order by id`,
+      [taskId]
+    );
+    expect(handoff.rows.map((row) => row.type)).toEqual(['awaiting_merge']);
+  });
+
+  test('an update that changes a file of the change is reviewed and verified again', async () => {
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    await adoptOutsidePushes(pool, fakeGitHub({ branchHead: 'upd2' }).port, [taskId]);
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({
+      stage: 'reviewing',
+      headSha: 'upd2'
+    });
+  });
+
+  test('checks red on a carried head send the work back', async () => {
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    const updated = fakeGitHub({
+      branchHead: 'upd3',
+      sameChangeAs: ['upd3'],
+      failed: ['CI: failure']
+    });
+    await adoptOutsidePushes(pool, updated.port, [taskId]);
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({
+      stage: 'building',
+      headSha: 'abc'
+    });
   });
 
   test("Officina's own status commit on the verified head is not a push from outside", async () => {

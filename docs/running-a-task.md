@@ -141,6 +141,8 @@ To stop a task at any time: `scripts/officina task cancel --number 1 --reason "W
 - **Commits from outside Officina.** When a bot, a person or GitHub's "Update branch" pushes to the
   task branch after the builder, Officina takes the new head in within a scheduler pass: the lane
   and guardrails are checked again and the task goes back to review, then to your verification.
+  An "Update branch" that leaves every file of the change as it was keeps your verification: only
+  the checks run again, and the pull request is approved and merged as the new head.
 - **Low-risk changes.** In a green lane with `auto_verify: true`, a result that the chooser only asks
   to glance at skips the verification step, unless merging deploys to production
   (`release.on_merge: production`, the default). The spec is always approved by a person.

@@ -87,6 +87,8 @@
         return 'turned auto-merge off';
       case 'awaiting_merge':
         return `left pull request #${p.pullRequest} for a person to merge on GitHub`;
+      case 'head_carried':
+        return `took in ${String(p.headSha).slice(0, 7)}, an update with the same change, keeping its review and verification`;
       case 'merge_held':
         return `found commits nobody verified on pull request #${p.pullRequest}: do not merge it until they are reviewed`;
       case 'github_approval_failed':
