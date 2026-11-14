@@ -120,6 +120,30 @@ describe.skipIf(!url)('migrations', () => {
     );
   });
 
+  test('a disambiguated name already taken gets a counter, so the index still builds', async () => {
+    await client.query(
+      "delete from schema_migrations where name = '0016_workspace_name_unique.sql'"
+    );
+    await client.query('drop index workspaces_name');
+    const older = await client.query<{ id: string }>(
+      "insert into workspaces (name, created_at) values ('pair', now() - interval '1 day') returning id"
+    );
+    const newer = await client.query<{ id: string }>(
+      "insert into workspaces (name) values ('pair') returning id"
+    );
+    const taken = `pair (${newer.rows[0]!.id})`;
+    await client.query('insert into workspaces (name) values ($1)', [taken]);
+    expect(await migrate(client)).toEqual(['0016_workspace_name_unique.sql']);
+    const names = await client.query<{ id: string; name: string }>(
+      'select id, name from workspaces where id = any($1) order by created_at',
+      [[older.rows[0]!.id, newer.rows[0]!.id]]
+    );
+    expect(names.rows).toEqual([
+      { id: older.rows[0]!.id, name: 'pair' },
+      { id: newer.rows[0]!.id, name: `pair (${newer.rows[0]!.id} 2)` }
+    ]);
+  });
+
   test('two registrations of a new workspace name at once land on one workspace', async () => {
     const pool = new Pool({ connectionString: url });
     const [first, second] = [await pool.connect(), await pool.connect()];
