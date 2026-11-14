@@ -8,7 +8,7 @@
 | `bun run test:db`     | `packages/db`, `packages/engine` and `apps/api` against a throwaway Postgres (`packages/db/test/with-postgres.ts`)         | Docker  |
 | `bun run check:board` | svelte-check on the board, warnings fail it                                                                                | nothing |
 
-What the board shows is decided and tested in the API views (`apps/api/test/board.test.ts`). Its own pure logic is tested in `apps/board/test` (formatting in `format.test.ts`, overlapping loads in `latest.test.ts`, the path a sign-in returns to in `return-path.test.ts`), importing from `src/lib` directly; Markdown sanitizing and run log folding are not covered yet.
+What the board shows is decided and tested in the API views (`apps/api/test/board.test.ts`). Its own pure logic is tested in `apps/board/test` (formatting in `format.test.ts`, overlapping loads in `latest.test.ts`, the path a sign-in returns to in `return-path.test.ts`, Markdown sanitizing in `markdown.test.ts`), importing from `src/lib` directly; run log folding is not covered yet. A test of code that needs the DOM, such as DOMPurify, calls `installWindow` from `apps/board/test/dom.ts` before importing that code: it sets up a happy-dom window (a devDependency for tests only, never in the board's bundle) with the two places where happy-dom differs from a browser and DOMPurify depends on it put right.
 
 ## Where a test goes
 
