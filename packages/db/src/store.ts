@@ -16,6 +16,7 @@ import {
   type Task
 } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
+import { appendTaskEvent, saveSpecVersion } from './task-history';
 import { addComment, listApprovedSubjects, listProjectMembers } from './tasks';
 
 export type StoreError = DecisionError | 'not_found' | 'conflict' | 'invalid_config';
@@ -90,11 +91,17 @@ const json = (value: unknown): string | null => (value === null ? null : JSON.st
 
 const insertEvent = (client: PoolClient, taskId: string, actor: Actor, event: DomainEvent) => {
   const { type, ...payload } = event;
-  return client.query(
-    'insert into task_events (task_id, actor, type, payload) values ($1, $2, $3, $4)',
-    [taskId, json(actor), type, json(payload)]
-  );
+  return appendTaskEvent(client, { taskId, actor, type, payload });
 };
+
+/** The project's next task number; the caller holds the project's row lock, which serializes it. */
+const nextTaskNumber = async (client: PoolClient, projectId: string): Promise<number> =>
+  (
+    await client.query<{ number: number }>(
+      'select coalesce(max(number), 0) + 1 as number from tasks where project_id = $1',
+      [projectId]
+    )
+  ).rows[0]!.number;
 
 export const createTask = (
   pool: Pool,
@@ -115,11 +122,11 @@ export const createTask = (
     await client.query('select id from projects where id = $1 for update', [input.projectId]);
     const { rows } = await client.query<TaskRow>(
       `insert into tasks (project_id, number, title, requester_id, stage, guards, blocked)
-       select $1, coalesce(max(number), 0) + 1, $2, $3, 'request', $4, $5
-       from tasks where project_id = $1
+       values ($1, $2, $3, $4, 'request', $5, $6)
        returning *`,
       [
         input.projectId,
+        await nextTaskNumber(client, input.projectId),
         input.title,
         input.requesterId,
         input.guards ?? [],
@@ -127,15 +134,12 @@ export const createTask = (
       ]
     );
     const row = rows[0]!;
-    await client.query(
-      'insert into task_events (task_id, actor, type, payload) values ($1, $2, $3, $4)',
-      [
-        row.id,
-        json({ kind: 'member', memberId: input.requesterId }),
-        'created',
-        json({ title: input.title })
-      ]
-    );
+    await appendTaskEvent(client, {
+      taskId: row.id,
+      actor: { kind: 'member', memberId: input.requesterId },
+      type: 'created',
+      payload: { title: input.title }
+    });
     if (input.hold) {
       await insertEvent(client, row.id, ENGINE, { type: 'blocked', blocked: input.hold });
     }
@@ -190,20 +194,29 @@ export const insertOnboardingTask = async (
   const lane = computeLane(input.paths, input.config.laneMatcher);
   const { rows } = await client.query<{ id: string; number: number }>(
     `insert into tasks (project_id, number, title, requester_id, kind, stage, lane, spec_version)
-       select $1, coalesce(max(number), 0) + 1, $2, $3, 'onboarding', 'spec_review', $4, 1
-       from tasks where project_id = $1
+       values ($1, $2, $3, $4, 'onboarding', 'spec_review', $5, 1)
        returning id, number`,
-    [input.projectId, input.title, input.requesterId, lane]
+    [
+      input.projectId,
+      await nextTaskNumber(client, input.projectId),
+      input.title,
+      input.requesterId,
+      lane
+    ]
   );
   const row = rows[0]!;
-  await client.query(
-    'insert into task_events (task_id, actor, type, payload) values ($1, $2, $3, $4)',
-    [row.id, json(ENGINE), 'created', json({ title: input.title, kind: 'onboarding' })]
-  );
-  await client.query(
-    'insert into spec_versions (task_id, version, body, created_by) values ($1, 1, $2, $3)',
-    [row.id, input.spec, json(ENGINE)]
-  );
+  await appendTaskEvent(client, {
+    taskId: row.id,
+    actor: ENGINE,
+    type: 'created',
+    payload: { title: input.title, kind: 'onboarding' }
+  });
+  await saveSpecVersion(client, {
+    taskId: row.id,
+    version: 1,
+    body: input.spec,
+    createdBy: ENGINE
+  });
   const events: DomainEvent[] = [
     { type: 'spec_versioned', version: 1 },
     { type: 'lane_changed', from: null, to: lane },
