@@ -188,6 +188,7 @@ const PUBLIC_FIELDS: Readonly<Record<string, readonly string[]>> = {
   github_copilot_review_failed: ['pullRequest', 'login'],
   awaiting_merge: ['pullRequest'],
   merge_held: ['pullRequest'],
+  head_carried: ['headSha'],
   checklist_posted: ['pullRequest']
 };
 

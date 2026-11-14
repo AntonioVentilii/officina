@@ -959,6 +959,12 @@ describe.skipIf(!url)('board api', () => {
       type: 'github_approval_failed',
       payload: { login: 'antonio', error: 'GitHub 422: SECRET body' }
     });
+    await appendTaskEvent(pool, {
+      taskId,
+      actor: engine,
+      type: 'head_carried',
+      payload: { headSha: 'carried1', from: 'abc' }
+    });
     await applyCommand(pool, {
       taskId,
       command: {
@@ -975,6 +981,10 @@ describe.skipIf(!url)('board api', () => {
       trail.events.find((event: { type: string }) => event.type === 'github_approval_failed')
         .payload
     ).toEqual({ login: 'antonio' });
+    // The timeline names the carried head for everyone, as it names every push.
+    expect(
+      trail.events.find((event: { type: string }) => event.type === 'head_carried').payload
+    ).toEqual({ headSha: 'carried1' });
     const cardBoard = await json(await call(contributor, `${project}/board`));
     expect(JSON.stringify(cardBoard)).not.toContain('SECRET');
     // The CLI reads the question as the board does.

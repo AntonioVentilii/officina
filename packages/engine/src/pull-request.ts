@@ -13,6 +13,7 @@ import {
 import {
   applyCommand,
   expectedHead,
+  recordHeadCarried,
   type ApplyResult,
   latestBuild,
   linkPullRequest,
@@ -21,7 +22,7 @@ import {
 } from '@officina/db';
 import type { GitHubClient, RepoRef } from '@officina/github';
 import type { Pool } from 'pg';
-import { stopAutoMergeOnLeaving } from './auto-merge';
+import { cancelTaskAutoMerge, stopAutoMergeOnLeaving } from './auto-merge';
 import { syncSpecStatus, taskLink, type SyncGitHubPort } from './github-sync';
 
 export type PullRequestPort = Pick<GitHubClient, 'openPullRequest'> & SyncGitHubPort;
@@ -147,9 +148,9 @@ export const openMissingPullRequests = async (
 };
 
 /** A task whose open pull request holds a head Officina took in, which someone else may move. */
-const movableFromOutside = (
-  context: StoredTaskContext | null
-): context is StoredTaskContext & { pullRequest: number; installationId: number } =>
+type MovableContext = StoredTaskContext & { pullRequest: number; installationId: number };
+
+const movableFromOutside = (context: StoredTaskContext | null): context is MovableContext =>
   context !== null &&
   context.pullRequest !== null &&
   context.installationId !== null &&
@@ -165,7 +166,7 @@ const movableFromOutside = (
  * still going: its push, and the status commit after it, are not recorded yet.
  */
 export type AdoptPort = PushFactsPort &
-  Pick<GitHubClient, 'pullRequest' | 'failedChecks' | 'cancelAutoMerge'>;
+  Pick<GitHubClient, 'pullRequest' | 'failedChecks' | 'cancelAutoMerge' | 'changeOf'>;
 
 /**
  * What follows a head taken in: auto-merge off if the task left `merging`, since GitHub would land
@@ -189,6 +190,71 @@ const afterAdoption = async (
   });
 };
 
+/**
+ * Whether a new head carries exactly the change of the one people verified, file by file with the
+ * same content: an update from the default branch that touched none of the change's files. When
+ * GitHub may have cut either list, nothing can be said and the answer is no.
+ */
+const sameChange = async (
+  github: AdoptPort,
+  ref: RepoRef,
+  input: { base: string; verified: string; head: string }
+): Promise<boolean> => {
+  const verified = await github.changeOf({ ...ref, base: input.base, head: input.verified });
+  if (verified === null) return false;
+  return verified === (await github.changeOf({ ...ref, base: input.base, head: input.head }));
+};
+
+/**
+ * Keeps the review and the verification for a new head with the same change, recorded as
+ * `head_carried` so it stands for the task's head: feedback on it counts for the task, and at
+ * merging the approval and the merge are done again for it. At merging, auto-merge pinned to the
+ * old commit is turned off first and the carry waits for the next pass when GitHub refuses, so an
+ * auto-merge nobody confirmed off never lands the new head. Checks already red on it still send
+ * the work back.
+ */
+const carryHead = async (
+  pool: Pool,
+  github: AdoptPort,
+  input: { context: MovableContext; ref: RepoRef; headSha: string; from: string }
+) => {
+  const { context, ref } = input;
+  const { task } = context;
+  if (!task.headSha) return;
+  if (task.stage === 'merging') {
+    const off = await cancelTaskAutoMerge(pool, github, {
+      id: task.id,
+      ...ref,
+      pullRequest: context.pullRequest
+    }).then(
+      () => true,
+      () => false
+    );
+    if (!off) return;
+  }
+  const carried = await recordHeadCarried(pool, {
+    taskId: task.id,
+    stage: task.stage,
+    taskHead: task.headSha,
+    from: input.from,
+    headSha: input.headSha
+  });
+  if (!carried) return;
+  const failures = await github.failedChecks({ ...ref, sha: input.headSha });
+  if (failures.length === 0) return;
+  const result = await applyCommand(pool, {
+    taskId: task.id,
+    command: { type: 'ci_failed', headSha: task.headSha, details: failures.join('; ') },
+    actor: ENGINE
+  });
+  await stopAutoMergeOnLeaving(
+    pool,
+    github,
+    { taskId: task.id, ref, pullRequest: context.pullRequest },
+    result
+  );
+};
+
 export const adoptOutsidePushes = async (
   pool: Pool,
   github: AdoptPort,
@@ -201,10 +267,14 @@ export const adoptOutsidePushes = async (
     if ((await latestBuild(pool, taskId, BUILD_ROLES))?.status === 'running') continue;
     const ref = { installationId: context.installationId, repo: context.repo };
     const expected = await expectedHead(pool, taskId);
-    if (
-      (await github.pullRequest({ ...ref, pullRequest: context.pullRequest })).head.sha === expected
-    )
+    const prHead = (await github.pullRequest({ ...ref, pullRequest: context.pullRequest })).head
+      .sha;
+    if (!expected || prHead === expected) continue;
+    const base = context.defaultBranch;
+    if (await sameChange(github, ref, { base, verified: expected, head: prHead })) {
+      await carryHead(pool, github, { context, ref, headSha: prHead, from: expected });
       continue;
+    }
     const config = parseProjectConfig(context.rawConfig);
     if (!config.ok) continue;
     const head = await readPush(github, ref, {
