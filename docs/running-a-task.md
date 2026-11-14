@@ -133,6 +133,14 @@ To stop a task at any time: `scripts/officina task cancel --number 1 --reason "W
   person needs GitHub connected in Officina and a Copilot seat (or the organization's permission to
   use Copilot review without one). When the request fails the task goes on and its timeline says
   why; ask for the review on GitHub by hand.
+- **Other review bots.** A bot that comments on the code (CodeRabbit's inline comments, for example)
+  sends the task back like Copilot. A bot that only writes a summary, as a review or as a comment on
+  the pull request, counts once the project lists it in `pull_request.review_bots`.
+- **Failing checks.** A check suite or a commit status that fails on the pull request's head sends
+  the task back to the builder with what failed, at any point from review to merge.
+- **Commits from outside Officina.** When a bot, a person or GitHub's "Update branch" pushes to the
+  task branch after the builder, Officina takes the new head in within a scheduler pass: the lane
+  and guardrails are checked again and the task goes back to review, then to your verification.
 - **Low-risk changes.** In a green lane with `auto_verify: true`, a result that the chooser only asks
   to glance at skips the verification step, unless merging deploys to production
   (`release.on_merge: production`, the default). The spec is always approved by a person.

@@ -63,7 +63,7 @@ const describeEvent = (event: TaskEventRow): string | null => {
     case 'changes_requested':
       return `changes requested at ${p.stage}: ${clip(String(p.note), 1500)}`;
     case 'pushed':
-      return `pushed ${(p.changedPaths as string[]).length} files, ${p.diffLines} lines`;
+      return `${p.outside ? 'pushed from outside Officina' : 'pushed'} ${(p.changedPaths as string[]).length} files, ${p.diffLines} lines`;
     case 'build_unchanged':
       return `kept the head, nothing to change: ${clip(String(p.note), 1500)}`;
     case 'review_recorded':

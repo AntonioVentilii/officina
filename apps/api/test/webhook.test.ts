@@ -207,23 +207,144 @@ describe.skipIf(!url)('api', () => {
     ]);
     const taskId = await createTaskInMerging(pool, seeded);
     await linkPullRequest(pool, taskId, 42);
-    const response = await deliver(checking, {
-      event: 'check_suite',
-      delivery: 'd-2',
-      payload: {
-        action: 'completed',
-        check_suite: {
-          conclusion: 'failure',
-          app: { name: 'GitHub Actions' },
-          pull_requests: [{ number: 42 }]
-        },
-        repository
-      }
+    const suite = (delivery: string, headSha: string) =>
+      deliver(checking, {
+        event: 'check_suite',
+        delivery,
+        payload: {
+          action: 'completed',
+          check_suite: {
+            conclusion: 'failure',
+            head_sha: headSha,
+            app: { name: 'GitHub Actions' },
+            pull_requests: []
+          },
+          repository
+        }
+      });
+    // A suite on a commit no task holds is about something else.
+    expect(await (await suite('d-1', 'unrelated')).json()).toEqual({
+      status: 'applied',
+      outcomes: []
     });
+    const response = await suite('d-2', 'abc');
     expect(await response.json()).toEqual({ status: 'applied', outcomes: [{ taskId, ok: true }] });
     const stored = await loadTask(pool, taskId);
     expect(stored?.task).toMatchObject({ stage: 'building', fixRounds: 1 });
     expect(calls).toEqual(['cancelAutoMerge']);
+  });
+
+  test("a failed commit status on Officina's own status commit counts for the task's head", async () => {
+    await pool.query('update projects set github_installation_id = 99 where id = $1', [
+      seeded.projectId
+    ]);
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    await pool.query(
+      `insert into task_events (task_id, actor, type, payload)
+       values ($1, '{"kind":"engine"}', 'spec_status_set', '{"status":"Implemented","commitSha":"status1"}')`,
+      [taskId]
+    );
+    const response = await deliver(app, {
+      event: 'status',
+      delivery: 's-1',
+      payload: {
+        sha: 'status1',
+        state: 'failure',
+        context: 'vercel',
+        description: 'Build failed',
+        repository
+      }
+    });
+    expect(await response.json()).toEqual({ status: 'applied', outcomes: [{ taskId, ok: true }] });
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({ stage: 'building' });
+    const details = await pool.query<{ details: string }>(
+      `select payload->>'details' as details from task_events where task_id = $1 and type = 'ci_failed'`,
+      [taskId]
+    );
+    expect(details.rows[0]?.details).toBe('vercel: failure (Build failed)');
+  });
+
+  test('a comment or an overview from a review bot the project lists reaches the builder, once per answer', async () => {
+    const commenting = createApp({
+      pool,
+      webhookSecret: SECRET,
+      github: { fileContent: async () => null, reviewComments: async () => [] }
+    });
+    await pool.query(
+      `update projects set github_installation_id = 99,
+         config = jsonb_set(config, '{pull_request}', '{"review_bots": ["coderabbitai[bot]"]}')
+       where id = $1`,
+      [seeded.projectId]
+    );
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    const comment = async (
+      delivery: string,
+      login: string,
+      body = 'The cache key is never cleared.'
+    ) =>
+      (
+        await deliver(commenting, {
+          event: 'issue_comment',
+          delivery,
+          payload: {
+            action: 'created',
+            issue: { number: 42, pull_request: {} },
+            comment: { id: 31, body, user: { login, type: 'Bot' } },
+            repository
+          }
+        })
+      ).json();
+
+    // A bot the project does not list, such as a deploy preview, asks for nothing.
+    expect(await comment('c-1', 'vercel[bot]')).toEqual({ status: 'applied', outcomes: [] });
+    expect(await comment('c-2', 'coderabbitai[bot]')).toEqual({
+      status: 'applied',
+      outcomes: [{ taskId, ok: true }]
+    });
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({ stage: 'building', fixRounds: 1 });
+    const recorded = await pool.query<{ notes: string; comment: string }>(
+      `select payload->>'notes' as notes, payload->>'githubCommentId' as comment from task_events
+       where task_id = $1 and type = 'review_recorded' and payload->>'reviewer' = 'github'`,
+      [taskId]
+    );
+    expect(recorded.rows[0]?.comment).toBe('31');
+    expect(recorded.rows[0]?.notes).toContain('The cache key is never cleared.');
+
+    // Its next word on the builder's answer is not sent back again.
+    await applyCommand(pool, {
+      taskId,
+      command: { type: 'unchanged', note: 'The key is cleared on logout.' },
+      actor: { kind: 'agent', role: 'builder', version: 1 }
+    });
+    expect(await comment('c-3', 'coderabbitai[bot]', 'Still looks off.')).toEqual({
+      status: 'applied',
+      outcomes: [{ taskId, ok: false, error: 'overview_already_answered' }]
+    });
+
+    // A review by the same bot with nothing on the code counts too, as an overview.
+    const reviewed = await deliver(commenting, {
+      event: 'pull_request_review',
+      delivery: 'c-4',
+      payload: {
+        action: 'submitted',
+        review: {
+          id: 12,
+          state: 'commented',
+          body: 'Summary: one risk in the cache.',
+          commit_id: 'abc',
+          author_association: 'NONE',
+          user: { login: 'coderabbitai[bot]', type: 'Bot' }
+        },
+        pull_request: { number: 42 },
+        repository
+      }
+    });
+    expect(await reviewed.json()).toEqual({
+      status: 'applied',
+      outcomes: [{ taskId, ok: false, error: 'overview_already_answered' }]
+    });
   });
 
   test('a Copilot review with comments sends the work back to the builder and stops auto-merge', async () => {

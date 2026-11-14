@@ -69,23 +69,73 @@ describe('webhook events', () => {
     });
   });
 
-  test('a failed check suite on pull requests', () => {
+  test('a failed check suite names the commit it ran on, with or without a pull request', () => {
+    for (const pull_requests of [[{ number: 7 }], []])
+      expect(
+        parseWebhookEvent('check_suite', {
+          action: 'completed',
+          check_suite: {
+            conclusion: 'failure',
+            head_sha: 'abc',
+            app: { name: 'GitHub Actions' },
+            pull_requests
+          },
+          repository
+        })
+      ).toEqual({
+        kind: 'checks_failed',
+        repo: 'ViciApp/vici-app',
+        headSha: 'abc',
+        details: 'GitHub Actions: failure'
+      });
+  });
+
+  test('a failed or errored commit status, with what it says and where to look', () => {
+    const status = (state: string, extra: Record<string, unknown> = {}) => ({
+      sha: 'abc',
+      state,
+      context: 'vercel',
+      repository,
+      ...extra
+    });
     expect(
-      parseWebhookEvent('check_suite', {
-        action: 'completed',
-        check_suite: {
-          conclusion: 'failure',
-          app: { name: 'GitHub Actions' },
-          pull_requests: [{ number: 7 }]
-        },
-        repository
-      })
+      parseWebhookEvent(
+        'status',
+        status('failure', { description: 'Build failed', target_url: 'https://ci.example/1' })
+      )
     ).toEqual({
       kind: 'checks_failed',
       repo: 'ViciApp/vici-app',
-      prNumbers: [7],
-      details: 'GitHub Actions: failure'
+      headSha: 'abc',
+      details: 'vercel: failure (Build failed) https://ci.example/1'
     });
+    expect(parseWebhookEvent('status', status('error'))).toMatchObject({
+      details: 'vercel: error'
+    });
+    expect(parseWebhookEvent('status', status('pending'))).toBeNull();
+    expect(parseWebhookEvent('status', status('success'))).toBeNull();
+  });
+
+  test("a bot's comment on a pull request, and nobody else's", () => {
+    const comment = (type: string, extra: Record<string, unknown> = {}) => ({
+      action: 'created',
+      issue: { number: 7, pull_request: { url: 'https://api.github.com/repos/x/pulls/7' } },
+      comment: { id: 31, body: 'Two problems found.', user: { login: 'coderabbitai[bot]', type } },
+      repository,
+      ...extra
+    });
+    expect(parseWebhookEvent('issue_comment', comment('Bot'))).toEqual({
+      kind: 'pull_request_commented',
+      repo: 'ViciApp/vici-app',
+      prNumber: 7,
+      commentId: 31,
+      by: 'coderabbitai[bot]',
+      body: 'Two problems found.'
+    });
+    expect(parseWebhookEvent('issue_comment', comment('User'))).toBeNull();
+    expect(parseWebhookEvent('issue_comment', comment('Bot', { action: 'edited' }))).toBeNull();
+    // A comment on an issue, not a pull request.
+    expect(parseWebhookEvent('issue_comment', comment('Bot', { issue: { number: 7 } }))).toBeNull();
   });
 
   test('a submitted review that may want changes, with who left it', () => {
@@ -127,15 +177,15 @@ describe('webhook events', () => {
     ).toBeNull();
   });
 
-  test('successful, neutral or PR-less check suites and unknown events are ignored', () => {
-    const suite = (conclusion: string, pull_requests = [{ number: 7 }]) => ({
+  test('successful, neutral or commit-less check suites and unknown events are ignored', () => {
+    const suite = (conclusion: string, head_sha: string | null = 'abc') => ({
       action: 'completed',
-      check_suite: { conclusion, pull_requests },
+      check_suite: { conclusion, head_sha },
       repository
     });
     expect(parseWebhookEvent('check_suite', suite('success'))).toBeNull();
     expect(parseWebhookEvent('check_suite', suite('neutral'))).toBeNull();
-    expect(parseWebhookEvent('check_suite', suite('failure', []))).toBeNull();
+    expect(parseWebhookEvent('check_suite', suite('failure', null))).toBeNull();
     expect(parseWebhookEvent('push', { ref: 'refs/tags/v1', repository })).toBeNull();
     expect(parseWebhookEvent('pull_request', 'not an object')).toBeNull();
   });
