@@ -256,7 +256,7 @@ describe.skipIf(!url)('GitHub sign-in', () => {
     );
     expect(await accounts.complete('c', seeded.ownerId)).toMatchObject({ ok: true });
 
-    const fresh = { token: 'ghu_new', login: 'antonio' };
+    const fresh = { token: 'ghu_new', login: 'antonio', userId: 42 };
     expect(await accounts.tokenFor(seeded.ownerId)).toEqual(fresh);
     expect(await accounts.tokenFor(seeded.ownerId)).toEqual(fresh);
     expect(refreshedWith).toEqual(['ghr_old']);
