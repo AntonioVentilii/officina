@@ -126,9 +126,10 @@ Search here before writing a helper, a type, a component or a fake. When you add
 
 ## Test helpers
 
-| Piece                                                         | Path                                | What it is                                                  |
-| ------------------------------------------------------------- | ----------------------------------- | ----------------------------------------------------------- |
-| `CONFIG_YAML`, `loadConfig`, `createDriver`, members, `PLAN`  | `packages/core/test/fixtures.ts`    | A config and a driver that applies commands like the engine |
-| `resetAndSeed`, `applyOrThrow`, `createTaskInMerging`, `PLAN` | `packages/db/test/seed.ts`          | A fresh schema with one workspace, owner and project        |
-| `createFakePort`, `toolUse`, `idle`, `running`, `terminated`  | `packages/runner/test/fake-port.ts` | A scripted Managed Agents port                              |
-| `with-postgres.ts`                                            | `packages/db/test/with-postgres.ts` | Runs the database tests against a throwaway container       |
+| Piece                                                         | Path                                  | What it is                                                                                                         |
+| ------------------------------------------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `CONFIG_YAML`, `loadConfig`, `createDriver`, members, `PLAN`  | `packages/core/test/fixtures.ts`      | A config and a driver that applies commands like the engine                                                        |
+| `resetAndSeed`, `applyOrThrow`, `createTaskInMerging`, `PLAN` | `packages/db/test/seed.ts`            | A fresh schema with one workspace, owner and project                                                               |
+| `createFakePort`, `toolUse`, `idle`, `running`, `terminated`  | `packages/runner/test/fake-port.ts`   | A scripted Managed Agents port                                                                                     |
+| `gitHubWith`                                                  | `packages/engine/test/fake-github.ts` | A GitHub port for the engine typed against the real client: only the calls a test gives answer, any other fails it |
+| `with-postgres.ts`                                            | `packages/db/test/with-postgres.ts`   | Runs the database tests against a throwaway container                                                              |

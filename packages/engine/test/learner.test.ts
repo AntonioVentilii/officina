@@ -16,18 +16,18 @@ import { Pool } from 'pg';
 import { applyOrThrow, createTaskInMerging, resetAndSeed, type Seeded } from '../../db/test/seed';
 import { createFakePort, idle, toolUse } from '../../runner/test/fake-port';
 import { parseProjectConfig } from '@officina/core';
-import { collectDueSteps, learningProblems, runAgentStep, type GitHubPort } from '../src';
+import { collectDueSteps, learningProblems, runAgentStep } from '../src';
+import { gitHubWith } from './fake-github';
 
 const url = process.env.TEST_DATABASE_URL;
 
 const DOCS = '# Agents\n\n## Copy\n\nKeep copy short.\n';
 
 const fakeGitHub = () =>
-  ({
+  gitHubWith({
     installationToken: async () => 'token-read',
-    readFile: async ({ path }: { path: string }) =>
-      path === 'AGENTS.md' ? { text: DOCS, sha: 'blob1' } : null
-  }) as unknown as GitHubPort;
+    readFile: async ({ path }) => (path === 'AGENTS.md' ? { text: DOCS, sha: 'blob1' } : null)
+  });
 
 const learning = (overrides: Record<string, unknown>) => ({
   title: 'Say where locale files live',
@@ -314,7 +314,7 @@ describe.skipIf(!url)('learner', () => {
   test('a rewrite run lost right after its claim still counts', async () => {
     const { taskId } = await staleLearning();
     // The engine dies before the session exists: the token it asks for never comes.
-    const github = { ...fakeGitHub(), installationToken: forever } as unknown as GitHubPort;
+    const github = { ...fakeGitHub(), installationToken: forever };
     const agents = createFakePort(() => []);
     const deps = { pool, github, agents, publicUrl: 'x' };
     for (const _ of [1, 2]) {
