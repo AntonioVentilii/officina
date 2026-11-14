@@ -7,16 +7,18 @@ import {
   TERMINAL_STAGES,
   applicableRequirements,
   can,
+  canAnswer,
   effectivePolicy,
   eligibleMembers,
   evaluatePolicy,
   gateSubject,
-  hasRole,
   humanBuildReason,
   isGate,
   optionKey,
   parseProjectConfig,
   policyContext,
+  readsTask,
+  seesQuestion,
   type Actor,
   type AgentRole,
   type Approval,
@@ -192,36 +194,25 @@ const PUBLIC_FIELDS: Readonly<Record<string, readonly string[]>> = {
 const HIDDEN_QUESTION =
   'A question for someone else to answer; maintainers and owners can read it.';
 
-/**
- * Questions are often an agent's or Officina's own failure, quoting an error; people who can
- * neither answer them nor see the runs get only that one is open.
- */
-const seesQuestion = (viewer: BoardViewer, blocked: Blocked): boolean =>
-  seesTechnical(viewer) ||
-  ('memberId' in blocked.askedOf
-    ? blocked.askedOf.memberId === viewer.memberId
-    : hasRole(viewerMember(viewer), blocked.askedOf.role));
+/** The question as this member may read it: people who may not get only that one is open. */
+export const questionFor = (member: Member, blocked: Blocked): string =>
+  seesQuestion(member, blocked.askedOf) ? blocked.question : HIDDEN_QUESTION;
 
-const questionFor = (viewer: BoardViewer, blocked: Blocked): string =>
-  seesQuestion(viewer, blocked) ? blocked.question : HIDDEN_QUESTION;
+/** Who a question is asked of, in words: the member by name, or a role. */
+export const askedOfLabel = (
+  askedOf: Blocked['askedOf'],
+  names: ReadonlyMap<string, string>
+): string =>
+  'memberId' in askedOf ? (names.get(askedOf.memberId) ?? 'a member') : article(askedOf.role);
 
 /** The options a question offers, by letter, to whoever may read the question itself. */
-const optionsFor = (viewer: BoardViewer, blocked: Blocked) =>
-  seesQuestion(viewer, blocked)
+const optionsFor = (member: Member, blocked: Blocked) =>
+  seesQuestion(member, blocked.askedOf)
     ? (blocked.options ?? []).map((option, index) => ({ key: optionKey(index), ...option }))
     : [];
 
 export const CONFIDENTIAL =
   "Confidential: only members who may see the project's confidential content can read this.";
-
-/**
- * Whether the viewer may read what a task says. A task guarded as confidential keeps its title,
- * stage and people for everyone, and its words for members with `see_confidential`.
- */
-const readsContent = (
-  row: Pick<BoardTaskRow, 'guards'>,
-  viewer: Pick<BoardViewer, 'role' | 'domains'>
-): boolean => !row.guards.includes('confidential') || can(viewer, 'see_confidential');
 
 /** Free text a timeline event may carry, dropped for viewers who may not read the task. */
 const EVENT_TEXT = ['note', 'answer', 'reason', 'blocked'];
@@ -239,7 +230,10 @@ const payloadFor = (
   );
   if (type === 'blocked' && visible.blocked) {
     const blocked = visible.blocked as Blocked;
-    visible.blocked = { askedOf: blocked.askedOf, question: questionFor(viewer, blocked) };
+    visible.blocked = {
+      askedOf: blocked.askedOf,
+      question: questionFor(viewerMember(viewer), blocked)
+    };
   }
   return visible;
 };
@@ -322,18 +316,6 @@ export const approvalState = async (
   };
 };
 
-const canAnswer = (row: BoardTaskRow, viewer: BoardViewer) => {
-  if (!row.blocked) return false;
-  const askedOf = row.blocked.askedOf;
-  return (
-    can(viewer, 'answer') &&
-    (viewer.role === 'owner' ||
-      ('memberId' in askedOf
-        ? askedOf.memberId === viewer.memberId
-        : hasRole(viewerMember(viewer), askedOf.role)))
-  );
-};
-
 /** What a handoff to a person needs, in words. */
 const handoffNeeds = (blocked: Blocked): string[] =>
   (blocked.handoff?.needs ?? []).map((need) => HANDOFF_NEEDS[need].label);
@@ -347,15 +329,14 @@ const waitingOn = (
   const member = viewerMember(viewer);
   if (TERMINAL_STAGES.has(row.stage)) return { kind: 'nobody', label: row.stage, me: false };
   if (row.blocked) {
-    const askedOf = row.blocked.askedOf;
-    const who = 'memberId' in askedOf ? 'a member' : article(askedOf.role);
+    const who = askedOfLabel(row.blocked.askedOf, facts.names);
     const needs = handoffNeeds(row.blocked);
     return {
       kind: 'people',
       label: needs.length
         ? `Agents cannot go on: needs ${who} for ${needs.join(', ')}`
         : `A question for ${who}`,
-      me: canAnswer(row, viewer)
+      me: canAnswer(member, row.blocked.askedOf)
     };
   }
   if (row.paused) return { kind: 'people', label: 'Paused', me: can(member, 'steer') };
@@ -446,7 +427,7 @@ const waitingOn = (
 const buildsIt = (
   row: Pick<BoardTaskRow, 'guards'>,
   member: Pick<BoardViewer, 'role' | 'domains'>
-) => can(member, 'build') && readsContent(row, member);
+) => can(member, 'build') && readsTask(member, row);
 
 /**
  * A developer claims a build when it waits or the agent has it, and hands in what they pushed once
@@ -471,7 +452,7 @@ const actionsFor = (row: BoardTaskRow, viewer: BoardViewer): BoardAction[] => {
   if (row.stage === 'request' && can(member, 'request') && (requester || can(member, 'triage')))
     actions.push('submit');
   if (row.blocked) {
-    if (canAnswer(row, viewer)) actions.push('answer');
+    if (canAnswer(member, row.blocked.askedOf)) actions.push('answer');
   } else if (!row.paused) {
     if (row.stage === 'triage' && can(member, 'triage')) actions.push('accept', 'decline');
     actions.push(...buildActions(row, viewer));
@@ -516,7 +497,9 @@ const cardView = (
   lane: row.lane,
   blocked: row.blocked
     ? {
-        question: readsContent(row, viewer) ? questionFor(viewer, row.blocked) : CONFIDENTIAL,
+        question: readsTask(viewer, row)
+          ? questionFor(viewerMember(viewer), row.blocked)
+          : CONFIDENTIAL,
         needs: handoffNeeds(row.blocked)
       }
     : null,
@@ -525,7 +508,7 @@ const cardView = (
   userVisible: row.userVisible,
   requester: row.requesterName,
   // Its pull request shows the confidential change itself.
-  pullRequest: readsContent(row, viewer) ? row.pullRequest : null,
+  pullRequest: readsTask(viewer, row) ? row.pullRequest : null,
   costCents: seesTechnical(viewer) ? row.costCents : null,
   running: row.runningRoles.map((role) => ({ role, label: roleLabel(role) })),
   fixRounds: row.fixRounds,
@@ -695,7 +678,7 @@ export const runsView = async (pool: Pool, viewer: BoardViewer, consoleWorkspace
  * rest is confidential. Everyone else reads everything.
  */
 const confidentialView = (row: BoardTaskRow, viewer: BoardViewer) => {
-  const reads = readsContent(row, viewer);
+  const reads = readsTask(viewer, row);
   const own = (author: Actor | undefined) =>
     author?.kind === 'member' && author.memberId === viewer.memberId;
   return {
@@ -734,13 +717,12 @@ export const taskView = async (
     ...cardView(row, viewer, approval, facts),
     blocked: row.blocked
       ? {
-          question: shown.text(questionFor(viewer, row.blocked)),
+          question: shown.text(questionFor(viewerMember(viewer), row.blocked)),
           needs: handoffNeeds(row.blocked),
-          options: shown.value(optionsFor(viewer, row.blocked)) ?? [],
-          askedOf:
-            'memberId' in row.blocked.askedOf
-              ? (facts.names.get(row.blocked.askedOf.memberId) ?? 'a member')
-              : article(row.blocked.askedOf.role)
+          options: shown.value(optionsFor(viewerMember(viewer), row.blocked)) ?? [],
+          // An option picked from this question holds only for the version it was read at.
+          version: row.version,
+          askedOf: askedOfLabel(row.blocked.askedOf, facts.names)
         }
       : null,
     repo: context?.repo ?? null,

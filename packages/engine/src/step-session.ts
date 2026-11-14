@@ -5,8 +5,8 @@ import {
   feedbackSinceLastPush,
   githubReviewsSinceLastPush,
   latestPushedPaths,
-  listComments,
   listProjectMemberProfiles,
+  listTaskComments,
   setRunExternalId
 } from '@officina/db';
 import { executeRun, type RunnerRole } from '@officina/runner';
@@ -79,7 +79,9 @@ const briefFor = async (step: Step, inputs: StepInputs) => {
     protectedPaths: config.lanes.red.paths,
     confidentialPaths: config.guards.confidential,
     requestThread:
-      role === 'spec' || role === 'interviewer' ? await listComments(pool, taskId) : [],
+      role === 'spec' || role === 'interviewer'
+        ? (await listTaskComments(pool, taskId)).map((comment) => comment.body)
+        : [],
     feedback: step.builds ? await feedbackSinceLastPush(pool, taskId) : [],
     firstRound: context.task.headSha === null,
     prTitlePattern: config.pullRequest.titlePattern,
@@ -102,6 +104,20 @@ const validatorFor = (step: Step, inputs: StepInputs) => {
     return planProblems(gateOf(step), new Set(inputs.members.map((member) => member.id)));
   }
   return step.role === 'interviewer' ? interviewProblems(inputs.questionsAsked) : undefined;
+};
+
+/** The run was failed outside its step before its session started; the session is interrupted. */
+export class RunStoppedError extends Error {}
+
+/**
+ * Records the session on its run. A run failed before its session existed (a build taken over in
+ * that window) is stopped here, before the brief is sent: nothing else knows the session to
+ * interrupt it.
+ */
+const registerSession = async (step: Step, sessionId: string) => {
+  if (await setRunExternalId(step.deps.pool, step.runId, sessionId)) return;
+  await step.deps.agents.send(sessionId, [{ type: 'user.interrupt' }]).catch(() => {});
+  throw new RunStoppedError('the run was stopped before its session started');
 };
 
 export const runSession = async (step: Step, inputs: StepInputs, token: string) => {
@@ -131,7 +147,7 @@ export const runSession = async (step: Step, inputs: StepInputs, token: string) 
           : Math.round(config.lanes[lane].budgetUsd * 100)
     },
     validate: validatorFor(step, inputs),
-    onSessionCreated: (sessionId) => setRunExternalId(pool, runId, sessionId),
+    onSessionCreated: (sessionId) => registerSession(step, sessionId),
     onEvent: (event) => appendRunEvent(pool, runId, event.type, event)
   });
 };

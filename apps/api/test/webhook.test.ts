@@ -11,7 +11,8 @@ import {
 } from '@officina/db';
 import { Pool } from 'pg';
 import { createTaskInMerging, resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
-import { createApp } from '../src';
+import { catchUpPullRequests, createApp, type PullRequestReader } from '../src';
+import { MAX_REQUEST_BYTES } from '../src/app';
 
 const url = process.env.TEST_DATABASE_URL;
 const SECRET = 'test-webhook-secret-with-enough-length';
@@ -61,6 +62,21 @@ describe.skipIf(!url)('api', () => {
     const response = await app.handle(new Request('http://officina.test/health'));
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ok: true });
+  });
+
+  test('a body larger than the cap is refused before it is read', async () => {
+    const server = createApp({ pool, webhookSecret: SECRET }).listen({ port: 0 });
+    try {
+      const response = await fetch(`http://localhost:${server.server!.port}/github/webhook`, {
+        method: 'POST',
+        headers: { 'x-github-event': 'push', 'x-github-delivery': 'd-big' },
+        body: 'x'.repeat(MAX_REQUEST_BYTES + 1)
+      });
+      expect(response.status).toBe(413);
+      expect((await pool.query('select 1 from webhook_deliveries')).rowCount).toBe(0);
+    } finally {
+      await server.stop();
+    }
   });
 
   test('a delivery with a bad signature is rejected and changes nothing', async () => {
@@ -207,23 +223,144 @@ describe.skipIf(!url)('api', () => {
     ]);
     const taskId = await createTaskInMerging(pool, seeded);
     await linkPullRequest(pool, taskId, 42);
-    const response = await deliver(checking, {
-      event: 'check_suite',
-      delivery: 'd-2',
-      payload: {
-        action: 'completed',
-        check_suite: {
-          conclusion: 'failure',
-          app: { name: 'GitHub Actions' },
-          pull_requests: [{ number: 42 }]
-        },
-        repository
-      }
+    const suite = (delivery: string, headSha: string) =>
+      deliver(checking, {
+        event: 'check_suite',
+        delivery,
+        payload: {
+          action: 'completed',
+          check_suite: {
+            conclusion: 'failure',
+            head_sha: headSha,
+            app: { name: 'GitHub Actions' },
+            pull_requests: []
+          },
+          repository
+        }
+      });
+    // A suite on a commit no task holds is about something else.
+    expect(await (await suite('d-1', 'unrelated')).json()).toEqual({
+      status: 'applied',
+      outcomes: []
     });
+    const response = await suite('d-2', 'abc');
     expect(await response.json()).toEqual({ status: 'applied', outcomes: [{ taskId, ok: true }] });
     const stored = await loadTask(pool, taskId);
     expect(stored?.task).toMatchObject({ stage: 'building', fixRounds: 1 });
     expect(calls).toEqual(['cancelAutoMerge']);
+  });
+
+  test("a failed commit status on Officina's own status commit counts for the task's head", async () => {
+    await pool.query('update projects set github_installation_id = 99 where id = $1', [
+      seeded.projectId
+    ]);
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    await pool.query(
+      `insert into task_events (task_id, actor, type, payload)
+       values ($1, '{"kind":"engine"}', 'spec_status_set', '{"status":"Implemented","commitSha":"status1"}')`,
+      [taskId]
+    );
+    const response = await deliver(app, {
+      event: 'status',
+      delivery: 's-1',
+      payload: {
+        sha: 'status1',
+        state: 'failure',
+        context: 'vercel',
+        description: 'Build failed',
+        repository
+      }
+    });
+    expect(await response.json()).toEqual({ status: 'applied', outcomes: [{ taskId, ok: true }] });
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({ stage: 'building' });
+    const details = await pool.query<{ details: string }>(
+      `select payload->>'details' as details from task_events where task_id = $1 and type = 'ci_failed'`,
+      [taskId]
+    );
+    expect(details.rows[0]?.details).toBe('vercel: failure (Build failed)');
+  });
+
+  test('a comment or an overview from a review bot the project lists reaches the builder, once per answer', async () => {
+    const commenting = createApp({
+      pool,
+      webhookSecret: SECRET,
+      github: { fileContent: async () => null, reviewComments: async () => [] }
+    });
+    await pool.query(
+      `update projects set github_installation_id = 99,
+         config = jsonb_set(config, '{pull_request}', '{"review_bots": ["coderabbitai[bot]"]}')
+       where id = $1`,
+      [seeded.projectId]
+    );
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    const comment = async (
+      delivery: string,
+      login: string,
+      body = 'The cache key is never cleared.'
+    ) =>
+      (
+        await deliver(commenting, {
+          event: 'issue_comment',
+          delivery,
+          payload: {
+            action: 'created',
+            issue: { number: 42, pull_request: {} },
+            comment: { id: 31, body, user: { login, type: 'Bot' } },
+            repository
+          }
+        })
+      ).json();
+
+    // A bot the project does not list, such as a deploy preview, asks for nothing.
+    expect(await comment('c-1', 'vercel[bot]')).toEqual({ status: 'applied', outcomes: [] });
+    expect(await comment('c-2', 'coderabbitai[bot]')).toEqual({
+      status: 'applied',
+      outcomes: [{ taskId, ok: true }]
+    });
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({ stage: 'building', fixRounds: 1 });
+    const recorded = await pool.query<{ notes: string; comment: string }>(
+      `select payload->>'notes' as notes, payload->>'githubCommentId' as comment from task_events
+       where task_id = $1 and type = 'review_recorded' and payload->>'reviewer' = 'github'`,
+      [taskId]
+    );
+    expect(recorded.rows[0]?.comment).toBe('31');
+    expect(recorded.rows[0]?.notes).toContain('The cache key is never cleared.');
+
+    // Its next word on the builder's answer is not sent back again.
+    await applyCommand(pool, {
+      taskId,
+      command: { type: 'unchanged', note: 'The key is cleared on logout.' },
+      actor: { kind: 'agent', role: 'builder', version: 1 }
+    });
+    expect(await comment('c-3', 'coderabbitai[bot]', 'Still looks off.')).toEqual({
+      status: 'applied',
+      outcomes: [{ taskId, ok: false, error: 'overview_already_answered' }]
+    });
+
+    // A review by the same bot with nothing on the code counts too, as an overview.
+    const reviewed = await deliver(commenting, {
+      event: 'pull_request_review',
+      delivery: 'c-4',
+      payload: {
+        action: 'submitted',
+        review: {
+          id: 12,
+          state: 'commented',
+          body: 'Summary: one risk in the cache.',
+          commit_id: 'abc',
+          author_association: 'NONE',
+          user: { login: 'coderabbitai[bot]', type: 'Bot' }
+        },
+        pull_request: { number: 42 },
+        repository
+      }
+    });
+    expect(await reviewed.json()).toEqual({
+      status: 'applied',
+      outcomes: [{ taskId, ok: false, error: 'overview_already_answered' }]
+    });
   });
 
   test('a Copilot review with comments sends the work back to the builder and stops auto-merge', async () => {
@@ -513,5 +650,51 @@ describe.skipIf(!url)('api', () => {
       })
     );
     expect(missingDelivery.status).toBe(400);
+  });
+
+  test('a pull request merged or closed while its webhook was missed is caught up on the next pass', async () => {
+    await pool.query('update projects set github_installation_id = 99 where id = $1', [
+      seeded.projectId
+    ]);
+    const states: Record<number, { state: string; merged: boolean } | Error> = {
+      41: new Error('GitHub 502 on /pulls/41'),
+      42: { state: 'closed', merged: true },
+      43: { state: 'closed', merged: false },
+      44: { state: 'open', merged: false }
+    };
+    const reads: number[] = [];
+    const github: PullRequestReader = {
+      fileContent: async () => null,
+      cancelAutoMerge: async () => {},
+      pullRequest: async ({ pullRequest }) => {
+        reads.push(pullRequest);
+        const pr = states[pullRequest]!;
+        if (pr instanceof Error) throw pr;
+        return { node_id: 'PR', head: { sha: 'abc' }, ...pr };
+      }
+    };
+    const tasks: Record<number, string> = {};
+    for (const number of [41, 42, 43, 44]) {
+      tasks[number] = await createTaskInMerging(pool, seeded);
+      await linkPullRequest(pool, tasks[number], number);
+    }
+    const ids = Object.values(tasks);
+
+    expect(await catchUpPullRequests(pool, github, ids)).toEqual([
+      { taskId: tasks[41]!, error: 'GitHub 502 on /pulls/41' }
+    ]);
+    const stages = async () =>
+      Promise.all(ids.map(async (id) => (await loadTask(pool, id))?.task.stage));
+    expect(await stages()).toEqual(['merging', 'done', 'ready', 'merging']);
+    // The same handling as the webhook's: the closed one is held for a maintainer and unlinked.
+    const closed = (await loadTask(pool, tasks[43]!))?.task;
+    expect(closed?.blocked?.question).toContain('#43');
+
+    // A task that left merging is not read again, and a second pass changes nothing.
+    const events = await Promise.all(ids.map(eventCount));
+    reads.length = 0;
+    await catchUpPullRequests(pool, github, ids);
+    expect(reads).toEqual([41, 44]);
+    expect(await Promise.all(ids.map(eventCount))).toEqual(events);
   });
 });

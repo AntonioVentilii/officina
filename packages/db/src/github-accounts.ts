@@ -29,6 +29,10 @@ export const consumeOAuthState = async (
   return rows[0] ? { memberId: rows[0].member_id } : null;
 };
 
+/** Deletes the states that expired before anyone spent them; returns how many. */
+export const purgeExpiredOAuthStates = async (db: Queryable): Promise<number> =>
+  (await db.query('delete from oauth_states where expires_at <= now()')).rowCount ?? 0;
+
 /**
  * Spends a state that was never stored, such as a sign-in's: recorded once it is used, until it
  * expires, so the same state cannot complete a second time.

@@ -97,6 +97,29 @@ export const createGitHubAsUser = (options: { fetch?: typeof fetch } = {}) => {
       `/repos/${repo}/pulls/${number}`
     );
 
+  /**
+   * Every review left on the pull request, oldest first, page by page: who (by GitHub's stable
+   * user id, since a login can be renamed), how and at which commit.
+   */
+  const reviews = async (token: string, repo: string, number: number) => {
+    const all: { userId: number; login: string; state: string; commitId: string | null }[] = [];
+    for (let page = 1; ; page++) {
+      const batch = await request<
+        { user: { id: number; login: string } | null; state: string; commit_id: string | null }[]
+      >(token, `/repos/${repo}/pulls/${number}/reviews?per_page=100&page=${page}`);
+      for (const review of batch) {
+        if (review.user)
+          all.push({
+            userId: review.user.id,
+            login: review.user.login,
+            state: review.state,
+            commitId: review.commit_id
+          });
+      }
+      if (batch.length < 100) return all;
+    }
+  };
+
   /** Approves exactly the given commit, so a later push is never approved by accident. */
   const approve = (token: string, repo: string, number: number, commitId: string, body: string) =>
     request(token, `/repos/${repo}/pulls/${number}/reviews`, {
@@ -146,7 +169,7 @@ export const createGitHubAsUser = (options: { fetch?: typeof fetch } = {}) => {
     }
   };
 
-  return { user, pullRequest, approve, mergeWhenReady, requestCopilotReview };
+  return { user, pullRequest, reviews, approve, mergeWhenReady, requestCopilotReview };
 };
 
 export type GitHubAsUser = ReturnType<typeof createGitHubAsUser>;

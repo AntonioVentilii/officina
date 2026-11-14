@@ -180,7 +180,8 @@ export const forwardedReviewIds = async (pool: Pool, taskId: string): Promise<nu
   (
     await pool.query<{ review_id: string }>(
       `select distinct payload->>'githubReviewId' as review_id from task_events
-       where task_id = $1 and type = 'review_recorded' and payload->>'reviewer' = 'github'`,
+       where task_id = $1 and type = 'review_recorded' and payload->>'reviewer' = 'github'
+         and payload ? 'githubReviewId'`,
       [taskId]
     )
   ).rows.map((row) => Number(row.review_id));
@@ -235,10 +236,10 @@ export const autoVerified = async (pool: Pool, taskId: string): Promise<boolean>
     .rows[0]?.skipped ?? false;
 
 /**
- * Whether the task's last request for changes was an overview-only review by the same bot. Copilot
- * may review every push, and its overview of the builder's answer would otherwise send the task
- * back again and again; a review asking for changes on the code, or any other reviewer's, still
- * counts.
+ * Whether the task's last request for changes was an overview-only review or comment by the same
+ * bot. A bot may review every push, and its overview of the builder's answer would otherwise send
+ * the task back again and again; a review asking for changes on the code, or any other reviewer's,
+ * still counts.
  */
 export const answeredOverviewLast = async (
   pool: Pool,
@@ -259,25 +260,38 @@ export const answeredOverviewLast = async (
   );
 
 /**
- * The head a review is about, in the task's terms. Officina's own commits that only set the spec's
- * status line sit on top of the reviewed work, so a review of one of them is a review of the task's
- * head; any other commit is passed through and judged by the lifecycle.
+ * Officina's own commit that only sets the spec's status line on top of the task's head, since
+ * its last push, in SQL for a task `t` and a commit `$2`.
  */
-export const reviewedHead = async (
-  pool: Pool,
-  taskId: string,
-  commitId: string
-): Promise<string> => {
-  const row = (
+const IS_STATUS_COMMIT = `exists (
+  select 1 from task_events e where e.task_id = t.id and e.type = 'spec_status_set'
+    and e.payload->>'commitSha' = $2
+    and e.id > coalesce((select max(p.id) from task_events p
+      where p.task_id = t.id and p.type = 'pushed'), 0))`;
+
+/**
+ * The head a review, a check or a status is about, in the task's terms. Officina's own commits
+ * that only set the spec's status line sit on top of the reviewed work, so feedback on one of them
+ * is feedback on the task's head; any other commit is passed through and judged by the lifecycle.
+ */
+export const reviewedHead = async (pool: Pool, taskId: string, commitId: string): Promise<string> =>
+  (
     await pool.query<{ head_sha: string | null }>(
-      `select t.head_sha from tasks t
-       where t.id = $1 and exists (
-         select 1 from task_events e where e.task_id = t.id and e.type = 'spec_status_set'
-           and e.payload->>'commitSha' = $2
-           and e.id > coalesce((select max(p.id) from task_events p
-             where p.task_id = t.id and p.type = 'pushed'), 0))`,
+      `select t.head_sha from tasks t where t.id = $1 and ${IS_STATUS_COMMIT}`,
       [taskId, commitId]
     )
-  ).rows[0];
-  return row?.head_sha ?? commitId;
-};
+  ).rows[0]?.head_sha ?? commitId;
+
+/** The tasks of a repository whose head is this commit, or Officina's status commit on it. */
+export const findTasksByCommit = async (
+  pool: Pool,
+  repo: string,
+  commitId: string
+): Promise<string[]> =>
+  (
+    await pool.query<{ id: string }>(
+      `select t.id from tasks t join projects p on p.id = t.project_id
+       where lower(p.github_repo) = lower($1) and (t.head_sha = $2 or ${IS_STATUS_COMMIT})`,
+      [repo, commitId]
+    )
+  ).rows.map((row) => row.id);
