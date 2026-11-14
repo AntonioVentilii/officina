@@ -296,6 +296,11 @@ describe.skipIf(!url)('GitHub sign-in', () => {
       '/\t/evil.example',
       '/\n/evil.example',
       '/\r/evil.example',
+      '/.//evil.example',
+      '/./\\evil.example',
+      '/..//evil.example',
+      '/a/..//evil.example',
+      '/%2e//evil.example',
       'https://evil.example'
     ]) {
       expect(await landing(elsewhere)).toBe('/');

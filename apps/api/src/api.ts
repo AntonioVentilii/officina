@@ -162,13 +162,17 @@ const HERE = 'http://officina.invalid';
 
 /**
  * Only a path on this site, so a sign-in can never be turned into a redirect elsewhere. The value is
- * resolved the way a browser resolves a `Location` (which drops tabs and newlines and reads `\` as
- * `/`), and anything that lands on another origin is refused; what is returned is that resolution.
+ * resolved the way a browser resolves a `Location` (which drops tabs and newlines, reads `\` as `/`
+ * and removes dot segments), and anything that lands on another origin is refused, as is a
+ * resolution that starts with two slashes, which the browser would read as another host; what is
+ * returned is that resolution.
  */
 const localPath = (value: unknown): string | null => {
   if (typeof value !== 'string' || !value.startsWith('/') || value.length > 4_000) return null;
   const url = URL.parse(value, HERE);
-  return url && url.origin === HERE ? `${url.pathname}${url.search}${url.hash}` : null;
+  if (!url || url.origin !== HERE) return null;
+  const path = `${url.pathname}${url.search}${url.hash}`;
+  return /^\/[/\\]/.test(path) ? null : path;
 };
 
 const redeemSchema = z.strictObject({
