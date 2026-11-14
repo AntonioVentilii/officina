@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import { hashToken, newToken } from './auth';
-import { recordAccessEvent, recordDailyAccessEvent } from './access';
+import { recordAccessEvent, recordConnectorUse } from './access';
 import { inTransaction } from './store';
 
 type Queryable = Pool | PoolClient;
@@ -124,10 +124,10 @@ export const issueConnectorTokens = async (
     ]
   );
   // A token is issued when the app first connects and each time it refreshes while in use.
-  await recordDailyAccessEvent(db, {
+  await recordConnectorUse(db, {
     memberId: input.memberId,
-    type: 'connector_used',
-    detail: { client: await clientName(db, input.clientId) }
+    clientId: input.clientId,
+    clientName: await clientName(db, input.clientId)
   });
   return { accessToken, refreshToken };
 };
