@@ -648,6 +648,17 @@ describe.skipIf(!url)('board api', () => {
     const handIn = await call(developer, `${path}/hand-in`, { prTitle: 'feat(deck): publish it' });
     expect(handIn.status).toBe(503);
     expect(await json(handIn)).toEqual({ error: 'the GitHub App is not configured' });
+
+    // A person lists as many checks as the builder may, and no more.
+    const checks = (count: number) => Array.from({ length: count }, (_, i) => `check ${i}`);
+    const handInWith = (count: number) =>
+      call(developer, `${path}/hand-in`, {
+        prTitle: 'feat(deck): publish it',
+        verified: checks(count),
+        notVerified: checks(count)
+      });
+    expect((await handInWith(30)).status).toBe(503);
+    expect((await handInWith(31)).status).toBe(400);
   });
 
   test('watchers read but cannot act, and other projects stay invisible', async () => {
