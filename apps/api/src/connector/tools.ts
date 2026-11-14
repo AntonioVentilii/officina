@@ -1,9 +1,17 @@
-import { taskUrl } from '@officina/core';
+import {
+  ACTION_LABELS,
+  TERMINAL_STAGES,
+  allowedActions,
+  redactSecrets,
+  taskUrl,
+  type Preview
+} from '@officina/core';
 import type { MemberProject } from '@officina/db';
+import type { HandInPort } from '@officina/engine';
 import type { Pool } from 'pg';
 import { z } from 'zod';
-import { boardView, taskView, type BoardViewer, type CardView } from '../board';
-import { TaskCommandError, actOnTaskAs, commentAs, createRequestAs } from '../tasks';
+import { boardView, taskView, type BoardViewer, type CardView, type TaskView } from '../board';
+import { TaskCommandError, actOnTaskAs, commentAs, createRequestAs, handInAs } from '../tasks';
 
 /**
  * The connector's tools. Each one is a thin call into what the board's API already does
@@ -18,6 +26,8 @@ export interface ToolContext {
   readonly memberId: string;
   readonly workspaceId: string;
   readonly projects: readonly MemberProject[];
+  /** Reads a handed-in push from GitHub; absent where the GitHub App is not configured. */
+  readonly github?: HandInPort | undefined;
 }
 
 /** A failure Claude should explain to the person, not a protocol error. */
@@ -67,18 +77,72 @@ const projectFor = (context: ToolContext, wanted: string | undefined): MemberPro
   return found;
 };
 
-const ROLE_CAN: Record<MemberProject['role'], string> = {
-  watcher: 'read tasks and threads',
-  contributor: 'open requests, answer questions, comment and check results',
-  maintainer: 'do everything a contributor can, plus accept requests and approve plans',
-  owner: 'do everything, including changing the project settings'
-};
+/** What a role may do, in the permission matrix's own words. */
+const roleCan = (project: MemberProject) =>
+  allowedActions(project)
+    .map((action) => ACTION_LABELS[action])
+    .join('; ');
 
 const cardLine = (context: ToolContext, project: MemberProject, card: CardView) =>
-  `- Task ${card.number}: ${card.title}. Now: ${card.waitingOn.label}. ${taskUrl(context.publicUrl, project.id, card.number)}`;
+  `- Task ${card.number}: ${card.title}, requested by ${card.requester}. Now: ${card.waitingOn.label}. ${taskUrl(context.publicUrl, project.id, card.number)}`;
+
+type TaskDetail = NonNullable<Awaited<ReturnType<typeof taskView>>>;
+
+/** Who asked, who approves each gate and who merges, so nobody assumes the requester decides. */
+const peopleLines = ({ people }: TaskDetail) => [
+  ...people.gates.map(
+    (gate) =>
+      `${gate.does}: ${gate.requirements
+        .map(
+          (requirement) =>
+            `${requirement.label} (${requirement.waived ? 'nobody holds it, so it is waived' : requirement.who.join(', ') || 'nobody yet'}${requirement.approvedBy.length ? `; approved by ${requirement.approvedBy.join(', ')}` : ''})`
+        )
+        .join(', ')}.${gate.asked.length ? ` Asked to check: ${gate.asked.join(', ')}.` : ''}`
+  ),
+  people.build.by === 'person'
+    ? `Build: a developer, not the agents (${people.build.reason}). Who can claim it: ${people.build.who.join(', ') || 'nobody yet'}.`
+    : 'Build: the build agent.',
+  people.merge.by === 'auto'
+    ? 'Merge: GitHub merges it once its checks pass.'
+    : `Merge: a person merges it on GitHub (${people.merge.who.join(', ') || 'nobody yet'}).`
+];
 
 const truncate = (text: string, max: number) =>
   text.length > max ? `${text.slice(0, max)}\n\n(cut here; the full text is on the board)` : text;
+
+/** A preview as Claude can show it in chat: words side by side, a mock to render, or a link. */
+const previewText = (preview: Preview): string => {
+  switch (preview.kind) {
+    case 'text':
+      return `Wording now: "${preview.before}"\n   Wording after: "${preview.after}"`;
+    case 'markdown':
+      return `Example (Markdown):\n${preview.body}`;
+    case 'html':
+      return `Mock (agent-written HTML; show it rendered as a static picture, never run scripts in it):\n\`\`\`html\n${preview.body}\n\`\`\``;
+    case 'link':
+      return `See it: ${preview.url}${preview.label ? ` (${preview.label})` : ''}`;
+  }
+};
+
+const questionLines = (blocked: NonNullable<TaskView['blocked']>): string[] => {
+  const lines = [
+    '',
+    blocked.needs.length
+      ? `The agents cannot do this alone. It needs ${blocked.askedOf} for: ${blocked.needs.join('; ')}.`
+      : `Open question for ${blocked.askedOf}:`,
+    blocked.question
+  ];
+  if (!blocked.options.length) return lines;
+  lines.push(
+    '',
+    'Options (show each preview to the person before they choose; they may also answer in their own words):'
+  );
+  for (const option of blocked.options) {
+    lines.push(`(${option.key}) ${option.label}${option.detail ? `: ${option.detail}` : ''}`);
+    if (option.preview) lines.push(`   ${previewText(option.preview)}`);
+  }
+  return lines;
+};
 
 const WHAT_TO_DO: Record<string, string> = {
   answer: 'answer the open question (answer_question)',
@@ -86,6 +150,8 @@ const WHAT_TO_DO: Record<string, string> = {
   changes: 'ask for changes, saying what is wrong (review with decision "changes")',
   comment: 'add a comment (comment)',
   accept: 'accept or decline it on the board',
+  claim: 'claim the build, to build it yourself, on the board',
+  hand_in: 'hand in the build once its branch is pushed (hand_in_build)',
   submit: 'send it on as it is, on the board',
   cancel: 'cancel it on the board'
 };
@@ -113,7 +179,8 @@ const tool = <T extends z.ZodType>(definition: Tool<T>) => ({
           .join('; '),
         isError: true
       };
-    return { text: await definition.run(context, parsed.data), isError: false };
+    // Whatever a task holds, nothing shaped like a secret leaves Officina through Claude.
+    return { text: redactSecrets(await definition.run(context, parsed.data)), isError: false };
   }
 });
 
@@ -130,7 +197,7 @@ export const TOOLS = [
         ? context.projects
             .map(
               (project) =>
-                `- ${project.name} (${project.repo}): your role is ${project.role}, so you can ${ROLE_CAN[project.role]}.`
+                `- ${project.name} (${project.repo}): your role is ${project.role}, so you can ${roleCan(project)}.`
             )
             .join('\n')
         : 'You are not a member of any project yet. Ask an Officina owner to add you.'
@@ -213,15 +280,32 @@ After it is opened, tell the person the task link and that an agent may ask them
           );
       }
       return sections.length
-        ? `${sections.join('\n\n')}\n\nUse show_task to see what each one needs.`
+        ? `${sections.join('\n\n')}\n\nUse show_task to see what each one needs, with the options and previews of any question.`
         : 'Nothing is waiting on you. Agents keep working; new questions and checks appear here.';
+    }
+  }),
+  tool({
+    name: 'list_tasks',
+    title: 'List the tasks in progress',
+    description:
+      "Lists every task in progress in a project, whoever asked for it: its number, title, who requested it and what it waits for now. Every member of a project sees all of its work. Use it when the person asks what the team is working on or how something is going; use whats_waiting_on_me for what needs them, and show_task for one task's detail.",
+    input: z.object({ project: PROJECT }),
+    readOnly: true,
+    run: async (context, input) => {
+      const project = projectFor(context, input.project);
+      const open = (await boardView(context.pool, viewerFor(context, project))).filter(
+        (card) => !TERMINAL_STAGES.has(card.stage)
+      );
+      return open.length
+        ? `${project.name}, ${open.length} in progress:\n${open.map((card) => cardLine(context, project, card)).join('\n')}`
+        : `Nothing is in progress in ${project.name}. Open a request with open_request.`;
     }
   }),
   tool({
     name: 'show_task',
     title: 'Show a task',
     description:
-      'Shows one task: where it is, whose turn it is, the request, any open question, the plan, what to check and the conversation. Use it before answering, approving or asking for changes, and summarise it for the person in plain words.',
+      'Shows one task: where it is, whose turn it is, the request, any open question with the options it offers and a preview of each, the plan, what to check and the conversation. Use it before answering, approving or asking for changes, and summarise it for the person in plain words. When a question offers options, show the person what each one would look like (the wording side by side, the example or mock rendered as a visual, the link) before they choose.',
     input: z.object({ project: PROJECT, number: NUMBER }),
     readOnly: true,
     run: async (context, input) => {
@@ -231,11 +315,11 @@ After it is opened, tell the person the task link and that an agent may ask them
       const lines = [
         `Task ${task.number} in ${project.name}: ${task.title}`,
         `Link: ${taskUrl(context.publicUrl, project.id, task.number)}`,
-        `Requested by ${task.requester}. Now: ${task.waitingOn.label}${task.waitingOn.me ? ' (your turn)' : ''}.`
+        `Requested by ${task.requester}. Now: ${task.waitingOn.label}${task.waitingOn.me ? ' (your turn)' : ''}.`,
+        ...peopleLines(task)
       ];
       if (task.pullRequestUrl) lines.push(`Pull request: ${task.pullRequestUrl}`);
-      if (task.blocked)
-        lines.push('', `Open question for ${task.blocked.askedOf}:`, task.blocked.question);
+      if (task.blocked) lines.push(...questionLines(task.blocked));
       if (task.request) lines.push('', `Request (${task.request.author}):`, task.request.body);
       const spec = task.specs.at(-1);
       if (spec) lines.push('', `Plan, version ${spec.version}:`, truncate(spec.body, 8_000));
@@ -261,20 +345,35 @@ After it is opened, tell the person the task link and that an agent may ask them
     name: 'answer_question',
     title: 'Answer a question',
     description:
-      'Answers the open question an agent asked on a task (show_task shows it). Pass on the person\'s answer in their words; if they are unsure, it is fine to answer "I don\'t know, choose what is simplest". The agent resumes as soon as it is answered.',
+      'Answers the open question an agent asked on a task (show_task shows it). When the person picks one of the options the question offers, pass its letter as `option`, plus anything they added as `answer`; otherwise pass their answer in their words. If they are unsure, it is fine to answer "I don\'t know, choose what is simplest". The agent resumes as soon as it is answered.',
     input: z.object({
       project: PROJECT,
       number: NUMBER,
-      answer: z.string().trim().min(1).max(10_000).describe('The answer, in plain language.')
+      option: z
+        .string()
+        .trim()
+        .min(1)
+        .max(2)
+        .optional()
+        .describe('The letter of the option the person chose, as show_task lists it ("a", "b").'),
+      answer: z
+        .string()
+        .trim()
+        .min(1)
+        .max(10_000)
+        .optional()
+        .describe('The answer in plain language, or a note on the chosen option.')
     }),
     readOnly: false,
     run: async (context, input) => {
       const project = projectFor(context, input.project);
+      if (!input.option && !input.answer)
+        throw new ToolError('Pass the chosen option, the answer in words, or both.');
       await actOnTaskAs(context.pool, {
         projectId: project.id,
         memberId: context.memberId,
         number: input.number,
-        action: { type: 'answer', text: input.answer }
+        action: { type: 'answer', text: input.answer ?? '', option: input.option }
       });
       return `Answered; the work on task ${input.number} continues: ${taskUrl(context.publicUrl, project.id, input.number)}`;
     }
@@ -299,6 +398,45 @@ After it is opened, tell the person the task link and that an agent may ask them
         text: input.text
       });
       return `Comment added to task ${input.number}: ${taskUrl(context.publicUrl, project.id, input.number)}`;
+    }
+  }),
+  tool({
+    name: 'hand_in_build',
+    title: 'Hand in a build',
+    description: `For a developer who claimed a task's build and pushed it to the task branch (\`officina/task-<number>\`), by hand or with their own agents, for example in Claude Code. Officina reads what was pushed from GitHub, sends it to the same review an agent's build gets (two reviewer agents, then the people who check the result) and opens the pull request. Call show_task first to read the approved plan; build exactly that, push the branch, then call this with a pull request title in the repository's format and what you checked.`,
+    input: z.object({
+      project: PROJECT,
+      number: NUMBER,
+      pr_title: z
+        .string()
+        .trim()
+        .min(3)
+        .max(120)
+        .describe("The pull request title, in the repository's own format."),
+      verified: z
+        .array(z.string().trim().min(1).max(500))
+        .max(20)
+        .optional()
+        .describe('What you checked, one item each, for example the commands you ran.'),
+      not_verified: z
+        .array(z.string().trim().min(1).max(500))
+        .max(20)
+        .optional()
+        .describe('What you could not check.')
+    }),
+    readOnly: false,
+    run: async (context, input) => {
+      const project = projectFor(context, input.project);
+      const result = await handInAs(context.pool, context.github, {
+        projectId: project.id,
+        memberId: context.memberId,
+        number: input.number,
+        publicUrl: context.publicUrl,
+        prTitle: input.pr_title,
+        verified: input.verified ?? [],
+        notVerified: input.not_verified ?? []
+      });
+      return `Handed in; task ${input.number} is now ${result.stage}${result.pullRequest ? `, pull request #${result.pullRequest}` : ''}: ${taskUrl(context.publicUrl, project.id, input.number)}`;
     }
   }),
   tool({

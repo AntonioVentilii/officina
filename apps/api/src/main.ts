@@ -103,6 +103,7 @@ const server = createApp({
     consoleWorkspace: env.ANTHROPIC_WORKSPACE_ID,
     realtime,
     github,
+    builds: github,
     githubLogin:
       githubAccounts && githubUserAuth
         ? { accounts: githubAccounts, authorizeUrl: githubUserAuth.authorizeUrl }

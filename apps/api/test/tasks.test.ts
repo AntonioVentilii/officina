@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { findTaskIdByNumber } from '@officina/db';
 import { Pool } from 'pg';
+import { invite } from '../src/people';
 import { PLAN, applyOrThrow, resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
 import {
   TaskCommandError,
@@ -106,6 +107,27 @@ describe.skipIf(!url)('task commands', () => {
     ).toEqual({
       stage: 'speccing'
     });
+  });
+
+  test('task show lists agent runs and costs only for members who may see runs', async () => {
+    await createRequest(pool, request);
+    const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
+    await pool.query(
+      `insert into runs (task_id, stage, runner, agent_role, agent_version, status, list_cost_cents)
+       values ($1, 'speccing', 'managed_agents', 'spec', 1, 'succeeded', 120)`,
+      [taskId]
+    );
+    await invite(pool, {
+      publicUrl: 'https://officina.example',
+      email: 'visitor@example.com',
+      name: 'Visitor',
+      role: 'watcher',
+      domains: []
+    });
+    expect(await describeTask(pool, { number: 1 })).toContain('Agent runs:');
+    const asWatcher = await describeTask(pool, { number: 1, asEmail: 'visitor@example.com' });
+    expect(asWatcher).not.toContain('Agent runs:');
+    expect(asWatcher).not.toContain('$1.20');
   });
 
   test('approving a spec moves it to ready', async () => {

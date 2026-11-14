@@ -1,8 +1,17 @@
 import {
+  GUARD_LABELS,
+  PERMISSIONS,
+  can,
   effectivePolicy,
+  guardsInRequest,
+  type Blocked,
+  type Guard,
+  type Member,
   evaluatePolicy,
-  hasRole,
+  findOption,
+  optionAnswer,
   parseProjectConfig,
+  policyContext,
   type Actor,
   type Command,
   type Gate
@@ -20,15 +29,17 @@ import {
   listProjectMembers,
   listRuns,
   listTaskSummaries,
-  loadProjectConfig,
   loadProjectMember,
+  loadTask,
   loadTaskContext,
+  lockProjectConfig,
   resolveProjectId,
   resolveProjectMember,
   type StoreError
 } from '@officina/db';
-import { checklistMarkdown } from '@officina/engine';
-import { consoleUrl, describeRequirement } from './board';
+import { checklistMarkdown, handInBuild, type HandInPort } from '@officina/engine';
+import { GitHubError } from '@officina/github';
+import { CONFIDENTIAL, consoleUrl, describeRequirement } from './board';
 import type { Pool } from 'pg';
 
 /** A refused task command, with the HTTP status the API answers it with. */
@@ -56,6 +67,7 @@ const ERROR_TEXT: Record<StoreError, string> = {
   no_head: 'nothing has been built yet',
   wip_limit: 'the lane is at its limit of concurrent work',
   agents_cannot_build_lane: 'agents may not build in this lane',
+  needs_developer: 'a person with the technical role builds this one; claim it',
   not_planned: 'the approval chooser has not yet decided who approves this; try again shortly',
   stale_head: 'that review is about an earlier version of the change',
   not_found: 'task not found',
@@ -123,23 +135,27 @@ export const createRequestAs = async (
   const actor: Actor = { kind: 'member', memberId };
   // A request starts paid agent runs, so reading the board is not enough to open one.
   const member = await loadProjectMember(pool, projectId, memberId);
-  if (!member || !hasRole(member, 'contributor'))
+  if (!member || !can(member, 'request'))
     throw new TaskCommandError(
       'watchers can read but not open requests; an owner can give the contributor role',
       403
     );
-  const config = parseProjectConfig(await loadProjectConfig(pool, projectId));
-  const interview = !input.skipInterview && (!config.ok || config.config.intake.interview);
-  // The task, its request and a skipped interview land together: a task never exists without its
+  // The task, its request and a skipped interview land together, and all of them are decided
+  // from one read of the config, taken under the project's lock: a task never exists without its
   // request, and one that skips the interviewer is never seen waiting for it.
   const opened = await inTransaction(pool, async (client) => {
+    const config = parseProjectConfig(await lockProjectConfig(client, projectId));
+    const { guards, hold } = guardRequest(config, member, input);
     const { task } = await insertTask(client, {
       projectId,
       title: input.title,
       requesterId: memberId,
-      request: input.request
+      request: input.request,
+      guards,
+      ...(hold ? { hold } : {})
     });
-    if (interview) return task;
+    const interview = !input.skipInterview && (!config.ok || config.config.intake.interview);
+    if (interview || hold) return task;
     const submitted = await applyCommandIn(client, {
       taskId: task.id,
       command: { type: 'submit_request' },
@@ -152,13 +168,39 @@ export const createRequestAs = async (
   return { number, stage: opened.stage };
 };
 
+/**
+ * By rule, never a model's reading: words about secrets, access, publishing or the project's
+ * confidential terms guard the task from the start. A guarded request from someone who may not
+ * decide it is born held, in the same transaction, so nothing moves it before the owner answers.
+ */
+const guardRequest = (
+  config: ReturnType<typeof parseProjectConfig>,
+  member: Member,
+  input: RequestInput
+): { guards: Guard[]; hold: Blocked | undefined } => {
+  const guards = guardsInRequest(
+    `${input.title}\n${input.request}`,
+    config.ok ? config.config.guards.confidentialTerms : []
+  );
+  return { guards, hold: guards.length && !can(member, 'publish') ? ownerHold(guards) : undefined };
+};
+
+/**
+ * The question a guarded request waits on, asked of whoever may `publish`. Submitting as is cannot
+ * skip it; the owner answers, and the request goes on like any other, or cancels it.
+ */
+const ownerHold = (guards: readonly Guard[]): Blocked => ({
+  question: `This request is about ${guards.map((guard) => GUARD_LABELS[guard]).join(', ')}. Agents never reveal secrets or confidential content, and never publish, deploy or change access on their own. The owner decides: answer to let the work go on, or cancel it.`,
+  askedOf: { role: PERMISSIONS.publish }
+});
+
 /** A member's comment on a task's conversation; watchers read but do not comment. */
 export const commentAs = async (
   pool: Pool,
   input: ProjectActor & { readonly number: number; readonly text: string }
 ): Promise<void> => {
   const member = await loadProjectMember(pool, input.projectId, input.memberId);
-  if (!member || !hasRole(member, 'contributor'))
+  if (!member || !can(member, 'comment'))
     throw new TaskCommandError('watchers can read but not comment', 403);
   const taskId = await findTaskIdByNumber(pool, input.projectId, input.number);
   if (!taskId) throw new TaskCommandError('task not found', 404);
@@ -168,9 +210,11 @@ export const commentAs = async (
 export type TaskAction =
   | { readonly type: 'submit' }
   | { readonly type: 'accept' }
+  | { readonly type: 'claim' }
   | { readonly type: 'approve' }
   | { readonly type: 'changes'; readonly note: string }
-  | { readonly type: 'answer'; readonly text: string }
+  /** With `option`, the letter of an option the question offers, and `text` an optional note. */
+  | { readonly type: 'answer'; readonly text: string; readonly option?: string | undefined }
   | { readonly type: 'cancel'; readonly reason: string }
   | { readonly type: 'decline'; readonly reason: string };
 
@@ -179,6 +223,7 @@ const toCommand = (action: TaskAction): Command => {
     case 'submit':
       return { type: 'submit_request' };
     case 'accept':
+    case 'claim':
     case 'approve':
       return { type: action.type };
     case 'changes':
@@ -189,6 +234,30 @@ const toCommand = (action: TaskAction): Command => {
     case 'decline':
       return { type: action.type, reason: action.reason };
   }
+};
+
+/**
+ * The answer as the thread keeps it. A picked option is written out by its letter and label, and
+ * holds only for the task version it was read from, so a question asked meanwhile, even with the
+ * same words, is never answered by it.
+ */
+const resolveAnswer = async (
+  pool: Pool,
+  taskId: string,
+  action: TaskAction
+): Promise<{ action: TaskAction; expectedVersion?: number }> => {
+  if (action.type !== 'answer') return { action };
+  if (action.option === undefined) {
+    if (!action.text.trim()) throw new TaskCommandError('write an answer or pick an option', 400);
+    return { action };
+  }
+  const stored = await loadTask(pool, taskId);
+  const option = findOption(stored?.task.blocked?.options, action.option);
+  if (!stored || !option) throw new TaskCommandError('the open question offers no such option');
+  return {
+    action: { type: 'answer', text: optionAnswer(action.option, option, action.text) },
+    expectedVersion: stored.version
+  };
 };
 
 /** Applies one person's decision to a task, as that person. */
@@ -210,11 +279,12 @@ export const actOnTaskAs = async (
   const actor: Actor = { kind: 'member', memberId: input.memberId };
   const taskId = await findTaskIdByNumber(pool, projectId, input.number);
   if (!taskId) throw new TaskCommandError(`task #${input.number} not found`);
-  const { action } = input;
+  const { action, expectedVersion } = await resolveAnswer(pool, taskId, input.action);
   const result = await applyCommand(pool, {
     taskId,
     command: toCommand(action),
     actor,
+    ...(expectedVersion === undefined ? {} : { expectedVersion }),
     // In the same transaction as the decision: someone not allowed to answer leaves no comment.
     onApplied: async (client) => {
       if (action.type === 'answer') await addComment(client, taskId, actor, action.text);
@@ -226,6 +296,48 @@ export const actOnTaskAs = async (
     stage: result.task.stage,
     ...(recorded && recorded.type === 'approval_recorded' ? { satisfied: recorded.satisfied } : {})
   };
+};
+
+/** What a developer hands in with the build they pushed. */
+export interface HandInInput {
+  readonly number: number;
+  readonly prTitle: string;
+  readonly verified: readonly string[];
+  readonly notVerified: readonly string[];
+}
+
+/**
+ * A developer hands in the build they claimed and pushed to the task branch, by hand or with their
+ * own agents: Officina reads the push from GitHub and sends it to the same review an agent's gets.
+ */
+export const handInAs = async (
+  pool: Pool,
+  github: HandInPort | undefined,
+  input: ProjectActor & HandInInput & { readonly publicUrl: string }
+): Promise<{ stage: string; pullRequest: number | null }> => {
+  if (!github) throw new TaskCommandError('the GitHub App is not configured', 503);
+  const taskId = await findTaskIdByNumber(pool, input.projectId, input.number);
+  if (!taskId) throw new TaskCommandError(`task #${input.number} not found`, 404);
+  try {
+    const result = await handInBuild(
+      { pool, github, publicUrl: input.publicUrl },
+      { ...input, taskId }
+    );
+    if (result.ok) return { stage: result.stage, pullRequest: result.pullRequest };
+    throw new TaskCommandError(
+      result.error === 'bad_title'
+        ? result.problems.join('; ')
+        : result.error === 'not_installed'
+          ? 'the GitHub App is not installed on this repository'
+          : ERROR_TEXT[result.error]
+    );
+  } catch (error) {
+    if (error instanceof GitHubError)
+      throw new TaskCommandError(
+        `could not read the task branch on GitHub; push it first (${error.message})`
+      );
+    throw error;
+  }
 };
 
 const money = (cents: number | null) =>
@@ -254,11 +366,16 @@ export const describeTask = async (
   pool: Pool,
   input: Target & { readonly number: number; readonly consoleWorkspace?: string | undefined }
 ): Promise<string> => {
-  const { projectId } = await resolve(pool, input);
+  const { projectId, memberId } = await resolve(pool, input);
   const taskId = await findTaskIdByNumber(pool, projectId, input.number);
   if (!taskId) throw new TaskCommandError(`task #${input.number} not found`);
   const context = (await loadTaskContext(pool, taskId))!;
+  const viewer = await loadProjectMember(pool, projectId, memberId);
   const { task } = context;
+  // As on the board: a confidential task's words only for members who may see them.
+  const reads =
+    !task.guards.includes('confidential') || (viewer !== null && can(viewer, 'see_confidential'));
+  const shown = (text: string) => (reads ? text : CONFIDENTIAL);
   const lines = [
     `Task #${context.number}: ${context.title}`,
     `Stage: ${task.stage}   Lane: ${task.lane ?? 'not set yet'}   User-visible: ${task.userVisible ? 'yes' : 'no'}${task.paused ? '   PAUSED' : ''}`
@@ -267,7 +384,7 @@ export const describeTask = async (
   if (task.blocked) {
     const who =
       'memberId' in task.blocked.askedOf ? 'a specific member' : `a ${task.blocked.askedOf.role}`;
-    lines.push('', `BLOCKED, question for ${who}:`, `  ${task.blocked.question}`);
+    lines.push('', `BLOCKED, question for ${who}:`, `  ${shown(task.blocked.question)}`);
   }
 
   if ((task.stage === 'spec_review' || task.stage === 'verifying') && task.lane) {
@@ -284,25 +401,23 @@ export const describeTask = async (
       } else {
         lines.push(
           '',
-          `Approval plan: check depth ${plan.depth}. ${plan.rationale}`,
+          `Approval plan: check depth ${plan.depth}. ${shown(plan.rationale)}`,
           ...plan.extra.map(
-            (item) => `  also needs ${describeRequirement(item.requirement)}: ${item.reason}`
+            (item) => `  also needs ${describeRequirement(item.requirement)}: ${shown(item.reason)}`
           ),
           ...plan.verifiers.map(
             (verifier) =>
-              `  asks ${names.get(verifier.memberId) ?? 'a former member'} to verify: ${verifier.reason}`
+              `  asks ${names.get(verifier.memberId) ?? 'a former member'} to verify: ${shown(verifier.reason)}`
           )
         );
       }
       const result = evaluatePolicy(
         effectivePolicy(config.config, task, gate),
         await listApprovedSubjects(pool, taskId),
-        {
+        policyContext(config.config, task, gate, {
           members: await listProjectMembers(pool, projectId),
-          requesterId: task.requesterId,
-          userVisible: task.userVisible,
           subject
-        }
+        })
       );
       lines.push(
         '',
@@ -316,17 +431,18 @@ export const describeTask = async (
     }
   }
 
-  if (context.pullRequest)
+  if (context.pullRequest && reads)
     lines.push('', `Pull request: https://github.com/${context.repo}/pull/${context.pullRequest}`);
   const checklist = checklistMarkdown(
     await latestChooserResult(pool, taskId),
     `task ${context.number}`
   );
-  if (checklist) lines.push('', checklist);
+  if (checklist) lines.push('', shown(checklist));
   if (context.latestSpec)
-    lines.push('', `Spec, version ${task.specVersion}:`, '', context.latestSpec);
+    lines.push('', `Spec, version ${task.specVersion}:`, '', shown(context.latestSpec));
 
-  const runs = await listRuns(pool, taskId);
+  // Runs quote the code and carry costs: like the board, only for members with `see_runs`.
+  const runs = viewer && can(viewer, 'see_runs') ? await listRuns(pool, taskId) : [];
   if (runs.length) {
     lines.push('', 'Agent runs:');
     for (const run of runs) {

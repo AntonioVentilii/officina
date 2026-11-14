@@ -50,7 +50,7 @@
   const toggleLane = (lane: Lane) =>
     (lanes = lanes.includes(lane) ? lanes.filter((item) => item !== lane) : [...lanes, lane]);
 
-  const canRequest = $derived(session.project?.role !== 'watcher');
+  const canRequest = $derived(session.can('request'));
 </script>
 
 <section class="board">
