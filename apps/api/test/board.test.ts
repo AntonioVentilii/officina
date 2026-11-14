@@ -293,6 +293,73 @@ describe.skipIf(!url)('board api', () => {
     ]);
   });
 
+  test('the approval plan shows whom the chooser asked, and waits on them while approval is pending', async () => {
+    const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    const join = (email: string, name: string, role: 'contributor' | 'watcher') =>
+      invite(pool, { publicUrl: PUBLIC_URL, email, name, role, domains: [] }).then(signIn);
+    const gio = await join('gio@example.com', 'Gio', 'contributor');
+    const visitor = await join('visitor@example.com', 'Visitor', 'watcher');
+    const tim = await join('tim@example.com', 'Tim', 'contributor');
+    const idOf = async (email: string) =>
+      (await pool.query<{ id: string }>('select id from members where email = $1', [email]))
+        .rows[0]!.id;
+    await createRequest(pool, {
+      title: 'Rename settings',
+      request: 'Call it Preferences.',
+      skipInterview: true
+    });
+    const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
+    const path = `/api/projects/${seeded.projectId}/tasks/1`;
+    await call(owner, `${path}/actions`, { type: 'accept' });
+    await applyCommand(pool, {
+      taskId,
+      command: { type: 'post_spec', predictedPaths: ['src/settings.ts'], userVisible: true },
+      actor: { kind: 'agent', role: 'spec', version: 1 }
+    });
+    await applyCommand(pool, {
+      taskId,
+      command: {
+        type: 'plan_approval',
+        userVisible: true,
+        plan: {
+          depth: 'glance',
+          rationale: 'A label.',
+          extra: [{ requirement: { role: 'owner' }, reason: 'The settings screen is theirs.' }],
+          verifiers: [{ memberId: await idOf('gio@example.com'), reason: 'Knows the screen.' }]
+        }
+      },
+      actor: { kind: 'agent', role: 'chooser', version: 1 }
+    });
+
+    const forGio = await json(await call(gio, path));
+    expect(forGio.plan).toEqual({
+      gate: 'spec_review',
+      current: true,
+      merge: null,
+      depth: 'glance',
+      depthLabel: 'A careful read is enough',
+      rationale: 'A label.',
+      extra: [{ label: 'an owner', reason: 'The settings screen is theirs.' }],
+      verifiers: [{ name: 'Gio', reason: 'Knows the screen.' }]
+    });
+    // Asked and allowed to approve a plan: it waits on Gio too, though the policy names an owner.
+    expect(forGio.waitingOn).toEqual({
+      kind: 'people',
+      label: 'Plan approval by an owner',
+      me: true
+    });
+    expect((await json(await call(owner, path))).waitingOn.me).toBe(true);
+    // Nobody else is waited on: not a contributor nobody asked, not a watcher.
+    expect((await json(await call(tim, path))).waitingOn.me).toBe(false);
+    expect((await json(await call(visitor, path))).waitingOn.me).toBe(false);
+
+    // Asked, but no longer allowed to approve a plan: it no longer waits on Gio.
+    await pool.query(`update project_roles set role = 'watcher' where member_id = $1`, [
+      await idOf('gio@example.com')
+    ]);
+    expect((await json(await call(gio, path))).waitingOn.me).toBe(false);
+  });
+
   test('every decision route refuses a request without the request header and changes nothing', async () => {
     const cookie = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
     await createRequest(pool, {
@@ -1266,23 +1333,90 @@ describe.skipIf(!url)('board api', () => {
     expect(text).not.toContain('"number":7');
   });
 
+  /** Far longer than a notification takes, so only a lost one ever reaches it. */
+  const EVENT_DEADLINE_MS = 10_000;
+
+  /**
+   * The first event the hub sends, or a failure once the deadline passes. `unsubscribe` also
+   * stops the deadline, so a test that fails before awaiting `event` leaves no rejection behind.
+   */
+  const nextEvent = (hub: { subscribe(listener: (event: BoardEvent) => void): () => void }) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let stopListening = () => {};
+    const event = new Promise<BoardEvent>((resolve, reject) => {
+      timer = setTimeout(() => reject(new Error('no event arrived')), EVENT_DEADLINE_MS);
+      stopListening = hub.subscribe((received) => {
+        clearTimeout(timer);
+        resolve(received);
+      });
+    });
+    const unsubscribe = () => {
+      clearTimeout(timer);
+      stopListening();
+    };
+    return { event, unsubscribe };
+  };
+
+  /** Polls `read` until it holds, failing once the deadline passes. */
+  const until = async (read: () => Promise<boolean>) => {
+    const deadline = Date.now() + EVENT_DEADLINE_MS;
+    while (!(await read())) {
+      if (Date.now() > deadline) throw new Error('never got there');
+      await Bun.sleep(20);
+    }
+  };
+
+  /** The realtime hub's connection as Postgres sees it. */
+  const listener = async () =>
+    (
+      await pool.query<{ pid: number; query: string }>(
+        "select pid, query from pg_stat_activity where application_name = 'officina-realtime'"
+      )
+    ).rows[0];
+
+  const openRequest = () =>
+    createRequest(pool, {
+      title: 'Rename settings',
+      request: 'Call it Preferences.',
+      skipInterview: true
+    });
+
   test('database changes reach open boards as events', async () => {
     const hub = await startRealtime({ connectionString: url!, pool, log: () => {} });
-    const received: BoardEvent[] = [];
-    const unsubscribe = hub.subscribe((event) => received.push(event));
+    const next = nextEvent(hub);
     try {
-      await createRequest(pool, {
-        title: 'Rename settings',
-        request: 'Call it Preferences.',
-        skipInterview: true
-      });
-      for (let attempt = 0; attempt < 50 && received.length === 0; attempt++) await Bun.sleep(20);
-      expect(received[0]).toEqual({ kind: 'task', projectId: seeded.projectId, number: 1 });
+      await openRequest();
+      expect(await next.event).toEqual({ kind: 'task', projectId: seeded.projectId, number: 1 });
     } finally {
-      unsubscribe();
+      next.unsubscribe();
       await hub.close();
     }
   });
+
+  test('a listening connection the database ends is opened again, and changes still arrive', async () => {
+    const logged: string[] = [];
+    const hub = await startRealtime({
+      connectionString: url!,
+      pool,
+      log: (message) => logged.push(message)
+    });
+    const next = nextEvent(hub);
+    try {
+      const first = (await listener())!.pid;
+      await pool.query('select pg_terminate_backend($1)', [first]);
+      // Listening again once a new connection has run its LISTEN.
+      await until(async () => {
+        const now = await listener();
+        return Boolean(now && now.pid !== first && /listen/i.test(now.query));
+      });
+      await openRequest();
+      expect(await next.event).toEqual({ kind: 'task', projectId: seeded.projectId, number: 1 });
+      expect(logged).toContain('realtime connection lost');
+    } finally {
+      next.unsubscribe();
+      await hub.close();
+    }
+  }, 30_000);
 
   test('the listening connection is pinged so it never looks idle', async () => {
     const hub = await startRealtime({
@@ -1292,15 +1426,7 @@ describe.skipIf(!url)('board api', () => {
       keepaliveMs: 20
     });
     try {
-      let last: string | undefined;
-      for (let attempt = 0; attempt < 50 && last !== 'select 1'; attempt++) {
-        await Bun.sleep(20);
-        const { rows } = await pool.query<{ query: string }>(
-          "select query from pg_stat_activity where application_name = 'officina-realtime'"
-        );
-        last = rows[0]?.query;
-      }
-      expect(last).toBe('select 1');
+      await until(async () => (await listener())?.query === 'select 1');
     } finally {
       await hub.close();
     }
