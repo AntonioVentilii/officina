@@ -1,5 +1,6 @@
 import { createSign } from 'node:crypto';
 import type { PushFacts } from '@officina/core';
+import { failuresOn } from './checks';
 import { GitHubError, githubRequest } from './http';
 import { mergeWhenReadyWith } from './merge';
 
@@ -438,6 +439,12 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
   const pullRequestHead = async (ref: RepoRef & { readonly pullRequest: number }) =>
     (await pullRequestNode(ref)).head.sha;
 
+  /** What already failed on a commit (`failuresOn`). */
+  const failedChecks = async (ref: RepoRef & { readonly sha: string }) => {
+    const token = await installationToken(ref);
+    return failuresOn((path) => request(path, { token }), ref.repo, ref.sha);
+  };
+
   /**
    * Turns on auto-merge as the app, for a result that needed no person's check, so the branch
    * rules (checks, resolved threads, any required review) still decide when it lands.
@@ -541,6 +548,7 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     reviewComments,
     mergeWhenReady,
     pullRequestHead,
+    failedChecks,
     cancelAutoMerge,
     resolveReviewThreads
   };

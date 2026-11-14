@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { randomBytes } from 'node:crypto';
-import { createGitHubAsUser } from '@officina/github';
+import { createGitHubAsUser, type UserTokens } from '@officina/github';
 import { Pool } from 'pg';
 import { resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
 import { createApp } from '../src/app';
@@ -100,21 +100,27 @@ describe.skipIf(!url)('GitHub sign-in', () => {
     await pool.end();
   });
 
-  const githubAs = (user: { id: number; login: string }) => {
+  const fromNow = (ms: number) => new Date(Date.now() + ms);
+
+  const githubAs = (
+    user: { id: number; login: string },
+    tokens: UserTokens = {
+      accessToken: 'ghu_access',
+      accessExpiresAt: fromNow(8 * 3600_000),
+      refreshToken: 'ghr_refresh',
+      refreshExpiresAt: fromNow(180 * 86_400_000)
+    },
+    refresh: (refreshToken: string) => Promise<UserTokens> = async () => {
+      throw new Error('not expected');
+    }
+  ) => {
     const accounts = createGitHubAccounts({
       pool,
       box: createTokenBox(KEY),
       auth: {
         authorizeUrl: (state) => `https://github.com/login/oauth/authorize?state=${state}`,
-        exchangeCode: async () => ({
-          accessToken: 'ghu_access',
-          accessExpiresAt: new Date(Date.now() + 8 * 3600_000),
-          refreshToken: 'ghr_refresh',
-          refreshExpiresAt: new Date(Date.now() + 180 * 86_400_000)
-        }),
-        refresh: async () => {
-          throw new Error('not expected');
-        }
+        exchangeCode: async () => tokens,
+        refresh
       },
       asUser: { user: async () => user } as never
     });
@@ -179,7 +185,8 @@ describe.skipIf(!url)('GitHub sign-in', () => {
     expect(linked.headers.get('location')).toBe('/?github=linked');
     expect(await accounts.tokenFor(seeded.ownerId)).toEqual({
       token: 'ghu_access',
-      login: 'antonio'
+      login: 'antonio',
+      userId: 42
     });
     const stored = await pool.query('select access_token_enc from github_accounts');
     expect(stored.rows[0].access_token_enc).not.toContain('ghu_access');
@@ -200,6 +207,34 @@ describe.skipIf(!url)('GitHub sign-in', () => {
 
     const replay = await callback(app, second.state, second.oauth);
     expect(replay.headers.get('location')).toContain('/signin?error=');
+  });
+
+  test('after a GitHub sign-in a member returns only to a path on this site', async () => {
+    const { app } = appFor({ id: 42, login: 'antonio' });
+    const session = await signIn(app);
+    const link = await start(app, 'link', session);
+    await callback(app, link.state, link.oauth);
+
+    const landing = async (next: string) => {
+      const { state, oauth } = await start(app, 'signin');
+      const response = await callback(
+        app,
+        state,
+        `${oauth}; officina_next=${encodeURIComponent(next)}`
+      );
+      return response.headers.get('location');
+    };
+    expect(await landing('/tasks/3?tab=log')).toBe('/tasks/3?tab=log');
+    for (const elsewhere of [
+      '//evil.example',
+      '/\\evil.example',
+      '/\t/evil.example',
+      '/\n/evil.example',
+      '/\r/evil.example',
+      'https://evil.example'
+    ]) {
+      expect(await landing(elsewhere)).toBe('/');
+    }
   });
 
   test('a state from another browser, or an unknown GitHub account, never signs anyone in', async () => {
@@ -225,5 +260,51 @@ describe.skipIf(!url)('GitHub sign-in', () => {
     expect(
       unknown.headers.getSetCookie().some((cookie) => cookie.startsWith('officina_session='))
     ).toBe(false);
+  });
+
+  test('an expired access token is refreshed once and the new tokens are kept', async () => {
+    const refreshedWith: string[] = [];
+    const accounts = githubAs(
+      { id: 42, login: 'antonio' },
+      {
+        accessToken: 'ghu_old',
+        accessExpiresAt: fromNow(-60_000),
+        refreshToken: 'ghr_old',
+        refreshExpiresAt: fromNow(180 * 86_400_000)
+      },
+      async (refreshToken) => {
+        refreshedWith.push(refreshToken);
+        return {
+          accessToken: 'ghu_new',
+          accessExpiresAt: fromNow(8 * 3600_000),
+          refreshToken: 'ghr_new',
+          refreshExpiresAt: fromNow(180 * 86_400_000)
+        };
+      }
+    );
+    expect(await accounts.complete('c', seeded.ownerId)).toMatchObject({ ok: true });
+
+    const fresh = { token: 'ghu_new', login: 'antonio', userId: 42 };
+    expect(await accounts.tokenFor(seeded.ownerId)).toEqual(fresh);
+    expect(await accounts.tokenFor(seeded.ownerId)).toEqual(fresh);
+    expect(refreshedWith).toEqual(['ghr_old']);
+    const stored = await pool.query<{ refresh_token_enc: string }>(
+      'select refresh_token_enc from github_accounts'
+    );
+    expect(createTokenBox(KEY).open(stored.rows[0]!.refresh_token_enc)).toBe('ghr_new');
+  });
+
+  test('an expired refresh token gives no token, without asking GitHub', async () => {
+    const accounts = githubAs(
+      { id: 42, login: 'antonio' },
+      {
+        accessToken: 'ghu_old',
+        accessExpiresAt: fromNow(-60_000),
+        refreshToken: 'ghr_old',
+        refreshExpiresAt: fromNow(-60_000)
+      }
+    );
+    expect(await accounts.complete('c', seeded.ownerId)).toMatchObject({ ok: true });
+    expect(await accounts.tokenFor(seeded.ownerId)).toBeNull();
   });
 });
