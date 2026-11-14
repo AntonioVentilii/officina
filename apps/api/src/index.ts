@@ -8,11 +8,10 @@ export {
   type AddProjectInput,
   type SetupGitHub
 } from './setup';
+export { catchUpPullRequests, type PullRequestReader } from './catch-up';
 export {
   CONFIG_PATH,
-  catchUpPullRequests,
   handleWebhookAction,
   type ConfigReader,
-  type PullRequestReader,
   type WebhookOutcome
 } from './webhooks';

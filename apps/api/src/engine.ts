@@ -29,7 +29,7 @@ import {
 import type { Pool } from 'pg';
 import { startScheduler, type Scheduler } from './scheduler';
 import { setupAgents } from './setup';
-import { catchUpPullRequests } from './webhooks';
+import { catchUpPullRequests } from './catch-up';
 
 const PURGE_INTERVAL_MS = 60 * 60 * 1000;
 
