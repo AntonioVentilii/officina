@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { findTaskIdByNumber } from '@officina/db';
 import type { HandInPort } from '@officina/engine';
+import { GitHubError } from '@officina/github';
 import { Pool } from 'pg';
 import { invite } from '../src/people';
 import { PLAN, applyOrThrow, resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
@@ -231,10 +232,8 @@ describe.skipIf(!url)('task commands', () => {
     ]);
   });
 
-  test('task hand-in sends the build the member claimed to review and opens its pull request', async () => {
-    await pool.query('update projects set github_installation_id = 99 where id = $1', [
-      seeded.projectId
-    ]);
+  /** Opens task 1 on the copy path and claims its build as the owner. */
+  const claimedBuild = async () => {
     await createRequest(pool, request);
     const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
     await applyOrThrow(pool, taskId, { type: 'accept' }, seeded.owner);
@@ -252,6 +251,22 @@ describe.skipIf(!url)('task commands', () => {
     );
     await applyOrThrow(pool, taskId, { type: 'approve' }, seeded.owner);
     await applyOrThrow(pool, taskId, { type: 'claim' }, seeded.owner);
+    return taskId;
+  };
+
+  const handInInput = {
+    number: 1,
+    prTitle: 'fix(copy): prediction wording',
+    verified: ['npm run check'],
+    notVerified: [],
+    publicUrl: 'https://officina.example'
+  };
+
+  test('task hand-in sends the build the member claimed to review and opens its pull request', async () => {
+    await pool.query('update projects set github_installation_id = 99 where id = $1', [
+      seeded.projectId
+    ]);
+    await claimedBuild();
 
     const opened: string[] = [];
     const github = {
@@ -269,18 +284,49 @@ describe.skipIf(!url)('task commands', () => {
       updateFile: async () => undefined,
       commentOnIssue: async () => undefined
     } as unknown as HandInPort;
-    const input = {
-      number: 1,
-      prTitle: 'fix(copy): prediction wording',
-      verified: ['npm run check'],
-      notVerified: [],
-      publicUrl: 'https://officina.example'
-    };
+    const input = handInInput;
 
     await expect(handIn(pool, undefined, input)).rejects.toThrow(
       'the GitHub App is not configured'
     );
     expect(await handIn(pool, github, input)).toEqual({ stage: 'reviewing', pullRequest: 9 });
     expect(opened).toEqual(['fix(copy): prediction wording']);
+  });
+
+  test('a hand-in GitHub cannot read, or on a repository without the App, is refused with why', async () => {
+    const taskId = await claimedBuild();
+    const unreadable = {
+      pushFacts: async () => {
+        throw new GitHubError(404, '/repos/ViciApp/vici-app/compare', 'Not Found');
+      }
+    } as unknown as HandInPort;
+    const refusal = (github: HandInPort) =>
+      handIn(pool, github, handInInput).then(
+        () => null,
+        (error: unknown) => error
+      );
+
+    const notInstalled = await refusal(unreadable);
+    expect(notInstalled).toBeInstanceOf(TaskCommandError);
+    expect(notInstalled).toMatchObject({
+      status: 409,
+      message: 'the GitHub App is not installed on this repository'
+    });
+
+    await pool.query('update projects set github_installation_id = 99 where id = $1', [
+      seeded.projectId
+    ]);
+    const notPushed = await refusal(unreadable);
+    expect(notPushed).toBeInstanceOf(TaskCommandError);
+    expect(notPushed).toMatchObject({
+      status: 409,
+      message:
+        'could not read the task branch on GitHub; push it first (GitHub 404 on /repos/ViciApp/vici-app/compare: Not Found)'
+    });
+    // Nothing was applied: the build is still the member's to hand in.
+    const stage = await pool.query<{ stage: string }>('select stage from tasks where id = $1', [
+      taskId
+    ]);
+    expect(stage.rows[0]!.stage).toBe('building');
   });
 });
