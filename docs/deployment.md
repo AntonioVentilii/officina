@@ -81,6 +81,7 @@ Kept as the runbook for a second instance.
 
 ## Still open
 
+- Add the **Commit statuses: read-only** permission and the `status` event to the GitHub App, then accept the new permission on each installation, so a failing commit status (CI outside GitHub Actions, a deploy preview) reaches the builder like a failing check suite.
 - Set a monthly spend limit on the Officina Anthropic workspace.
 - Merge `.github/officina.yml` and `docs/ai/officina.md` in vici-app, then drop the machine-local config copy.
 - No webhook delivery has been received yet; the first event on vici-app will confirm the signature path.

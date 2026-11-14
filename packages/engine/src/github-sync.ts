@@ -15,6 +15,7 @@ import {
 } from '@officina/db';
 import type { GitHubAsUser, GitHubClient, RepoRef } from '@officina/github';
 import type { Pool } from 'pg';
+import { cancelTaskAutoMerge } from './auto-merge';
 
 /**
  * A markdown link to a task. A bare `#N` would link the repository's issue or pull request N.
@@ -321,28 +322,6 @@ const autoMergeOnGitHub = async (
       payload: { error: (error as Error).message.slice(0, 500) }
     });
   }
-};
-
-/**
- * Turns a task's auto-merge off on GitHub and records it in the task's trail, which is what tells
- * `cancelStaleAutoMerges` it is off. Throws when GitHub refuses, so nothing is recorded.
- */
-export const cancelTaskAutoMerge = async (
-  pool: Pool,
-  github: Pick<SyncGitHubPort, 'cancelAutoMerge'>,
-  task: { id: string; installationId: number; repo: string; pullRequest: number }
-) => {
-  await github.cancelAutoMerge({
-    installationId: task.installationId,
-    repo: task.repo,
-    pullRequest: task.pullRequest
-  });
-  await appendTaskEvent(pool, {
-    taskId: task.id,
-    actor: ENGINE,
-    type: 'github_auto_merge_cancelled',
-    payload: { pullRequest: task.pullRequest }
-  });
 };
 
 /**

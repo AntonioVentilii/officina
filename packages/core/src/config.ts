@@ -140,7 +140,13 @@ const projectConfigSchema = z
          * rule that asks for Copilot's review does not start it on the App's pull requests. Left
          * out, it is off.
          */
-        copilot_review: z.boolean().optional()
+        copilot_review: z.boolean().optional(),
+        /**
+         * GitHub accounts of review bots the repository runs (CodeRabbit, a Claude action and the
+         * like) whose comments on the pull request and review overviews reach the builder. Bots
+         * that comment on the code count without being listed; Copilot's verdict is always read.
+         */
+        review_bots: z.array(z.string().min(1)).optional()
       })
       .optional(),
     runtime: z
@@ -221,6 +227,7 @@ export interface ProjectConfig {
     readonly titlePattern: string | null;
     readonly autoMerge: boolean;
     readonly copilotReview: boolean;
+    readonly reviewBots: readonly string[];
   };
   readonly board: { readonly look: BoardLook };
   readonly lanes: Readonly<Record<Lane, LaneSettings>>;
@@ -358,7 +365,8 @@ export const parseProjectConfig = (input: unknown): ConfigResult => {
       pullRequest: {
         titlePattern: raw.pull_request?.title_pattern ?? null,
         autoMerge: raw.pull_request?.auto_merge ?? false,
-        copilotReview: raw.pull_request?.copilot_review ?? false
+        copilotReview: raw.pull_request?.copilot_review ?? false,
+        reviewBots: raw.pull_request?.review_bots ?? []
       },
       board: { look: raw.board?.look ?? DEFAULT_BOARD_LOOK },
       lanes,
