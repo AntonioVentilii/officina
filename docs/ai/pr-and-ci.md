@@ -34,4 +34,4 @@ bun run check:board
 
 ## CI
 
-`.github/workflows/ci.yml` runs the title check, the `check` job (lint, typecheck, tests, svelte-check, board build) and the `db` job (`bun run test:db` against a Postgres 17 service). The `checks-pass` job is the one status the `main` ruleset requires. `release-please.yml` opens the release pull requests; a `v*` tag deploys to Fly (`deploy.yml`, see [`../deployment.md`](../deployment.md)).
+`.github/workflows/ci.yml` runs the title check, the `check` job (lint, typecheck, tests, svelte-check, board build) and the `db` job (`bun run test:db` against a Postgres 17 service). The `checks-pass` job is the one status the `main` ruleset requires. `release-please.yml` opens the release pull requests; a `v*` tag deploys to Fly (`deploy.yml`, see [`../deployment.md`](../deployment.md)). Every third-party action is pinned to a commit SHA with its version in a comment, and checkouts that never push keep no credentials (`persist-credentials: false`).
