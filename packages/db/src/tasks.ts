@@ -23,6 +23,31 @@ export const findTaskIdByNumber = async (
     ])
   ).rows[0]?.id ?? null;
 
+/** A request as its client named it: the same id from the same requester is the same request. */
+interface NamedRequest {
+  readonly projectId: string;
+  readonly requesterId: string;
+  readonly requestId: string;
+}
+
+/** The task a requester already opened with this request id, if any, at its current stage. */
+export const findRequestedTask = async (
+  db: Queryable,
+  request: NamedRequest
+): Promise<{ id: string; stage: Task['stage'] } | null> =>
+  (
+    await db.query<{ id: string; stage: Task['stage'] }>(
+      `select id, stage from tasks
+       where project_id = $1 and requester_id = $2 and request_id = $3`,
+      [request.projectId, request.requesterId, request.requestId]
+    )
+  ).rows[0] ?? null;
+
+/** Names the task a request just opened, in its transaction, so a repeat finds it. */
+export const nameRequestedTask = async (db: Queryable, taskId: string, requestId: string) => {
+  await db.query('update tasks set request_id = $2 where id = $1', [taskId, requestId]);
+};
+
 /** A member of the project by email, or the project's owner when no email is given. */
 export const resolveProjectMember = async (
   db: Queryable,

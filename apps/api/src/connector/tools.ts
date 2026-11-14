@@ -247,6 +247,15 @@ After it is opened, tell the person the task link and that an agent may ask them
         .optional()
         .describe(
           'Only when the person explicitly says the request is complete and needs no questions.'
+        ),
+      request_id: z
+        .string()
+        .trim()
+        .min(1)
+        .max(INPUT_LIMITS.requestId)
+        .optional()
+        .describe(
+          'A new random id for this request, sent again unchanged if this call is retried, so a retry finds the task the first call opened instead of opening a second one.'
         )
     }),
     readOnly: false,
@@ -257,7 +266,8 @@ After it is opened, tell the person the task link and that an agent may ask them
         memberId: context.memberId,
         title: input.title,
         request: input.request,
-        skipInterview: input.skip_interview === true
+        skipInterview: input.skip_interview === true,
+        requestId: input.request_id
       });
       const next =
         created.stage === 'request'

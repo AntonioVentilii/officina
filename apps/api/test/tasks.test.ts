@@ -43,6 +43,49 @@ describe.skipIf(!url)('task commands', () => {
     expect(await listTasksText(pool, {})).toContain('#1    triage');
   });
 
+  test('a request sent again with the same id finds the task the first one opened', async () => {
+    const named = { ...request, skipInterview: false, requestId: 'form-1' };
+    const sent = await Promise.all([createRequest(pool, named), createRequest(pool, named)]);
+    expect(sent).toEqual([
+      { number: 1, stage: 'request' },
+      { number: 1, stage: 'request' }
+    ]);
+    expect(await createRequest(pool, named)).toEqual({ number: 1, stage: 'request' });
+    expect((await pool.query('select id from tasks')).rows).toHaveLength(1);
+    expect((await pool.query('select id from comments')).rows).toHaveLength(1);
+
+    // Another id, or none, is another request.
+    expect(await createRequest(pool, { ...named, requestId: 'form-2' })).toMatchObject({
+      number: 2
+    });
+    expect(await createRequest(pool, { ...request, skipInterview: false })).toMatchObject({
+      number: 3
+    });
+  });
+
+  test('a request id is only ever matched against the same requester', async () => {
+    await createRequest(pool, { ...request, requestId: 'form-1' });
+    const other = await invite(pool, {
+      publicUrl: 'x',
+      email: 'gio@example.com',
+      name: 'Gio',
+      role: 'contributor',
+      domains: []
+    });
+    expect(other).toContain('/signin#');
+    const gio = (
+      await pool.query<{ id: string }>("select id from members where email = 'gio@example.com'")
+    ).rows[0]!.id;
+    expect(
+      await createRequestAs(pool, {
+        projectId: seeded.projectId,
+        memberId: gio,
+        ...request,
+        requestId: 'form-1'
+      })
+    ).toMatchObject({ number: 2 });
+  });
+
   test('a watcher cannot open a request, and no task is left behind', async () => {
     const watcher = (
       await pool.query<{ id: string }>(
