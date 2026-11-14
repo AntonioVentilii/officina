@@ -1,6 +1,9 @@
 import type Anthropic from '@anthropic-ai/sdk';
 import type { AgentCreateParams } from '@anthropic-ai/sdk/resources/beta/agents/agents';
-import type { EventSendParams } from '@anthropic-ai/sdk/resources/beta/sessions/events';
+import type {
+  BetaManagedAgentsStreamSessionEvents,
+  EventSendParams
+} from '@anthropic-ai/sdk/resources/beta/sessions/events';
 import type { SessionCreateParams } from '@anthropic-ai/sdk/resources/beta/sessions/sessions';
 import type { EnvironmentCreateParams } from '@anthropic-ai/sdk/resources/beta/environments/environments';
 import type { ListedModel } from './models';
@@ -27,6 +30,17 @@ const toSdkEvent = (event: OutboundEvent): EventSendParams['events'][number] => 
       return { type: 'user.interrupt' };
   }
 };
+
+/**
+ * Each SDK event as the port's, every field kept so the run log stores what the session sent. The
+ * previews of an event still being produced (`event_start`, `event_delta`) have no id of their
+ * own and come only when the stream asks for them, which this port never does.
+ */
+async function* portEvents(
+  stream: AsyncIterable<BetaManagedAgentsStreamSessionEvents>
+): AsyncGenerator<SessionEvent> {
+  for await (const event of stream) if ('id' in event) yield { ...event };
+}
 
 const agentParams = (agent: AgentWrite): AgentCreateParams => ({
   name: agent.name,
@@ -90,8 +104,7 @@ export const createSdkPort = (client: Anthropic): ManagedAgentsPort => ({
     return { id: session.id };
   },
   async openStream(sessionId) {
-    const stream = await client.beta.sessions.events.stream(sessionId);
-    return stream as unknown as AsyncIterable<SessionEvent>;
+    return portEvents(await client.beta.sessions.events.stream(sessionId));
   },
   async send(sessionId, events) {
     await client.beta.sessions.events.send(sessionId, { events: events.map(toSdkEvent) });
