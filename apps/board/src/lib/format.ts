@@ -16,9 +16,13 @@ export const since = (iso: string | null | undefined, now = Date.now()): string 
 
 const relative = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
 
+/**
+ * How long ago, in words: `just now`, `5 minutes ago`, `yesterday`. Every time it is given has
+ * passed, so a browser clock behind the server's reads `just now`, never a time to come.
+ */
 export const ago = (iso: string | null | undefined, now = Date.now()): string => {
   if (!iso) return '';
-  const ms = new Date(iso).getTime() - now;
+  const ms = Math.min(0, new Date(iso).getTime() - now);
   for (const [unit, size] of UNITS) {
     if (Math.abs(ms) >= size) return relative.format(Math.round(ms / size), unit);
   }
