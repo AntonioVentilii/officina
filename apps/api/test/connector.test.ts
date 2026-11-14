@@ -156,12 +156,21 @@ describe.skipIf(!url)('connector for Claude', () => {
 
   test('a bad client or redirect is never redirected to', async () => {
     const client = await json(await register());
+    // The consent page gets a code it words itself, never text to show as it is.
     const unknown = await handle('/oauth/authorize?client_id=nope&response_type=code');
-    expect(unknown.headers.get('location')).toStartWith(`${PUBLIC_URL}/connect?error=`);
+    expect(unknown.headers.get('location')).toBe(`${PUBLIC_URL}/connect?error=unknown_client`);
     const elsewhere = await handle(
       `/oauth/authorize?client_id=${client.client_id}&redirect_uri=${encodeURIComponent('https://evil.example/cb')}`
     );
-    expect(elsewhere.headers.get('location')).toStartWith(`${PUBLIC_URL}/connect?error=`);
+    expect(elsewhere.headers.get('location')).toBe(
+      `${PUBLIC_URL}/connect?error=unregistered_redirect`
+    );
+    const cookie = await signIn();
+    const signedIn = await handle('/api/connector/authorization?client_id=nope', {
+      headers: { cookie }
+    });
+    expect(signedIn.status).toBe(400);
+    expect(await json(signedIn)).toEqual({ error: 'unknown_client' });
     const noPkce = await handle(
       `/oauth/authorize?client_id=${client.client_id}&response_type=code&state=s`
     );

@@ -72,10 +72,7 @@ export const createConnector = (deps: {
       .get('/oauth/authorize', async ({ request, query }) => {
         const checked = await checkAuthorization(pool, publicUrl, query);
         if (!checked.ok && !checked.redirectable)
-          return Response.redirect(
-            `${board}/connect?error=${encodeURIComponent(checked.message)}`,
-            302
-          );
+          return Response.redirect(`${board}/connect?error=${checked.problem}`, 302);
         if (!checked.ok) return Response.redirect(checked.redirect, 302);
         return Response.redirect(`${board}/connect${new URL(request.url).search}`, 302);
       })

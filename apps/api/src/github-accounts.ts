@@ -9,6 +9,12 @@ import type { GitHubAsUser, GitHubUserAuth, UserTokens } from '@officina/github'
 import type { Pool } from 'pg';
 import type { TokenBox } from './token-box';
 
+/**
+ * Why a GitHub sign-in or link did not complete. Only the code reaches the browser, in the sign-in
+ * page's address; the board words each one (`apps/board/src/routes/signin/+page.svelte`).
+ */
+export type GitHubSignInProblem = 'github_mismatch' | 'github_expired' | 'github_not_linked';
+
 /** Refresh a little before GitHub would refuse the token. */
 const REFRESH_MARGIN_MS = 5 * 60 * 1000;
 
@@ -45,22 +51,18 @@ export const createGitHubAccounts = (deps: {
     code: string,
     linkTo: string | null,
     claim?: () => Promise<boolean>
-  ): Promise<{ ok: true; memberId: string; login: string } | { ok: false; why: string }> => {
+  ): Promise<
+    { ok: true; memberId: string; login: string } | { ok: false; problem: GitHubSignInProblem }
+  > => {
     const tokens = await deps.auth.exchangeCode(code);
     const user = await deps.asUser.user(tokens.accessToken);
-    if (claim && !(await claim()))
-      return { ok: false, why: 'The GitHub sign-in expired; try again.' };
+    if (claim && !(await claim())) return { ok: false, problem: 'github_expired' };
     if (linkTo) {
       await linkGitHubAccount(pool, sealed(linkTo, user, tokens));
       return { ok: true, memberId: linkTo, login: user.login };
     }
     const memberId = await memberForGitHubUser(pool, user.id);
-    if (!memberId) {
-      return {
-        ok: false,
-        why: `@${user.login} is not linked to a member yet: sign in with an invite link, then connect GitHub`
-      };
-    }
+    if (!memberId) return { ok: false, problem: 'github_not_linked' };
     await saveGitHubAccount(pool, sealed(memberId, user, tokens));
     return { ok: true, memberId, login: user.login };
   };

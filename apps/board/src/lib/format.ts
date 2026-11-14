@@ -57,3 +57,13 @@ export const initials = (name: string) =>
     .slice(0, 2)
     .map((part) => part[0]!.toUpperCase())
     .join('');
+
+/**
+ * The fixed words for a code that came from the address or the API; any other value gets the
+ * fallback, so text from a link is never shown as it is.
+ */
+export const wordsFor = <Code extends string>(
+  table: Readonly<Record<Code, string>>,
+  code: string,
+  fallback: string
+): string => (Object.hasOwn(table, code) ? table[code as Code] : fallback);
