@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { findTaskIdByNumber } from '@officina/db';
+import type { HandInPort } from '@officina/engine';
 import { Pool } from 'pg';
 import { invite } from '../src/people';
 import { PLAN, applyOrThrow, resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
@@ -9,6 +10,7 @@ import {
   createRequest,
   createRequestAs,
   describeTask,
+  handIn,
   listTasksText
 } from '../src/tasks';
 
@@ -192,5 +194,58 @@ describe.skipIf(!url)('task commands', () => {
     });
     const task = await pool.query('select blocked from tasks where id = $1', [taskId]);
     expect(task.rows[0].blocked).toBeNull();
+  });
+
+  test('task hand-in sends the build the member claimed to review and opens its pull request', async () => {
+    await pool.query('update projects set github_installation_id = 99 where id = $1', [
+      seeded.projectId
+    ]);
+    await createRequest(pool, request);
+    const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
+    await applyOrThrow(pool, taskId, { type: 'accept' }, seeded.owner);
+    await applyOrThrow(
+      pool,
+      taskId,
+      { type: 'post_spec', predictedPaths: [COPY], userVisible: false },
+      { kind: 'agent', role: 'spec', version: 1 }
+    );
+    await applyOrThrow(
+      pool,
+      taskId,
+      { type: 'plan_approval', userVisible: false, plan: PLAN },
+      { kind: 'engine' }
+    );
+    await applyOrThrow(pool, taskId, { type: 'approve' }, seeded.owner);
+    await applyOrThrow(pool, taskId, { type: 'claim' }, seeded.owner);
+
+    const opened: string[] = [];
+    const github = {
+      pushFacts: async () => ({
+        headSha: 'dev1',
+        changedPaths: [COPY],
+        addedPaths: [],
+        diffLines: 2
+      }),
+      readFile: async () => null,
+      openPullRequest: async (input: { title: string }) => {
+        opened.push(input.title);
+        return { number: 9, url: 'https://github.com/ViciApp/vici-app/pull/9' };
+      },
+      updateFile: async () => undefined,
+      commentOnIssue: async () => undefined
+    } as unknown as HandInPort;
+    const input = {
+      number: 1,
+      prTitle: 'fix(copy): prediction wording',
+      verified: ['npm run check'],
+      notVerified: [],
+      publicUrl: 'https://officina.example'
+    };
+
+    await expect(handIn(pool, undefined, input)).rejects.toThrow(
+      'the GitHub App is not configured'
+    );
+    expect(await handIn(pool, github, input)).toEqual({ stage: 'reviewing', pullRequest: 9 });
+    expect(opened).toEqual(['fix(copy): prediction wording']);
   });
 });

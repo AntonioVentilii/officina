@@ -60,7 +60,8 @@ new), the task is handed to the owner or a maintainer with the list of what is n
 resumes it. When the plan says a person must build it (or the lane forbids agents), it waits in
 `ready` until a maintainer, or a contributor with the `developer` domain, runs
 `task claim --number <n>`. They build it on `officina/task-<n>` by hand or with their own agents,
-push, and hand it in from the board ("Hand in the build") or from Claude (`hand_in_build`); it then
+push, and hand it in from the board ("Hand in the build"), from Claude (`hand_in_build`) or with
+`task hand-in --number <n> --title "<pull request title>"`; it then
 goes to the same review as an agent's build.
 
 ## Step by step

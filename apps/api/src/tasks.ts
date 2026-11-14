@@ -373,6 +373,14 @@ export const handInAs = async (
   }
 };
 
+/** A developer's hand-in from the CLI, as the member `--as` names (the project owner by default). */
+export const handIn = async (
+  pool: Pool,
+  github: HandInPort | undefined,
+  input: Target & HandInInput & { readonly publicUrl: string }
+): Promise<{ stage: string; pullRequest: number | null }> =>
+  handInAs(pool, github, { ...input, ...(await resolve(pool, input)) });
+
 const money = (cents: number | null) =>
   cents === null ? 'cost unknown' : `$${(cents / 100).toFixed(2)}`;
 
