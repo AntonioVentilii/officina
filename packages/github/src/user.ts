@@ -8,6 +8,7 @@ import { mergeWhenReadyWith } from './merge';
  */
 
 const WEB = 'https://github.com';
+const TOKEN_PATH = '/login/oauth/access_token';
 
 export interface OAuthAppOptions {
   readonly clientId: string;
@@ -28,6 +29,16 @@ export interface GitHubUser {
   readonly login: string;
 }
 
+/** The JSON object a text holds, or `undefined` when it holds anything else. */
+const jsonObject = (text: string): Record<string, unknown> | undefined => {
+  try {
+    const value: unknown = JSON.parse(text);
+    return value && typeof value === 'object' ? (value as Record<string, unknown>) : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
 const expiry = (seconds: unknown, now: number) =>
   typeof seconds === 'number' && seconds > 0 ? new Date(now + seconds * 1000) : null;
 
@@ -43,7 +54,7 @@ export const createGitHubUserAuth = (options: OAuthAppOptions) => {
     })}`;
 
   const tokenRequest = async (params: Record<string, string>): Promise<UserTokens> => {
-    const response = await http(`${WEB}/login/oauth/access_token`, {
+    const response = await http(`${WEB}${TOKEN_PATH}`, {
       method: 'POST',
       headers: { accept: 'application/json', 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -52,12 +63,14 @@ export const createGitHubUserAuth = (options: OAuthAppOptions) => {
         ...params
       })
     });
-    const body = (await response.json()) as Record<string, unknown>;
-    if (!response.ok || typeof body.access_token !== 'string') {
+    // An outage answers with an HTML page, so the body is parsed only after it is read whole.
+    const text = await response.text();
+    const body = jsonObject(text);
+    if (!response.ok || typeof body?.access_token !== 'string') {
       throw new GitHubError(
         response.status,
-        '/login/oauth/access_token',
-        String(body.error ?? 'no token')
+        TOKEN_PATH,
+        body ? String(body.error ?? 'no token') : 'not JSON'
       );
     }
     const now = Date.now();
