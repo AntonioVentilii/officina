@@ -493,6 +493,11 @@ describe.skipIf(!url)('connector for Claude', () => {
     expect(changes.isError).toBe(false);
     expect(changes.content[0]!.text).toStartWith('Changes requested; the agents work on it again.');
     expect(await stageOf(taskId)).toBe('speccing');
+    const requested = await pool.query(
+      `select note from approvals where task_id = $1 and gate = 'spec_review' and decision = 'changes'`,
+      [taskId]
+    );
+    expect(requested.rows).toEqual([{ note: 'Cover Italian too.' }]);
   });
 
   test('Claude hands in a build the member claimed and pushed, and the pull request opens', async () => {
