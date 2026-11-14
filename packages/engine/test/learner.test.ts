@@ -13,6 +13,7 @@ import {
 } from '@officina/db';
 import { RUNNER_ROLES } from '@officina/runner';
 import { Pool } from 'pg';
+import { backendPid, untilWaitingOn } from '../../db/test/locks';
 import { applyOrThrow, createTaskInMerging, resetAndSeed, type Seeded } from '../../db/test/seed';
 import { createFakePort, idle, toolUse } from '../../runner/test/fake-port';
 import { parseProjectConfig } from '@officina/core';
@@ -355,7 +356,10 @@ describe.skipIf(!url)('learner', () => {
       const other = await pool.connect();
       await other.query('begin');
       await other.query('select 1 from learnings where id = $1 for update', [id]);
+      const pid = await backendPid(other);
       return {
+        /** Waits until the other side waits on this lock. */
+        waitedOn: () => untilWaitingOn(pool, pid),
         query: (sql: string, values: unknown[]) => other.query(sql, values),
         commit: async () => {
           await other.query('commit');
@@ -368,7 +372,7 @@ describe.skipIf(!url)('learner', () => {
       const { taskId, id } = await staleLearning();
       const failing = await holdingTheLearning(id);
       const claim = startLearningRewriteRun(pool, { ...NEW_RUN, taskId }, id, 2);
-      await Bun.sleep(50);
+      await failing.waitedOn();
       await failing.query("update learnings set rewrite = 'failed' where id = $1", [id]);
       await failing.commit();
 
@@ -380,7 +384,7 @@ describe.skipIf(!url)('learner', () => {
       const { taskId, id } = await staleLearning();
       const claiming = await holdingTheLearning(id);
       const failure = failIdleLearningRewrite(pool, id);
-      await Bun.sleep(50);
+      await claiming.waitedOn();
       await claiming.query(
         `insert into runs (task_id, stage, runner, agent_role, agent_version, status, learning_id)
          values ($1, 'done', 'managed_agents', 'learner', 1, 'running', $2)`,
