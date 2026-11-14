@@ -56,4 +56,4 @@ Every change follows the universal code standard, [`standards/code.md`](./standa
 - **Engine logic is deterministic code.** Do not move scheduling, state transitions, limits or recovery into a model prompt.
 - **Nothing project-specific.** Officina serves any repository; project details belong in that project's `.github/officina.yml` and docs.
 - **Stack:** Bun, Elysia, Postgres with raw `pg`, SvelteKit with Svelte 5 runes.
-- **Docs are for agents too.** When a change introduces a pattern, update `docs/architecture.md` in the same PR.
+- **Docs are for agents too.** The page a change updates in the same PR, a new pattern included, is the one the [meta-update map](./docs/ai/governance.md#meta-update-map) names.

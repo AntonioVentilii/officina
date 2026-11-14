@@ -9,8 +9,9 @@ import {
 } from './handoffs';
 import { CHECK_DEPTHS, MERGE_MODES, type Blocked, type Command, type Task } from './lifecycle';
 import { redactDeep } from './guards';
+import { pushedFields } from './limits';
 import { questionOptionsSchema } from './questions';
-import { TASK_BRANCH_PREFIX } from './steps';
+import { APPROVER_ROLES } from './roles';
 
 /*
  * What each agent role must return. Agent output is untrusted: it is validated here, and anything
@@ -20,7 +21,7 @@ import { TASK_BRANCH_PREFIX } from './steps';
 
 const text = z.string().trim().min(1);
 
-const askedOfSchema = z.enum(['requester', 'maintainer', 'owner']);
+const askedOfSchema = z.enum(['requester', ...APPROVER_ROLES]);
 
 /**
  * The builder's answer to a GitHub review it was sent back for, posted on the pull request: what it
@@ -65,19 +66,6 @@ export const specOutputSchema = z.discriminatedUnion('outcome', [
   blockedSchema.extend({ options: questionOptionsSchema }),
   needsPersonSchema
 ]);
-
-/** What every push hands back, the builder's and the onboarder's alike. */
-const pushedFields = {
-  outcome: z.literal('pushed'),
-  // A pattern, not a refinement, so the agent's tool schema shows it too.
-  branch: text
-    .max(200)
-    .regex(new RegExp(`^${TASK_BRANCH_PREFIX}`), `branch must start with ${TASK_BRANCH_PREFIX}`),
-  /** The pull request title, in the repository's required format. */
-  prTitle: text.max(120),
-  verified: z.array(text.max(500)).max(30),
-  notVerified: z.array(text.max(500)).max(30)
-};
 
 export const builderOutputSchema = z.discriminatedUnion('outcome', [
   z.strictObject({
@@ -130,7 +118,7 @@ const extraApprovalSchema = z.union([
     domain: text.max(50).regex(/^[a-z][a-z0-9-]*$/, 'a lowercase domain name'),
     reason: text.max(300)
   }),
-  z.strictObject({ role: z.enum(['maintainer', 'owner']), reason: text.max(300) })
+  z.strictObject({ role: z.enum(APPROVER_ROLES), reason: text.max(300) })
 ]);
 
 /** One wording change people check, as it reads before and after. */

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { BUILD_MODES, type Command } from './lifecycle';
-import type { Role } from './roles';
+import type { ApproverRole } from './roles';
 
 /**
  * What agents can neither do nor decide, and who in the project provides it. An agent that needs
@@ -17,17 +17,14 @@ export const HANDOFF_NEEDS = {
   access: { label: 'access for someone, or a change to who can see something', askedOf: 'owner' },
   publishing: { label: 'publishing or exposing content somewhere new', askedOf: 'owner' },
   decision: { label: 'a business or product decision only the owner can take', askedOf: 'owner' }
-} as const satisfies Record<
-  string,
-  { label: string; askedOf: Extract<Role, 'maintainer' | 'owner'> }
->;
+} as const satisfies Record<string, { label: string; askedOf: ApproverRole }>;
 
 export type HandoffNeed = keyof typeof HANDOFF_NEEDS;
 
 export const HANDOFF_NEED_KEYS = Object.keys(HANDOFF_NEEDS) as [HandoffNeed, ...HandoffNeed[]];
 
 /** Who a handoff goes to: the owner when any need is the owner's, a maintainer otherwise. */
-export const handoffAskedOf = (needs: readonly HandoffNeed[]): 'maintainer' | 'owner' =>
+export const handoffAskedOf = (needs: readonly HandoffNeed[]): ApproverRole =>
   needs.some((need) => HANDOFF_NEEDS[need].askedOf === 'owner') ? 'owner' : 'maintainer';
 
 /**

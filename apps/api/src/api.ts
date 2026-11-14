@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { allowedActions, can } from '@officina/core';
+import { INPUT_LIMITS, allowedActions, can, checksSchema } from '@officina/core';
 import type { HandInPort } from '@officina/engine';
 import {
   consumeOAuthState,
@@ -120,37 +120,42 @@ const sessionCookie = (value: string, maxAgeMs: number, secure: boolean) =>
     .filter(Boolean)
     .join('; ');
 
+const reason = z.string().trim().min(1).max(INPUT_LIMITS.reason);
+
 const actionSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('submit') }),
   z.strictObject({ type: z.literal('accept') }),
   z.strictObject({ type: z.literal('claim') }),
   z.strictObject({ type: z.literal('approve') }),
-  z.strictObject({ type: z.literal('changes'), note: z.string().trim().min(1).max(10_000) }),
+  z.strictObject({
+    type: z.literal('changes'),
+    note: z.string().trim().min(1).max(INPUT_LIMITS.note)
+  }),
   // A free answer is its text; a picked option is its letter, with `text` as an optional note and
   // `version` the task version the question was read at.
   z.strictObject({
     type: z.literal('answer'),
-    text: z.string().trim().max(10_000).default(''),
-    option: z.string().trim().min(1).max(2).optional(),
+    text: z.string().trim().max(INPUT_LIMITS.answer).default(''),
+    option: z.string().trim().min(1).max(INPUT_LIMITS.option).optional(),
     version: z.number().int().positive().optional()
   }),
-  z.strictObject({ type: z.literal('decline'), reason: z.string().trim().min(1).max(2_000) }),
-  z.strictObject({ type: z.literal('cancel'), reason: z.string().trim().min(1).max(2_000) })
+  z.strictObject({ type: z.literal('decline'), reason }),
+  z.strictObject({ type: z.literal('cancel'), reason })
 ]);
 
 const handInSchema = z.strictObject({
-  prTitle: z.string().trim().min(3).max(120),
-  verified: z.array(z.string().trim().min(1).max(500)).max(20).default([]),
-  notVerified: z.array(z.string().trim().min(1).max(500)).max(20).default([])
+  prTitle: z.string().trim().min(INPUT_LIMITS.prTitle.min).max(INPUT_LIMITS.prTitle.max),
+  verified: checksSchema.default([]),
+  notVerified: checksSchema.default([])
 });
 
 const requestSchema = z.strictObject({
-  title: z.string().trim().min(3).max(200),
-  request: z.string().trim().min(1).max(20_000),
+  title: z.string().trim().min(INPUT_LIMITS.title.min).max(INPUT_LIMITS.title.max),
+  request: z.string().trim().min(1).max(INPUT_LIMITS.request),
   interview: z.boolean().optional()
 });
 
-const commentSchema = z.strictObject({ body: z.string().trim().min(1).max(20_000) });
+const commentSchema = z.strictObject({ body: z.string().trim().min(1).max(INPUT_LIMITS.comment) });
 
 /** Stands for this site when a path is resolved; never used as an address. */
 const HERE = 'http://officina.invalid';
