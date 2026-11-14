@@ -70,6 +70,18 @@ export interface Me {
   readonly projects: readonly Project[];
   readonly github: { readonly login: string } | null;
   readonly githubAvailable: boolean;
+  readonly limits: InputLimits;
+}
+
+interface Length {
+  readonly min: number;
+  readonly max: number;
+}
+
+/** How long what a person types may be, the ceilings the API checks (`INPUT_LIMITS`). */
+export interface InputLimits {
+  readonly title: Length;
+  readonly prTitle: Length;
 }
 
 export interface WaitingOn {

@@ -8,6 +8,7 @@ import {
 } from '@officina/core';
 import {
   appendTaskEvent,
+  claimLearningDecision,
   decideLearning,
   insertLearnings,
   listLearnings,
@@ -1197,6 +1198,7 @@ describe.skipIf(!url)('engine', () => {
       afterBuild: async () => {
         await decideLearning(pool, {
           id: learning!.id,
+          claim: (await claimLearningDecision(pool, seeded.projectId, learning!.id))!,
           status: 'accepted',
           memberId: seeded.ownerId,
           note: null,

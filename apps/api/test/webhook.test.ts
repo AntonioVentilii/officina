@@ -1,6 +1,8 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { createHmac } from 'node:crypto';
 import {
+  DELIVERY_RETENTION,
+  STALE_CLAIM,
   applyCommand,
   claimDelivery,
   linkPullRequest,
@@ -54,6 +56,13 @@ describe.skipIf(!url)('api', () => {
   afterAll(async () => {
     await pool.end();
   });
+
+  /** Moves a delivery's claim one minute past `window`. */
+  const ageDelivery = (id: string, window: string) =>
+    pool.query(
+      "update webhook_deliveries set received_at = now() - $2::interval - interval '1 minute' where id = $1",
+      [id, window]
+    );
 
   const eventCount = async (taskId: string) =>
     (await pool.query('select 1 from task_events where task_id = $1', [taskId])).rowCount;
@@ -158,9 +167,7 @@ describe.skipIf(!url)('api', () => {
     expect(await fresh.json()).toEqual({ status: 'duplicate' });
     expect((await loadTask(pool, taskId))?.task.stage).toBe('merging');
 
-    await pool.query(
-      "update webhook_deliveries set received_at = now() - interval '11 minutes' where id = 'd-lost'"
-    );
+    await ageDelivery('d-lost', STALE_CLAIM);
     const redelivered = await deliver(app, {
       event: 'pull_request',
       payload: mergedPayload,
@@ -174,10 +181,12 @@ describe.skipIf(!url)('api', () => {
   });
 
   test('deliveries too old to be redelivered are purged, the recent ones kept', async () => {
+    // One just past the retention window, one just inside it.
     await pool.query(
       `insert into webhook_deliveries (id, event, received_at, handled_at) values
-         ('d-old', 'push', now() - interval '8 days', now() - interval '8 days'),
-         ('d-new', 'push', now() - interval '2 days', now() - interval '2 days')`
+         ('d-old', 'push', now() - $1::interval - interval '1 minute', now() - $1::interval - interval '1 minute'),
+         ('d-new', 'push', now() - $1::interval + interval '1 minute', now() - $1::interval + interval '1 minute')`,
+      [DELIVERY_RETENTION]
     );
     expect(await purgeOldDeliveries(pool)).toBe(1);
     expect(await purgeOldDeliveries(pool)).toBe(0);
@@ -187,9 +196,7 @@ describe.skipIf(!url)('api', () => {
 
   test('a handler that outlived its claim can neither mark nor give back the claim that replaced it', async () => {
     const stale = await claimDelivery(pool, 'd-slow', 'pull_request');
-    await pool.query(
-      "update webhook_deliveries set received_at = now() - interval '11 minutes' where id = 'd-slow'"
-    );
+    await ageDelivery('d-slow', STALE_CLAIM);
     const replacing = await claimDelivery(pool, 'd-slow', 'pull_request');
     expect(stale).not.toBeNull();
     expect(replacing).not.toBeNull();
