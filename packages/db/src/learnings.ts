@@ -233,12 +233,14 @@ export const decideLearning = async (
     note: string | null;
     prNumber?: number;
     prUrl?: string;
+    /** The commit Officina wrote on the learning's branch, and the one it was written on. */
+    branchCommit?: { sha: string; parentSha: string };
   }
 ): Promise<boolean> =>
   ((
     await db.query(
       `update learnings set status = $2, decided_by = $3, decided_at = now(), decision_note = $4,
-         pr_number = $5, pr_url = $6
+         pr_number = $5, pr_url = $6, branch_sha = $7, branch_parent_sha = $8
        where id = $1 and status = 'proposed'`,
       [
         input.id,
@@ -246,7 +248,9 @@ export const decideLearning = async (
         input.memberId,
         input.note,
         input.prNumber ?? null,
-        input.prUrl ?? null
+        input.prUrl ?? null,
+        input.branchCommit?.sha ?? null,
+        input.branchCommit?.parentSha ?? null
       ]
     )
   ).rowCount ?? 0) === 1;
@@ -301,6 +305,14 @@ export const listRecentLearningTitles = async (db: Queryable, projectId: string)
     )
   ).rows;
 
+/** A learning decided during a run, with the commit Officina wrote on its branch, if any. */
+export interface LearningDecidedDuring {
+  readonly id: string;
+  readonly rewrittenAt: Date | null;
+  readonly branchSha: string | null;
+  readonly branchParentSha: string | null;
+}
+
 /**
  * The learnings of this run's project that people decided on at or after `since`: accepting one
  * pushes its edit to its own branch with the App's identity, which the check after a build running
@@ -310,10 +322,12 @@ export const learningsDecidedDuring = async (
   pool: Pool,
   runId: string,
   since: Date
-): Promise<{ id: string; rewrittenAt: Date | null }[]> =>
+): Promise<LearningDecidedDuring[]> =>
   (
-    await pool.query<{ id: string; rewrittenAt: Date | null }>(
-      `select l.id, l.rewritten_at as "rewrittenAt" from runs r
+    await pool.query<LearningDecidedDuring>(
+      `select l.id, l.rewritten_at as "rewrittenAt", l.branch_sha as "branchSha",
+              l.branch_parent_sha as "branchParentSha"
+       from runs r
        join tasks t on t.id = r.task_id
        join learnings l on l.project_id = t.project_id
        where r.id = $1 and l.decided_at >= $2`,

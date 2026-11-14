@@ -94,7 +94,10 @@ describe.skipIf(!url)('learning decisions', () => {
           ? { text: options.base ?? '# Agents\n\n## Copy\n', sha: 'blob1' }
           : { text, sha: 'blob2' };
       }
-      if (method === 'updateFile') written.set(String(args.branch), String(args.text));
+      if (method === 'updateFile') {
+        written.set(String(args.branch), String(args.text));
+        return { commitSha: 'learn1', parentSha: 'main1' };
+      }
       if (method === 'closePullRequestsFrom') open.delete(String(args.branch));
       if (method === 'openPullRequest') {
         open.add(String(args.branch));
@@ -179,6 +182,44 @@ describe.skipIf(!url)('learning decisions', () => {
 
     expect(await accepting).toMatchObject({ status: 'accepted', prNumber: 77 });
     await expect(rejecting).rejects.toThrow('already decided');
+  });
+
+  test('accepting a learning records the commit Officina wrote on its branch, and only that', async () => {
+    const written = await propose('docs');
+    await decide(pool, fakeGitHub().port, owner(), {
+      id: written.id,
+      decision: 'accept',
+      rewrittenAt: null
+    });
+    const held = await propose('project');
+    const github = fakeGitHub();
+    // The branch already holds the edit, so nothing is written and nothing is recorded.
+    await github.port.updateFile({
+      installationId: 1,
+      repo: 'x/y',
+      path: 'docs/copy.md',
+      branch: `officina/learning-${held.id.slice(0, 8)}`,
+      text: '# Agents\n\n## Copy\n\nUpdate every live locale.\n',
+      message: 'x'
+    });
+    await decide(pool, github.port, owner(), {
+      id: held.id,
+      decision: 'accept',
+      rewrittenAt: null
+    });
+
+    const commits = await pool.query<{ id: string; branch_sha: string; branch_parent_sha: string }>(
+      'select id, branch_sha, branch_parent_sha from learnings where id = any($1::uuid[])',
+      [[written.id, held.id]]
+    );
+    expect(commits.rows.find((row) => row.id === written.id)).toMatchObject({
+      branch_sha: 'learn1',
+      branch_parent_sha: 'main1'
+    });
+    expect(commits.rows.find((row) => row.id === held.id)).toMatchObject({
+      branch_sha: null,
+      branch_parent_sha: null
+    });
   });
 
   test('accepting an agent docs learning opens a pull request with exactly the proposed edit', async () => {

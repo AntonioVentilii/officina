@@ -50,21 +50,39 @@ const movedRefs = (
     });
 
 /**
- * The branches whose move during the run is expected: the task's own, those of tasks building
- * alongside, and those of learnings people accepted meanwhile, which Officina pushes their edit to
- * (the branch of the edit as it stands, and the first one, which an accept before a rewrite used).
+ * The branches whose move during the run is expected: the task's own, and those of tasks building
+ * alongside.
  */
-const expectedBranches = async (step: RefStep, since: Date): Promise<Set<string>> => {
-  const { pool } = step.deps;
-  const learnings = await learningsDecidedDuring(pool, step.runId, since);
-  return new Set([
+const expectedBranches = async (step: RefStep): Promise<Set<string>> =>
+  new Set([
     step.taskBranch,
-    ...(await overlappingRunTasks(pool, step.runId, BUILD_ROLES)).map(branchForTask),
-    ...learnings.flatMap((learning) => [
-      branchForLearning(learning),
-      branchForLearning({ ...learning, rewrittenAt: null })
-    ])
+    ...(await overlappingRunTasks(step.deps.pool, step.runId, BUILD_ROLES)).map(branchForTask)
   ]);
+
+/**
+ * The branches of learnings people accepted during the run that end on exactly the commit Officina
+ * wrote there, on a commit of the default branch: Officina pushed that edit with the App's identity.
+ * A learning branch holding anything else is checked like any other branch.
+ */
+const ownLearningBranches = async (
+  step: RefStep,
+  after: RefSnapshot,
+  since: Date
+): Promise<Set<string>> => {
+  const own = new Set<string>();
+  for (const learning of await learningsDecidedDuring(step.deps.pool, step.runId, since)) {
+    const branch = branchForLearning(learning);
+    const { branchSha, branchParentSha } = learning;
+    if (branchSha === null || branchParentSha === null || after.branches[branch] !== branchSha)
+      continue;
+    const onDefault = await step.deps.github.isOnBranch({
+      ...step.repoRef,
+      sha: branchParentSha,
+      branch: step.context.defaultBranch
+    });
+    if (onDefault) own.add(branch);
+  }
+  return own;
 };
 
 /** Whether the default branch moved forward only by a pull request merged on top of it. */
@@ -119,7 +137,10 @@ const branchChanges = async (
   after: RefSnapshot,
   since: Date
 ): Promise<string[]> => {
-  const expected = await expectedBranches(step, since);
+  const expected = new Set([
+    ...(await expectedBranches(step)),
+    ...(await ownLearningBranches(step, after, since))
+  ]);
   const own = new Set(
     (await ownStatusCommitsDuring(step.deps.pool, step.runId)).map(
       ({ taskNumber, sha }) => `${branchForTask(taskNumber)}@${sha}`
@@ -160,9 +181,10 @@ const tagChanges = async (
  * What changed outside the task's own branch while a builder held a token that can write any ref,
  * and that the builder could have done. The default branch may move forward by a pull request
  * merged meanwhile, the branch of another task by that task's own build run alongside, and a
- * learning's branch by Officina pushing an edit people accepted. Any other branch counts only when
- * Officina's identity moved it (or GitHub cannot say who did). GitHub's activity does not record
- * who moves tags, so a tag counts unless it is new and on a commit already on the default branch.
+ * learning's branch by Officina pushing an edit people accepted, as long as it holds only that.
+ * Any other branch counts only when Officina's identity moved it (or GitHub cannot say who did).
+ * GitHub's activity does not record who moves tags, so a tag counts unless it is new and on a
+ * commit already on the default branch.
  */
 const refChanges = async (
   step: RefStep,

@@ -1164,7 +1164,11 @@ describe.skipIf(!url)('engine', () => {
     expect(task?.blocked?.question).toContain('tag v1.0.0 moved from tag1 to main1');
   });
 
-  test("Officina's push of a learning people accepted during the build does not stop it", async () => {
+  /**
+   * A build during which people accept a learning whose edit Officina wrote as `learn1` on `main1`,
+   * and the learning's branch ends on `branchHead`; then the task.
+   */
+  const buildWhileLearningAccepted = async (branchHead: string, onDefault = ['main1']) => {
     const taskId = await taskInReady();
     const { rows } = await pool.query<{ id: string }>(
       'select id from runs where task_id = $1 limit 1',
@@ -1187,24 +1191,42 @@ describe.skipIf(!url)('engine', () => {
     const [learning] = await listLearnings(pool, seeded.projectId);
     const branch = branchForLearning(learning!);
     const github = fakeGitHub({
-      refs: [REFS, { branches: { ...REFS.branches, [branch]: 'main1' }, tags: REFS.tags }],
-      pushes: { [branch]: { actor: APP_LOGIN, after: 'main1' } },
+      refs: [REFS, { branches: { ...REFS.branches, [branch]: branchHead }, tags: REFS.tags }],
+      pushes: { [branch]: { actor: APP_LOGIN, after: branchHead } },
+      onDefault,
       afterBuild: async () => {
         await decideLearning(pool, {
           id: learning!.id,
           status: 'accepted',
           memberId: seeded.ownerId,
-          note: null
+          note: null,
+          branchCommit: { sha: 'learn1', parentSha: 'main1' }
         });
       }
     });
     const agents = createFakePort(succeed);
     await tick({ pool, github: github.port, agents, publicUrl: PUBLIC_URL }, seeded.projectId);
+    return { task: (await loadTask(pool, taskId))?.task, branch };
+  };
 
-    expect((await loadTask(pool, taskId))?.task).toMatchObject({
-      stage: 'reviewing',
-      blocked: null
-    });
+  test("Officina's push of a learning people accepted during the build does not stop it", async () => {
+    const { task } = await buildWhileLearningAccepted('learn1');
+
+    expect(task).toMatchObject({ stage: 'reviewing', blocked: null });
+  });
+
+  test('a learning branch holding anything but the commit Officina wrote stops the build', async () => {
+    const { task, branch } = await buildWhileLearningAccepted('evil');
+
+    expect(task?.blocked?.question).toContain(
+      `branch ${branch} was created with Officina's GitHub App`
+    );
+  });
+
+  test('a learning branch whose Officina commit sits on a commit not on the default branch stops the build', async () => {
+    const { task, branch } = await buildWhileLearningAccepted('learn1', []);
+
+    expect(task?.blocked?.question).toContain(`branch ${branch} was created`);
   });
 
   test('a pull request merged into the default branch during a build is not a builder push', async () => {

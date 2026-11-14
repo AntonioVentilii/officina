@@ -9,7 +9,7 @@ import {
   type LearningRow,
   type ProjectRecord
 } from '@officina/db';
-import type { GitHubClient } from '@officina/github';
+import type { GitHubClient, RepoRef } from '@officina/github';
 import { taskLink } from '@officina/engine';
 import type { Pool, PoolClient } from 'pg';
 import { TaskCommandError } from './tasks';
@@ -60,6 +60,30 @@ const titleFor = (learning: LearningRow) => {
   return `docs(${scope}): ${summary}`.slice(0, 120);
 };
 
+/** A learning's pull request, and the commit Officina wrote on its branch when it wrote one. */
+interface OpenedLearning {
+  readonly number: number;
+  readonly url: string;
+  readonly branchCommit?: { readonly sha: string; readonly parentSha: string };
+}
+
+/**
+ * Writes the edit on the learning's branch, unless a branch an earlier attempt left already holds
+ * it, and returns the commit written and the one it was written on, when GitHub names them.
+ */
+const writeEdit = async (
+  github: LearningGitHub,
+  file: RepoRef & { readonly path: string; readonly branch: string },
+  edit: { readonly text: string; readonly message: string }
+): Promise<OpenedLearning['branchCommit']> => {
+  const onBranch = await github.readFile(file);
+  if (onBranch?.text === edit.text) return undefined;
+  const written = await github.updateFile({ ...file, ...edit, sha: onBranch?.sha });
+  return written.commitSha && written.parentSha
+    ? { sha: written.commitSha, parentSha: written.parentSha }
+    : undefined;
+};
+
 /**
  * Opens the pull request with exactly the edit people saw; a branch an earlier attempt left is
  * reused. When the default branch changed so the edit no longer applies, nothing is written.
@@ -69,7 +93,7 @@ const openLearningPullRequest = async (
   project: ProjectRecord,
   learning: LearningRow,
   context: { readonly publicUrl: string; readonly note: string | undefined }
-): Promise<{ ok: true; pr: { number: number; url: string } } | { ok: false; why: string }> => {
+): Promise<{ ok: true; pr: OpenedLearning } | { ok: false; why: string }> => {
   if (project.installationId === null)
     throw new TaskCommandError('the GitHub App is not installed on this repository');
   const ref = { installationId: project.installationId, repo: project.repo };
@@ -83,18 +107,14 @@ const openLearningPullRequest = async (
   const branch = branchForLearning(learning);
   const title = titleFor(learning);
   await github.createBranch({ ...ref, branch, from: project.defaultBranch });
-  // A branch an earlier attempt left may already hold the edit; writing it again is skipped.
-  const onBranch = await github.readFile({ ...ref, path: learning.file, branch });
-  if (onBranch?.text !== edited.text) {
-    await github.updateFile({
-      ...ref,
-      path: learning.file,
-      branch,
+  const branchCommit = await writeEdit(
+    github,
+    { ...ref, path: learning.file, branch },
+    {
       text: edited.text,
-      sha: onBranch?.sha,
       message: title
-    });
-  }
+    }
+  );
   const link = learning.taskNumber
     ? taskLink(context.publicUrl, project.id, learning.taskNumber)
     : 'an Officina task';
@@ -112,7 +132,7 @@ const openLearningPullRequest = async (
       .filter(Boolean)
       .join('\n\n')
   });
-  return { ok: true, pr };
+  return { ok: true, pr: { ...pr, ...(branchCommit ? { branchCommit } : {}) } };
 };
 
 /** Why a learning cannot be accepted while its edit is being rewritten, or after that failed. */
@@ -138,7 +158,7 @@ const acceptIntoPullRequest = async (
     readonly target: Target;
     readonly note: string | undefined;
   }
-): Promise<{ number: number; url: string } | null> => {
+): Promise<OpenedLearning | null> => {
   if (learning.rewrite) throw new TaskCommandError(REWRITE_BLOCKS[learning.rewrite]);
   if (!github) throw new TaskCommandError('the GitHub App is not configured');
   const project = (await loadProject(client, target.projectId))!;
@@ -222,7 +242,7 @@ export const decide = async (
   return inTransaction(pool, async (client) => {
     await lockLearning(client, input.id);
     const learning = decidable(await loadLearning(client, target.projectId, input.id), input);
-    let pr: { number: number; url: string } | undefined;
+    let pr: OpenedLearning | undefined;
     if (input.decision === 'accept' && editsProject(learning.target)) {
       const opened = await acceptIntoPullRequest(client, learning, {
         github,
@@ -239,7 +259,8 @@ export const decide = async (
       status: input.decision === 'accept' ? 'accepted' : 'rejected',
       memberId: target.memberId,
       note: input.note ?? null,
-      ...(pr ? { prNumber: pr.number, prUrl: pr.url } : {})
+      ...(pr ? { prNumber: pr.number, prUrl: pr.url } : {}),
+      ...(pr?.branchCommit ? { branchCommit: pr.branchCommit } : {})
     });
     return (await loadLearning(client, target.projectId, learning.id))!;
   });
