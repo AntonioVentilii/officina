@@ -40,7 +40,7 @@ import { checkAuthorization, consentRedirect } from './connector';
 import type { GitHubAccounts, GitHubSignInProblem } from './github-accounts';
 import { decide as decideLearning, type LearningGitHub } from './learnings';
 import { notificationsView } from './notifications';
-import { accessLogView, inviteAgain, membersView } from './people';
+import { INVITE_TTL_DAYS, accessLogView, inviteAgain, membersView } from './people';
 import type { BoardEvent, RealtimeHub } from './realtime';
 import {
   TaskCommandError,
@@ -443,7 +443,9 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
             can: allowedActions(project)
           })),
           github: login ? { login } : null,
-          githubAvailable: Boolean(deps.githubLogin)
+          githubAvailable: Boolean(deps.githubLogin),
+          // The board's fields hold what people type to the same ceilings the API checks.
+          limits: INPUT_LIMITS
         };
       })
       // The connector's consent step: the person, signed in on the board, allows or refuses an
@@ -598,7 +600,8 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
             viewerRole: viewer.role,
             viewerId: viewer.memberId,
             memberId: params.memberId
-          })
+          }),
+          validDays: INVITE_TTL_DAYS
         };
       })
       .get('/api/projects/:projectId/access-log', async ({ request, params }) => {
