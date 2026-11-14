@@ -314,15 +314,22 @@ const holdMerge = async (
 /**
  * Records, once per time the task reaches merging, that the engine's part is over and GitHub will
  * not merge on its own: the pull request waits for a person to merge it. The board and the
- * timeline say whose turn it is from this.
+ * timeline say whose turn it is from this. Only while the task is still in merging at the head it
+ * was checked at, under its row lock, so a task sent back meanwhile is never left to a person.
  */
-const awaitMerge = async (pool: Pool, input: { taskId: string; pullRequest: number }) => {
-  if (await hasEventSinceMerging(pool, input.taskId, ['awaiting_merge'])) return;
-  await appendTaskEvent(pool, {
-    taskId: input.taskId,
-    actor: ENGINE,
-    type: 'awaiting_merge',
-    payload: { pullRequest: input.pullRequest }
+const awaitMerge = async (
+  pool: Pool,
+  input: { taskId: string; taskHead: string | null; pullRequest: number }
+) => {
+  const at = { taskId: input.taskId, stage: 'merging', headSha: input.taskHead };
+  await whileTaskAt(pool, at, async (client) => {
+    if (await hasEventSinceMerging(client, input.taskId, ['awaiting_merge'])) return;
+    await appendTaskEvent(client, {
+      taskId: input.taskId,
+      actor: ENGINE,
+      type: 'awaiting_merge',
+      payload: { pullRequest: input.pullRequest }
+    });
   });
 };
 
@@ -333,9 +340,10 @@ const awaitMerge = async (pool: Pool, input: { taskId: string; pullRequest: numb
  * still have turned it on (the request reached GitHub but the answer did not), so it is recorded
  * as unsettled and `cancelStaleAutoMerges` turns it off before a person is asked to merge.
  *
- * Only while the task is still in merging at the head it was checked at, under its row lock: a
- * review that sends the work back meanwhile waits for the attempt to be recorded, and then turns
- * auto-merge off. `false` says the task had moved and nothing was asked of GitHub.
+ * Only while the task is still in merging at the head it was checked at, under its row lock, and
+ * the once-per-handoff check with it: a review that sends the work back meanwhile waits for the
+ * attempt to be recorded, and then turns auto-merge off, and a second pass waits for it and then
+ * finds it. Nothing is asked of GitHub once the task has moved.
  */
 const autoMergeOnGitHub = async (
   pool: Pool,
@@ -345,16 +353,16 @@ const autoMergeOnGitHub = async (
     actor: Actor;
     merge: () => Promise<'auto_merge' | 'merged'>;
   }
-): Promise<boolean> => {
-  if (
-    await hasEventSinceMerging(pool, input.taskId, [
-      'github_auto_merge',
-      'github_auto_merge_failed'
-    ])
-  )
-    return true;
+) => {
   const at = { taskId: input.taskId, stage: 'merging', headSha: input.taskHead };
-  const tried = await whileTaskAt(pool, at, async (client) => {
+  await whileTaskAt(pool, at, async (client) => {
+    if (
+      await hasEventSinceMerging(client, input.taskId, [
+        'github_auto_merge',
+        'github_auto_merge_failed'
+      ])
+    )
+      return;
     try {
       const merge = await input.merge();
       await appendTaskEvent(client, {
@@ -371,9 +379,7 @@ const autoMergeOnGitHub = async (
         payload: { error: (error as Error).message.slice(0, 500) }
       });
     }
-    return true;
   });
-  return tried !== null;
 };
 
 /**
@@ -636,15 +642,13 @@ const finishVerifiedSpec = async (
   // people's verification has no verifier to approve as.
   const taskHead = current.task.headSha;
   if (await autoVerified(pool, taskId)) {
-    const tried =
-      !autoMerge ||
-      (await autoMergeOnGitHub(pool, {
+    if (autoMerge)
+      await autoMergeOnGitHub(pool, {
         taskId,
         taskHead,
         actor: ENGINE,
         merge: () => github.mergeWhenReady({ ...ref, pullRequest, expectedHead: expected })
-      }));
-    if (!tried) return;
+      });
   } else if (onBehalf) {
     await approveOnGitHub(pool, onBehalf, {
       taskId,
@@ -656,19 +660,19 @@ const finishVerifiedSpec = async (
     // Only on top of the verifier's own approval, so it never stands in for a missing review.
     const approved = await hasTaskEvent(pool, taskId, 'github_approved', { headSha: expected });
     const account = autoMerge && approved ? await verifierAccount(pool, onBehalf, taskId) : null;
-    const tried =
-      !account ||
-      (await autoMergeOnGitHub(pool, {
+    if (account)
+      await autoMergeOnGitHub(pool, {
         taskId,
         taskHead,
         actor: account.actor,
         merge: () =>
           onBehalf.asUser.mergeWhenReady(account.token, context.repo, pullRequest, expected)
-      }));
-    // Sent back while it was approved: neither handed to GitHub nor to a person.
-    if (!tried) return;
+      });
   }
-  if (!(await handedToGitHub(pool, taskId))) await awaitMerge(pool, { taskId, pullRequest });
+  // Sent back while it was approved: neither handed to GitHub nor to a person (both checked under
+  // the task's row lock).
+  if (!(await handedToGitHub(pool, taskId)))
+    await awaitMerge(pool, { taskId, taskHead, pullRequest });
 };
 
 /** Finishes each task on its own: one that fails is reported and the others still go ahead. */

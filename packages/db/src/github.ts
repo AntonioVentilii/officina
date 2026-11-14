@@ -155,7 +155,7 @@ export const wasAutoVerified = (task: string): string =>
  * carried (`sinceHandoff`): what the engine does on GitHub at merging is done once per head.
  */
 export const hasEventSinceMerging = async (
-  pool: Pool,
+  pool: Pool | PoolClient,
   taskId: string,
   types: readonly string[]
 ): Promise<boolean> =>

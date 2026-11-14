@@ -1751,7 +1751,67 @@ describe.skipIf(!url)('engine', () => {
     expect(await types(off)).toEqual(['github_approved', 'awaiting_merge']);
   });
 
-  test('a task sent back while it is approved is neither auto-merged nor left to a person', async () => {
+  test.each([
+    ['allowed', true],
+    ['not allowed', false]
+  ])(
+    'a task sent back while it is approved, auto-merge %s, is neither auto-merged nor left to a person',
+    async (_, allowed) => {
+      const config = Bun.YAML.parse(CONFIG_YAML) as Record<string, unknown>;
+      await pool.query('update projects set config = $2 where id = $1', [
+        seeded.projectId,
+        JSON.stringify({ ...config, pull_request: { auto_merge: allowed } })
+      ]);
+      const taskId = await createTaskInMerging(pool, seeded);
+      await linkPullRequest(pool, taskId, 42);
+      await pool.query(
+        `update tasks set approval_plans = jsonb_set(approval_plans, '{verifying,merge}', '"auto"')
+       where id = $1`,
+        [taskId]
+      );
+      const userCalls: string[] = [];
+      const onBehalf = {
+        publicUrl: PUBLIC_URL,
+        tokenFor: async () => ({ token: 't', login: 'antonio', userId: 1 }),
+        asUser: {
+          pullRequest: async () => ({
+            node_id: 'PR',
+            state: 'open',
+            merged: false,
+            head: { sha: 'abc' }
+          }),
+          reviews: async () => [],
+          approve: async () => {
+            userCalls.push('approve');
+            // A review's webhook lands while GitHub takes the approval.
+            await pool.query(`update tasks set stage = 'building' where id = $1`, [taskId]);
+            return {};
+          },
+          mergeWhenReady: async () => {
+            userCalls.push('mergeWhenReady');
+            return 'auto_merge' as const;
+          },
+          requestCopilotReview: async () => 'requested' as const
+        }
+      };
+      const github = fakeGitHub({
+        branchHead: 'abc',
+        written: { commitSha: 'abc2', parentSha: 'abc' }
+      });
+
+      await finishVerifiedSpecs(pool, github.port, [taskId], onBehalf);
+
+      expect(userCalls).toEqual(['approve']);
+      const { rows } = await pool.query<{ type: string }>(
+        `select type from task_events where task_id = $1
+         and type in ('github_approved', 'github_auto_merge', 'awaiting_merge') order by id`,
+        [taskId]
+      );
+      expect(rows.map((row) => row.type)).toEqual(['github_approved']);
+    }
+  );
+
+  test('two passes at once turn auto-merge on once', async () => {
     const config = Bun.YAML.parse(CONFIG_YAML) as Record<string, unknown>;
     await pool.query('update projects set config = $2 where id = $1', [
       seeded.projectId,
@@ -1764,7 +1824,24 @@ describe.skipIf(!url)('engine', () => {
        where id = $1`,
       [taskId]
     );
-    const userCalls: string[] = [];
+    // Until the other pass waits for the task's row lock, past every check made before taking it.
+    const otherPassWaitsForTheLock = async () => {
+      for (let tries = 0; tries < 200; tries += 1) {
+        const { rowCount } = await pool.query(
+          `select 1 from pg_stat_activity
+           where wait_event_type = 'Lock' and query like 'select stage, head_sha from tasks%'`
+        );
+        if (rowCount) return;
+        await Bun.sleep(10);
+      }
+      throw new Error('the other pass never waited for the lock');
+    };
+    let second: Promise<unknown> | undefined;
+    const merges: string[] = [];
+    const github = fakeGitHub({
+      branchHead: 'abc',
+      written: { commitSha: 'abc2', parentSha: 'abc' }
+    });
     const onBehalf = {
       publicUrl: PUBLIC_URL,
       tokenFor: async () => ({ token: 't', login: 'antonio', userId: 1 }),
@@ -1776,33 +1853,22 @@ describe.skipIf(!url)('engine', () => {
           head: { sha: 'abc' }
         }),
         reviews: async () => [],
-        approve: async () => {
-          userCalls.push('approve');
-          // A review's webhook lands while GitHub takes the approval.
-          await pool.query(`update tasks set stage = 'building' where id = $1`, [taskId]);
-          return {};
-        },
+        approve: async () => ({}),
         mergeWhenReady: async () => {
-          userCalls.push('mergeWhenReady');
+          merges.push('mergeWhenReady');
+          if (!second) {
+            second = finishVerifiedSpecs(pool, github.port, [taskId], onBehalf);
+            await otherPassWaitsForTheLock();
+          }
           return 'auto_merge' as const;
         },
         requestCopilotReview: async () => 'requested' as const
       }
     };
-    const github = fakeGitHub({
-      branchHead: 'abc',
-      written: { commitSha: 'abc2', parentSha: 'abc' }
-    });
 
-    await finishVerifiedSpecs(pool, github.port, [taskId], onBehalf);
-
-    expect(userCalls).toEqual(['approve']);
-    const { rows } = await pool.query<{ type: string }>(
-      `select type from task_events where task_id = $1
-         and type in ('github_approved', 'github_auto_merge', 'awaiting_merge') order by id`,
-      [taskId]
-    );
-    expect(rows.map((row) => row.type)).toEqual(['github_approved']);
+    expect(await finishVerifiedSpecs(pool, github.port, [taskId], onBehalf)).toEqual([]);
+    expect(await second).toEqual([]);
+    expect(merges).toEqual(['mergeWhenReady']);
   });
 
   test('a pull request already merged or closed on GitHub is neither approved nor left to a person to merge', async () => {
