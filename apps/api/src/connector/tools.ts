@@ -1,7 +1,9 @@
 import {
   ACTION_LABELS,
+  INPUT_LIMITS,
   TERMINAL_STAGES,
   allowedActions,
+  checksSchema,
   redactSecrets,
   taskUrl,
   type Preview
@@ -231,14 +233,14 @@ After it is opened, tell the person the task link and that an agent may ask them
       title: z
         .string()
         .trim()
-        .min(3)
-        .max(200)
+        .min(INPUT_LIMITS.title.min)
+        .max(INPUT_LIMITS.title.max)
         .describe('A short imperative title, for example "Rename the Submit button to Send".'),
       request: z
         .string()
         .trim()
         .min(1)
-        .max(20_000)
+        .max(INPUT_LIMITS.request)
         .describe('What the person wants, why, and what must not change, in plain language.'),
       skip_interview: z
         .boolean()
@@ -361,7 +363,7 @@ After it is opened, tell the person the task link and that an agent may ask them
         .string()
         .trim()
         .min(1)
-        .max(2)
+        .max(INPUT_LIMITS.option)
         .optional()
         .describe('The letter of the option the person chose, as show_task lists it ("a", "b").'),
       version: z
@@ -376,7 +378,7 @@ After it is opened, tell the person the task link and that an agent may ask them
         .string()
         .trim()
         .min(1)
-        .max(10_000)
+        .max(INPUT_LIMITS.answer)
         .optional()
         .describe('The answer in plain language, or a note on the chosen option.')
     }),
@@ -407,7 +409,12 @@ After it is opened, tell the person the task link and that an agent may ask them
     input: z.object({
       project: PROJECT,
       number: NUMBER,
-      text: z.string().trim().min(1).max(20_000).describe('The comment, in plain language.')
+      text: z
+        .string()
+        .trim()
+        .min(1)
+        .max(INPUT_LIMITS.comment)
+        .describe('The comment, in plain language.')
     }),
     readOnly: false,
     run: async (context, input) => {
@@ -431,19 +438,13 @@ After it is opened, tell the person the task link and that an agent may ask them
       pr_title: z
         .string()
         .trim()
-        .min(3)
-        .max(120)
+        .min(INPUT_LIMITS.prTitle.min)
+        .max(INPUT_LIMITS.prTitle.max)
         .describe("The pull request title, in the repository's own format."),
-      verified: z
-        .array(z.string().trim().min(1).max(500))
-        .max(20)
+      verified: checksSchema
         .optional()
         .describe('What you checked, one item each, for example the commands you ran.'),
-      not_verified: z
-        .array(z.string().trim().min(1).max(500))
-        .max(20)
-        .optional()
-        .describe('What you could not check.')
+      not_verified: checksSchema.optional().describe('What you could not check.')
     }),
     readOnly: false,
     run: async (context, input) => {
@@ -476,7 +477,7 @@ Always call show_task first, show the person the plan or the list of what to che
       note: z
         .string()
         .trim()
-        .max(10_000)
+        .max(INPUT_LIMITS.note)
         .optional()
         .describe('Required for "changes": what is wrong, in plain language.')
     }),
