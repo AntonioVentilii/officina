@@ -9,7 +9,7 @@ import {
 } from './handoffs';
 import { CHECK_DEPTHS, MERGE_MODES, type Blocked, type Command, type Task } from './lifecycle';
 import { redactDeep } from './guards';
-import { pushedFields } from './limits';
+import { CHECKLIST_LIMITS, pushedFields } from './limits';
 import { questionOptionsSchema } from './questions';
 import { APPROVER_ROLES } from './roles';
 
@@ -123,10 +123,10 @@ const extraApprovalSchema = z.union([
 
 /** One wording change people check, as it reads before and after. */
 const beforeAfterSchema = z.strictObject({
-  key: text.max(120),
-  locale: text.max(35),
-  before: z.string().max(350),
-  after: z.string().max(350)
+  key: text.max(CHECKLIST_LIMITS.row.key),
+  locale: text.max(CHECKLIST_LIMITS.row.locale),
+  before: z.string().max(CHECKLIST_LIMITS.row.before),
+  after: z.string().max(CHECKLIST_LIMITS.row.after)
 });
 
 /**
@@ -153,8 +153,8 @@ export const chooserOutputSchema = z.strictObject({
    * Required at verification, where the engine checks it is not empty. With the before/after table
    * it is posted as one comment, so together they stay under GitHub's limit at any size.
    */
-  checklist: z.array(text.max(300)).max(30).default([]),
-  beforeAfter: z.array(beforeAfterSchema).max(30).default([])
+  checklist: z.array(text.max(CHECKLIST_LIMITS.item)).max(CHECKLIST_LIMITS.items).default([]),
+  beforeAfter: z.array(beforeAfterSchema).max(CHECKLIST_LIMITS.rows).default([])
 });
 
 /**
