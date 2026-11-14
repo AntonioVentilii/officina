@@ -40,8 +40,14 @@ export const applyEdit = (
   if (current === null) return { ok: false, why: 'the file no longer exists' };
   const count = current.split(learning.find).length - 1;
   if (count !== 1) return { ok: false, why: `the text to replace now appears ${count} times` };
+  // The output contract trims the text, so a replaced line would lose the line break that ended it
+  // and the next line would join the addition: the break comes back.
+  const text =
+    learning.find.endsWith('\n') && !learning.text.endsWith('\n')
+      ? `${learning.text}\n`
+      : learning.text;
   // A function replacer, so `$&` or `$$` in the text land as written rather than as patterns.
-  return { ok: true, text: current.replace(learning.find, () => learning.text) };
+  return { ok: true, text: current.replace(learning.find, () => text) };
 };
 
 /** Agent docs learnings say so in their scope, so they read as changes to `docs/ai` in the history. */

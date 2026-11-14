@@ -43,6 +43,14 @@ describe('learning edits', () => {
     });
   });
 
+  test('a replaced line keeps its line break when the stored text was trimmed', () => {
+    expect(applyEdit('a\n## Copy\nb\n', { find: '## Copy\n', text: '## Copy\n\nrule' })).toEqual({
+      ok: true,
+      text: 'a\n## Copy\n\nrule\nb\n'
+    });
+    expect(applyEdit('a X b\n', { find: 'X', text: 'Y' })).toEqual({ ok: true, text: 'a Y b\n' });
+  });
+
   test('replacement text with dollar signs lands exactly as written', () => {
     expect(applyEdit('cost: X\n', { find: 'X', text: "$$5, $& and $' stay" })).toEqual({
       ok: true,
