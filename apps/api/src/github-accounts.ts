@@ -1,4 +1,5 @@
 import {
+  forgetSpentGitHubAccount,
   linkGitHubAccount,
   loadGitHubAccount,
   memberForGitHubUser,
@@ -71,6 +72,25 @@ export const createGitHubAccounts = (deps: {
     return { ok: true, memberId, login: user.login };
   };
 
+  /**
+   * Stores the tokens a refresh gave. GitHub spent the old refresh token in giving them, so tokens
+   * that cannot be stored leave the account dead: it is forgotten and the member told to reconnect.
+   */
+  const keepRefreshed = async (
+    account: GitHubAccountRow,
+    spentRefreshEnc: string,
+    tokens: UserTokens
+  ): Promise<boolean> => {
+    const user = { id: account.githubUserId, login: account.login };
+    let kept = false;
+    try {
+      kept = (await saveGitHubAccount(pool, sealed(account.memberId, user, tokens))).ok;
+    } finally {
+      if (!kept) await forgetSpentGitHubAccount(pool, account.memberId, spentRefreshEnc);
+    }
+    return kept;
+  };
+
   const expired = (at: Date | null) => at !== null && at.getTime() - REFRESH_MARGIN_MS < Date.now();
 
   /** A usable token for acting as the member, refreshed when needed; `null` when not linked or revoked. */
@@ -88,11 +108,7 @@ export const createGitHubAccounts = (deps: {
     }
     if (!account.refreshTokenEnc || expired(account.refreshExpiresAt)) return null;
     const tokens = await deps.auth.refresh(box.open(account.refreshTokenEnc));
-    const saved = await saveGitHubAccount(
-      pool,
-      sealed(memberId, { id: account.githubUserId, login: account.login }, tokens)
-    );
-    if (!saved.ok) return null;
+    if (!(await keepRefreshed(account, account.refreshTokenEnc, tokens))) return null;
     return { token: tokens.accessToken, login: account.login, userId: account.githubUserId };
   };
 

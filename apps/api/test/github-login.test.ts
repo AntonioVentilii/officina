@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { randomBytes } from 'node:crypto';
-import { findMemberByEmail } from '@officina/db';
+import { findMemberByEmail, forgetSpentGitHubAccount } from '@officina/db';
 import { createGitHubAsUser, type UserTokens } from '@officina/github';
 import { Pool } from 'pg';
 import { resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
@@ -354,6 +354,84 @@ describe.skipIf(!url)('GitHub sign-in', () => {
       'select refresh_token_enc from github_accounts'
     );
     expect(createTokenBox(KEY).open(stored.rows[0]!.refresh_token_enc)).toBe('ghr_new');
+  });
+
+  describe('a refresh whose new tokens cannot be stored', () => {
+    const expiredAccount = () =>
+      githubAs(
+        { id: 42, login: 'antonio' },
+        {
+          accessToken: 'ghu_old',
+          accessExpiresAt: fromNow(-60_000),
+          refreshToken: 'ghr_old',
+          refreshExpiresAt: fromNow(180 * 86_400_000)
+        },
+        async () => ({
+          accessToken: 'ghu_new',
+          accessExpiresAt: fromNow(8 * 3600_000),
+          refreshToken: 'ghr_new',
+          refreshExpiresAt: fromNow(180 * 86_400_000)
+        })
+      );
+    const githubLog = async () =>
+      (await accessLogView(pool, seeded.projectId))
+        .filter((event) => event.type.startsWith('github_'))
+        .map((event) => `${event.member} ${event.text}`);
+    const LOST =
+      'Antonio lost GitHub @antonio: its renewed token could not be kept, so it must reconnect';
+
+    test('forgets the spent account and tells the member to reconnect', async () => {
+      const accounts = expiredAccount();
+      expect(await accounts.complete('c', seeded.ownerId)).toMatchObject({ ok: true });
+      await pool.query(
+        `create function fail_update() returns trigger language plpgsql as
+           $$ begin raise exception 'update of % failed', tg_table_name; end $$`
+      );
+      await pool.query(
+        'create trigger fail_update before update on github_accounts for each row execute function fail_update()'
+      );
+      await expect(accounts.tokenFor(seeded.ownerId)).rejects.toThrow(
+        'update of github_accounts failed'
+      );
+      await pool.query('drop trigger fail_update on github_accounts');
+      await pool.query('drop function fail_update()');
+
+      expect((await pool.query('select 1 from github_accounts')).rowCount).toBe(0);
+      expect(await githubLog()).toEqual([LOST, 'Antonio connected GitHub as @antonio']);
+      expect(await accounts.tokenFor(seeded.ownerId)).toBeNull();
+      // The GitHub sign-in stays, and signing in with it stores fresh tokens again.
+      expect(await accounts.complete('c', null)).toMatchObject({
+        ok: true,
+        memberId: seeded.ownerId
+      });
+      expect((await pool.query('select 1 from github_accounts')).rowCount).toBe(1);
+    });
+
+    test('a refusal to store them forgets the account too', async () => {
+      const accounts = expiredAccount();
+      expect(await accounts.complete('c', seeded.ownerId)).toMatchObject({ ok: true });
+      await invite(pool, {
+        publicUrl: 'https://officina.example',
+        email: 'gio@example.com',
+        name: 'Gio',
+        role: 'contributor',
+        domains: []
+      });
+      const gio = (await findMemberByEmail(pool, 'gio@example.com'))!.id;
+      await pool.query("update identities set member_id = $1 where provider = 'github'", [gio]);
+
+      expect(await accounts.tokenFor(seeded.ownerId)).toBeNull();
+      expect((await pool.query('select 1 from github_accounts')).rowCount).toBe(0);
+      expect((await githubLog())[0]).toBe(LOST);
+    });
+
+    test('an account reconnected meanwhile is never forgotten', async () => {
+      const accounts = expiredAccount();
+      expect(await accounts.complete('c', seeded.ownerId)).toMatchObject({ ok: true });
+      expect(await forgetSpentGitHubAccount(pool, seeded.ownerId, 'another-refresh')).toBe(false);
+      expect((await pool.query('select 1 from github_accounts')).rowCount).toBe(1);
+      expect(await githubLog()).toEqual(['Antonio connected GitHub as @antonio']);
+    });
   });
 
   test('an expired refresh token gives no token, without asking GitHub', async () => {

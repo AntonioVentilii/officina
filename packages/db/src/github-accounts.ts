@@ -151,6 +151,28 @@ export const loadGitHubAccount = async (
     )
   ).rows[0] ?? null;
 
+/**
+ * Forgets a linked account whose refresh token GitHub has already spent, when the tokens it gave in
+ * exchange could not be stored, and records in the access log that the member must reconnect. Only
+ * the row still holding that spent token goes, so an account reconnected meanwhile stays. The GitHub
+ * sign-in stays too: signing in with GitHub stores fresh tokens again.
+ */
+export const forgetSpentGitHubAccount = (pool: Pool, memberId: string, refreshTokenEnc: string) =>
+  inTransaction(pool, async (db) => {
+    const { rows } = await db.query<{ login: string }>(
+      `delete from github_accounts where member_id = $1 and refresh_token_enc = $2
+       returning login`,
+      [memberId, refreshTokenEnc]
+    );
+    if (!rows[0]) return false;
+    await recordAccessEvent(db, {
+      memberId,
+      type: 'github_unlinked',
+      detail: { login: rows[0].login, reason: 'refresh_lost' }
+    });
+    return true;
+  });
+
 export const memberForGitHubUser = async (db: Queryable, githubUserId: number) =>
   (
     await db.query<{ member_id: string }>(
