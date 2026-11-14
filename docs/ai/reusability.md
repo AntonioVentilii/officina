@@ -66,6 +66,7 @@ Search here before writing a helper, a type, a component or a fake. When you add
 | `handInBuild`, `HandInPort`                                                                                                          | `packages/engine/src/hand-in.ts`      | A developer's claimed build, read from GitHub and sent to review as theirs                                    |
 | `collectDueSteps`, `tick`                                                                                                            | `packages/engine/src/tick.ts`         | Dispatch and due work                                                                                         |
 | `syncSpecStatus`, `postChecklist`, `approveOnGitHub`, `askCopilotToReview`, `requestCopilotReviews`, `checklistMarkdown`, `taskLink` | `packages/engine/src/github-sync.ts`  | Mirroring to GitHub, and acting there as a member (`OnBehalf`)                                                |
+| `cancelTaskAutoMerge`, `cancelStaleAutoMerges`                                                                                       | `packages/engine/src/github-sync.ts`  | Turns a task's auto-merge off and records it, for the webhooks and the scheduler                              |
 
 ## `apps/api`
 

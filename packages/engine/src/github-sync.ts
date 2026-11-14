@@ -324,6 +324,28 @@ const autoMergeOnGitHub = async (
 };
 
 /**
+ * Turns a task's auto-merge off on GitHub and records it in the task's trail, which is what tells
+ * `cancelStaleAutoMerges` it is off. Throws when GitHub refuses, so nothing is recorded.
+ */
+export const cancelTaskAutoMerge = async (
+  pool: Pool,
+  github: Pick<SyncGitHubPort, 'cancelAutoMerge'>,
+  task: { id: string; installationId: number; repo: string; pullRequest: number }
+) => {
+  await github.cancelAutoMerge({
+    installationId: task.installationId,
+    repo: task.repo,
+    pullRequest: task.pullRequest
+  });
+  await appendTaskEvent(pool, {
+    taskId: task.id,
+    actor: ENGINE,
+    type: 'github_auto_merge_cancelled',
+    payload: { pullRequest: task.pullRequest }
+  });
+};
+
+/**
  * Turns auto-merge off, until GitHub confirms it, on every task of a project whose trail may have
  * it on (turned on, or an attempt with an unknown outcome) when it must not be: the task left
  * merging (sent back to building, or cancelled), the attempt failed, or the pull request was held
@@ -339,17 +361,7 @@ export const cancelStaleAutoMerges = async (
   const failures: string[] = [];
   for (const task of stale) {
     try {
-      await github.cancelAutoMerge({
-        installationId: task.installationId,
-        repo: task.repo,
-        pullRequest: task.pullRequest
-      });
-      await appendTaskEvent(pool, {
-        taskId: task.id,
-        actor: ENGINE,
-        type: 'github_auto_merge_cancelled',
-        payload: { pullRequest: task.pullRequest }
-      });
+      await cancelTaskAutoMerge(pool, github, task);
     } catch (error) {
       failures.push(`${task.repo}#${task.pullRequest}: ${(error as Error).message}`);
     }

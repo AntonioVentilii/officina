@@ -1,7 +1,6 @@
 import { ENGINE, parseProjectConfigYaml, type Command } from '@officina/core';
 import {
   answeredOverviewLast,
-  appendTaskEvent,
   applyCommand,
   findProjectsByRepo,
   findTasksByPullRequest,
@@ -10,6 +9,7 @@ import {
   unlinkPullRequest,
   updateProjectConfig
 } from '@officina/db';
+import { cancelTaskAutoMerge } from '@officina/engine';
 import {
   COPILOT_REVIEWERS,
   copilotVerdict,
@@ -121,19 +121,19 @@ const stopAutoMerge = async (
   const leftMerging =
     result.ok &&
     result.events.some((event) => event.type === 'stage_changed' && event.from === 'merging');
-  if (!leftMerging || !github?.cancelAutoMerge) return;
+  const cancelAutoMerge = github?.cancelAutoMerge;
+  if (!leftMerging || !cancelAutoMerge) return;
   try {
-    await github.cancelAutoMerge({
-      installationId: input.installationId,
-      repo: input.repo,
-      pullRequest: input.prNumber
-    });
-    await appendTaskEvent(pool, {
-      taskId: input.taskId,
-      actor: ENGINE,
-      type: 'github_auto_merge_cancelled',
-      payload: { pullRequest: input.prNumber }
-    });
+    await cancelTaskAutoMerge(
+      pool,
+      { cancelAutoMerge },
+      {
+        id: input.taskId,
+        installationId: input.installationId,
+        repo: input.repo,
+        pullRequest: input.prNumber
+      }
+    );
   } catch {
     // Left to `cancelStaleAutoMerges`.
   }

@@ -3,6 +3,7 @@ export {
   askCopilotToReview,
   checklistMarkdown,
   cancelStaleAutoMerges,
+  cancelTaskAutoMerge,
   finishVerifiedSpecs,
   requestCopilotReviews,
   syncSpecStatus,
