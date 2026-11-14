@@ -186,6 +186,23 @@ const closeLeftPullRequest = async (
 };
 
 /**
+ * The learning a decision is about, if it can still be decided as asked: still proposed, and for an
+ * accept, the edit the person read, never one rewritten since.
+ */
+const decidable = (
+  learning: LearningRow | null,
+  input: { readonly decision: 'accept' | 'reject'; readonly rewrittenAt: string | null }
+): LearningRow => {
+  if (!learning) throw new TaskCommandError('learning not found');
+  if (learning.status !== 'proposed')
+    throw new TaskCommandError('this learning was already decided');
+  const read = learning.rewrittenAt?.toISOString() ?? null;
+  if (input.decision === 'accept' && read !== input.rewrittenAt)
+    throw new TaskCommandError('the edit was rewritten since you read it; read it again first');
+  return learning;
+};
+
+/**
  * Accepting a learning for the project's docs or agent docs opens a pull request with exactly the edit people saw; an agent
  * learning is recorded for Officina's maintainers, whose repository Officina does not write to.
  * Either way people merge, never Officina. The learning stays locked from the first read to the
@@ -197,16 +214,19 @@ export const decide = async (
   pool: Pool,
   github: LearningGitHub | undefined,
   target: Target,
-  input: { id: string; decision: 'accept' | 'reject'; note?: string | undefined }
+  input: {
+    id: string;
+    decision: 'accept' | 'reject';
+    /** The `rewrittenAt` of the edit the person read, as the board received it. */
+    rewrittenAt: string | null;
+    note?: string | undefined;
+  }
 ): Promise<LearningRow> => {
   if (!can(target, 'decide_learnings'))
     throw new TaskCommandError('only maintainers and owners decide on learnings');
   return inTransaction(pool, async (client) => {
     await lockLearning(client, input.id);
-    const learning = await loadLearning(client, target.projectId, input.id);
-    if (!learning) throw new TaskCommandError('learning not found');
-    if (learning.status !== 'proposed')
-      throw new TaskCommandError('this learning was already decided');
+    const learning = decidable(await loadLearning(client, target.projectId, input.id), input);
     let pr: { number: number; url: string } | undefined;
     if (input.decision === 'accept' && editsProject(learning.target)) {
       const opened = await acceptIntoPullRequest(client, learning, {
