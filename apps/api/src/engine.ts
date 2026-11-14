@@ -13,6 +13,7 @@ import {
 } from '@officina/engine';
 import {
   failOrphanedRuns,
+  failStaleRuns,
   failTakenOverRuns,
   listActiveTaskIds,
   listSchedulableProjectIds,
@@ -28,7 +29,8 @@ import {
   type AnthropicAuth,
   type ManagedAgentsPort,
   type ModelResolver,
-  type RunnerRole
+  type RunnerRole,
+  SESSION_DEADLINE_MS
 } from '@officina/runner';
 import type { Pool } from 'pg';
 import { startScheduler, type Scheduler } from './scheduler';
@@ -36,6 +38,9 @@ import { setupAgents } from './setup';
 import { catchUpPullRequests } from './catch-up';
 
 const PURGE_INTERVAL_MS = 60 * 60 * 1000;
+
+/** Well past a session's own deadline, so only a run its step no longer looks after is failed. */
+const STALE_RUN_MS = 2 * SESSION_DEADLINE_MS;
 
 /** Interrupts the sessions of runs failed outside their step, best-effort: the run is failed already. */
 const interruptSessions = async (
@@ -148,6 +153,11 @@ export const startEngine = async (input: {
         return [];
       });
       await interruptSessions(input.agents, takenOver, input.log, 'taken over run stopped');
+      const stale = await failStaleRuns(input.pool, STALE_RUN_MS).catch((error: unknown) => {
+        input.log('stale run check failed', { error: (error as Error).message });
+        return [];
+      });
+      await interruptSessions(input.agents, stale, input.log, 'stale run failed');
       const due = [];
       for (const projectId of await listSchedulableProjectIds(input.pool)) {
         const active = await listActiveTaskIds(input.pool, projectId);

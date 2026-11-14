@@ -1,7 +1,14 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { Pool } from 'pg';
 import type { Actor, Command } from '@officina/core';
-import { applyCommand, createTask, failOrphanedRuns, loadTask, startRun } from '../src';
+import {
+  applyCommand,
+  createTask,
+  failOrphanedRuns,
+  failStaleRuns,
+  loadTask,
+  startRun
+} from '../src';
 import { PLAN, resetAndSeed } from './seed';
 
 const url = process.env.TEST_DATABASE_URL;
@@ -239,5 +246,39 @@ describe.skipIf(!url)('task store', () => {
         })
       ).ok
     ).toBe(true);
+  });
+
+  test('runs in progress long past their deadline are failed once, and recent ones are left', async () => {
+    const claimFor = async (title: string) => {
+      const { task } = await createTask(pool, { projectId, title, requesterId: antonioId });
+      const claim = await startRun(pool, {
+        taskId: task.id,
+        stage: 'speccing',
+        role: 'spec',
+        agentVersion: 1,
+        runner: 'managed_agents'
+      });
+      if (!claim.ok) throw new Error('claim failed');
+      return claim.runId;
+    };
+    const stale = await claimFor('Hung');
+    const recent = await claimFor('Working');
+    await pool.query(
+      `update runs set started_at = now() - interval '3 hours', external_id = 'sesn_hung'
+       where id = $1`,
+      [stale]
+    );
+
+    const twoHours = 2 * 60 * 60 * 1000;
+    expect(await failStaleRuns(pool, twoHours)).toEqual([{ id: stale, externalId: 'sesn_hung' }]);
+    expect(await failStaleRuns(pool, twoHours)).toEqual([]);
+    const { rows } = await pool.query<{ id: string; status: string }>(
+      'select id, status from runs where id = any($1::uuid[]) order by status',
+      [[stale, recent]]
+    );
+    expect(rows).toEqual([
+      { id: stale, status: 'failed' },
+      { id: recent, status: 'running' }
+    ]);
   });
 });

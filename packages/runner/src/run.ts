@@ -4,6 +4,12 @@ import type { ManagedAgentsPort, SessionEvent, SessionRequest } from './port';
 
 export const MAX_RESULT_ATTEMPTS = 3;
 
+/**
+ * How long one session may run before its step stops waiting: past it the session is interrupted
+ * and the run fails, so a stream that stops sending events cannot hold the role forever.
+ */
+export const SESSION_DEADLINE_MS = 2 * 60 * 60 * 1000;
+
 /** The runner every run records: Managed Agents is the only one. */
 export const RUNNER = 'managed_agents';
 
@@ -24,9 +30,43 @@ const stopReason = (event: SessionEvent): string | undefined =>
   (event.stop_reason as { type?: string } | undefined)?.type;
 
 /**
+ * The stream's events until `deadlineMs` passes, then none: `passed()` says whether the deadline
+ * ended them. A stream closed early is closed at its source too, except one that is hung past the
+ * deadline, which is left without waiting on it.
+ */
+const untilDeadline = (stream: AsyncIterable<SessionEvent>, deadlineMs: number) => {
+  let passed = false;
+  async function* events() {
+    const iterator = stream[Symbol.asyncIterator]();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<'deadline'>((resolve) => {
+      timer = setTimeout(() => resolve('deadline'), deadlineMs);
+    });
+    try {
+      for (;;) {
+        const next = await Promise.race([iterator.next(), deadline]);
+        if (next === 'deadline') {
+          passed = true;
+          return;
+        }
+        if (next.done) return;
+        yield next.value;
+      }
+    } finally {
+      clearTimeout(timer);
+      const closing = Promise.resolve(iterator.return?.()).catch(() => {});
+      if (!passed) await closing;
+    }
+  }
+  return { events: events(), passed: () => passed };
+};
+
+/**
  * Runs one agent role in one session: opens the event stream before sending the brief so no early
  * event is missed, validates every `submit_result` call against the role's contract, returns the
- * problems to the agent when a result is invalid, and stops only when the session is truly done.
+ * problems to the agent when a result is invalid, and stops only when the session is truly done, or
+ * when it runs past its deadline (`SESSION_DEADLINE_MS` unless `deadlineMs` says otherwise), which
+ * interrupts it and fails the run unless a result was already accepted.
  */
 export const executeRun = async (
   port: ManagedAgentsPort,
@@ -40,6 +80,7 @@ export const executeRun = async (
       | ((output: AgentOutput<RunnerRole>) => readonly string[] | Promise<readonly string[]>)
       | undefined;
     readonly onEvent?: (event: SessionEvent) => Promise<void> | void;
+    readonly deadlineMs?: number;
   }
 ): Promise<RunReport> => {
   const { id: sessionId } = await port.createSession(input.session);
@@ -51,8 +92,9 @@ export const executeRun = async (
   let attempts = 0;
   let lastErrors: readonly string[] = [];
   let outcome: RunOutcome | null = null;
+  const bounded = untilDeadline(stream, input.deadlineMs ?? SESSION_DEADLINE_MS);
 
-  for await (const event of stream) {
+  for await (const event of bounded.events) {
     await input.onEvent?.(event);
 
     if (event.type === 'agent.custom_tool_use') {
@@ -124,6 +166,11 @@ export const executeRun = async (
       }
       break;
     }
+  }
+
+  if (bounded.passed()) {
+    await port.send(sessionId, [{ type: 'user.interrupt' }]).catch(() => {});
+    outcome ??= { kind: 'failed', reason: 'the session ran past its deadline and was interrupted' };
   }
 
   const costCents = await port.sessionCostCents(sessionId).catch(() => null);
