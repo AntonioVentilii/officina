@@ -45,7 +45,8 @@ describe.skipIf(!url)('migrations', () => {
       '0015_learning_rewrite.sql',
       '0016_workspace_name_unique.sql',
       '0017_access_events.sql',
-      '0018_connector_use_daily.sql'
+      '0018_connector_use_daily.sql',
+      '0020_member_joined.sql'
     ]);
     expect(await migrate(client)).toEqual([]);
   });

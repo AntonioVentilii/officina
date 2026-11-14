@@ -166,3 +166,23 @@ export const listSchedulableProjectIds = async (db: Queryable): Promise<string[]
        order by created_at`
     )
   ).rows.map((row) => row.id);
+
+/**
+ * The role a viewer holds in each project the given members belong to, `null` where they hold
+ * none, keyed by member.
+ */
+export const viewerRolesOver = async (
+  db: Queryable,
+  viewerId: string,
+  memberIds: readonly string[]
+): Promise<Map<string, (Role | null)[]>> => {
+  const { rows } = await db.query<{ member_id: string; role: Role | null }>(
+    `select r.member_id, v.role from project_roles r
+     left join project_roles v on v.project_id = r.project_id and v.member_id = $1
+     where r.member_id = any($2::uuid[])`,
+    [viewerId, memberIds]
+  );
+  const roles = new Map<string, (Role | null)[]>();
+  for (const row of rows) roles.set(row.member_id, [...(roles.get(row.member_id) ?? []), row.role]);
+  return roles;
+};

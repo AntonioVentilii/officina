@@ -557,7 +557,7 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
       })
       .get('/api/projects/:projectId/members', async ({ request, params }) => {
         const viewer = technicalViewer(viewerFor(await signedIn(request), params.projectId));
-        return { members: await membersView(pool, viewer.projectId, viewer.role) };
+        return { members: await membersView(pool, viewer.projectId, viewer.memberId) };
       })
       .post('/api/projects/:projectId/members/:memberId/link', async ({ request, params }) => {
         mutation(request);

@@ -1,9 +1,10 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { DEFAULT_BOARD_LOOK, type BoardLook, type Role } from '@officina/core';
+import { DEFAULT_BOARD_LOOK, managesEverywhere, type BoardLook, type Role } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
 import { recordAccessEvent } from './access';
 import { purgeExpiredOAuthStates } from './github-accounts';
 import { recordFirstSignIn } from './members';
+import { viewerRolesOver } from './projects';
 import { inTransaction } from './store';
 
 type Queryable = Pool | PoolClient;
@@ -31,15 +32,17 @@ export const createLoginLink = async (
 export type InviteLinkResult =
   | { readonly ok: true; readonly token: string }
   | { readonly ok: false; readonly error: 'not_member' }
-  | { readonly ok: false; readonly error: 'signed_in'; readonly name: string };
+  | { readonly ok: false; readonly error: 'signed_in' | 'other_projects'; readonly name: string };
 
 /**
- * A new sign-in link for a project member who has never signed in. The member's row is locked while
- * the link is written, so a sign-in racing it either lands first, and no link is made, or after.
+ * A new sign-in link for a project member who has never signed in, made by a viewer who may manage
+ * them in every project they belong to, since the link signs in as them in each. The member's row
+ * is locked while the link is written, so a sign-in racing it either lands first, and no link is
+ * made, or after. The new link replaces any the member still had pending.
  */
 export const createInviteLink = (
   pool: Pool,
-  input: { projectId: string; memberId: string; ttlMs: number }
+  input: { projectId: string; memberId: string; viewerId: string; ttlMs: number }
 ): Promise<InviteLinkResult> =>
   inTransaction(pool, async (client) => {
     const { rows } = await client.query<{ name: string; signed_in: boolean }>(
@@ -51,6 +54,14 @@ export const createInviteLink = (
     const member = rows[0];
     if (!member) return { ok: false, error: 'not_member' };
     if (member.signed_in) return { ok: false, error: 'signed_in', name: member.name };
+    const roles = await viewerRolesOver(client, input.viewerId, [input.memberId]);
+    if (!managesEverywhere(roles.get(input.memberId) ?? []))
+      return { ok: false, error: 'other_projects', name: member.name };
+    await client.query(
+      `update login_links set expires_at = now()
+       where member_id = $1 and used_at is null and expires_at > now()`,
+      [input.memberId]
+    );
     return { ok: true, token: await createLoginLink(client, input.memberId, input.ttlMs) };
   });
 

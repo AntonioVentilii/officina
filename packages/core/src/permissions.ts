@@ -139,3 +139,11 @@ export const readsTask = (
   member: Pick<Member, 'role'> & Partial<Pick<Member, 'domains'>>,
   task: { readonly guards: readonly Guard[] }
 ): boolean => !task.guards.includes('confidential') || can(member, 'see_confidential');
+
+/**
+ * Whether someone may manage a member everywhere that member belongs, given their own role in each
+ * of the member's projects (`null` where they have none). A sign-in link signs in as the member in
+ * every one of those projects, so making one needs `manage_members` in all of them.
+ */
+export const managesEverywhere = (rolesOverMember: readonly (Role | null)[]): boolean =>
+  rolesOverMember.every((role) => role !== null && can({ role }, 'manage_members'));

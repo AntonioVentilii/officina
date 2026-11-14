@@ -180,7 +180,12 @@ describe.skipIf(!url)('member activity', () => {
   test('a fresh invite link waits for a first sign-in in flight and is refused once it lands', async () => {
     const tim = await addMember('Tim', 'contributor');
     const mint = (memberId: string) =>
-      createInviteLink(pool, { projectId: seeded.projectId, memberId, ttlMs: HOUR_MS });
+      createInviteLink(pool, {
+        projectId: seeded.projectId,
+        memberId,
+        viewerId: seeded.ownerId,
+        ttlMs: HOUR_MS
+      });
     const signing = await pool.connect();
     try {
       await signing.query('begin');
@@ -200,5 +205,82 @@ describe.skipIf(!url)('member activity', () => {
       ok: false,
       error: 'not_member'
     });
+  });
+
+  test('a fresh invite link needs every project the member is in, and replaces a pending one', async () => {
+    const tim = await addMember('Tim', 'contributor');
+    const other = (
+      await pool.query<{ id: string }>(
+        `insert into projects (workspace_id, name, github_repo)
+         select workspace_id, 'vici-dataroom', 'ViciApp/vici-dataroom' from projects where id = $1
+         returning id`,
+        [seeded.projectId]
+      )
+    ).rows[0]!.id;
+    await pool.query(
+      "insert into project_roles (project_id, member_id, role) values ($1, $2, 'owner')",
+      [other, tim]
+    );
+    const mint = () =>
+      createInviteLink(pool, {
+        projectId: seeded.projectId,
+        memberId: tim,
+        viewerId: seeded.ownerId,
+        ttlMs: HOUR_MS
+      });
+    // The link would sign in as Tim where he owns a project the viewer has no part in.
+    expect(await mint()).toEqual({ ok: false, error: 'other_projects', name: 'Tim' });
+    await pool.query(
+      "insert into project_roles (project_id, member_id, role) values ($1, $2, 'maintainer')",
+      [other, seeded.ownerId]
+    );
+    expect(await mint()).toEqual({ ok: false, error: 'other_projects', name: 'Tim' });
+    await pool.query(
+      "update project_roles set role = 'owner' where project_id = $1 and member_id = $2",
+      [other, seeded.ownerId]
+    );
+
+    const pending = await createLoginLink(pool, tim, HOUR_MS);
+    const fresh = await mint();
+    if (!fresh.ok) throw new Error('expected a link');
+    expect(await redeemLoginLink(pool, pending)).toBeNull();
+    expect(await redeemLoginLink(pool, fresh.token)).toMatchObject({ memberId: tim });
+  });
+
+  test('members with a session, GitHub or Claude count as joined, and their pending links end', async () => {
+    const tim = await addMember('Tim', 'contributor');
+    const gio = await addMember('Gio', 'contributor');
+    const ada = await addMember('Ada', 'contributor');
+    // As a member whose first link was purged before sign-ins were recorded would be.
+    await pool.query(
+      'insert into sessions (token_hash, member_id, expires_at) values ($1, $2, now())',
+      ['old-session', tim]
+    );
+    const client = await registerConnectorClient(pool, {
+      name: 'Claude',
+      redirectUris: ['https://claude.ai/cb']
+    });
+    await issueConnectorTokens(pool, {
+      clientId: client.id,
+      memberId: gio,
+      resource: 'https://officina.example/mcp',
+      accessTtlMs: HOUR_MS,
+      refreshTtlMs: HOUR_MS
+    });
+    const timLink = await createLoginLink(pool, tim, HOUR_MS);
+    const adaLink = await createLoginLink(pool, ada, HOUR_MS);
+
+    const sql = await Bun.file(
+      new URL('../migrations/0020_member_joined.sql', import.meta.url)
+    ).text();
+    await pool.query(sql);
+    await pool.query(sql);
+
+    const members = await byName();
+    expect(members.Tim!.firstSignedInAt).not.toBeNull();
+    expect(members.Gio!.firstSignedInAt).not.toBeNull();
+    expect(members.Ada!.firstSignedInAt).toBeNull();
+    expect(await redeemLoginLink(pool, timLink)).toBeNull();
+    expect(await redeemLoginLink(pool, adaLink)).toMatchObject({ memberId: ada });
   });
 });

@@ -1069,6 +1069,33 @@ describe.skipIf(!url)('board api', () => {
     expect((await json(again)).error).toBe('Tim has already signed in');
   });
 
+  test('a fresh link is only for a member whose every project the owner owns', async () => {
+    const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    await invite(pool, {
+      publicUrl: PUBLIC_URL,
+      email: 'tim@example.com',
+      name: 'Tim',
+      role: 'contributor',
+      domains: []
+    });
+    const tim = (
+      await pool.query<{ id: string }>("select id from members where email = 'tim@example.com'")
+    ).rows[0]!.id;
+    await pool.query(
+      `with p as (insert into projects (workspace_id, name, github_repo)
+                  select workspace_id, 'tims-app', 'Tim/tims-app' from projects where id = $1
+                  returning id)
+       insert into project_roles (project_id, member_id, role) select id, $2, 'owner' from p`,
+      [seeded.projectId, tim]
+    );
+    const project = `/api/projects/${seeded.projectId}`;
+    const listed = (await json(await call(owner, `${project}/members`))).members;
+    expect(listed.find((member: { name: string }) => member.name === 'Tim').invitable).toBe(false);
+    const refused = await call(owner, `${project}/members/${tim}/link`, {});
+    expect(refused.status).toBe(403);
+    expect((await json(refused)).error).toContain('also in a project you do not own');
+  });
+
   test('an accepted invite reaches the owner Inbox and leaves it once read', async () => {
     const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
     const project = `/api/projects/${seeded.projectId}`;

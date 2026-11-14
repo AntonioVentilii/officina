@@ -1,4 +1,4 @@
-import { ROLES, can, type Role } from '@officina/core';
+import { ROLES, can, managesEverywhere, type Role } from '@officina/core';
 import {
   createInviteLink,
   createLoginLink,
@@ -10,6 +10,7 @@ import {
   resolveProjectMember,
   setProjectRole,
   upsertMember,
+  viewerRolesOver,
   loadProject,
   type AccessEventRow,
   type AccessEventType,
@@ -95,22 +96,30 @@ export interface MemberView extends MemberActivity {
 }
 
 /**
- * A sign-in link signs in as its member, so only an owner, who could invite them, may send another,
- * and only to someone who never signed in: a member who has signed in has their own way back in.
+ * A sign-in link signs in as its member in every project they belong to, so only someone who may
+ * manage them in all of those may send another, and only to someone who never signed in: a member
+ * who has signed in has their own way back in.
  */
-const mayInviteAgain = (viewerRole: Role, member: MemberActivity) =>
-  can({ role: viewerRole }, 'manage_members') && member.firstSignedInAt === null;
+const mayInviteAgain = (rolesOverMember: readonly (Role | null)[], member: MemberActivity) =>
+  managesEverywhere(rolesOverMember) && member.firstSignedInAt === null;
 
 /** The project's members as the board's Members page shows them to an owner or maintainer. */
 export const membersView = async (
   pool: Pool,
   projectId: string,
-  viewerRole: Role
-): Promise<MemberView[]> =>
-  (await listMemberActivity(pool, projectId)).map((member) => ({
+  viewerId: string
+): Promise<MemberView[]> => {
+  const members = await listMemberActivity(pool, projectId);
+  const roles = await viewerRolesOver(
+    pool,
+    viewerId,
+    members.map((member) => member.id)
+  );
+  return members.map((member) => ({
     ...member,
-    invitable: mayInviteAgain(viewerRole, member)
+    invitable: mayInviteAgain(roles.get(member.id) ?? [], member)
   }));
+};
 
 /** A fresh invite link for a member who has not signed in yet, valid as long as a first invite. */
 export const inviteAgain = async (
@@ -135,6 +144,11 @@ export const inviteAgain = async (
     return signInUrl(input.publicUrl, result.token);
   }
   if (result.error === 'not_member') throw new TaskCommandError('member not found', 404);
+  if (result.error === 'other_projects')
+    throw new TaskCommandError(
+      `${result.name} is also in a project you do not own: an owner of each of their projects can send the link`,
+      403
+    );
   throw new TaskCommandError(`${result.name} has already signed in`);
 };
 

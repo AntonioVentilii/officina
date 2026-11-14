@@ -6,6 +6,7 @@ import {
   allowedActions,
   can,
   canAnswer,
+  managesEverywhere,
   readsTask,
   seesQuestion
 } from '../src';
@@ -95,6 +96,13 @@ describe('permission matrix', () => {
     expect(readsTask({ role: 'contributor' }, confidential)).toBe(false);
     expect(readsTask({ role: 'contributor', domains: ['confidential'] }, confidential)).toBe(true);
     expect(readsTask({ role: 'maintainer' }, confidential)).toBe(true);
+  });
+
+  test('managing a member everywhere needs the right in each of their projects', () => {
+    expect(managesEverywhere(['owner'])).toBe(true);
+    expect(managesEverywhere(['owner', 'owner'])).toBe(true);
+    expect(managesEverywhere(['owner', null])).toBe(false);
+    expect(managesEverywhere(['owner', 'maintainer'])).toBe(false);
   });
 
   test('every action has words people read', () => {
