@@ -481,6 +481,54 @@ describe.skipIf(!url)('api', () => {
     expect(notes.rows[0]?.notes).toContain('`src/a.ts:3`: Typo in the key.');
   });
 
+  test("a collaborator's request for changes sends merging work back with the review and stops auto-merge", async () => {
+    const calls: string[] = [];
+    const reviewing = createApp({
+      pool,
+      webhookSecret: SECRET,
+      github: {
+        fileContent: async () => null,
+        reviewComments: async () => [],
+        cancelAutoMerge: async () => {
+          calls.push('cancelAutoMerge');
+        }
+      }
+    });
+    await pool.query('update projects set github_installation_id = 99 where id = $1', [
+      seeded.projectId
+    ]);
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+
+    const response = await deliver(reviewing, {
+      event: 'pull_request_review',
+      delivery: 'r-person',
+      payload: {
+        action: 'submitted',
+        review: {
+          id: 6,
+          state: 'changes_requested',
+          body: 'Rename the flag before this lands.',
+          commit_id: 'abc',
+          author_association: 'COLLABORATOR',
+          user: { login: 'alice', type: 'User' }
+        },
+        pull_request: { number: 42 },
+        repository
+      }
+    });
+    expect(await response.json()).toEqual({ status: 'applied', outcomes: [{ taskId, ok: true }] });
+    expect((await loadTask(pool, taskId))?.task.stage).toBe('building');
+    expect(calls).toEqual(['cancelAutoMerge']);
+    const notes = await pool.query<{ notes: string }>(
+      `select payload->>'notes' as notes from task_events
+       where task_id = $1 and type = 'review_recorded' and payload->>'reviewer' = 'github'`,
+      [taskId]
+    );
+    expect(notes.rows[0]?.notes).toContain('@alice');
+    expect(notes.rows[0]?.notes).toContain('Rename the flag before this lands.');
+  });
+
   test('a Copilot review with no comment on the code is read once per answer', async () => {
     const reviewing = createApp({
       pool,
@@ -673,6 +721,37 @@ describe.skipIf(!url)('api', () => {
       status: 'applied',
       outcomes: []
     });
+  });
+
+  test('a config deleted from the default branch is reported missing and the last one stays', async () => {
+    let served: string | null = 'version: 1\ndocs: { entry: CONTRIBUTING.md }\n';
+    const withGitHub = createApp({
+      pool,
+      webhookSecret: SECRET,
+      github: { fileContent: async () => served }
+    });
+    await pool.query('update projects set github_installation_id = 99 where id = $1', [
+      seeded.projectId
+    ]);
+    const push = (delivery: string, change: 'modified' | 'removed') =>
+      deliver(withGitHub, {
+        event: 'push',
+        delivery,
+        payload: {
+          ref: 'refs/heads/main',
+          commits: [{ [change]: ['.github/officina.yml'] }],
+          repository
+        }
+      });
+    await push('d-8', 'modified');
+
+    served = null;
+    expect(await (await push('d-9', 'removed')).json()).toEqual({
+      status: 'applied',
+      outcomes: [{ projectId: seeded.projectId, config: 'missing' }]
+    });
+    const entry = await pool.query(`select config->'docs'->>'entry' as entry from projects`);
+    expect(entry.rows[0].entry).toBe('CONTRIBUTING.md');
   });
 
   test('malformed requests are rejected', async () => {
