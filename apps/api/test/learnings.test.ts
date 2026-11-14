@@ -86,33 +86,34 @@ describe.skipIf(!url)('learning decisions', () => {
     const written = new Map<string, string>();
     const open = new Set<string>();
     let failOpening = options.failOpening ?? 0;
-    const record = (method: string) => async (args: Record<string, unknown>) => {
-      calls.push({ method, args });
-      if (method === 'readFile') {
-        const text = written.get(String(args.branch));
+    const note = (method: string, args: object) => calls.push({ method, args: { ...args } });
+    const port: LearningGitHub = {
+      readFile: async (args) => {
+        note('readFile', args);
+        const text = written.get(args.branch);
         return text === undefined
           ? { text: options.base ?? '# Agents\n\n## Copy\n', sha: 'blob1' }
           : { text, sha: 'blob2' };
-      }
-      if (method === 'updateFile') {
-        written.set(String(args.branch), String(args.text));
+      },
+      updateFile: async (args) => {
+        note('updateFile', args);
+        written.set(args.branch, args.text);
         return { commitSha: 'learn1', parentSha: 'main1' };
-      }
-      if (method === 'closePullRequestsFrom') open.delete(String(args.branch));
-      if (method === 'openPullRequest') {
-        open.add(String(args.branch));
+      },
+      createBranch: async (args) => {
+        note('createBranch', args);
+      },
+      openPullRequest: async (args) => {
+        note('openPullRequest', args);
+        open.add(args.branch);
         if (failOpening-- > 0) throw new Error('GitHub 502 on /pulls');
         return { number: 77, url: 'https://github.com/x/pull/77' };
+      },
+      closePullRequestsFrom: async (args) => {
+        note('closePullRequestsFrom', args);
+        open.delete(args.branch);
       }
-      return undefined;
     };
-    const port = {
-      readFile: record('readFile'),
-      updateFile: record('updateFile'),
-      createBranch: record('createBranch'),
-      openPullRequest: record('openPullRequest'),
-      closePullRequestsFrom: record('closePullRequestsFrom')
-    } as unknown as LearningGitHub;
     return { port, calls, open };
   };
 

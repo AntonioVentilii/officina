@@ -5,11 +5,12 @@ import { RUNNER_ROLES } from '@officina/runner';
 import { Pool } from 'pg';
 import { resetAndSeed, type Seeded } from '../../db/test/seed';
 import { createFakePort, idle, toolUse } from '../../runner/test/fake-port';
-import { collectDueSteps, runAgentStep, type GitHubPort } from '../src';
+import { collectDueSteps, runAgentStep } from '../src';
+import { gitHubWith } from './fake-github';
 
 const url = process.env.TEST_DATABASE_URL;
 
-const github = { installationToken: async () => 'token-read' } as unknown as GitHubPort;
+const github = gitHubWith({ installationToken: async () => 'token-read' });
 
 describe.skipIf(!url)('interviewer', () => {
   const pool = new Pool({ connectionString: url });

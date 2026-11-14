@@ -12,7 +12,8 @@ import { RUNNER_ROLES } from '@officina/runner';
 import { Pool } from 'pg';
 import { PLAN, applyOrThrow, resetAndSeed, type Seeded } from '../../db/test/seed';
 import { createFakePort, idle, toolUse } from '../../runner/test/fake-port';
-import { collectDueSteps, ensureOnboarding, runAgentStep, type GitHubPort } from '../src';
+import { collectDueSteps, ensureOnboarding, runAgentStep } from '../src';
+import { gitHubWith } from './fake-github';
 
 const url = process.env.TEST_DATABASE_URL;
 const PUBLIC_URL = 'https://officina.example';
@@ -29,7 +30,7 @@ const ONBOARDED = {
 
 const fakeGitHub = (changedPaths: readonly string[]) => {
   const opened: { title: string; body: string }[] = [];
-  const port = {
+  const port = gitHubWith({
     refSnapshot: async () => ({ branches: { main: 'main1' }, tags: {} }),
     runToken: async () => 'token',
     appBotLogin: async () => 'officina[bot]',
@@ -37,13 +38,13 @@ const fakeGitHub = (changedPaths: readonly string[]) => {
     revokeToken: async () => undefined,
     isPullRequestMerge: async () => false,
     installationToken: async () => 'token',
-    pushFacts: async () => ({ headSha: 'sha1', changedPaths, diffLines: 200 }),
+    pushFacts: async () => ({ headSha: 'sha1', changedPaths, addedPaths: [], diffLines: 200 }),
     readFile: async () => null,
-    openPullRequest: async (input: { title: string; body: string }) => {
+    openPullRequest: async (input) => {
       opened.push(input);
       return { number: 7, url: 'https://github.com/ViciApp/vici-app/pull/7' };
     }
-  } as unknown as GitHubPort;
+  });
   return { port, opened };
 };
 

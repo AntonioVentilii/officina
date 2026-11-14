@@ -15,17 +15,18 @@ import {
 } from '../src';
 import { createFakePort } from './fake-port';
 
-const toolset = (role: (typeof RUNNER_ROLES)[number]) =>
-  buildDefinition(role, 'prompt').tools[0] as unknown as {
-    configs: { name: string; enabled: boolean }[];
-  };
+const toolset = (role: (typeof RUNNER_ROLES)[number]) => {
+  const tool = buildDefinition(role, 'prompt').tools[0];
+  if (tool?.type !== 'agent_toolset_20260401') throw new Error('the first tool is the toolset');
+  return tool;
+};
 
 describe('agent definitions', () => {
   test('web access is off for every role and only the builder and the onboarder write files', () => {
     expect(RUNNER_ROLES.filter(isBuildRole)).toEqual(['builder', 'onboarder']);
     for (const role of RUNNER_ROLES) {
-      const disabled = toolset(role)
-        .configs.filter((config) => !config.enabled)
+      const disabled = (toolset(role).configs ?? [])
+        .filter((config) => !config.enabled)
         .map((config) => config.name);
       expect(disabled).toContain('web_search');
       expect(disabled).toContain('web_fetch');
@@ -35,13 +36,11 @@ describe('agent definitions', () => {
   });
 
   test('the result tool wraps the role contract', () => {
-    const tool = buildDefinition('reviewer_spec', 'prompt').tools[1] as unknown as {
-      name: string;
-      input_schema: { required: string[]; properties: { result: unknown } };
-    };
+    const tool = buildDefinition('reviewer_spec', 'prompt').tools[1];
+    if (tool?.type !== 'custom') throw new Error('the second tool is the result tool');
     expect(tool.name).toBe(RESULT_TOOL);
     expect(tool.input_schema.required).toEqual(['result']);
-    expect(JSON.stringify(tool.input_schema.properties.result)).toContain('approve');
+    expect(JSON.stringify(tool.input_schema.properties?.result)).toContain('approve');
   });
 
   test('the hash changes when the prompt changes', () => {
