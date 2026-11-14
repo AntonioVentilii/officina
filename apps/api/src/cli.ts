@@ -4,7 +4,14 @@ import { createGitHubClient } from '@officina/github';
 import { anthropicAuthFrom, createModelResolver } from '@officina/runner';
 import { Pool } from 'pg';
 import { createAgentsPort } from './engine';
-import { accessLogText, invite, loginLink, membersText } from './people';
+import {
+  INVITE_TTL_DAYS,
+  SIGN_IN_TTL_MINUTES,
+  accessLogText,
+  invite,
+  loginLink,
+  membersText
+} from './people';
 import { SetupError, addProject, setupAgents } from './setup';
 import {
   TaskCommandError,
@@ -37,9 +44,9 @@ const USAGE = `usage (on your machine, prefix with scripts/officina; on the serv
     and --as <email> (defaults to the project owner).
 
   People
-    login-link    [--email <email>]          one-time sign-in link to the board, valid 30 minutes
+    login-link    [--email <email>]          one-time sign-in link to the board, valid ${SIGN_IN_TTL_MINUTES} minutes
     invite        --email <email> --name "<name>" --role watcher|contributor|maintainer|owner
-                  [--domains product,legal]  adds or updates a member; the link is valid 7 days
+                  [--domains product,legal]  adds or updates a member; the link is valid ${INVITE_TTL_DAYS} days
     members                                  who is in the project, when they joined, whether their
                                              latest link was used, when they were last seen and
                                              whether they connected Claude

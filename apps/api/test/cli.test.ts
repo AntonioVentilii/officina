@@ -29,6 +29,9 @@ describe('cli arguments', () => {
       stderr: 'pipe'
     });
     expect(await run.exited).toBe(0);
-    expect(await new Response(run.stdout).text()).toStartWith('usage');
+    const usage = await new Response(run.stdout).text();
+    expect(usage).toStartWith('usage');
+    expect(usage).toContain('one-time sign-in link to the board, valid 30 minutes');
+    expect(usage).toContain('the link is valid 7 days');
   });
 });
