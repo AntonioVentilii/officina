@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.5.1](https://github.com/AntonioVentilii/officina/compare/v1.5.0...v1.5.1) (2026-11-14)
+
+
+### Bug Fixes
+
+* **api:** a learning that replaces a whole line keeps the line break after it ([#121](https://github.com/AntonioVentilii/officina/issues/121)) ([f4e6924](https://github.com/AntonioVentilii/officina/commit/f4e692462f127e7bfae7c2bda586b2c166fa249e))
+
+
+### Code Refactoring
+
+* **core,db,api:** one list of approval gates and one approval state for the board and the CLI ([#111](https://github.com/AntonioVentilii/officina/issues/111)) ([2ea1876](https://github.com/AntonioVentilii/officina/commit/2ea18760c591d8cb714e3b27a7519d18c7f13d6f))
+
+
+### Tests
+
+* **db:** build the missing member id with a random uuid ([#123](https://github.com/AntonioVentilii/officina/issues/123)) ([09be0fd](https://github.com/AntonioVentilii/officina/commit/09be0fd3a8f3e2f0662b4016b7e161eb69fcb1c7))
+
 ## [1.5.0](https://github.com/AntonioVentilii/officina/compare/v1.4.0...v1.5.0) (2026-11-14)
 
 
