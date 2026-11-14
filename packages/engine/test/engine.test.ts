@@ -445,9 +445,10 @@ describe.skipIf(!url)('engine', () => {
     };
     const onBehalf: OnBehalf = {
       publicUrl: PUBLIC_URL,
-      tokenFor: async (memberId) => ({ token: `token-${memberId}`, login: 'antonio' }),
+      tokenFor: async (memberId) => ({ token: `token-${memberId}`, login: 'antonio', userId: 1 }),
       asUser: {
         pullRequest: notExpected,
+        reviews: notExpected,
         approve: notExpected,
         mergeWhenReady: notExpected,
         requestCopilotReview: async (...args) => {
@@ -1202,7 +1203,7 @@ describe.skipIf(!url)('engine', () => {
     const userCalls: string[] = [];
     const onBehalf = {
       publicUrl: PUBLIC_URL,
-      tokenFor: async () => ({ token: 't', login: 'antonio' }),
+      tokenFor: async () => ({ token: 't', login: 'antonio', userId: 1 }),
       asUser: {
         pullRequest: async () => ({
           node_id: 'PR',
@@ -1210,6 +1211,7 @@ describe.skipIf(!url)('engine', () => {
           merged: false,
           head: { sha: 'abc' }
         }),
+        reviews: async () => [],
         approve: async () => {
           userCalls.push('approve');
           return {};

@@ -8,9 +8,14 @@
   let message = $state('');
   let github = $state(false);
 
-  // Only a path on this site, never an address elsewhere.
+  // Only a path on this site, never an address elsewhere: resolved the way the browser would
+  // (tabs and newlines dropped, `\` read as `/`), and refused when it lands on another origin.
   const raw = new URLSearchParams(location.search).get('next') ?? '';
-  const next = raw.startsWith('/') && !raw.startsWith('//') && !raw.includes('\\') ? raw : '/';
+  const resolved = raw.startsWith('/') ? URL.parse(raw, location.origin) : null;
+  const next =
+    resolved?.origin === location.origin
+      ? `${resolved.pathname}${resolved.search}${resolved.hash}`
+      : '/';
   const githubHref = `/auth/github/start?mode=signin${next === '/' ? '' : `&next=${encodeURIComponent(next)}`}`;
 
   $effect(() => {

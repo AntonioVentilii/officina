@@ -185,7 +185,8 @@ describe.skipIf(!url)('GitHub sign-in', () => {
     expect(linked.headers.get('location')).toBe('/?github=linked');
     expect(await accounts.tokenFor(seeded.ownerId)).toEqual({
       token: 'ghu_access',
-      login: 'antonio'
+      login: 'antonio',
+      userId: 42
     });
     const stored = await pool.query('select access_token_enc from github_accounts');
     expect(stored.rows[0].access_token_enc).not.toContain('ghu_access');
@@ -206,6 +207,34 @@ describe.skipIf(!url)('GitHub sign-in', () => {
 
     const replay = await callback(app, second.state, second.oauth);
     expect(replay.headers.get('location')).toContain('/signin?error=');
+  });
+
+  test('after a GitHub sign-in a member returns only to a path on this site', async () => {
+    const { app } = appFor({ id: 42, login: 'antonio' });
+    const session = await signIn(app);
+    const link = await start(app, 'link', session);
+    await callback(app, link.state, link.oauth);
+
+    const landing = async (next: string) => {
+      const { state, oauth } = await start(app, 'signin');
+      const response = await callback(
+        app,
+        state,
+        `${oauth}; officina_next=${encodeURIComponent(next)}`
+      );
+      return response.headers.get('location');
+    };
+    expect(await landing('/tasks/3?tab=log')).toBe('/tasks/3?tab=log');
+    for (const elsewhere of [
+      '//evil.example',
+      '/\\evil.example',
+      '/\t/evil.example',
+      '/\n/evil.example',
+      '/\r/evil.example',
+      'https://evil.example'
+    ]) {
+      expect(await landing(elsewhere)).toBe('/');
+    }
   });
 
   test('a state from another browser, or an unknown GitHub account, never signs anyone in', async () => {
@@ -255,7 +284,7 @@ describe.skipIf(!url)('GitHub sign-in', () => {
     );
     expect(await accounts.complete('c', seeded.ownerId)).toMatchObject({ ok: true });
 
-    const fresh = { token: 'ghu_new', login: 'antonio' };
+    const fresh = { token: 'ghu_new', login: 'antonio', userId: 42 };
     expect(await accounts.tokenFor(seeded.ownerId)).toEqual(fresh);
     expect(await accounts.tokenFor(seeded.ownerId)).toEqual(fresh);
     expect(refreshedWith).toEqual(['ghr_old']);
