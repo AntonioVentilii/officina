@@ -39,3 +39,7 @@ Each advisory names the versions it affects and the first version with the fix.
 | [GHSA-mmm4-72xr-98x4](https://github.com/AntonioVentilii/officina/security/advisories/GHSA-mmm4-72xr-98x4): confidential tasks read and written by members who may not read them          | medium   | 1.7.1    |
 | [GHSA-xcr8-w6q4-285c](https://github.com/AntonioVentilii/officina/security/advisories/GHSA-xcr8-w6q4-285c): guarded asks made after the request skipping the owner                        | medium   | 1.7.1    |
 | [GHSA-72wc-8h2c-x2qj](https://github.com/AntonioVentilii/officina/security/advisories/GHSA-72wc-8h2c-x2qj): a build's write token outliving its run, other branches unchecked             | medium   | 1.7.1    |
+| [GHSA-6p5m-vr93-v439](https://github.com/AntonioVentilii/officina/security/advisories/GHSA-6p5m-vr93-v439): refs a build moved left unchecked when its run failed or the engine restarted | medium   | 1.7.3    |
+| [GHSA-2fw3-r47f-8fp6](https://github.com/AntonioVentilii/officina/security/advisories/GHSA-2fw3-r47f-8fp6): a build's own commits on the branch of a learning accepted during its run     | low      | 1.7.3    |
+| [GHSA-fvrw-vmpg-vj88](https://github.com/AntonioVentilii/officina/security/advisories/GHSA-fvrw-vmpg-vj88): a return path after sign-in that could lead to another site                   | low      | 1.7.3    |
+| [GHSA-hq84-4v24-5vrg](https://github.com/AntonioVentilii/officina/security/advisories/GHSA-hq84-4v24-5vrg): a project's access log showing events from the members' other projects        | low      | 1.7.3    |
