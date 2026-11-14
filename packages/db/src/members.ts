@@ -94,16 +94,17 @@ export const listMemberActivity = async (
 /**
  * Records a member's first sign-in and tells whoever may invite members to each of their projects
  * that the invite was accepted. Only the first call finds the column empty, so a repeat notifies
- * nobody. The caller holds a transaction, as `redeemLoginLink` does, so the two land together.
- * Returns how many notifications went out.
+ * nobody. It takes the caller's transaction (a client, never the pool), as `redeemLoginLink`
+ * gives it, so the sign-in and its notifications land together or not at all. Returns how many
+ * notifications went out.
  */
-export const recordFirstSignIn = async (db: Queryable, memberId: string): Promise<number> => {
-  const { rows } = await db.query<{ display_name: string }>(
+export const recordFirstSignIn = async (client: PoolClient, memberId: string): Promise<number> => {
+  const { rows } = await client.query<{ display_name: string }>(
     `update members set first_signed_in_at = now()
      where id = $1 and first_signed_in_at is null
      returning display_name`,
     [memberId]
   );
   const first = rows[0];
-  return first ? notifyInviteAccepted(db, { id: memberId, name: first.display_name }) : 0;
+  return first ? notifyInviteAccepted(client, { id: memberId, name: first.display_name }) : 0;
 };

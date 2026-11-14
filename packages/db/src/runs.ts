@@ -265,10 +265,10 @@ export const latestChooserResult = async (pool: Pool, taskId: string): Promise<u
  * Assumes a single scheduler instance.
  */
 export const failOrphanedRuns = async (
-  pool: Pool
+  db: Pool | PoolClient
 ): Promise<{ id: string; externalId: string | null }[]> =>
   (
-    await pool.query<{ id: string; external_id: string | null }>(
+    await db.query<{ id: string; external_id: string | null }>(
       `update runs set status = 'failed', finished_at = now(),
          result = coalesce(result, '{}'::jsonb)
            || '{"error": "the engine restarted while this run was in progress"}'::jsonb
