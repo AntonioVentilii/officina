@@ -19,7 +19,7 @@ import {
 import type { Pool } from 'pg';
 import { TaskCommandError } from './tasks';
 
-/** How long a sign-in link works, and an invite's; the CLI help states both. */
+/** How long a sign-in link and an invite link each work; the CLI help states both lifetimes. */
 export const SIGN_IN_TTL_MINUTES = 30;
 export const INVITE_TTL_DAYS = 7;
 const SIGN_IN_TTL_MS = SIGN_IN_TTL_MINUTES * 60 * 1000;
