@@ -36,7 +36,7 @@ const toSdkEvent = (event: OutboundEvent): EventSendParams['events'][number] => 
  * previews of an event still being produced (`event_start`, `event_delta`) have no id of their
  * own and come only when the stream asks for them, which this port never does.
  */
-async function* portEvents(
+export async function* portEvents(
   stream: AsyncIterable<BetaManagedAgentsStreamSessionEvents>
 ): AsyncGenerator<SessionEvent> {
   for await (const event of stream) if ('id' in event) yield { ...event };
