@@ -7,7 +7,7 @@ import {
   type Task
 } from '@officina/core';
 import { applyCommand, finishRun } from '@officina/db';
-import { type GitHubClient, type RefSnapshot } from '@officina/github';
+import { type GitHubClient } from '@officina/github';
 import {
   type ManagedAgentsPort,
   type RunnerRole,
@@ -19,7 +19,7 @@ import { claimStep, type ClaimedStep, type SkipReason } from './claim';
 import { runLearnerStep } from './learner';
 import type { SyncGitHubPort } from './github-sync';
 import { applyResult, roleOutputOf, sameWork, type StepOutcome } from './step-apply';
-import { refChanges, runWindowStart } from './step-refs';
+import { guardRefs, recordStartingRefs } from './step-refs';
 import { gatherInputs, runSession, RunStoppedError } from './step-session';
 
 export type GitHubPort = Pick<
@@ -110,33 +110,6 @@ const failAndBlock = async (
   return blocked.ok ? { status: 'blocked', reason } : { status: 'discarded', reason };
 };
 
-/** The refs a builder could have moved besides its own branch, checked after every build run. */
-const guardRefs = async (
-  step: Step,
-  before: { readonly refs: RefSnapshot; readonly since: Date },
-  report: RunReport
-): Promise<StepResult | null> => {
-  const after = await step.deps.github.refSnapshot(step.repoRef);
-  const changes = await refChanges(step, before.refs, after, before.since);
-  if (!changes.length) return null;
-  const { role, taskBranch } = step;
-  await finishRun(step.deps.pool, step.runId, {
-    status: 'failed',
-    costCents: report.costCents,
-    result: { refsChanged: changes, outcome: report.outcome }
-  });
-  // Whoever builds the task now: refs outside its branch moved, and a maintainer checks them first.
-  await blockTask(
-    step.deps.pool,
-    step.taskId,
-    `While the ${role} ran, ${changes.join('; ')}. The ${role} may only push ${taskBranch}. Check those refs on GitHub and restore them if the ${role} changed them, then answer to run the build again.`
-  );
-  return {
-    status: 'blocked',
-    reason: `refs outside ${taskBranch} changed during the build: ${changes.join('; ')}`
-  };
-};
-
 /** The result to apply, or why the run left none: no valid result, or a push to the wrong branch. */
 const outcomeOf = async (
   step: Step,
@@ -161,14 +134,29 @@ const runClaimed = async (step: Step): Promise<StepResult> => {
   const token = step.builds
     ? await github.runToken(step.repoRef, { contents: 'write' })
     : await github.installationToken(step.repoRef, { contents: 'read' });
-  // Taken before the session starts, so nothing the builder does can land before it.
-  const since = runWindowStart(Date.now());
-  const refsBefore = step.builds ? { refs: await github.refSnapshot(step.repoRef), since } : null;
-  const report = await runSession(step, inputs, token).finally(async () => {
-    if (step.builds) await github.revokeToken(token);
-  });
+  const refsBefore = step.builds ? await recordStartingRefs(step, Date.now()) : null;
+  let report: RunReport;
+  try {
+    report = await runSession(step, inputs, token).finally(async () => {
+      if (step.builds) await github.revokeToken(token);
+    });
+  } catch (error) {
+    // A session that throws may have pushed somewhere too, and its retry starts from the refs as
+    // they are then: they are checked now or never.
+    const result = { error: (error as Error).message };
+    const moved = refsBefore
+      ? await guardRefs(step, refsBefore, { costCents: null, result })
+      : null;
+    if (moved) return moved;
+    throw error;
+  }
   // Checked whatever the run reported: a failed run may still have pushed somewhere.
-  const moved = refsBefore ? await guardRefs(step, refsBefore, report) : null;
+  const moved = refsBefore
+    ? await guardRefs(step, refsBefore, {
+        costCents: report.costCents,
+        result: { outcome: report.outcome }
+      })
+    : null;
   if (moved) return moved;
   const outcome = await outcomeOf(step, report);
   if ('reason' in outcome) {

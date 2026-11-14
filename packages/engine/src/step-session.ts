@@ -148,6 +148,8 @@ export const runSession = async (step: Step, inputs: StepInputs, token: string) 
     },
     validate: validatorFor(step, inputs),
     onSessionCreated: (sessionId) => registerSession(step, sessionId),
-    onEvent: (event) => appendRunEvent(pool, runId, event.type, event)
+    // The log is for people to read; an event it cannot hold must not end the run, which still
+    // has its refs to check and its result to apply.
+    onEvent: (event) => appendRunEvent(pool, runId, event.type, event).catch(() => {})
   });
 };

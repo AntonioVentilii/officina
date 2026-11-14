@@ -48,7 +48,8 @@ describe.skipIf(!url)('migrations', () => {
       '0018_connector_use_daily.sql',
       '0019_connector_revoke.sql',
       '0020_member_joined.sql',
-      '0021_run_learning.sql'
+      '0021_run_learning.sql',
+      '0022_run_refs.sql'
     ]);
     expect(await migrate(client)).toEqual([]);
   });

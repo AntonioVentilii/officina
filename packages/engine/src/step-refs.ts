@@ -1,7 +1,23 @@
-import { BUILD_ROLES, branchForLearning, branchForTask } from '@officina/core';
-import { learningsDecidedDuring, overlappingRunTasks, ownStatusCommitsDuring } from '@officina/db';
+import { BUILD_ROLES, ENGINE, branchForLearning, branchForTask } from '@officina/core';
+import {
+  applyCommand,
+  finishRun,
+  learningsDecidedDuring,
+  loadTaskContext,
+  overlappingRunTasks,
+  ownStatusCommitsDuring,
+  recordRunRefs,
+  runsWithRefs,
+  type RunRefs
+} from '@officina/db';
 import type { RefSnapshot } from '@officina/github';
-import type { Step } from './step';
+import type { EngineDependencies, Step, StepResult } from './step';
+
+/** What checking a build run's refs reads of its step: the run, its task and where it may push. */
+type RefStep = Pick<Step, 'deps' | 'taskId' | 'runId' | 'taskBranch' | 'repoRef'> & {
+  readonly role: string;
+  readonly context: Pick<Step['context'], 'defaultBranch'>;
+};
 
 /** GitHub's clock and ours may disagree; a push this much before the run began still counts. */
 const CLOCK_SKEW_MS = 60_000;
@@ -38,7 +54,7 @@ const movedRefs = (
  * alongside, and those of learnings people accepted meanwhile, which Officina pushes their edit to
  * (the branch of the edit as it stands, and the first one, which an accept before a rewrite used).
  */
-const expectedBranches = async (step: Step, since: Date): Promise<Set<string>> => {
+const expectedBranches = async (step: RefStep, since: Date): Promise<Set<string>> => {
   const { pool } = step.deps;
   const learnings = await learningsDecidedDuring(pool, step.runId, since);
   return new Set([
@@ -53,7 +69,7 @@ const expectedBranches = async (step: Step, since: Date): Promise<Set<string>> =
 
 /** Whether the default branch moved forward only by a pull request merged on top of it. */
 const mergedIntoDefault = async (
-  step: Step,
+  step: RefStep,
   { name }: MovedRef,
   before: RefSnapshot,
   after: RefSnapshot
@@ -73,7 +89,7 @@ const mergedIntoDefault = async (
  * branch, or nobody GitHub can name. A person or any other bot never stops the build.
  */
 const movedAsOfficina = async (
-  step: Step,
+  step: RefStep,
   { name }: MovedRef,
   window: { readonly since: Date; readonly own: ReadonlySet<string> }
 ): Promise<'officina' | 'unknown' | null> => {
@@ -98,7 +114,7 @@ const ATTRIBUTION = {
 
 /** The branches outside those expected that Officina's identity moved, or nobody GitHub names. */
 const branchChanges = async (
-  step: Step,
+  step: RefStep,
   before: RefSnapshot,
   after: RefSnapshot,
   since: Date
@@ -125,7 +141,7 @@ const branchChanges = async (
  * a release makes. Deploys run on tags, so a tag on anything else could ship unmerged code.
  */
 const tagChanges = async (
-  step: Step,
+  step: RefStep,
   before: RefSnapshot,
   after: RefSnapshot
 ): Promise<string[]> => {
@@ -148,8 +164,8 @@ const tagChanges = async (
  * Officina's identity moved it (or GitHub cannot say who did). GitHub's activity does not record
  * who moves tags, so a tag counts unless it is new and on a commit already on the default branch.
  */
-export const refChanges = async (
-  step: Step,
+const refChanges = async (
+  step: RefStep,
   before: RefSnapshot,
   after: RefSnapshot,
   since: Date
@@ -157,3 +173,82 @@ export const refChanges = async (
   ...(await branchChanges(step, before, after, since)),
   ...(await tagChanges(step, before, after))
 ];
+
+/**
+ * Takes the refs a build run starts from and keeps them on the run, before its session starts, so
+ * nothing the builder does can land before them and a run this process never finishes can still be
+ * checked.
+ */
+export const recordStartingRefs = async (step: Step, nowMs: number): Promise<RunRefs> => {
+  const start = {
+    refs: await step.deps.github.refSnapshot(step.repoRef),
+    since: runWindowStart(nowMs)
+  };
+  await recordRunRefs(step.deps.pool, step.runId, start);
+  return start;
+};
+
+/**
+ * Compares the refs now with those a build run started from. When something the builder could have
+ * done moved, the run fails with what moved and a maintainer is asked to check, whoever builds the
+ * task now. A comparison GitHub cannot answer counts as a change: nothing would check again later.
+ */
+export const guardRefs = async (
+  step: RefStep,
+  before: RunRefs,
+  run: { readonly costCents: number | null; readonly result: Record<string, unknown> }
+): Promise<Extract<StepResult, { status: 'blocked' }> | null> => {
+  const changes = await step.deps.github
+    .refSnapshot(step.repoRef)
+    .then((after) => refChanges(step, before.refs, after, before.since))
+    .catch((error: unknown) => [`the refs could not be checked (${(error as Error).message})`]);
+  if (!changes.length) return null;
+  const { pool } = step.deps;
+  const { role, taskBranch } = step;
+  await finishRun(pool, step.runId, {
+    status: 'failed',
+    costCents: run.costCents,
+    result: { ...run.result, refsChanged: changes }
+  });
+  await applyCommand(pool, {
+    taskId: step.taskId,
+    command: {
+      type: 'block',
+      question: `While the ${role} ran, ${changes.join('; ')}. The ${role} may only push ${taskBranch}. Check those refs on GitHub and restore them if the ${role} changed them, then answer to run the build again.`,
+      askedOf: { role: 'maintainer' }
+    },
+    actor: ENGINE
+  });
+  return {
+    status: 'blocked',
+    reason: `refs outside ${taskBranch} changed during the build: ${changes.join('; ')}`
+  };
+};
+
+/**
+ * Checks the build runs a previous process left unfinished, among `runIds` (already failed), against
+ * the refs each recorded before its session: the process that would have checked them is gone.
+ */
+export const guardOrphanedBuilds = async (
+  deps: EngineDependencies,
+  runIds: readonly string[]
+): Promise<{ readonly runId: string; readonly reason: string }[]> => {
+  const blocked = [];
+  for (const run of await runsWithRefs(deps.pool, runIds)) {
+    const context = await loadTaskContext(deps.pool, run.taskId);
+    if (!context || context.installationId === null) continue;
+    const step: RefStep = {
+      deps,
+      taskId: run.taskId,
+      runId: run.runId,
+      role: run.role,
+      taskBranch: branchForTask(context.number),
+      repoRef: { installationId: context.installationId, repo: context.repo },
+      context
+    };
+    const result = run.result !== null && typeof run.result === 'object' ? run.result : {};
+    const moved = await guardRefs(step, run, { costCents: null, result: { ...result } });
+    if (moved) blocked.push({ runId: run.runId, reason: moved.reason });
+  }
+  return blocked;
+};

@@ -44,6 +44,7 @@ import {
   cancelStaleAutoMerges,
   finishVerifiedSpecs,
   forwardSettledComments,
+  guardOrphanedBuilds,
   openMissingPullRequests,
   requestCopilotReviews,
   runAgentStep,
@@ -1266,6 +1267,120 @@ describe.skipIf(!url)('engine', () => {
     expect(question).toContain("branch feature/x was created with Officina's GitHub App");
     expect(question).not.toContain('branch officina/task-1');
     expect(github.calls.some((call) => call.method === 'openPullRequest')).toBe(false);
+  });
+
+  const MOVED_MAIN: RefSnapshot = { branches: { ...REFS.branches, main: 'evil' }, tags: REFS.tags };
+
+  /** A builder that runs `script` instead of submitting its result, and then the step's outcome. */
+  const buildRunning = async (script: ScriptItem[], refs: RefSnapshot[] = [REFS, MOVED_MAIN]) => {
+    const github = fakeGitHub({ refs });
+    const agents = createFakePort((request) =>
+      request.metadata.role === 'builder' ? script : succeed(request)
+    );
+    const taskId = await taskInReady(github, agents);
+    await applyOrThrow(
+      pool,
+      taskId,
+      { type: 'dispatch', assignee: { kind: 'agent', role: 'builder' }, openInLane: 0 },
+      ENGINE
+    );
+    const deps = { pool, github: github.port, agents, publicUrl: PUBLIC_URL };
+    return { taskId, deps, step: runAgentStep(deps, taskId, 'builder') };
+  };
+
+  const lastBuildRun = async (taskId: string) =>
+    (
+      await pool.query<{ id: string; status: string; result: Record<string, unknown> }>(
+        `select id, status, result from runs where task_id = $1 and agent_role = 'builder'
+         order by created_at desc limit 1`,
+        [taskId]
+      )
+    ).rows[0]!;
+
+  test('a builder event Postgres cannot store is recorded without the NUL and the refs are still checked', async () => {
+    const { taskId, step } = await buildRunning([
+      { type: 'agent.message', id: 'sevt_nul', content: [{ type: 'text', text: 'do\u0000ne' }] },
+      toolUse(RESULTS.builder),
+      idle('requires_action'),
+      idle('end_turn')
+    ]);
+
+    expect(await step).toMatchObject({ status: 'blocked' });
+    expect((await loadTask(pool, taskId))?.task.blocked?.question).toContain(
+      'main moved from main1 to evil'
+    );
+    const run = await lastBuildRun(taskId);
+    const events = await pool.query<{ payload: { content: { text: string }[] } }>(
+      "select payload from run_events where run_id = $1 and type = 'agent.message'",
+      [run.id]
+    );
+    expect(events.rows.map((row) => row.payload.content[0]!.text)).toEqual(['done']);
+  });
+
+  test('a build session that throws still has its refs checked, and blocks on what moved', async () => {
+    const { taskId, step } = await buildRunning([
+      async () => {
+        throw new Error('stream lost');
+      }
+    ]);
+
+    expect(await step).toMatchObject({ status: 'blocked' });
+    expect((await loadTask(pool, taskId))?.task.blocked?.question).toContain(
+      'While the builder ran, branch main moved from main1 to evil'
+    );
+    expect(await lastBuildRun(taskId)).toMatchObject({
+      status: 'failed',
+      result: { error: 'stream lost', refsChanged: [expect.stringContaining('main moved')] }
+    });
+  });
+
+  /** A build left running by a process that died during its session, then the engine's next boot. */
+  const orphanedBuild = async (refs: RefSnapshot[]) => {
+    let started!: () => void;
+    const inSession = new Promise<void>((resolve) => (started = resolve));
+    const { taskId, deps } = await buildRunning(
+      [async () => started(), () => new Promise<void>(() => {})],
+      refs
+    );
+    await inSession;
+    const orphaned = await failOrphanedRuns(pool);
+    return {
+      taskId,
+      blocked: await guardOrphanedBuilds(
+        deps,
+        orphaned.map((run) => run.id)
+      )
+    };
+  };
+
+  test('a build orphaned by a restart is checked against the refs it started from', async () => {
+    const { taskId, blocked } = await orphanedBuild([REFS, MOVED_MAIN]);
+
+    expect(blocked).toEqual([
+      {
+        runId: expect.any(String),
+        reason: expect.stringContaining('main moved from main1 to evil')
+      }
+    ]);
+    expect((await loadTask(pool, taskId))?.task.blocked).toMatchObject({
+      askedOf: { role: 'maintainer' },
+      question: expect.stringContaining('main moved from main1 to evil')
+    });
+    expect(await lastBuildRun(taskId)).toMatchObject({
+      status: 'failed',
+      result: {
+        error: 'the engine restarted while this run was in progress',
+        refsChanged: [expect.stringContaining('main moved')]
+      }
+    });
+  });
+
+  test('a build orphaned by a restart with its refs as they were is only failed', async () => {
+    const { taskId, blocked } = await orphanedBuild([REFS]);
+
+    expect(blocked).toEqual([]);
+    expect((await loadTask(pool, taskId))?.task.blocked).toBeNull();
+    expect((await lastBuildRun(taskId)).status).toBe('failed');
   });
 
   test('the branch of another task whose build runs alongside may move', async () => {

@@ -10,6 +10,7 @@ export {
   type OnBehalf
 } from './github-sync';
 export { runAgentStep, type EngineDependencies, type GitHubPort } from './step';
+export { guardOrphanedBuilds } from './step-refs';
 export { adoptOutsidePushes, openMissingPullRequests, type AdoptPort } from './pull-request';
 export { holdAutoMerge, stopAutoMergeOnLeaving } from './auto-merge';
 export { handInBuild, type HandInPort } from './hand-in';
