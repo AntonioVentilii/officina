@@ -11,6 +11,7 @@ import {
   actOnTask,
   createRequest,
   describeTask,
+  handIn,
   listTasksText,
   type TaskAction
 } from './tasks';
@@ -24,6 +25,8 @@ const USAGE = `usage (on your machine, prefix with scripts/officina; on the serv
     task submit   --number <n>                 send a request to triage without more questions
     task accept   --number <n>
     task claim    --number <n>                 build it yourself instead of the agent
+    task hand-in  --number <n> --title "<pull request title>" [--checked "<what you checked>" ...]
+                                               after pushing officina/task-<n>: send your build to review
     task approve  --number <n>
     task changes  --number <n> --note "<what to change>"
     task answer   --number <n> --text "<answer to the open question>"
@@ -74,6 +77,13 @@ const agentsPort = () => {
   return createAgentsPort(auth);
 };
 
+/** The GitHub App's client, for the commands that read or write GitHub. */
+const githubClient = () =>
+  createGitHubClient({
+    appId: required('GITHUB_APP_ID'),
+    privateKeyPem: required('GITHUB_APP_PRIVATE_KEY')
+  });
+
 const main = async () => {
   const { positionals, values } = parseArgs({
     args: decodeArgs(Bun.argv.slice(2)),
@@ -95,6 +105,7 @@ const main = async () => {
       name: { type: 'string' },
       role: { type: 'string' },
       domains: { type: 'string' },
+      checked: { type: 'string', multiple: true },
       'skip-interview': { type: 'boolean' },
       help: { type: 'boolean', short: 'h' }
     }
@@ -144,6 +155,20 @@ const main = async () => {
             created.stage === 'request'
               ? `Created task #${created.number}. The interviewer asks follow-up questions first: answer with task answer --number ${created.number} --text "...", or skip with task submit --number ${created.number}.`
               : `Created task #${created.number} (${created.stage}). Next: task accept --number ${created.number}`
+          );
+          return;
+        }
+        case 'hand-in': {
+          const handedIn = await handIn(pool, githubClient(), {
+            ...target,
+            number: number(),
+            prTitle: need(values.title, 'title'),
+            verified: values.checked ?? [],
+            notVerified: [],
+            publicUrl: required('OFFICINA_PUBLIC_URL')
+          });
+          console.log(
+            `Task #${values.number} handed in, now ${handedIn.stage}${handedIn.pullRequest ? `, pull request #${handedIn.pullRequest}` : ''}.`
           );
           return;
         }
@@ -234,13 +259,9 @@ const main = async () => {
         'config-file': configFile
       } = values;
       if (!workspace || !repo || !email || !name) throw new SetupError(USAGE);
-      const github = createGitHubClient({
-        appId: required('GITHUB_APP_ID'),
-        privateKeyPem: required('GITHUB_APP_PRIVATE_KEY')
-      });
       const result = await addProject(
         pool,
-        { github, agents: agentsPort() },
+        { github: githubClient(), agents: agentsPort() },
         {
           workspace,
           repo,
