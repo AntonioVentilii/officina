@@ -1,18 +1,18 @@
 import type { Role } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
-import { RUN_IS_ACTIVE } from './run-status';
 
 type Queryable = Pool | PoolClient;
 
-export const upsertWorkspace = async (db: Queryable, name: string): Promise<string> => {
-  const existing = await db.query<{ id: string }>('select id from workspaces where name = $1', [
-    name
-  ]);
-  if (existing.rows[0]) return existing.rows[0].id;
-  return (
-    await db.query<{ id: string }>('insert into workspaces (name) values ($1) returning id', [name])
+/** One statement, so two registrations of a new name at once land on the same workspace. */
+export const upsertWorkspace = async (db: Queryable, name: string): Promise<string> =>
+  (
+    await db.query<{ id: string }>(
+      `insert into workspaces (name) values ($1)
+       on conflict (name) do update set name = excluded.name
+       returning id`,
+      [name]
+    )
   ).rows[0]!.id;
-};
 
 export const upsertMember = async (
   db: Queryable,
@@ -138,6 +138,18 @@ export const loadProjectConfig = async (db: Queryable, projectId: string): Promi
   (await db.query<{ config: unknown }>('select config from projects where id = $1', [projectId]))
     .rows[0]?.config;
 
+/**
+ * The project's config, read under the project's row lock inside the caller's transaction, so
+ * everything decided from it holds until the transaction ends.
+ */
+export const lockProjectConfig = async (client: PoolClient, projectId: string): Promise<unknown> =>
+  (
+    await client.query<{ config: unknown }>(
+      'select config from projects where id = $1 for update',
+      [projectId]
+    )
+  ).rows[0]?.config;
+
 export const updateProjectConfig = async (db: Queryable, projectId: string, config: unknown) => {
   await db.query('update projects set config = $2 where id = $1', [
     projectId,
@@ -154,20 +166,3 @@ export const listSchedulableProjectIds = async (db: Queryable): Promise<string[]
        order by created_at`
     )
   ).rows.map((row) => row.id);
-
-/**
- * Runs left `running` by a previous engine process can never finish: their stream is gone. They are
- * failed so the step can run again; a result the run already recorded is kept beside the error.
- * Assumes a single scheduler instance.
- */
-export const failOrphanedRuns = async (
-  db: Queryable
-): Promise<{ id: string; externalId: string | null }[]> =>
-  (
-    await db.query<{ id: string; external_id: string | null }>(
-      `update runs set status = 'failed', finished_at = now(),
-         result = coalesce(result, '{}'::jsonb)
-           || '{"error": "the engine restarted while this run was in progress"}'::jsonb
-       where status ${RUN_IS_ACTIVE} returning id, external_id`
-    )
-  ).rows.map((row) => ({ id: row.id, externalId: row.external_id }));

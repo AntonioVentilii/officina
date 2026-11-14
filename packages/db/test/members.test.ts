@@ -8,6 +8,7 @@ import {
   listUnreadNotifications,
   markNotificationRead,
   purgeExpiredCredentials,
+  inTransaction,
   recordFirstSignIn,
   redeemLoginLink,
   registerConnectorClient
@@ -144,7 +145,7 @@ describe.skipIf(!url)('member activity', () => {
 
     const before = (await pool.query('select id from notifications')).rowCount;
     expect(await redeemLoginLink(pool, await createLoginLink(pool, tim, HOUR_MS))).not.toBeNull();
-    expect(await recordFirstSignIn(pool, tim)).toBe(0);
+    expect(await inTransaction(pool, (client) => recordFirstSignIn(client, tim))).toBe(0);
     expect((await pool.query('select id from notifications')).rowCount).toBe(before);
   });
 

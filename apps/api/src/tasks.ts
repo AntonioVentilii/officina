@@ -16,17 +16,19 @@ import {
 import {
   addComment,
   applyCommand,
-  createTask,
+  applyCommandIn,
   findTaskIdByNumber,
+  inTransaction,
+  insertTask,
   latestChooserResult,
   listProjectMemberProfiles,
   listProjectMembers,
   listRuns,
   listTaskSummaries,
-  loadProjectConfig,
   loadProjectMember,
   loadTask,
   loadTaskContext,
+  lockProjectConfig,
   resolveProjectId,
   resolveProjectMember,
   type StoreError
@@ -140,27 +142,32 @@ export const createRequestAs = async (
       'watchers can read but not open requests; an owner can give the contributor role',
       403
     );
-  const config = parseProjectConfig(await loadProjectConfig(pool, projectId));
-  const { guards, hold } = guardRequest(config, member, input);
-  // The task and the request it carries land together: a task never exists without its request.
-  const { task } = await createTask(pool, {
-    projectId,
-    title: input.title,
-    requesterId: memberId,
-    request: input.request,
-    guards,
-    ...(hold ? { hold } : {})
+  // The task, its request and a skipped interview land together, and all of them are decided
+  // from one read of the config, taken under the project's lock: a task never exists without its
+  // request, and one that skips the interviewer is never seen waiting for it.
+  const opened = await inTransaction(pool, async (client) => {
+    const config = parseProjectConfig(await lockProjectConfig(client, projectId));
+    const { guards, hold } = guardRequest(config, member, input);
+    const { task } = await insertTask(client, {
+      projectId,
+      title: input.title,
+      requesterId: memberId,
+      request: input.request,
+      guards,
+      ...(hold ? { hold } : {})
+    });
+    const interview = !input.skipInterview && (!config.ok || config.config.intake.interview);
+    if (interview || hold) return task;
+    const submitted = await applyCommandIn(client, {
+      taskId: task.id,
+      command: { type: 'submit_request' },
+      actor
+    });
+    if (!submitted.ok) throw new TaskCommandError(ERROR_TEXT[submitted.error]);
+    return submitted.task;
   });
-  const { number } = (await loadTaskContext(pool, task.id))!;
-  const interview = !input.skipInterview && (!config.ok || config.config.intake.interview);
-  if (interview || hold) return { number, stage: task.stage };
-  const submitted = await applyCommand(pool, {
-    taskId: task.id,
-    command: { type: 'submit_request' },
-    actor
-  });
-  if (!submitted.ok) throw new TaskCommandError(ERROR_TEXT[submitted.error]);
-  return { number, stage: submitted.task.stage };
+  const { number } = (await loadTaskContext(pool, opened.id))!;
+  return { number, stage: opened.stage };
 };
 
 /**

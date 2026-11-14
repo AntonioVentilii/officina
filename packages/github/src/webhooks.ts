@@ -1,3 +1,4 @@
+import { statusFailure, suiteFailure, type CheckSuite, type CommitStatus } from './checks';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
 /** Checks GitHub's `X-Hub-Signature-256` header against the raw request body, in constant time. */
@@ -38,13 +39,22 @@ export type WebhookAction =
       readonly body: string;
     }
   | {
+      /** A comment on a pull request's conversation by a bot, such as a review action's summary. */
+      readonly kind: 'pull_request_commented';
+      readonly repo: string;
+      readonly prNumber: number;
+      readonly commentId: number;
+      readonly by: string;
+      readonly body: string;
+    }
+  | {
+      /** A check suite or a commit status failed on a commit, whichever branch holds it. */
       readonly kind: 'checks_failed';
       readonly repo: string;
-      readonly prNumbers: readonly number[];
+      readonly headSha: string;
       readonly details: string;
     };
 
-const FAILED_CONCLUSIONS = new Set(['failure', 'timed_out', 'action_required', 'startup_failure']);
 const TRUSTED_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
 
 interface RepoPayload {
@@ -129,26 +139,43 @@ export const parseWebhookEvent = (event: string | null, payload: unknown): Webho
     };
   }
 
+  if (event === 'issue_comment') {
+    const body = payload as {
+      action?: string;
+      issue?: { number?: number; pull_request?: unknown };
+      comment?: { id?: number; body?: string | null; user?: { login?: string; type?: string } };
+    };
+    const comment = body.comment;
+    // A person's comment may only be a question; what a person wants changed comes as a review.
+    if (body.action !== 'created' || !body.issue?.pull_request || !body.issue.number) return null;
+    if (!comment?.id || !comment.user?.login || comment.user.type !== 'Bot') return null;
+    return {
+      kind: 'pull_request_commented',
+      repo,
+      prNumber: body.issue.number,
+      commentId: comment.id,
+      by: comment.user.login,
+      body: comment.body ?? ''
+    };
+  }
+
+  // Found by the commit rather than by pull request: a suite started by a push to the task branch
+  // lists no pull request, and a commit status never does.
   if (event === 'check_suite') {
     const body = payload as {
       action?: string;
-      check_suite?: {
-        conclusion?: string | null;
-        app?: { name?: string };
-        pull_requests?: { number: number }[];
-      };
+      check_suite?: CheckSuite & { head_sha?: string };
     };
     const suite = body.check_suite;
-    if (body.action !== 'completed' || !suite?.conclusion) return null;
-    if (!FAILED_CONCLUSIONS.has(suite.conclusion)) return null;
-    const prNumbers = (suite.pull_requests ?? []).map((pr) => pr.number);
-    if (prNumbers.length === 0) return null;
-    return {
-      kind: 'checks_failed',
-      repo,
-      prNumbers,
-      details: `${suite.app?.name ?? 'checks'}: ${suite.conclusion}`
-    };
+    if (body.action !== 'completed' || !suite?.head_sha) return null;
+    const details = suiteFailure(suite);
+    return details ? { kind: 'checks_failed', repo, headSha: suite.head_sha, details } : null;
+  }
+
+  if (event === 'status') {
+    const body = payload as CommitStatus & { sha?: string };
+    const details = body.sha ? statusFailure(body) : null;
+    return details && body.sha ? { kind: 'checks_failed', repo, headSha: body.sha, details } : null;
   }
 
   return null;
