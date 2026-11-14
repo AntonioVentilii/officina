@@ -1,4 +1,4 @@
-import { locateRun, locateTask } from '@officina/db';
+import { listenForChanges, locateRun, locateTask, pingConnection } from '@officina/db';
 import { Client, type Pool } from 'pg';
 
 export type BoardEvent =
@@ -80,7 +80,7 @@ export const startRealtime = async (input: {
     });
     try {
       await next.connect();
-      await next.query('listen officina');
+      await listenForChanges(next);
       client = next;
     } catch (error) {
       input.log('realtime connect failed', { error: (error as Error).message });
@@ -92,7 +92,7 @@ export const startRealtime = async (input: {
   await connect();
   // A failed ping needs no handling here: a dead connection also emits 'error', which reconnects.
   const keepalive = setInterval(
-    () => void client?.query('select 1').catch(() => {}),
+    () => void (client && pingConnection(client).catch(() => {})),
     input.keepaliveMs ?? KEEPALIVE_MS
   );
 
