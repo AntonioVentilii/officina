@@ -923,6 +923,8 @@ export const learningsView = async (pool: Pool, viewer: BoardViewer) => {
     decisionNote: row.decisionNote,
     prNumber: row.prNumber,
     prUrl: row.prUrl,
+    rewrite: row.rewrite,
+    rewrittenAt: row.rewrittenAt,
     createdAt: row.createdAt,
     canDecide: canDecide && row.status === 'proposed'
   }));

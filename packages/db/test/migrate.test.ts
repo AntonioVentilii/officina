@@ -41,7 +41,8 @@ describe.skipIf(!url)('migrations', () => {
       '0011_connector.sql',
       '0012_webhook_handled.sql',
       '0013_member_activity.sql',
-      '0014_task_guards.sql'
+      '0014_task_guards.sql',
+      '0015_learning_rewrite.sql'
     ]);
     expect(await migrate(client)).toEqual([]);
   });

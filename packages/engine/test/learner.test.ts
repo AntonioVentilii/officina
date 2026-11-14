@@ -2,7 +2,12 @@ import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { listLearnings, saveAgentVersion } from '@officina/db';
+import {
+  insertLearnings,
+  listLearnings,
+  requestLearningRewrite,
+  saveAgentVersion
+} from '@officina/db';
 import { RUNNER_ROLES } from '@officina/runner';
 import { Pool } from 'pg';
 import { applyOrThrow, createTaskInMerging, resetAndSeed, type Seeded } from '../../db/test/seed';
@@ -152,6 +157,90 @@ describe.skipIf(!url)('learner', () => {
       ])
     );
     expect((await collectDueSteps({ pool }, seeded.projectId)).due).toEqual([]);
+    expect(await runAgentStep(deps, taskId, 'learner')).toEqual({
+      status: 'skipped',
+      reason: 'not_due'
+    });
+  });
+
+  /** A learning proposed earlier whose text to replace the default branch no longer holds. */
+  const staleLearning = async () => {
+    const taskId = await doneTask();
+    const run = await pool.query<{ id: string }>(
+      `insert into runs (task_id, stage, runner, agent_role, agent_version, status)
+       values ($1, 'done', 'managed_agents', 'learner', 1, 'succeeded') returning id`,
+      [taskId]
+    );
+    await insertLearnings(pool, {
+      projectId: seeded.projectId,
+      taskId,
+      runId: run.rows[0]!.id,
+      learnings: [
+        learning({
+          edit: { file: 'AGENTS.md', find: '## Copy, short\n', text: '## Copy, short\n\nx\n' }
+        }) as never
+      ]
+    });
+    const [stale] = await listLearnings(pool, seeded.projectId);
+    await requestLearningRewrite(pool, stale!.id);
+    return { taskId, id: stale!.id };
+  };
+
+  test('an edit the default branch moved past is rewritten against the file as it is now', async () => {
+    const { taskId, id } = await staleLearning();
+    expect((await collectDueSteps({ pool }, seeded.projectId)).due).toEqual([
+      { taskId, role: 'learner' }
+    ]);
+
+    const agents = createFakePort(() => [
+      toolUse({ learnings: [learning({}), learning({ title: 'Another one' })] }),
+      idle('requires_action'),
+      toolUse({
+        learnings: [
+          learning({ target: 'project', edit: { file: 'docs/ai/patterns.md', text: 'x' } })
+        ]
+      }),
+      idle('requires_action'),
+      toolUse({ learnings: [learning({})] }),
+      idle('requires_action'),
+      idle('end_turn')
+    ]);
+    const deps = { pool, github: fakeGitHub(), agents, publicUrl: 'https://o.example' };
+    expect(await runAgentStep(deps, taskId, 'learner')).toEqual({ status: 'applied' });
+
+    const brief = (agents.sent[0]!.events[0] as { text: string }).text;
+    expect(brief).toContain('role: learner, rewriting one edit');
+    expect(brief).toContain('## Copy, short');
+    const feedback = JSON.stringify(agents.sent);
+    expect(feedback).toContain('return this one learning rewritten, or none');
+    expect(feedback).toContain('keep the target docs');
+    expect(feedback).toContain('keep the file AGENTS.md');
+
+    const [rewritten] = await listLearnings(pool, seeded.projectId);
+    expect(rewritten).toMatchObject({
+      id,
+      status: 'proposed',
+      rewrite: null,
+      find: '## Copy\n',
+      text: '## Copy\n\nUpdate every live locale.'
+    });
+    expect(rewritten!.rewrittenAt).toBeInstanceOf(Date);
+    expect((await collectDueSteps({ pool }, seeded.projectId)).due).toEqual([]);
+  });
+
+  test('a rewrite that finds nothing to change leaves the learning for people to reject', async () => {
+    const { taskId } = await staleLearning();
+    const agents = createFakePort(() => [
+      toolUse({ learnings: [] }),
+      idle('requires_action'),
+      idle('end_turn')
+    ]);
+    const deps = { pool, github: fakeGitHub(), agents, publicUrl: 'x' };
+    expect(await runAgentStep(deps, taskId, 'learner')).toEqual({ status: 'applied' });
+    expect((await listLearnings(pool, seeded.projectId))[0]).toMatchObject({
+      rewrite: 'failed',
+      find: '## Copy, short\n'
+    });
     expect(await runAgentStep(deps, taskId, 'learner')).toEqual({
       status: 'skipped',
       reason: 'not_due'
