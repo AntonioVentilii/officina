@@ -1,7 +1,12 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { randomBytes } from 'node:crypto';
 import { findMemberByEmail, linkGitHubAccount, unlinkGitHubAccount } from '@officina/db';
-import { createGitHubAsUser, type UserTokens } from '@officina/github';
+import {
+  GitHubError,
+  RefreshTokenRefused,
+  createGitHubAsUser,
+  type UserTokens
+} from '@officina/github';
 import { Pool } from 'pg';
 import { resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
 import { createApp } from '../src/app';
@@ -425,6 +430,31 @@ describe.skipIf(!url)('GitHub sign-in', () => {
         ok: true,
         memberId: seeded.ownerId
       });
+      expect(await accountRows()).toHaveLength(1);
+    });
+
+    test('that GitHub refuses, its token spent by a refresh whose answer was lost, forgets the account and tells the member to reconnect', async () => {
+      const refusals: string[] = [];
+      const accounts = expiredAccount(async () => {
+        refusals.push('refused');
+        throw new RefreshTokenRefused(200, '/login/oauth/access_token', 'bad_refresh_token');
+      });
+      expect(await accounts.complete('c', seeded.ownerId)).toMatchObject({ ok: true });
+
+      expect(await accounts.tokenFor(seeded.ownerId)).toBeNull();
+      expect(await accountRows()).toHaveLength(0);
+      expect(await githubLog()).toEqual([LOST, 'Antonio connected GitHub as @antonio']);
+      // Forgotten once: nothing is left to refresh with.
+      expect(await accounts.tokenFor(seeded.ownerId)).toBeNull();
+      expect(refusals).toHaveLength(1);
+    });
+
+    test('that fails for another reason keeps the account and passes the error on', async () => {
+      const accounts = expiredAccount(async () => {
+        throw new GitHubError(502, '/login/oauth/access_token', 'not JSON');
+      });
+      expect(await accounts.complete('c', seeded.ownerId)).toMatchObject({ ok: true });
+      await expect(accounts.tokenFor(seeded.ownerId)).rejects.toThrow('GitHub 502');
       expect(await accountRows()).toHaveLength(1);
     });
 

@@ -7,7 +7,12 @@ import {
   saveRefreshedGitHubTokens,
   type GitHubAccountRow
 } from '@officina/db';
-import type { GitHubAsUser, GitHubUserAuth, UserTokens } from '@officina/github';
+import {
+  RefreshTokenRefused,
+  type GitHubAsUser,
+  type GitHubUserAuth,
+  type UserTokens
+} from '@officina/github';
 import type { Pool } from 'pg';
 import type { TokenBox } from './token-box';
 
@@ -114,6 +119,26 @@ export const createGitHubAccounts = (deps: {
     }
   };
 
+  /**
+   * The tokens a refresh gives, or null when GitHub refuses the refresh token: a refresh whose
+   * answer was lost spent it, so the account can never act again. It is forgotten and the member
+   * told to reconnect, rather than left showing as connected while every refresh fails.
+   */
+  const refreshed = async (
+    account: GitHubAccountRow,
+    refreshTokenEnc: string
+  ): Promise<UserTokens | null> => {
+    try {
+      return await deps.auth.refresh(box.open(refreshTokenEnc));
+    } catch (error) {
+      if (!(error instanceof RefreshTokenRefused)) throw error;
+      await forgetSpentGitHubAccount(pool, account.memberId, refreshTokenEnc).catch(
+        logForgetFailure(account.memberId)
+      );
+      return null;
+    }
+  };
+
   const expired = (at: Date | null) => at !== null && at.getTime() - REFRESH_MARGIN_MS < Date.now();
 
   /** A usable token for acting as the member, refreshed when needed; `null` when not linked or revoked. */
@@ -130,8 +155,8 @@ export const createGitHubAccounts = (deps: {
       };
     }
     if (!account.refreshTokenEnc || expired(account.refreshExpiresAt)) return null;
-    const tokens = await deps.auth.refresh(box.open(account.refreshTokenEnc));
-    if (!(await keepRefreshed(account, account.refreshTokenEnc, tokens))) return null;
+    const tokens = await refreshed(account, account.refreshTokenEnc);
+    if (!tokens || !(await keepRefreshed(account, account.refreshTokenEnc, tokens))) return null;
     return { token: tokens.accessToken, login: account.login, userId: account.githubUserId };
   };
 

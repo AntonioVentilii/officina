@@ -180,7 +180,8 @@ export const loadGitHubAccount = async (
 
 /**
  * Forgets a linked account whose refresh token GitHub has already spent, when the tokens it gave in
- * exchange could not be stored, and records in the access log that the member must reconnect. Only
+ * exchange could not be stored or GitHub now refuses it, and records in the access log that the
+ * member must reconnect. Only
  * the row still holding that spent token goes, so an account reconnected meanwhile stays. The GitHub
  * sign-in stays too: signing in with GitHub stores fresh tokens again.
  */
