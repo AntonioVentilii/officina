@@ -1070,6 +1070,12 @@ describe.skipIf(!url)('board api', () => {
       type: 'head_carried',
       payload: { headSha: 'carried1', from: 'abc' }
     });
+    await appendTaskEvent(pool, {
+      taskId,
+      actor: seeded.owner,
+      type: 'github_copilot_review_requested',
+      payload: { pullRequest: 7, login: 'antonio', outcome: 'already_reviewed' }
+    });
     await applyCommand(pool, {
       taskId,
       command: {
@@ -1090,6 +1096,12 @@ describe.skipIf(!url)('board api', () => {
     expect(
       trail.events.find((event: { type: string }) => event.type === 'head_carried').payload
     ).toEqual({ headSha: 'carried1' });
+    // Everyone reads whether Copilot was asked or had already reviewed, so the timeline can say which.
+    expect(
+      trail.events.find(
+        (event: { type: string }) => event.type === 'github_copilot_review_requested'
+      ).payload
+    ).toEqual({ pullRequest: 7, login: 'antonio', outcome: 'already_reviewed' });
     const cardBoard = await json(await call(contributor, `${project}/board`));
     expect(JSON.stringify(cardBoard)).not.toContain('SECRET');
     // The CLI reads the question as the board does.

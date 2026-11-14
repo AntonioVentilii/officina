@@ -96,7 +96,10 @@
           ? `could not approve on GitHub as @${p.login}: ${p.error}`
           : `could not approve on GitHub as @${p.login}`;
       case 'github_copilot_review_requested':
-        return `asked Copilot to review pull request #${p.pullRequest} as @${p.login}`;
+        // A request whose record was lost is not sent again once Copilot's review is there.
+        return p.outcome === 'already_reviewed'
+          ? `found Copilot had already reviewed pull request #${p.pullRequest}, so did not ask again`
+          : `asked Copilot to review pull request #${p.pullRequest} as @${p.login}`;
       case 'github_copilot_review_failed':
         return p.error
           ? `could not ask Copilot to review pull request #${p.pullRequest}: ${p.error}`
