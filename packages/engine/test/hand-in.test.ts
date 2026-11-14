@@ -1,15 +1,26 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
-import { createTask, loadTask, setProjectRole, upsertMember } from '@officina/db';
+import {
+  createTask,
+  finishRun,
+  loadTask,
+  setProjectRole,
+  startRun,
+  upsertMember
+} from '@officina/db';
 import { Pool } from 'pg';
 import { PLAN, applyOrThrow, resetAndSeed, type Seeded } from '../../db/test/seed';
-import { handInBuild, type HandInPort } from '../src';
+import { handInBuild, openMissingPullRequests, type HandInPort } from '../src';
 
 const url = process.env.TEST_DATABASE_URL;
 const PUBLIC_URL = 'https://officina.example';
 
-/** GitHub as a developer's push left it: one changed file on the task branch. */
-const fakeGitHub = () => {
+/**
+ * GitHub as a developer's push left it: one changed file on the task branch. `openFails` is how
+ * many times opening the pull request fails before it works.
+ */
+const fakeGitHub = (openFails = 0) => {
   const calls: string[] = [];
+  let failures = openFails;
   const port = {
     pushFacts: async () => {
       calls.push('pushFacts');
@@ -18,6 +29,7 @@ const fakeGitHub = () => {
     readFile: async () => null,
     openPullRequest: async (input: { title: string }) => {
       calls.push(`openPullRequest ${input.title}`);
+      if (failures-- > 0) throw new Error('GitHub 502 on /pulls');
       return { number: 7, url: 'https://github.com/ViciApp/vici-app/pull/7' };
     },
     updateFile: async () => undefined,
@@ -148,5 +160,55 @@ describe.skipIf(!url)('a developer hands in a build', () => {
     expect(github.calls.filter((call) => call.startsWith('openPullRequest'))).toEqual([
       'openPullRequest feat(room): port the design'
     ]);
+  });
+
+  test('a pull request that fails to open is opened later from the hand-in, not an earlier agent round', async () => {
+    const taskId = await waitingForDeveloper();
+    // An agent built an earlier round of this task and recorded its own title.
+    const run = await startRun(pool, {
+      taskId,
+      stage: 'building',
+      role: 'builder',
+      agentVersion: 1,
+      runner: 'managed-agents'
+    });
+    if (!run.ok) throw new Error(run.error);
+    await finishRun(pool, run.runId, {
+      status: 'succeeded',
+      costCents: 1,
+      result: {
+        outcome: 'pushed',
+        branch: 'officina/task-1',
+        prTitle: 'feat(room): the agent title',
+        verified: [],
+        notVerified: []
+      }
+    });
+    const dev = await developer('dev@example.com', 'Dev');
+    await applyOrThrow(pool, taskId, { type: 'claim' }, dev);
+    const github = fakeGitHub(1);
+    const deps = { pool, github: github.port, publicUrl: PUBLIC_URL };
+    const handIn = {
+      taskId,
+      memberId: dev.memberId,
+      prTitle: 'feat(room): port the design',
+      verified: ['bun test'],
+      notVerified: []
+    };
+
+    await expect(handInBuild(deps, handIn)).rejects.toThrow('GitHub 502');
+    expect((await loadTask(pool, taskId))?.task.stage).toBe('reviewing');
+
+    expect(await openMissingPullRequests(pool, github.port, [taskId], PUBLIC_URL)).toEqual([]);
+    expect(await openMissingPullRequests(pool, github.port, [taskId], PUBLIC_URL)).toEqual([]);
+    expect(github.calls.filter((call) => call.startsWith('openPullRequest'))).toEqual([
+      'openPullRequest feat(room): port the design',
+      'openPullRequest feat(room): port the design'
+    ]);
+    const { rows } = await pool.query<{ github_pr: number | null }>(
+      'select github_pr from tasks where id = $1',
+      [taskId]
+    );
+    expect(rows[0]?.github_pr).toBe(7);
   });
 });
