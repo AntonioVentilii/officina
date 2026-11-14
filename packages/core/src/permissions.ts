@@ -1,4 +1,6 @@
 import type { Gate } from './config';
+import type { Guard } from './guards';
+import type { Blocked } from './lifecycle';
 import { hasRole, type Member, type Role } from './roles';
 
 /**
@@ -105,3 +107,32 @@ export const can = (
 export const allowedActions = (
   member: Pick<Member, 'role'> & Partial<Pick<Member, 'domains'>>
 ): Action[] => ACTIONS.filter((action) => can(member, action));
+
+type Person = Pick<Member, 'id' | 'role'> & Partial<Pick<Member, 'domains'>>;
+
+/** Whether a question is asked of this member: by name, or of a role they hold. */
+const isAskedOf = (member: Person, askedOf: Blocked['askedOf']): boolean =>
+  'memberId' in askedOf ? askedOf.memberId === member.id : hasRole(member, askedOf.role);
+
+/**
+ * Whether a member may answer a question: one asked of them, and any question for an owner, so
+ * nothing waits on someone who is away.
+ */
+export const canAnswer = (member: Person, askedOf: Blocked['askedOf']): boolean =>
+  can(member, 'answer') && (hasRole(member, 'owner') || isAskedOf(member, askedOf));
+
+/**
+ * Whether a member may read a question. Questions are often an agent's or Officina's own failure,
+ * quoting an error, so beyond those it is asked of only members who see the runs read them.
+ */
+export const seesQuestion = (member: Person, askedOf: Blocked['askedOf']): boolean =>
+  can(member, 'see_runs') || isAskedOf(member, askedOf);
+
+/**
+ * Whether a member may read what a task says. A task guarded as confidential keeps its title,
+ * stage and people for everyone, and its words for members with `see_confidential`.
+ */
+export const readsTask = (
+  member: Pick<Member, 'role'> & Partial<Pick<Member, 'domains'>>,
+  task: { readonly guards: readonly Guard[] }
+): boolean => !task.guards.includes('confidential') || can(member, 'see_confidential');
