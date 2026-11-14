@@ -1,7 +1,7 @@
 const API = 'https://api.github.com';
 
 /** How long one call may take, body included; a hung call would otherwise hold the scheduler's pass. */
-const REQUEST_TIMEOUT_MS = 30_000;
+export const REQUEST_TIMEOUT_MS = 30_000;
 
 export class GitHubError extends Error {
   constructor(
