@@ -1,4 +1,5 @@
 import { parseArgs } from 'node:util';
+import { branchForTask } from '@officina/core';
 import { createGitHubClient } from '@officina/github';
 import { PROMPTS_DIR, anthropicAuthFrom, createModelResolver } from '@officina/runner';
 import { Pool } from 'pg';
@@ -32,7 +33,7 @@ const USAGE = `usage (on your machine, prefix with scripts/officina; on the serv
     task accept   --number <n>
     task claim    --number <n>                 build it yourself instead of the agent
     task hand-in  --number <n> --title "<pull request title>" [--checked "<what you checked>" ...]
-                                               after pushing officina/task-<n>: send your build to review
+                                               after pushing ${branchForTask('<n>')}: send your build to review
     task approve  --number <n>
     task changes  --number <n> --note "<what to change>"
     task answer   --number <n> --text "<answer to the open question>"

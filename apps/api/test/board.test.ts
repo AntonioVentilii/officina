@@ -13,7 +13,7 @@ import { parseProjectConfig } from '@officina/core';
 import { Pool } from 'pg';
 import { resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
 import { createApp } from '../src/app';
-import { logEntries } from '../src/board';
+import { agentsView, logEntries } from '../src/board';
 import { invite, loginLink } from '../src/people';
 import { startRealtime, type BoardEvent } from '../src/realtime';
 import { createRequest, createRequestAs, describeTask } from '../src/tasks';
@@ -62,6 +62,51 @@ describe('run log', () => {
     expect(entries[1]).toMatchObject({ name: 'bash', summary: 'npm run check' });
     expect((entries[2] as { text: string }).text).toContain('1000 more characters');
     expect(entries[3]).toMatchObject({ outcome: 'pushed' });
+  });
+});
+
+describe('agents page', () => {
+  const run = (role: string, status: string, costCents: number | null) => ({
+    id: `${role}-${status}`,
+    taskNumber: 1,
+    taskTitle: 'Rename settings',
+    role,
+    label: role,
+    agentVersion: 1,
+    stage: 'building',
+    status,
+    costCents,
+    startedAt: new Date(),
+    finishedAt: null,
+    eventCount: 0,
+    consoleUrl: null,
+    result: null
+  });
+
+  test('each role counts its runs, its share of finished ones that succeeded and their cost', () => {
+    const view = agentsView([
+      run('builder', 'succeeded', 120),
+      run('builder', 'succeeded', 80),
+      run('builder', 'failed', 50),
+      run('builder', 'cancelled', null),
+      run('builder', 'running', null),
+      run('learner', 'succeeded', 30)
+    ]);
+    expect(view.agents.find((agent) => agent.role === 'builder')).toMatchObject({
+      running: true,
+      runs: 5,
+      success: 67,
+      costCents: 250
+    });
+    expect(view.agents.find((agent) => agent.role === 'spec')).toMatchObject({
+      running: false,
+      runs: 0,
+      success: null,
+      costCents: 0
+    });
+    // The learner is not listed, but what its runs cost is in the total.
+    expect(view.agents.some((agent) => agent.role === 'learner')).toBe(false);
+    expect(view.costCents).toBe(280);
   });
 });
 
@@ -1016,8 +1061,12 @@ describe.skipIf(!url)('board api', () => {
     expect(full.runs).toHaveLength(1);
     const runs = await call(owner, `${project}/runs`);
     expect(runs.status).toBe(200);
-    // The Agents page takes each role's name and description from here, not its own copy.
-    expect((await json(runs)).agents).toEqual([
+    // The Agents page takes each role's name, description and numbers from here, not its own copy.
+    const { agents } = await json(runs);
+    expect(agents[0]).toMatchObject({ running: true, runs: 1, success: null, costCents: 0 });
+    expect(
+      agents.map(({ role, label, does }: Record<string, unknown>) => ({ role, label, does }))
+    ).toEqual([
       {
         role: 'spec',
         label: 'Spec writer',
