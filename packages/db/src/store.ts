@@ -16,6 +16,7 @@ import {
   type Task
 } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
+import { appendTaskEvent, saveSpecVersion } from './task-history';
 import { addComment, listApprovedSubjects, listProjectMembers } from './tasks';
 
 export type StoreError = DecisionError | 'not_found' | 'conflict' | 'invalid_config';
@@ -90,11 +91,17 @@ const json = (value: unknown): string | null => (value === null ? null : JSON.st
 
 const insertEvent = (client: PoolClient, taskId: string, actor: Actor, event: DomainEvent) => {
   const { type, ...payload } = event;
-  return client.query(
-    'insert into task_events (task_id, actor, type, payload) values ($1, $2, $3, $4)',
-    [taskId, json(actor), type, json(payload)]
-  );
+  return appendTaskEvent(client, { taskId, actor, type, payload });
 };
+
+/** The project's next task number; the caller holds the project's row lock, which serializes it. */
+const nextTaskNumber = async (client: PoolClient, projectId: string): Promise<number> =>
+  (
+    await client.query<{ number: number }>(
+      'select coalesce(max(number), 0) + 1 as number from tasks where project_id = $1',
+      [projectId]
+    )
+  ).rows[0]!.number;
 
 interface NewTask {
   readonly projectId: string;
@@ -114,21 +121,24 @@ export const insertTask = async (client: PoolClient, input: NewTask): Promise<St
   await client.query('select id from projects where id = $1 for update', [input.projectId]);
   const { rows } = await client.query<TaskRow>(
     `insert into tasks (project_id, number, title, requester_id, stage, guards, blocked)
-       select $1, coalesce(max(number), 0) + 1, $2, $3, 'request', $4, $5
-       from tasks where project_id = $1
-       returning *`,
-    [input.projectId, input.title, input.requesterId, input.guards ?? [], json(input.hold ?? null)]
-  );
-  const row = rows[0]!;
-  await client.query(
-    'insert into task_events (task_id, actor, type, payload) values ($1, $2, $3, $4)',
+     values ($1, $2, $3, $4, 'request', $5, $6)
+     returning *`,
     [
-      row.id,
-      json({ kind: 'member', memberId: input.requesterId }),
-      'created',
-      json({ title: input.title })
+      input.projectId,
+      await nextTaskNumber(client, input.projectId),
+      input.title,
+      input.requesterId,
+      input.guards ?? [],
+      json(input.hold ?? null)
     ]
   );
+  const row = rows[0]!;
+  await appendTaskEvent(client, {
+    taskId: row.id,
+    actor: { kind: 'member', memberId: input.requesterId },
+    type: 'created',
+    payload: { title: input.title }
+  });
   if (input.hold) {
     await insertEvent(client, row.id, ENGINE, { type: 'blocked', blocked: input.hold });
   }
@@ -187,20 +197,29 @@ export const insertOnboardingTask = async (
   const lane = computeLane(input.paths, input.config.laneMatcher);
   const { rows } = await client.query<{ id: string; number: number }>(
     `insert into tasks (project_id, number, title, requester_id, kind, stage, lane, spec_version)
-       select $1, coalesce(max(number), 0) + 1, $2, $3, 'onboarding', 'spec_review', $4, 1
-       from tasks where project_id = $1
+       values ($1, $2, $3, $4, 'onboarding', 'spec_review', $5, 1)
        returning id, number`,
-    [input.projectId, input.title, input.requesterId, lane]
+    [
+      input.projectId,
+      await nextTaskNumber(client, input.projectId),
+      input.title,
+      input.requesterId,
+      lane
+    ]
   );
   const row = rows[0]!;
-  await client.query(
-    'insert into task_events (task_id, actor, type, payload) values ($1, $2, $3, $4)',
-    [row.id, json(ENGINE), 'created', json({ title: input.title, kind: 'onboarding' })]
-  );
-  await client.query(
-    'insert into spec_versions (task_id, version, body, created_by) values ($1, 1, $2, $3)',
-    [row.id, input.spec, json(ENGINE)]
-  );
+  await appendTaskEvent(client, {
+    taskId: row.id,
+    actor: ENGINE,
+    type: 'created',
+    payload: { title: input.title, kind: 'onboarding' }
+  });
+  await saveSpecVersion(client, {
+    taskId: row.id,
+    version: 1,
+    body: input.spec,
+    createdBy: ENGINE
+  });
   const events: DomainEvent[] = [
     { type: 'spec_versioned', version: 1 },
     { type: 'lane_changed', from: null, to: lane },
@@ -238,10 +257,11 @@ export interface ApplyInput {
   readonly actor: Actor;
   readonly expectedVersion?: number;
   /**
-   * Checked against the locked, current task. Agent results use it to require the state the agent
-   * actually worked on (same stage, same head commit), so a stale result is never applied.
+   * Checked against the locked, current task, inside the transaction. Agent results use it to
+   * require the state the agent actually worked on (same stage, same head commit, its own run still
+   * in progress), so a stale result is never applied.
    */
-  readonly guard?: (task: Task) => boolean;
+  readonly guard?: (task: Task, client: PoolClient) => boolean | Promise<boolean>;
   /** Runs inside the same transaction after the new state is written, e.g. to store a spec version. */
   readonly onApplied?: (client: PoolClient, task: Task) => Promise<void>;
 }
@@ -268,7 +288,7 @@ export const applyCommandIn = async (
   const approvals = await listApprovedSubjects(client, input.taskId);
 
   const before = toStored(row).task;
-  if (input.guard && !input.guard(before)) return { ok: false, error: 'conflict' };
+  if (input.guard && !(await input.guard(before, client))) return { ok: false, error: 'conflict' };
   // Only a dispatch reads the onboarding gate; the share lock waits for an onboarding task
   // being opened, so the gate it reads is the one in force when the build starts.
   let onboardingOpen = false;

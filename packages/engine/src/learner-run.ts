@@ -33,7 +33,10 @@ const runLearner = async (
       budgetCents: LEARNER_BUDGET_CENTS
     },
     validate,
-    onSessionCreated: (sessionId) => setRunExternalId(deps.pool, runId, sessionId),
+    // Only build runs are failed outside their step (`failTakenOverRuns`); a learner run never is.
+    onSessionCreated: async (sessionId) => {
+      await setRunExternalId(deps.pool, runId, sessionId);
+    },
     onEvent: (event) => appendRunEvent(deps.pool, runId, event.type, event)
   });
 };
