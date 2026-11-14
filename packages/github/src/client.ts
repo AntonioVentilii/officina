@@ -426,17 +426,14 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     return response;
   };
 
-  const pullRequestNode = (ref: RepoRef & { readonly pullRequest: number }) =>
+  /** A pull request as GitHub has it now: open or closed, merged or not, and its head commit. */
+  const pullRequest = (ref: RepoRef & { readonly pullRequest: number }) =>
     installationToken(ref).then((token) =>
-      request<{ node_id: string; head: { sha: string } }>(
+      request<{ node_id: string; state: string; merged: boolean; head: { sha: string } }>(
         `/repos/${ref.repo}/pulls/${ref.pullRequest}`,
         { token }
       )
     );
-
-  /** The commit the pull request's head branch points at now. */
-  const pullRequestHead = async (ref: RepoRef & { readonly pullRequest: number }) =>
-    (await pullRequestNode(ref)).head.sha;
 
   /**
    * Turns on auto-merge as the app, for a result that needed no person's check, so the branch
@@ -455,13 +452,13 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
             body
           })
       },
-      (await pullRequestNode(ref)).node_id,
+      (await pullRequest(ref)).node_id,
       ref.expectedHead
     );
 
   /** Turns auto-merge off, so work sent back to building cannot land before it is checked again. */
   const cancelAutoMerge = async (ref: RepoRef & { readonly pullRequest: number }) => {
-    const pr = await pullRequestNode(ref);
+    const pr = await pullRequest(ref);
     const response = await graphql(
       ref,
       'mutation($id: ID!) { disablePullRequestAutoMerge(input: { pullRequestId: $id }) { clientMutationId } }',
@@ -540,7 +537,7 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     commentOnIssue,
     reviewComments,
     mergeWhenReady,
-    pullRequestHead,
+    pullRequest,
     cancelAutoMerge,
     resolveReviewThreads
   };

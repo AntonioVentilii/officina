@@ -10,7 +10,9 @@ export {
 } from './setup';
 export {
   CONFIG_PATH,
+  catchUpPullRequests,
   handleWebhookAction,
   type ConfigReader,
+  type PullRequestReader,
   type WebhookOutcome
 } from './webhooks';

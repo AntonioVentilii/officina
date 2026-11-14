@@ -11,7 +11,7 @@ import {
 } from '@officina/db';
 import { Pool } from 'pg';
 import { createTaskInMerging, resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
-import { createApp } from '../src';
+import { catchUpPullRequests, createApp, type PullRequestReader } from '../src';
 
 const url = process.env.TEST_DATABASE_URL;
 const SECRET = 'test-webhook-secret-with-enough-length';
@@ -513,5 +513,51 @@ describe.skipIf(!url)('api', () => {
       })
     );
     expect(missingDelivery.status).toBe(400);
+  });
+
+  test('a pull request merged or closed while its webhook was missed is caught up on the next pass', async () => {
+    await pool.query('update projects set github_installation_id = 99 where id = $1', [
+      seeded.projectId
+    ]);
+    const states: Record<number, { state: string; merged: boolean } | Error> = {
+      41: new Error('GitHub 502 on /pulls/41'),
+      42: { state: 'closed', merged: true },
+      43: { state: 'closed', merged: false },
+      44: { state: 'open', merged: false }
+    };
+    const reads: number[] = [];
+    const github: PullRequestReader = {
+      fileContent: async () => null,
+      cancelAutoMerge: async () => {},
+      pullRequest: async ({ pullRequest }) => {
+        reads.push(pullRequest);
+        const pr = states[pullRequest]!;
+        if (pr instanceof Error) throw pr;
+        return { node_id: 'PR', head: { sha: 'abc' }, ...pr };
+      }
+    };
+    const tasks: Record<number, string> = {};
+    for (const number of [41, 42, 43, 44]) {
+      tasks[number] = await createTaskInMerging(pool, seeded);
+      await linkPullRequest(pool, tasks[number], number);
+    }
+    const ids = Object.values(tasks);
+
+    expect(await catchUpPullRequests(pool, github, ids)).toEqual([
+      { taskId: tasks[41]!, error: 'GitHub 502 on /pulls/41' }
+    ]);
+    const stages = async () =>
+      Promise.all(ids.map(async (id) => (await loadTask(pool, id))?.task.stage));
+    expect(await stages()).toEqual(['merging', 'done', 'ready', 'merging']);
+    // The same handling as the webhook's: the closed one is held for a maintainer and unlinked.
+    const closed = (await loadTask(pool, tasks[43]!))?.task;
+    expect(closed?.blocked?.question).toContain('#43');
+
+    // A task that left merging is not read again, and a second pass changes nothing.
+    const events = await Promise.all(ids.map(eventCount));
+    reads.length = 0;
+    await catchUpPullRequests(pool, github, ids);
+    expect(reads).toEqual([41, 44]);
+    expect(await Promise.all(ids.map(eventCount))).toEqual(events);
   });
 });

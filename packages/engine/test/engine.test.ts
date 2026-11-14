@@ -83,6 +83,8 @@ const fakeGitHub = (
     written?: { commitSha: string; parentSha: string };
     /** The pull request's head; by default the branch head after any status commit written. */
     prHead?: string;
+    /** The pull request's state on GitHub; open by default. */
+    prState?: { state: string; merged: boolean };
     mergeFails?: boolean;
     /** How many times opening the pull request fails before it works. */
     openFails?: number;
@@ -144,9 +146,13 @@ const fakeGitHub = (
       if (options.mergeFails) throw new Error('timeout');
       return 'auto_merge';
     },
-    pullRequestHead: async (...args: unknown[]) => {
-      calls.push({ method: 'pullRequestHead', args });
-      return options.prHead ?? branch;
+    pullRequest: async (...args: unknown[]) => {
+      calls.push({ method: 'pullRequest', args });
+      return {
+        node_id: 'PR_42',
+        ...(options.prState ?? { state: 'open', merged: false }),
+        head: { sha: options.prHead ?? branch }
+      };
     },
     // Someone else's commit right on the verified head, touching the code.
     commitChanges: async (...args: unknown[]) => {
@@ -950,7 +956,12 @@ describe.skipIf(!url)('engine', () => {
       },
       commitChanges: async ({ sha }) =>
         sha === 'status1' ? { parents: [base], paths: [SPEC] } : { parents: [], paths: [] },
-      pullRequestHead: async () => head
+      pullRequest: async () => ({
+        node_id: 'PR_42',
+        state: 'open',
+        merged: false,
+        head: { sha: head }
+      })
     };
     return { port, writes: () => writes };
   };
@@ -1085,6 +1096,45 @@ describe.skipIf(!url)('engine', () => {
     await finishVerifiedSpecs(pool, clean().port, [off], onBehalf);
     expect(userCalls).toEqual(['approve']);
     expect(await types(off)).toEqual(['github_approved', 'awaiting_merge']);
+  });
+
+  test('a pull request already merged or closed on GitHub is neither approved nor left to a person to merge', async () => {
+    const approvals: string[] = [];
+    const onBehalf = {
+      publicUrl: PUBLIC_URL,
+      tokenFor: async () => ({ token: 't', login: 'antonio' }),
+      asUser: {
+        pullRequest: async () => ({
+          node_id: 'PR',
+          state: 'open',
+          merged: false,
+          head: { sha: 'abc' }
+        }),
+        approve: async () => {
+          approvals.push('approve');
+          return {};
+        },
+        mergeWhenReady: async () => 'auto_merge' as const,
+        requestCopilotReview: async () => 'requested' as const
+      }
+    };
+    for (const prState of [
+      { state: 'closed', merged: true },
+      { state: 'closed', merged: false }
+    ]) {
+      const taskId = await createTaskInMerging(pool, seeded);
+      await linkPullRequest(pool, taskId, 42);
+      const github = fakeGitHub({ branchHead: 'abc', prState });
+      expect(await finishVerifiedSpecs(pool, github.port, [taskId], onBehalf)).toEqual([]);
+      const { rows } = await pool.query(
+        `select 1 from task_events where task_id = $1
+           and type in ('github_approved', 'github_approval_failed', 'merge_held', 'awaiting_merge')`,
+        [taskId]
+      );
+      expect(rows).toEqual([]);
+      expect((await loadTask(pool, taskId))?.task.stage).toBe('merging');
+    }
+    expect(approvals).toEqual([]);
   });
 
   test('a task that fails to finish does not stop the others, and a refused token is recorded once', async () => {
