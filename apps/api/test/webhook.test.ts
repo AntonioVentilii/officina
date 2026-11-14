@@ -726,4 +726,37 @@ describe.skipIf(!url)('api', () => {
     expect(reads).toEqual([41, 44]);
     expect(await Promise.all(ids.map(eventCount))).toEqual(events);
   });
+
+  test('a pull request closed before the task reached merging is caught up too', async () => {
+    await pool.query('update projects set github_installation_id = 99 where id = $1', [
+      seeded.projectId
+    ]);
+    const github: PullRequestReader = {
+      fileContent: async () => null,
+      cancelAutoMerge: async () => {},
+      pullRequest: async () => ({
+        node_id: 'PR',
+        head: { sha: 'abc' },
+        state: 'closed',
+        merged: false
+      })
+    };
+    const ids: string[] = [];
+    for (const [number, stage] of [
+      [51, 'building'],
+      [52, 'reviewing']
+    ] as const) {
+      const taskId = await createTaskInMerging(pool, seeded);
+      await linkPullRequest(pool, taskId, number);
+      await pool.query('update tasks set stage = $2 where id = $1', [taskId, stage]);
+      ids.push(taskId);
+    }
+
+    expect(await catchUpPullRequests(pool, github, ids)).toEqual([]);
+    for (const taskId of ids) {
+      const task = (await loadTask(pool, taskId))?.task;
+      expect(task?.stage).toBe('ready');
+      expect(task?.blocked?.question).toContain('was closed without being merged');
+    }
+  });
 });

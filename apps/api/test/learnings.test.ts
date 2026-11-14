@@ -9,6 +9,7 @@ import {
 } from '@officina/db';
 import { Pool } from 'pg';
 import { createTaskInMerging, resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
+import { catchUpLearningPullRequests } from '../src/catch-up';
 import { applyEdit, decide, type LearningGitHub } from '../src/learnings';
 import { invite } from '../src/people';
 import { TaskCommandError } from '../src/tasks';
@@ -264,6 +265,37 @@ describe.skipIf(!url)('learning decisions', () => {
       prNumber: 77
     });
     expect((await listLearnings(pool, seeded.projectId))[0]!.status).toBe('applied');
+  });
+
+  test('a learning pull request merged while its webhook was missed is applied on the next pass', async () => {
+    const learning = await propose('docs');
+    await decide(pool, fakeGitHub().port, owner(), {
+      id: learning.id,
+      decision: 'accept',
+      rewrittenAt: null
+    });
+    let merged = false;
+    const reads: number[] = [];
+    const github = {
+      pullRequest: async ({ pullRequest }: { pullRequest: number }) => {
+        reads.push(pullRequest);
+        return {
+          node_id: 'PR',
+          head: { sha: 'learn1' },
+          state: merged ? 'closed' : 'open',
+          merged
+        };
+      }
+    };
+
+    expect(await catchUpLearningPullRequests(pool, github, seeded.projectId)).toEqual([]);
+    expect((await listLearnings(pool, seeded.projectId))[0]!.status).toBe('accepted');
+    merged = true;
+    expect(await catchUpLearningPullRequests(pool, github, seeded.projectId)).toEqual([]);
+    expect((await listLearnings(pool, seeded.projectId))[0]!.status).toBe('applied');
+    // Applied, it is not read again.
+    await catchUpLearningPullRequests(pool, github, seeded.projectId);
+    expect(reads).toEqual([77, 77]);
   });
 
   test('a merged learning pull request is applied whatever the case of the repository name', async () => {

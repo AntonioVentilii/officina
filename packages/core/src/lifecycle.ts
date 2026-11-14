@@ -747,7 +747,7 @@ export const GITHUB_REVIEWABLE: ReadonlySet<Stage> = new Set([
 ]);
 
 /** Stages where the task's pull request may exist: from the first push until it is merged. */
-const WITH_PULL_REQUEST: ReadonlySet<Stage> = new Set(['building', ...GITHUB_REVIEWABLE]);
+export const WITH_PULL_REQUEST: ReadonlySet<Stage> = new Set(['building', ...GITHUB_REVIEWABLE]);
 
 const ALLOWED_WHILE_HELD: ReadonlySet<Command['type']> = new Set([
   'submit_request',

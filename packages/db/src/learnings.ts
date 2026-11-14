@@ -255,6 +255,30 @@ export const decideLearning = async (
     )
   ).rowCount ?? 0) === 1;
 
+/**
+ * The pull requests of a project's accepted learnings, still waiting to merge as far as Officina
+ * knows, for the catch-up of a merge whose webhook was missed.
+ */
+export const listLearningPullRequests = async (
+  db: Queryable,
+  projectId: string
+): Promise<{ repo: string; installationId: number; pullRequest: number }[]> =>
+  (
+    await db.query<{ repo: string; installation_id: string; pr_number: number }>(
+      `select distinct p.github_repo as repo, p.github_installation_id::text as installation_id,
+         l.pr_number
+       from learnings l join projects p on p.id = l.project_id
+       where l.project_id = $1 and l.status = 'accepted' and l.pr_number is not null
+         and p.github_installation_id is not null
+       order by l.pr_number`,
+      [projectId]
+    )
+  ).rows.map((row) => ({
+    repo: row.repo,
+    installationId: Number(row.installation_id),
+    pullRequest: row.pr_number
+  }));
+
 /** A merged learning pull request makes its learning applied. */
 export const markLearningsApplied = async (db: Queryable, repo: string, prNumber: number) =>
   (

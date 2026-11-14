@@ -33,7 +33,7 @@ import {
 import type { Pool } from 'pg';
 import { startScheduler, type Scheduler } from './scheduler';
 import { setupAgents } from './setup';
-import { catchUpPullRequests } from './catch-up';
+import { catchUpLearningPullRequests, catchUpPullRequests } from './catch-up';
 
 const PURGE_INTERVAL_MS = 60 * 60 * 1000;
 
@@ -178,6 +178,14 @@ export const startEngine = async (input: {
         ).catch((error: unknown) => [{ error: (error as Error).message }]);
         for (const failure of uncaught) {
           input.log('pull request state catch-up failed', { projectId, ...failure });
+        }
+        const unapplied = await catchUpLearningPullRequests(
+          input.pool,
+          input.github,
+          projectId
+        ).catch((error: unknown) => [{ error: (error as Error).message }]);
+        for (const failure of unapplied) {
+          input.log('learning pull request catch-up failed', { projectId, ...failure });
         }
         const unopened = await openMissingPullRequests(
           input.pool,
