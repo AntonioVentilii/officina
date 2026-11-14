@@ -11,6 +11,7 @@ import {
   applyCommand,
   finishRun,
   recordRunResult,
+  runIsActive,
   saveSpecVersion,
   setTaskTitle
 } from '@officina/db';
@@ -28,17 +29,23 @@ const sameAssignee = (a: Task['assignee'], b: Task['assignee']): boolean => {
   return b.kind === 'agent' && a.role === b.role;
 };
 
-/**
- * Only the state the agent saw may receive its result, or its failure: a build a member took over
- * meanwhile is theirs, and nothing the agent's run ends with applies to it.
- */
-export const sameWork = (seen: Task) => (current: Task) =>
+const sameFields = (seen: Task, current: Task) =>
   current.stage === seen.stage &&
   current.specVersion === seen.specVersion &&
   current.headSha === seen.headSha &&
   sameAssignee(current.assignee, seen.assignee) &&
   !current.blocked &&
   !current.paused;
+
+/**
+ * Only the state the agent saw may receive its result, or its failure, and only while its own run
+ * is still in progress: a build a member took over meanwhile is theirs, and nothing the agent's run
+ * ends with applies to it, even once the same role builds the task again after the member let go.
+ */
+export const sameWork =
+  (seen: Task, runId: string) =>
+  async (current: Task, client: PoolClient): Promise<boolean> =>
+    sameFields(seen, current) && (await runIsActive(client, runId));
 
 /** A build result with the facts of what was really pushed, read from GitHub. */
 const pushedOutput = async (step: Step, built: PushedBuild): Promise<RoleOutput> => {
@@ -183,7 +190,7 @@ export const applyResult = async (
     taskId: step.taskId,
     command: mapped.command,
     actor: step.actor,
-    guard: sameWork(step.context.task),
+    guard: sameWork(step.context.task, step.runId),
     onApplied: recordAlongside(step, output)
   });
   if (!applied.ok) {

@@ -238,10 +238,11 @@ export interface ApplyInput {
   readonly actor: Actor;
   readonly expectedVersion?: number;
   /**
-   * Checked against the locked, current task. Agent results use it to require the state the agent
-   * actually worked on (same stage, same head commit), so a stale result is never applied.
+   * Checked against the locked, current task, inside the transaction. Agent results use it to
+   * require the state the agent actually worked on (same stage, same head commit, its own run still
+   * in progress), so a stale result is never applied.
    */
-  readonly guard?: (task: Task) => boolean;
+  readonly guard?: (task: Task, client: PoolClient) => boolean | Promise<boolean>;
   /** Runs inside the same transaction after the new state is written, e.g. to store a spec version. */
   readonly onApplied?: (client: PoolClient, task: Task) => Promise<void>;
 }
@@ -268,7 +269,7 @@ export const applyCommandIn = async (
   const approvals = await listApprovedSubjects(client, input.taskId);
 
   const before = toStored(row).task;
-  if (input.guard && !input.guard(before)) return { ok: false, error: 'conflict' };
+  if (input.guard && !(await input.guard(before, client))) return { ok: false, error: 'conflict' };
   // Only a dispatch reads the onboarding gate; the share lock waits for an onboarding task
   // being opened, so the gate it reads is the one in force when the build starts.
   let onboardingOpen = false;

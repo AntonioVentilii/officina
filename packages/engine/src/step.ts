@@ -14,12 +14,12 @@ import {
   type RunOutcome,
   type RunReport
 } from '@officina/runner';
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import { claimStep, type ClaimedStep, type SkipReason } from './claim';
 import { runLearnerStep } from './learner';
 import type { SyncGitHubPort } from './github-sync';
 import { applyResult, roleOutputOf, sameWork, type StepOutcome } from './step-apply';
-import { gatherInputs, runSession } from './step-session';
+import { gatherInputs, runSession, RunStoppedError } from './step-session';
 
 export type GitHubPort = Pick<
   GitHubClient,
@@ -92,7 +92,12 @@ const refChanges = async (
 };
 
 /** Asks a maintainer; with a `guard`, only while the task is still in the state it allows. */
-const blockTask = (pool: Pool, taskId: string, question: string, guard?: (task: Task) => boolean) =>
+const blockTask = (
+  pool: Pool,
+  taskId: string,
+  question: string,
+  guard?: (task: Task, client: PoolClient) => Promise<boolean>
+) =>
   applyCommand(pool, {
     taskId,
     command: { type: 'block', question, askedOf: { role: 'maintainer' } },
@@ -111,9 +116,9 @@ export interface Step extends ClaimedStep {
 }
 
 /**
- * Fails the run with what it left and asks a maintainer, so the scheduler does not retry it. Only
+ * Asks a maintainer and fails the run with what it left, so the scheduler does not retry it. Only
  * on the work the run saw, as for a result: a build a member took over is not blocked by the run
- * it replaced.
+ * it replaced. Blocked first, while the run is still in progress, as the guard requires.
  */
 const failAndBlock = async (
   step: Step,
@@ -121,13 +126,13 @@ const failAndBlock = async (
   question: string,
   reason: string
 ): Promise<StepResult> => {
-  await finishRun(step.deps.pool, step.runId, { status: 'failed', ...run });
   const blocked = await blockTask(
     step.deps.pool,
     step.taskId,
     question,
-    sameWork(step.context.task)
+    sameWork(step.context.task, step.runId)
   );
+  await finishRun(step.deps.pool, step.runId, { status: 'failed', ...run });
   return blocked.ok ? { status: 'blocked', reason } : { status: 'discarded', reason };
 };
 
@@ -227,20 +232,22 @@ export const runAgentStep = async (
   try {
     return await runClaimed(step);
   } catch (error) {
+    // Failed already, by whoever stopped it, with the reason recorded on the run.
+    if (error instanceof RunStoppedError) return { status: 'discarded', reason: error.message };
     const message = (error as Error).message;
+    // Blocking stops the scheduler from retrying a step that fails the same way every time;
+    // answering the question retries it. Blocked first, while the run is still in progress.
+    await blockTask(
+      deps.pool,
+      taskId,
+      `The ${role} step failed unexpectedly: ${message}. Answer this question to retry it.`,
+      sameWork(step.context.task, step.runId)
+    ).catch(() => {});
     await finishRun(deps.pool, step.runId, {
       status: 'failed',
       costCents: null,
       result: { error: message }
     });
-    // Blocking stops the scheduler from retrying a step that fails the same way every time;
-    // answering the question retries it.
-    await blockTask(
-      deps.pool,
-      taskId,
-      `The ${role} step failed unexpectedly: ${message}. Answer this question to retry it.`,
-      sameWork(step.context.task)
-    ).catch(() => {});
     throw error;
   }
 };
