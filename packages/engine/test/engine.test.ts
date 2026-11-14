@@ -1112,7 +1112,7 @@ describe.skipIf(!url)('engine', () => {
     const approvals: string[] = [];
     const onBehalf = {
       publicUrl: PUBLIC_URL,
-      tokenFor: async () => ({ token: 't', login: 'antonio' }),
+      tokenFor: async () => ({ token: 't', login: 'antonio', userId: 1 }),
       asUser: {
         pullRequest: async () => ({
           node_id: 'PR',
@@ -1120,6 +1120,7 @@ describe.skipIf(!url)('engine', () => {
           merged: false,
           head: { sha: 'abc' }
         }),
+        reviews: async () => [],
         approve: async () => {
           approvals.push('approve');
           return {};
