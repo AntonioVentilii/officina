@@ -11,6 +11,11 @@ const ADDED_STATUSES: ReadonlySet<string> = new Set(['added', 'copied', 'renamed
 
 const base64url = (input: string | Buffer): string => Buffer.from(input).toString('base64url');
 
+/** The paths a list of changed files touches, a renamed file under both names. */
+const touchedPaths = (files: readonly { filename: string; previous_filename?: string }[]) => [
+  ...new Set(files.flatMap((file) => [file.filename, file.previous_filename ?? []].flat()))
+];
+
 /** A short-lived JWT that authenticates as the GitHub App itself. */
 export const createAppJwt = (appId: string, privateKeyPem: string, nowSeconds: number): string => {
   const header = base64url(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
@@ -126,9 +131,7 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     }>(`/repos/${ref.repo}/compare/${encodeURIComponent(ref.base)}...${headSha}`, { token });
 
     const files = comparison.files ?? [];
-    const changedPaths = [
-      ...new Set(files.flatMap((file) => [file.filename, file.previous_filename ?? []].flat()))
-    ];
+    const changedPaths = touchedPaths(files);
     const addedPaths = files
       .filter((file) => ADDED_STATUSES.has(file.status))
       .map((file) => file.filename);
@@ -192,6 +195,21 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     );
   };
 
+  /** A commit's parents and the paths it changes. */
+  const commitChanges = async (
+    ref: RepoRef & { readonly sha: string }
+  ): Promise<{ parents: string[]; paths: string[] }> => {
+    const token = await installationToken(ref, { contents: 'read' });
+    const commit = await request<{
+      parents: { sha: string }[];
+      files?: { filename: string; previous_filename?: string }[];
+    }>(`/repos/${ref.repo}/commits/${encodeURIComponent(ref.sha)}`, { token });
+    return {
+      parents: commit.parents.map((parent) => parent.sha),
+      paths: touchedPaths(commit.files ?? [])
+    };
+  };
+
   /** The installation of this app on a repository, authenticated as the app itself. */
   const repoInstallationId = async (repo: string): Promise<number> => {
     const jwt = createAppJwt(options.appId, options.privateKeyPem, Math.floor(now() / 1000));
@@ -211,7 +229,7 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     `/repos/${repo}/contents/${path.split('/').map(encodeURIComponent).join('/')}`;
 
   /**
-   * A file's text and blob sha at a branch, or `null` when no file exists there. A directory (or a
+   * A file's text and blob sha at a branch (or a commit), or `null` when no file exists there. A directory (or a
    * symlink or submodule) at that path is not a file, so it reads as missing instead of failing.
    */
   const readFile = async (
@@ -296,17 +314,27 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     }
   };
 
-  /** The pull requests open from one of the repository's own branches, to any base or to one. */
-  const openFromBranch = (
+  /**
+   * The pull requests open from one of the repository's own branches, to any base or to one. Every
+   * page is read before anything acts on them, so closing some cannot shift the pages still unread.
+   */
+  const openFromBranch = async (
     ref: RepoRef & { readonly branch: string; readonly base?: string },
     token: string
   ) => {
     const owner = ref.repo.split('/')[0]!;
     const base = ref.base === undefined ? '' : `&base=${encodeURIComponent(ref.base)}`;
-    return request<{ number: number; html_url: string }[]>(
-      `/repos/${ref.repo}/pulls?state=open&head=${encodeURIComponent(`${owner}:${ref.branch}`)}${base}`,
-      { token }
-    );
+    const head = encodeURIComponent(`${owner}:${ref.branch}`);
+    const pulls: { number: number; html_url: string }[] = [];
+    for (let page = 1; ; page++) {
+      const batch = await request<typeof pulls>(
+        `/repos/${ref.repo}/pulls?state=open&head=${head}${base}&per_page=100&page=${page}`,
+        { token }
+      );
+      pulls.push(...batch);
+      if (batch.length < 100) break;
+    }
+    return pulls;
   };
 
   /** Opens a pull request, or returns the one already open from the same branch to the same base. */
@@ -506,6 +534,7 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     pushFacts,
     refSnapshot,
     isPullRequestMerge,
+    commitChanges,
     openPullRequest,
     closePullRequestsFrom,
     commentOnIssue,

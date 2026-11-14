@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { GuardPaths } from './guards';
 import { compileLaneMatcher, type Lane, type LaneMatcher } from './lanes';
 
 /** The board's two looks. A member's own pick wins over the project's default. */
@@ -87,6 +88,26 @@ const projectConfigSchema = z
       })
       .optional(),
     verify: z.array(z.string().min(1)).optional(),
+    guards: z
+      .strictObject({
+        /** Files whose content is confidential: agents never quote it outside (section 13). */
+        confidential: z.array(z.string().min(1)).optional(),
+        /** Words that mark a request as about confidential content, e.g. `investor`. */
+        confidential_terms: z.array(z.string().trim().min(2)).optional(),
+        /** Files that publish, deploy or open access: changing one needs the owner. */
+        publishing: z.array(z.string().min(1)).optional()
+      })
+      .optional(),
+    approvals: z
+      .strictObject({
+        /**
+         * Whether the requester's own approval meets a role or domain requirement and the
+         * maintainer floor at their task's gates. Left out, it does; set to false, someone else
+         * must, unless nobody else can.
+         */
+        self_approval: z.boolean().optional()
+      })
+      .optional(),
     release: z
       .strictObject({
         /** What merging into the default branch deploys. Left out, it is taken to be production. */
@@ -188,6 +209,8 @@ export interface ProjectConfig {
   readonly setup: readonly string[];
   readonly intake: { readonly interview: boolean };
   readonly verify: readonly string[];
+  readonly approvals: { readonly selfApproval: boolean };
+  readonly guards: GuardPaths & { readonly confidentialTerms: readonly string[] };
   readonly release: { readonly onMerge: ReleaseOnMerge };
   readonly runtime: { readonly allowedHosts: readonly string[] };
   readonly pullRequest: {
@@ -320,6 +343,12 @@ export const parseProjectConfig = (input: unknown): ConfigResult => {
       setup: raw.setup ?? [],
       intake: { interview: raw.intake?.interview ?? true },
       verify: raw.verify ?? [],
+      approvals: { selfApproval: raw.approvals?.self_approval ?? true },
+      guards: {
+        confidential: raw.guards?.confidential ?? [],
+        confidentialTerms: raw.guards?.confidential_terms ?? [],
+        publishing: raw.guards?.publishing ?? []
+      },
       release: { onMerge: raw.release?.on_merge ?? 'production' },
       runtime: { allowedHosts: raw.runtime?.allowed_hosts ?? [] },
       pullRequest: {

@@ -1,4 +1,4 @@
-import { ROLES, type Role } from '@officina/core';
+import { ROLES, can, type Role } from '@officina/core';
 import {
   createInviteLink,
   createLoginLink,
@@ -85,7 +85,7 @@ export interface MemberView extends MemberActivity {
  * and only to someone who never signed in: a member who has signed in has their own way back in.
  */
 const mayInviteAgain = (viewerRole: Role, member: MemberActivity) =>
-  viewerRole === 'owner' && member.firstSignedInAt === null;
+  can({ role: viewerRole }, 'manage_members') && member.firstSignedInAt === null;
 
 /** The project's members as the board's Members page shows them to an owner or maintainer. */
 export const membersView = async (
@@ -103,7 +103,7 @@ export const inviteAgain = async (
   pool: Pool,
   input: { publicUrl: string; projectId: string; viewerRole: Role; memberId: string }
 ): Promise<string> => {
-  if (input.viewerRole !== 'owner')
+  if (!can({ role: input.viewerRole }, 'manage_members'))
     throw new TaskCommandError('only owners send invite links', 403);
   const result = await createInviteLink(pool, { ...input, ttlMs: INVITE_TTL_MS });
   if (result.ok) return signInUrl(input.publicUrl, result.token);

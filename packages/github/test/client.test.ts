@@ -170,6 +170,25 @@ describe('GitHub client', () => {
     expect(await check('diverged')).toBe(false);
   });
 
+  test("a commit's parents and the paths it changes, a rename under both names", async () => {
+    const { fetchImpl } = fakeGitHub({
+      'POST /app/installations/99/access_tokens': tokenRoute('2099-01-01T00:00:00Z'),
+      'GET /repos/ViciApp/vici-app/commits/s1': () =>
+        json({
+          parents: [{ sha: 'h1' }],
+          files: [
+            { filename: 'docs/specs/a.md', status: 'modified' },
+            { filename: 'src/b.ts', previous_filename: 'src/a.ts', status: 'renamed' }
+          ]
+        })
+    });
+    const client = createGitHubClient({ appId: '1', privateKeyPem, fetch: fetchImpl });
+    expect(await client.commitChanges({ ...ref, sha: 's1' })).toEqual({
+      parents: ['h1'],
+      paths: ['docs/specs/a.md', 'src/b.ts', 'src/a.ts']
+    });
+  });
+
   test('a possibly truncated file list reports an unbounded diff', async () => {
     const files = Array.from({ length: COMPARE_FILE_LIMIT }, (_, index) => ({
       filename: `src/file${index}.ts`,
@@ -308,6 +327,30 @@ describe('GitHub client', () => {
     open = [];
     await client.closePullRequestsFrom({ ...ref, branch: 'officina/learning-1' });
     expect(calls.filter((call) => call.method === 'PATCH')).toHaveLength(2);
+  });
+
+  test('closes the pull requests on every page, reading them all before closing any', async () => {
+    const pulls = Array.from({ length: 101 }, (_, index) => ({
+      number: index + 1,
+      html_url: `https://github.com/ViciApp/vici-app/pull/${index + 1}`
+    }));
+    const routes: Record<string, () => Response> = {
+      'POST /app/installations/99/access_tokens': tokenRoute('2099-01-01T00:00:00Z'),
+      'GET /repos/ViciApp/vici-app/pulls': () => {
+        const query = new URLSearchParams(calls.at(-1)!.query);
+        const page = Number(query.get('page'));
+        expect(query.get('per_page')).toBe('100');
+        return json(pulls.slice((page - 1) * 100, page * 100));
+      }
+    };
+    for (const pull of pulls)
+      routes[`PATCH /repos/ViciApp/vici-app/pulls/${pull.number}`] = () => json({});
+    const { fetchImpl, calls } = fakeGitHub(routes);
+    const client = createGitHubClient({ appId: '1', privateKeyPem, fetch: fetchImpl });
+    await client.closePullRequestsFrom({ ...ref, branch: 'officina/learning-1' });
+    const methods = calls.slice(1).map((call) => call.method);
+    expect(methods.slice(0, 2)).toEqual(['GET', 'GET']);
+    expect(methods.filter((method) => method === 'PATCH')).toHaveLength(101);
   });
 
   test('creating a branch again keeps the one the first attempt made, never moving it', async () => {

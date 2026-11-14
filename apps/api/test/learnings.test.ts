@@ -1,6 +1,12 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import type { LearningTarget } from '@officina/core';
-import { insertLearnings, listLearnings } from '@officina/db';
+import {
+  failLearningRewrite,
+  insertLearnings,
+  listLearnings,
+  requestLearningRewrite,
+  rewriteLearningEdit
+} from '@officina/db';
 import { Pool } from 'pg';
 import { createTaskInMerging, resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
 import { applyEdit, decide, type LearningGitHub } from '../src/learnings';
@@ -64,7 +70,7 @@ describe.skipIf(!url)('learning decisions', () => {
    * Remembers what each branch holds and which pull requests are open, so a second decision sees
    * what the first one left. A failed opening has opened it, as when GitHub's answer is lost.
    */
-  const fakeGitHub = (options: { failOpening?: number } = {}) => {
+  const fakeGitHub = (options: { failOpening?: number; base?: string } = {}) => {
     const calls: { method: string; args: Record<string, unknown> }[] = [];
     const written = new Map<string, string>();
     const open = new Set<string>();
@@ -74,7 +80,7 @@ describe.skipIf(!url)('learning decisions', () => {
       if (method === 'readFile') {
         const text = written.get(String(args.branch));
         return text === undefined
-          ? { text: '# Agents\n\n## Copy\n', sha: 'blob1' }
+          ? { text: options.base ?? '# Agents\n\n## Copy\n', sha: 'blob1' }
           : { text, sha: 'blob2' };
       }
       if (method === 'updateFile') written.set(String(args.branch), String(args.text));
@@ -255,6 +261,64 @@ describe.skipIf(!url)('learning decisions', () => {
       method: 'closePullRequestsFrom',
       args: { installationId: 99, repo: 'ViciApp/vici-app', branch }
     });
+  });
+
+  test('an edit the default branch moved past goes back to the learner instead of failing', async () => {
+    const learning = await propose('docs');
+    const github = fakeGitHub({ base: '# Agents\n\n## Copy and tone\n' });
+    const decided = await decide(pool, github.port, owner(), {
+      id: learning.id,
+      decision: 'accept'
+    });
+    expect(decided).toMatchObject({ status: 'proposed', rewrite: 'requested', prNumber: null });
+    expect(github.calls.map((call) => call.method)).toEqual(['readFile']);
+
+    await expect(
+      decide(pool, github.port, owner(), { id: learning.id, decision: 'accept' })
+    ).rejects.toThrow('the learner is rewriting this edit');
+
+    await failLearningRewrite(pool, learning.id);
+    await expect(
+      decide(pool, github.port, owner(), { id: learning.id, decision: 'accept' })
+    ).rejects.toThrow('could not rewrite it; reject it instead');
+    expect(
+      await decide(pool, github.port, owner(), { id: learning.id, decision: 'reject' })
+    ).toMatchObject({ status: 'rejected' });
+  });
+
+  test('a rewritten edit opens its pull request from a branch of its own', async () => {
+    const learning = await propose('docs');
+    await requestLearningRewrite(pool, learning.id);
+    await rewriteLearningEdit(pool, learning.id, {
+      file: 'AGENTS.md',
+      find: '## Copy\n',
+      text: '## Copy\n\nEvery live locale.\n'
+    });
+    const github = fakeGitHub();
+    await decide(pool, github.port, owner(), { id: learning.id, decision: 'accept' });
+    const created = github.calls.find((call) => call.method === 'createBranch')!;
+    expect(String(created.args.branch)).toMatch(
+      new RegExp(`^officina/learning-${learning.id.slice(0, 8)}-[0-9a-z]+$`)
+    );
+  });
+
+  test('rejecting a rewritten learning closes what an accept left on its first branch too', async () => {
+    const learning = await propose('docs');
+    await requestLearningRewrite(pool, learning.id);
+    await rewriteLearningEdit(pool, learning.id, {
+      file: 'AGENTS.md',
+      find: '## Copy\n',
+      text: '## Copy\n\nEvery live locale.\n'
+    });
+    const github = fakeGitHub();
+    await decide(pool, github.port, owner(), { id: learning.id, decision: 'reject' });
+    const closed = github.calls
+      .filter((call) => call.method === 'closePullRequestsFrom')
+      .map((call) => String(call.args.branch));
+    const first = `officina/learning-${learning.id.slice(0, 8)}`;
+    expect(closed).toHaveLength(2);
+    expect(closed).toContain(first);
+    expect(closed.find((branch) => branch !== first)).toMatch(new RegExp(`^${first}-[0-9a-z]+$`));
   });
 
   test('agent learnings are recorded without touching the repository; contributors cannot decide', async () => {

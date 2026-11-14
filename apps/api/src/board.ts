@@ -1,17 +1,31 @@
 import {
+  APPROVAL_FLOOR,
+  GATE_ACTIONS,
+  GUARD_LABELS,
+  HANDOFF_NEEDS,
   REVIEWER_ROLES,
   TERMINAL_STAGES,
+  applicableRequirements,
+  can,
   effectivePolicy,
+  eligibleMembers,
   evaluatePolicy,
   gateSubject,
   hasRole,
-  isEligible,
+  humanBuildReason,
+  optionKey,
   parseProjectConfig,
+  policyContext,
   type Actor,
   type AgentRole,
+  type Approval,
+  type ApprovalPlan,
   type Blocked,
   type Gate,
+  type Eligibility,
   type Member,
+  type Policy,
+  type ProjectConfig,
   type Requirement,
   type Role
 } from '@officina/core';
@@ -47,7 +61,16 @@ export interface WaitingOn {
 }
 
 export type BoardAction =
-  'submit' | 'accept' | 'decline' | 'approve' | 'changes' | 'answer' | 'cancel' | 'comment';
+  | 'submit'
+  | 'accept'
+  | 'decline'
+  | 'claim'
+  | 'hand_in'
+  | 'approve'
+  | 'changes'
+  | 'answer'
+  | 'cancel'
+  | 'comment';
 
 export interface BoardViewer {
   readonly memberId: string;
@@ -127,8 +150,7 @@ const viewerMember = (viewer: BoardViewer): Member => ({
  * learnings. Maintainers and owners look after the work; contributors and watchers may not have
  * access to the repository at all, so they get the decisions and the trail, not the code or money.
  */
-export const seesTechnical = (viewer: BoardViewer): boolean =>
-  hasRole(viewerMember(viewer), 'maintainer');
+export const seesTechnical = (viewer: BoardViewer): boolean => can(viewer, 'see_runs');
 
 /**
  * What contributors and watchers read of each event's payload: what the timeline says about the
@@ -141,6 +163,7 @@ const PUBLIC_FIELDS: Readonly<Record<string, readonly string[]>> = {
   lane_changed: ['from', 'to'],
   spec_versioned: ['version'],
   user_visible_changed: ['userVisible'],
+  guards_changed: ['guards'],
   approval_recorded: ['gate', 'satisfied', 'memberId'],
   approval_planned: ['gate'],
   changes_requested: ['stage', 'note'],
@@ -172,13 +195,35 @@ const HIDDEN_QUESTION =
  * Questions are often an agent's or Officina's own failure, quoting an error; people who can
  * neither answer them nor see the runs get only that one is open.
  */
-const questionFor = (viewer: BoardViewer, blocked: Blocked): string =>
+const seesQuestion = (viewer: BoardViewer, blocked: Blocked): boolean =>
   seesTechnical(viewer) ||
   ('memberId' in blocked.askedOf
     ? blocked.askedOf.memberId === viewer.memberId
-    : hasRole(viewerMember(viewer), blocked.askedOf.role))
-    ? blocked.question
-    : HIDDEN_QUESTION;
+    : hasRole(viewerMember(viewer), blocked.askedOf.role));
+
+const questionFor = (viewer: BoardViewer, blocked: Blocked): string =>
+  seesQuestion(viewer, blocked) ? blocked.question : HIDDEN_QUESTION;
+
+/** The options a question offers, by letter, to whoever may read the question itself. */
+const optionsFor = (viewer: BoardViewer, blocked: Blocked) =>
+  seesQuestion(viewer, blocked)
+    ? (blocked.options ?? []).map((option, index) => ({ key: optionKey(index), ...option }))
+    : [];
+
+export const CONFIDENTIAL =
+  "Confidential: only members who may see the project's confidential content can read this.";
+
+/**
+ * Whether the viewer may read what a task says. A task guarded as confidential keeps its title,
+ * stage and people for everyone, and its words for members with `see_confidential`.
+ */
+const readsContent = (
+  row: Pick<BoardTaskRow, 'guards'>,
+  viewer: Pick<BoardViewer, 'role' | 'domains'>
+): boolean => !row.guards.includes('confidential') || can(viewer, 'see_confidential');
+
+/** Free text a timeline event may carry, dropped for viewers who may not read the task. */
+const EVENT_TEXT = ['note', 'answer', 'reason', 'blocked'];
 
 const payloadFor = (
   viewer: BoardViewer,
@@ -204,12 +249,16 @@ interface ApprovalState {
   readonly pending: readonly Requirement[];
   readonly waived: readonly Requirement[];
   readonly approvedBy: readonly string[];
+  /** The members whose approval would meet a pending requirement. */
+  readonly canApprove: readonly string[];
 }
 
 interface ProjectFacts {
   readonly members: Awaited<ReturnType<typeof listProjectMembers>>;
   readonly names: ReadonlyMap<string, string>;
   readonly rawConfig: unknown;
+  /** The project's config, parsed once; `null` when it is invalid. */
+  readonly config: ProjectConfig | null;
   /** The open onboarding task's number: until it is done, no other task is built. */
   readonly onboarding: number | null;
 }
@@ -227,22 +276,33 @@ const approvalState = async (
   const plan = row.approvalPlans[gate];
   // Until the approval chooser has planned this subject, nobody can approve it yet.
   if (plan?.subject !== subject)
-    return { gate, planned: false, pending: [], waived: [], approvedBy: [] };
+    return { gate, planned: false, pending: [], waived: [], approvedBy: [], canApprove: [] };
   const approvals = await listApprovedSubjects(pool, row.id);
-  const result = evaluatePolicy(effectivePolicy(config.config, row, gate), approvals, {
-    members: facts.members,
-    requesterId: row.requesterId,
-    userVisible: row.userVisible,
-    subject
-  });
+  const context = policyContext(config.config, row, gate, { members: facts.members, subject });
+  const policy = effectivePolicy(config.config, row, gate);
+  const result = evaluatePolicy(policy, approvals, context);
+  // Only approvals that count are shown as approvals: someone the policy does not name (or who may
+  // not see a confidential task) can record one, but it meets nothing.
+  const counting = new Set(
+    applicableRequirements(policy, row.userVisible).flatMap((requirement) =>
+      eligibleMembers(requirement, context).map((member) => member.id)
+    )
+  );
   return {
     gate,
     planned: true,
     pending: result.pending,
     waived: result.waived,
     approvedBy: approvals
-      .filter((approval) => approval.subject === subject)
-      .map((approval) => facts.names.get(approval.memberId) ?? 'a former member')
+      .filter((approval) => approval.subject === subject && counting.has(approval.memberId))
+      .map((approval) => facts.names.get(approval.memberId) ?? 'a former member'),
+    canApprove: [
+      ...new Set(
+        result.pending.flatMap((requirement) =>
+          eligibleMembers(requirement, context).map((member) => member.id)
+        )
+      )
+    ]
   };
 };
 
@@ -250,30 +310,39 @@ const canAnswer = (row: BoardTaskRow, viewer: BoardViewer) => {
   if (!row.blocked) return false;
   const askedOf = row.blocked.askedOf;
   return (
-    viewer.role === 'owner' ||
-    ('memberId' in askedOf
-      ? askedOf.memberId === viewer.memberId
-      : hasRole(viewerMember(viewer), askedOf.role))
+    can(viewer, 'answer') &&
+    (viewer.role === 'owner' ||
+      ('memberId' in askedOf
+        ? askedOf.memberId === viewer.memberId
+        : hasRole(viewerMember(viewer), askedOf.role)))
   );
 };
+
+/** What a handoff to a person needs, in words. */
+const handoffNeeds = (blocked: Blocked): string[] =>
+  (blocked.handoff?.needs ?? []).map((need) => HANDOFF_NEEDS[need].label);
 
 const waitingOn = (
   row: BoardTaskRow,
   viewer: BoardViewer,
   approval: ApprovalState | null,
-  onboarding: number | null
+  facts: Pick<ProjectFacts, 'config' | 'onboarding' | 'names'>
 ): WaitingOn => {
   const member = viewerMember(viewer);
   if (TERMINAL_STAGES.has(row.stage)) return { kind: 'nobody', label: row.stage, me: false };
   if (row.blocked) {
     const askedOf = row.blocked.askedOf;
+    const who = 'memberId' in askedOf ? 'a member' : article(askedOf.role);
+    const needs = handoffNeeds(row.blocked);
     return {
       kind: 'people',
-      label: `A question for ${'memberId' in askedOf ? 'a member' : article(askedOf.role)}`,
+      label: needs.length
+        ? `Agents cannot go on: needs ${who} for ${needs.join(', ')}`
+        : `A question for ${who}`,
       me: canAnswer(row, viewer)
     };
   }
-  if (row.paused) return { kind: 'people', label: 'Paused', me: hasRole(member, 'maintainer') };
+  if (row.paused) return { kind: 'people', label: 'Paused', me: can(member, 'steer') };
   const running = row.runningRoles.map(roleLabel);
   switch (row.stage) {
     case 'request':
@@ -286,7 +355,7 @@ const waitingOn = (
       return {
         kind: 'people',
         label: 'A maintainer accepts or declines it',
-        me: hasRole(member, 'maintainer')
+        me: can(member, 'triage')
       };
     case 'speccing':
       return {
@@ -308,23 +377,31 @@ const waitingOn = (
           ? `${noun} by ${[...new Set(readable(pending).map(describeRequirement))].join(' and ')}`
           : noun,
         me:
-          pending.some((requirement) => isEligible(member, requirement, row.requesterId)) ||
-          (Boolean(asked) && pending.length > 0 && hasRole(member, 'contributor'))
+          Boolean(approval?.canApprove.includes(viewer.memberId)) ||
+          (Boolean(asked) && pending.length > 0 && can(member, GATE_ACTIONS[row.stage]))
       };
     }
-    case 'ready':
-      return row.kind === 'request' && onboarding !== null
+    case 'ready': {
+      const byPerson = facts.config && humanBuildReason(facts.config, row);
+      if (byPerson)
+        return {
+          kind: 'people',
+          label: `Needs a developer: a developer claims the build. ${byPerson}`,
+          me: can(member, 'build')
+        };
+      return row.kind === 'request' && facts.onboarding !== null
         ? {
             kind: 'agent',
-            label: `Builds once the agent docs of task ${onboarding} are merged`,
+            label: `Builds once the agent docs of task ${facts.onboarding} are merged`,
             me: false
           }
         : { kind: 'agent', label: 'Waiting for a build slot', me: false };
+    }
     case 'building':
       return row.assignee?.kind === 'member'
         ? {
             kind: 'people',
-            label: 'A person is building it',
+            label: `${facts.names.get(row.assignee.memberId) ?? 'A person'} is building it, then hands it in`,
             me: row.assignee.memberId === viewer.memberId
           }
         : {
@@ -343,39 +420,54 @@ const waitingOn = (
     case 'merging':
       return row.autoMergeOn
         ? { kind: 'github', label: 'Merging once GitHub checks pass', me: false }
-        : { kind: 'github', label: 'Merge on GitHub', me: hasRole(member, 'maintainer') };
+        : { kind: 'github', label: 'Merge on GitHub', me: can(member, 'merge') };
     default:
       return { kind: 'nobody', label: row.stage, me: false };
   }
 };
 
+/** Whether a member may build this task: the `build` action, and reading it if it is confidential. */
+const buildsIt = (
+  row: Pick<BoardTaskRow, 'guards'>,
+  member: Pick<BoardViewer, 'role' | 'domains'>
+) => can(member, 'build') && readsContent(row, member);
+
+/**
+ * A developer claims a build when it waits or the agent has it, and hands in what they pushed once
+ * it is theirs: built by hand or with their own agents, it goes to the same review.
+ */
+const buildActions = (row: BoardTaskRow, viewer: BoardViewer): BoardAction[] => {
+  if (!buildsIt(row, viewer)) return [];
+  if (row.stage === 'ready' || (row.stage === 'building' && row.assignee?.kind === 'agent'))
+    return ['claim'];
+  return row.stage === 'building' &&
+    row.assignee?.kind === 'member' &&
+    row.assignee.memberId === viewer.memberId
+    ? ['hand_in']
+    : [];
+};
+
 const actionsFor = (row: BoardTaskRow, viewer: BoardViewer): BoardAction[] => {
   const member = viewerMember(viewer);
-  if (TERMINAL_STAGES.has(row.stage)) return hasRole(member, 'contributor') ? ['comment'] : [];
+  if (TERMINAL_STAGES.has(row.stage)) return can(member, 'comment') ? ['comment'] : [];
   const actions: BoardAction[] = [];
-  if (
-    row.stage === 'request' &&
-    hasRole(member, 'contributor') &&
-    (row.requesterId === viewer.memberId || hasRole(member, 'maintainer'))
-  )
+  const requester = row.requesterId === viewer.memberId;
+  if (row.stage === 'request' && can(member, 'request') && (requester || can(member, 'triage')))
     actions.push('submit');
   if (row.blocked) {
     if (canAnswer(row, viewer)) actions.push('answer');
   } else if (!row.paused) {
-    if (row.stage === 'triage' && hasRole(member, 'maintainer')) actions.push('accept', 'decline');
+    if (row.stage === 'triage' && can(member, 'triage')) actions.push('accept', 'decline');
+    actions.push(...buildActions(row, viewer));
     if (
       (row.stage === 'spec_review' || row.stage === 'verifying') &&
-      hasRole(member, 'contributor') &&
+      can(member, GATE_ACTIONS[row.stage]) &&
       row.approvalPlans[row.stage]?.subject === gateSubject(row, row.stage)
     )
       actions.push('approve', 'changes');
   }
-  if (
-    hasRole(member, 'maintainer') ||
-    (row.requesterId === viewer.memberId && hasRole(member, 'contributor'))
-  )
-    actions.push('cancel');
-  if (hasRole(member, 'contributor')) actions.push('comment');
+  if (can(member, 'steer') || (requester && can(member, 'request'))) actions.push('cancel');
+  if (can(member, 'comment')) actions.push('comment');
   return actions;
 };
 
@@ -386,10 +478,12 @@ const projectFacts = async (pool: Pool, viewer: BoardViewer): Promise<ProjectFac
     loadProjectConfig(pool, viewer.projectId),
     openOnboardingTask(pool, viewer.projectId)
   ]);
+  const parsed = parseProjectConfig(config);
   return {
     members,
     names,
     rawConfig: config,
+    config: parsed.ok ? parsed.config : null,
     onboarding: onboarding?.number ?? null
   };
 };
@@ -404,11 +498,18 @@ const cardView = (
   title: row.title,
   stage: row.stage,
   lane: row.lane,
-  blocked: row.blocked ? { question: questionFor(viewer, row.blocked) } : null,
+  blocked: row.blocked
+    ? {
+        question: readsContent(row, viewer) ? questionFor(viewer, row.blocked) : CONFIDENTIAL,
+        needs: handoffNeeds(row.blocked)
+      }
+    : null,
+  guards: row.guards.map((guard) => GUARD_LABELS[guard]),
   paused: row.paused,
   userVisible: row.userVisible,
   requester: row.requesterName,
-  pullRequest: row.pullRequest,
+  // Its pull request shows the confidential change itself.
+  pullRequest: readsContent(row, viewer) ? row.pullRequest : null,
   costCents: seesTechnical(viewer) ? row.costCents : null,
   running: row.runningRoles.map((role) => ({ role, label: roleLabel(role) })),
   fixRounds: row.fixRounds,
@@ -418,7 +519,7 @@ const cardView = (
   stageSince: row.stageSince,
   autoVerified: row.autoVerified,
   autoMergeOn: row.autoMergeOn,
-  waitingOn: waitingOn(row, viewer, approval, facts.onboarding)
+  waitingOn: waitingOn(row, viewer, approval, facts)
 });
 
 const DEPTH_LABELS = {
@@ -426,6 +527,10 @@ const DEPTH_LABELS = {
   test: 'Try it by hand',
   device: 'Test it on a real device'
 } as const;
+
+/** Who will merge the result: the chooser's choice, which the project may not allow. */
+const mergedBy = (plan: ApprovalPlan | undefined, config: ProjectConfig | null) =>
+  plan?.merge === 'auto' && config?.pullRequest.autoMerge ? ('auto' as const) : ('person' as const);
 
 /** The approval chooser's plan for the gate the task is at (or the latest one), for people. */
 const planView = (row: BoardTaskRow, facts: ProjectFacts) => {
@@ -437,13 +542,7 @@ const planView = (row: BoardTaskRow, facts: ProjectFacts) => {
   return {
     gate,
     current: plan.subject === gateSubject(row, gate),
-    // Who will merge the result: the chooser's choice, which the project may not allow.
-    merge:
-      gate === 'verifying'
-        ? plan.merge === 'auto' && config.ok && config.config.pullRequest.autoMerge
-          ? ('auto' as const)
-          : ('person' as const)
-        : null,
+    merge: gate === 'verifying' ? mergedBy(plan, config.ok ? config.config : null) : null,
     depth: plan.depth,
     depthLabel: DEPTH_LABELS[plan.depth],
     rationale: plan.rationale,
@@ -459,6 +558,88 @@ const planView = (row: BoardTaskRow, facts: ProjectFacts) => {
 };
 
 export type CardView = ReturnType<typeof cardView>;
+
+/**
+ * The requirements a gate shows people. The floor folds into an owner requirement only when someone
+ * can meet that one: an owner requirement waived for want of an owner leaves the floor to read.
+ */
+const shownRequirements = (policy: Policy, userVisible: boolean, context: Eligibility) => {
+  const applicable = applicableRequirements(policy, userVisible);
+  const meetable = applicable.filter(
+    (requirement) =>
+      requirement === APPROVAL_FLOOR || eligibleMembers(requirement, context).length > 0
+  );
+  const collapsed = readable(meetable);
+  return applicable.filter(
+    (requirement) => !meetable.includes(requirement) || collapsed.includes(requirement)
+  );
+};
+
+/** Each human gate, in order, with what the people it names do there. */
+const GATE_PEOPLE = [
+  { gate: 'spec_review', does: 'Approve the plan' },
+  { gate: 'verifying', does: 'Check the result' }
+] as const satisfies readonly { gate: Gate; does: string }[];
+
+/**
+ * The people of a task: who asked for it, who the approval policy expects at each gate (the
+ * lane's policy plus what the chooser added, and the maintainer floor) with who already approved,
+ * whom the chooser asked to check, and who merges. The requester approves only where a
+ * requirement names them, or where the project lets them meet their own gates.
+ */
+const peopleView = (row: BoardTaskRow, facts: ProjectFacts, approvals: readonly Approval[]) => {
+  const config = parseProjectConfig(facts.rawConfig);
+  const name = (id: string) => facts.names.get(id) ?? 'a former member';
+  const gates = config.ok
+    ? GATE_PEOPLE.map(({ gate, does }) => {
+        const subject = gateSubject(row, gate);
+        const approved = new Set(
+          approvals
+            .filter((approval) => subject !== null && approval.subject === subject)
+            .map((approval) => approval.memberId)
+        );
+        const context = policyContext(config.config, row, gate, {
+          members: facts.members,
+          subject: subject ?? ''
+        });
+        const policy = effectivePolicy(config.config, row, gate);
+        return {
+          gate,
+          does,
+          current: row.stage === gate,
+          requirements: shownRequirements(policy, row.userVisible, context).map((requirement) => {
+            const eligible = eligibleMembers(requirement, context);
+            return {
+              label: describeRequirement(requirement),
+              who: eligible.map((member) => name(member.id)),
+              waived: eligible.length === 0 && requirement !== APPROVAL_FLOOR,
+              approvedBy: eligible
+                .filter((member) => approved.has(member.id))
+                .map((member) => name(member.id))
+            };
+          }),
+          asked: (row.approvalPlans[gate]?.verifiers ?? []).map((verifier) =>
+            name(verifier.memberId)
+          )
+        };
+      })
+    : [];
+  const byPerson = facts.config && humanBuildReason(facts.config, row);
+  const developers = facts.members
+    .filter((member) => buildsIt(row, member))
+    .map((member) => name(member.id));
+  return {
+    requester: row.requesterName,
+    gates,
+    build: byPerson
+      ? { by: 'person' as const, reason: byPerson, who: developers }
+      : { by: 'agent' as const, reason: null, who: [] },
+    merge: {
+      by: mergedBy(row.approvalPlans.verifying, config.ok ? config.config : null),
+      who: facts.members.filter((member) => can(member, 'merge')).map((member) => name(member.id))
+    }
+  };
+};
 
 export const boardView = async (pool: Pool, viewer: BoardViewer) => {
   const facts = await projectFacts(pool, viewer);
@@ -493,6 +674,24 @@ const runView = (run: RunRow, consoleWorkspace: string | undefined) => ({
 export const runsView = async (pool: Pool, viewer: BoardViewer, consoleWorkspace?: string) =>
   (await listProjectRuns(pool, viewer.projectId, 60)).map((run) => runView(run, consoleWorkspace));
 
+/**
+ * What a viewer reads of a confidential task they may not see: their own words, and that the
+ * rest is confidential. Everyone else reads everything.
+ */
+const confidentialView = (row: BoardTaskRow, viewer: BoardViewer) => {
+  const reads = readsContent(row, viewer);
+  const own = (author: Actor | undefined) =>
+    author?.kind === 'member' && author.memberId === viewer.memberId;
+  return {
+    text: (body: string, author?: Actor) => (reads || own(author) ? body : CONFIDENTIAL),
+    value: <T>(value: T): T | null => (reads ? value : null),
+    payload: (payload: Record<string, unknown>) =>
+      reads
+        ? payload
+        : Object.fromEntries(Object.entries(payload).filter(([key]) => !EVENT_TEXT.includes(key)))
+  };
+};
+
 export const taskView = async (
   pool: Pool,
   viewer: BoardViewer,
@@ -502,22 +701,26 @@ export const taskView = async (
   const row = await loadBoardTask(pool, viewer.projectId, number);
   if (!row) return null;
   const facts = await projectFacts(pool, viewer);
-  const [approval, context, specs, comments, events, runs, chooser] = await Promise.all([
+  const [approval, context, specs, comments, events, runs, chooser, approvals] = await Promise.all([
     approvalState(pool, row, facts),
     loadTaskContext(pool, row.id),
     listSpecVersions(pool, row.id),
     listTaskComments(pool, row.id),
     listTaskEvents(pool, row.id),
     listTaskRuns(pool, row.id),
-    latestChooserResult(pool, row.id)
+    latestChooserResult(pool, row.id),
+    listApprovedSubjects(pool, row.id)
   ]);
   const label = (actor: Actor) => actorLabel(actor, facts.names);
   const [request, ...thread] = comments;
+  const shown = confidentialView(row, viewer);
   return {
     ...cardView(row, viewer, approval, facts),
     blocked: row.blocked
       ? {
-          question: questionFor(viewer, row.blocked),
+          question: shown.text(questionFor(viewer, row.blocked)),
+          needs: handoffNeeds(row.blocked),
+          options: shown.value(optionsFor(viewer, row.blocked)) ?? [],
           askedOf:
             'memberId' in row.blocked.askedOf
               ? (facts.names.get(row.blocked.askedOf.memberId) ?? 'a member')
@@ -525,24 +728,29 @@ export const taskView = async (
         }
       : null,
     repo: context?.repo ?? null,
-    pullRequestUrl:
+    pullRequestUrl: shown.value(
       context?.repo && row.pullRequest
         ? `https://github.com/${context.repo}/pull/${row.pullRequest}`
-        : null,
-    headSha: row.headSha,
+        : null
+    ),
+    headSha: shown.value(row.headSha),
     request: request
-      ? { author: label(request.author), body: request.body, at: request.createdAt }
+      ? {
+          author: label(request.author),
+          body: shown.text(request.body, request.author),
+          at: request.createdAt
+        }
       : null,
     comments: thread.map((comment) => ({
       id: comment.id,
       author: label(comment.author),
       authorKind: comment.author.kind,
-      body: comment.body,
+      body: shown.text(comment.body, comment.author),
       at: comment.createdAt
     })),
     specs: specs.map((spec) => ({
       version: spec.version,
-      body: spec.body,
+      body: shown.text(spec.body),
       author: label(spec.createdBy),
       at: spec.createdAt
     })),
@@ -552,11 +760,12 @@ export const taskView = async (
       actor: label(event.actor),
       actorKind: event.actor.kind,
       actorRole: event.actor.kind === 'agent' ? event.actor.role : null,
-      payload: payloadFor(viewer, event.type, event.payload),
+      payload: shown.payload(payloadFor(viewer, event.type, event.payload)),
       at: event.createdAt
     })),
     runs: seesTechnical(viewer) ? runs.map((run) => runView(run, consoleWorkspace)) : [],
-    plan: planView(row, facts),
+    plan: shown.value(planView(row, facts)),
+    people: peopleView(row, facts, approvals),
     approval: approval && {
       gate: approval.gate,
       planned: approval.planned,
@@ -564,15 +773,19 @@ export const taskView = async (
       waived: approval.waived.map(describeRequirement),
       approvedBy: approval.approvedBy
     },
-    checklist: chooser as {
-      checklist: string[];
-      beforeAfter?: { key: string; locale: string; before: string; after: string }[];
-      userVisible: boolean;
-    } | null,
+    checklist: shown.value(
+      chooser as {
+        checklist: string[];
+        beforeAfter?: { key: string; locale: string; before: string; after: string }[];
+        userVisible: boolean;
+      } | null
+    ),
     reviewers: REVIEWER_ROLES.map((role) => ({ role, label: roleLabel(role) })),
     actions: actionsFor(row, viewer)
   };
 };
+
+export type TaskView = NonNullable<Awaited<ReturnType<typeof taskView>>>;
 
 const text = (value: unknown, max: number): string => {
   const raw =
@@ -692,10 +905,7 @@ export const learningsView = async (pool: Pool, viewer: BoardViewer) => {
     listLearnings(pool, viewer.projectId),
     memberNames(pool, viewer.workspaceId)
   ]);
-  const canDecide = hasRole(
-    { id: viewer.memberId, role: viewer.role, domains: viewer.domains },
-    'maintainer'
-  );
+  const canDecide = can(viewer, 'decide_learnings');
   return rows.map((row) => ({
     id: row.id,
     title: row.title,
@@ -713,6 +923,8 @@ export const learningsView = async (pool: Pool, viewer: BoardViewer) => {
     decisionNote: row.decisionNote,
     prNumber: row.prNumber,
     prUrl: row.prUrl,
+    rewrite: row.rewrite,
+    rewrittenAt: row.rewrittenAt,
     createdAt: row.createdAt,
     canDecide: canDecide && row.status === 'proposed'
   }));

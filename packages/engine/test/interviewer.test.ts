@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
+import type { QuestionOption } from '@officina/core';
 import { addComment, applyCommand, createTask, loadTask, saveAgentVersion } from '@officina/db';
 import { RUNNER_ROLES } from '@officina/runner';
 import { Pool } from 'pg';
@@ -104,6 +105,34 @@ describe.skipIf(!url)('interviewer', () => {
         role: 'interviewer'
       }
     ]);
+  });
+
+  test('a question with options and previews is stored on the task and listed in the thread', async () => {
+    const taskId = await draft();
+    const options: QuestionOption[] = [
+      {
+        label: 'Say Prediction',
+        preview: { kind: 'text', before: 'Place a wager', after: 'Make a prediction' }
+      },
+      { label: 'Say Pick', detail: 'Shorter on small screens.' }
+    ];
+    const agents = createFakePort(() => [
+      toolUse({ outcome: 'question', question: 'Which word instead?', options }),
+      idle('requires_action'),
+      idle('end_turn')
+    ]);
+    const deps = { pool, github, agents, publicUrl: 'https://o.example' };
+
+    expect(await runAgentStep(deps, taskId, 'interviewer')).toEqual({ status: 'applied' });
+    expect((await loadTask(pool, taskId))!.task.blocked).toEqual({
+      question: 'Which word instead?',
+      askedOf: { memberId: seeded.ownerId },
+      options
+    });
+    expect((await comments(taskId)).at(-1)).toEqual({
+      body: 'Which word instead?\n\n- **(a) Say Prediction**\n- **(b) Say Pick**: Shorter on small screens.',
+      role: 'interviewer'
+    });
   });
 
   test('after four questions the interviewer must finish', async () => {

@@ -6,8 +6,12 @@ import {
   type ProjectConfig,
   type Requirement
 } from './config';
+import { OWNER_GUARDS, guardsForPaths, secretFiles, withGuards, type Guard } from './guards';
+import type { HandoffNeed } from './handoffs';
 import { computeLane, redPaths, stricterLane, type Lane } from './lanes';
-import { evaluatePolicy, type Approval } from './policies';
+import { GATE_ACTIONS, PERMISSIONS, can, type Action } from './permissions';
+import { evaluatePolicy, policyContext, type Approval } from './policies';
+import type { QuestionOption } from './questions';
 import { hasRole, type Member, type Role } from './roles';
 
 export const STAGES = [
@@ -77,6 +81,10 @@ export type Assignee =
 export interface Blocked {
   readonly question: string;
   readonly askedOf: { readonly memberId: string } | { readonly role: Role };
+  /** Set when agents cannot go on without something only a person can provide or decide. */
+  readonly handoff?: { readonly needs: readonly HandoffNeed[] };
+  /** Choices an agent offered, each with an optional preview; people may still answer freely. */
+  readonly options?: readonly QuestionOption[];
 }
 
 export interface Task {
@@ -96,6 +104,8 @@ export interface Task {
   readonly reviews: Readonly<Partial<Record<ReviewerRole, 'approve'>>>;
   /** The approval chooser's decision for each human gate. */
   readonly approvalPlans: Readonly<Partial<Record<Gate, ApprovalPlan>>>;
+  /** What the task touches that no agent may handle alone (`GUARDS`); set by rule, only grows. */
+  readonly guards: readonly Guard[];
 }
 
 /** How closely people should check: a read, a hands-on test, or a test on a real device. */
@@ -108,6 +118,13 @@ export type CheckDepth = (typeof CHECK_DEPTHS)[number];
  */
 export const MERGE_MODES = ['person', 'auto'] as const;
 export type MergeMode = (typeof MERGE_MODES)[number];
+
+/**
+ * Who builds an approved spec: the build agent, or a person with the technical role who claims it,
+ * when the work is too big or too risky for agents. The chooser decides at spec review.
+ */
+export const BUILD_MODES = ['agent', 'person'] as const;
+export type BuildMode = (typeof BUILD_MODES)[number];
 
 /** An approval the chooser adds to a gate on top of the lane policy. It can only add, never remove. */
 export type ExtraRequirement =
@@ -123,6 +140,10 @@ export interface ApprovalPlan {
   readonly verifiers: readonly { readonly memberId: string; readonly reason: string }[];
   /** Absent in plans made before the chooser decided it, which means `person`. */
   readonly merge?: MergeMode;
+  /** At spec review: who builds it. Absent means the build agent. */
+  readonly build?: BuildMode;
+  /** Why a person must build it, for the people asked. */
+  readonly buildReason?: string;
 }
 
 export type PlanInput = Omit<ApprovalPlan, 'subject'>;
@@ -141,7 +162,8 @@ export const newTask = (id: string, requesterId: string, kind: TaskKind = 'reque
   paused: false,
   fixRounds: 0,
   reviews: {},
-  approvalPlans: {}
+  approvalPlans: {},
+  guards: []
 });
 
 export type Command =
@@ -189,7 +211,13 @@ export type Command =
       /** A bot review that left nothing on the code, only its verdict and overview. */
       readonly overviewOnly: boolean;
     }
-  | { readonly type: 'block'; readonly question: string; readonly askedOf: Blocked['askedOf'] }
+  | {
+      readonly type: 'block';
+      readonly question: string;
+      readonly askedOf: Blocked['askedOf'];
+      readonly handoff?: Blocked['handoff'];
+      readonly options?: Blocked['options'];
+    }
   | { readonly type: 'answer'; readonly text: string }
   | { readonly type: 'pause' }
   | { readonly type: 'resume' }
@@ -197,13 +225,19 @@ export type Command =
 
 /** `unlisted_files` sends the work back to its builder; the others hold it for a person. */
 export type Guardrail =
-  'red_paths' | 'outside_agent_docs' | 'diff_too_large' | 'unlisted_files' | 'fix_rounds_exhausted';
+  | 'red_paths'
+  | 'secret_files'
+  | 'outside_agent_docs'
+  | 'diff_too_large'
+  | 'unlisted_files'
+  | 'fix_rounds_exhausted';
 
 export type DomainEvent =
   | { readonly type: 'stage_changed'; readonly from: Stage; readonly to: Stage }
   | { readonly type: 'lane_changed'; readonly from: Lane | null; readonly to: Lane }
   | { readonly type: 'spec_versioned'; readonly version: number }
   | { readonly type: 'user_visible_changed'; readonly userVisible: boolean }
+  | { readonly type: 'guards_changed'; readonly guards: readonly Guard[] }
   | {
       readonly type: 'approval_recorded';
       readonly gate: Gate;
@@ -265,6 +299,7 @@ export type DecisionError =
   | 'no_head'
   | 'wip_limit'
   | 'agents_cannot_build_lane'
+  | 'needs_developer'
   | 'not_planned'
   | 'stale_head'
   | 'awaiting_onboarding';
@@ -299,9 +334,24 @@ const memberFor = (actor: Actor, context: DecideContext): Member | undefined =>
     ? context.members.find((member) => member.id === actor.memberId)
     : undefined;
 
-const isMemberWith = (actor: Actor, context: DecideContext, role: Role): boolean => {
+/** Whether the actor is a member the permission matrix lets take the action. */
+const memberCan = (actor: Actor, context: DecideContext, action: Action): boolean => {
   const member = memberFor(actor, context);
-  return member !== undefined && hasRole(member, role);
+  return member !== undefined && can(member, action);
+};
+
+/**
+ * Why a person must build this task instead of an agent: its lane forbids agents, or the chooser
+ * asked for a human developer at spec review. `null` when agents may build it.
+ */
+export const humanBuildReason = (
+  config: ProjectConfig,
+  task: Pick<Task, 'lane' | 'approvalPlans'>
+): string | null => {
+  if (task.lane && !config.lanes[task.lane].agentsBuild)
+    return `Agents may not build changes in the ${task.lane} lane.`;
+  const plan = task.approvalPlans.spec_review;
+  return plan?.build === 'person' ? (plan.buildReason ?? null) : null;
 };
 
 export const gateSubject = (
@@ -313,12 +363,18 @@ export const gateSubject = (
 /** The lane's policy for a gate plus whatever the approval chooser added to it. */
 export const effectivePolicy = (
   config: ProjectConfig,
-  task: Pick<Task, 'lane' | 'approvalPlans'>,
+  task: Pick<Task, 'lane' | 'approvalPlans' | 'guards'>,
   gate: Gate
 ): Policy => [
   ...config.lanes[task.lane ?? 'standard'].approvals[gate],
-  ...(task.approvalPlans[gate]?.extra.map((item) => item.requirement) ?? [])
+  ...(task.approvalPlans[gate]?.extra.map((item) => item.requirement) ?? []),
+  // Secrets, access and publishing always need whoever may `publish`, whatever the lane says.
+  ...(needsOwner(task) ? [{ role: PERMISSIONS.publish }] : [])
 ];
+
+/** Whether the task's guards call for the owner at both gates. */
+export const needsOwner = (task: Pick<Task, 'guards'>): boolean =>
+  task.guards.some((guard) => OWNER_GUARDS.has(guard));
 
 /**
  * Whether a result may skip people's verification: only in a green lane that opts in, only when a
@@ -327,10 +383,11 @@ export const effectivePolicy = (
  */
 export const canAutoVerify = (
   config: ProjectConfig,
-  task: Pick<Task, 'lane' | 'approvalPlans'>
+  task: Pick<Task, 'lane' | 'approvalPlans' | 'guards'>
 ): boolean => {
   const plan = task.approvalPlans.verifying;
   return (
+    task.guards.length === 0 &&
     task.lane === 'green' &&
     config.lanes.green.autoVerify &&
     config.release.onMerge !== 'production' &&
@@ -342,6 +399,18 @@ export const canAutoVerify = (
 
 const sameRequirement = (a: ExtraRequirement, b: ExtraRequirement) =>
   JSON.stringify(a) === JSON.stringify(b);
+
+/** Who builds only gets stricter too: once a spec plan asked for a person, agents never build it. */
+const plannedBuild = (
+  gate: Gate,
+  input: PlanInput,
+  earlier: ApprovalPlan | undefined
+): Pick<ApprovalPlan, 'build' | 'buildReason'> => {
+  const byPerson = input.build === 'person' ? input : earlier?.build === 'person' ? earlier : null;
+  return gate === 'spec_review' && byPerson
+    ? { build: 'person', buildReason: byPerson.buildReason ?? 'The chooser asked for a person.' }
+    : { build: 'agent' };
+};
 
 /**
  * Records the chooser's plan for a gate. Requirements only accumulate across plans for the same
@@ -365,21 +434,47 @@ const withPlan = (
   }
   const verifiers = input.verifiers.filter((verifier) => {
     const member = context.members.find((candidate) => candidate.id === verifier.memberId);
-    return member !== undefined && hasRole(member, 'contributor');
+    return member !== undefined && can(member, GATE_ACTIONS[gate]);
   });
   // Like approvals, the merge only gets stricter: once a plan for this gate asked for a person, a
   // later plan cannot hand the merge back to GitHub. The spec gate has nothing to merge.
   // A plan without the field predates the choice and counts as `person`.
   const earlier = task.approvalPlans[gate];
   const merge: MergeMode =
-    gate === 'verifying' && input.merge === 'auto' && (!earlier || earlier.merge === 'auto')
+    gate === 'verifying' &&
+    input.merge === 'auto' &&
+    (!earlier || earlier.merge === 'auto') &&
+    task.guards.length === 0
       ? 'auto'
       : 'person';
-  const plan: ApprovalPlan = { ...input, subject, extra, verifiers, merge };
+  const plan: ApprovalPlan = {
+    ...input,
+    subject,
+    extra,
+    verifiers,
+    merge,
+    ...plannedBuild(gate, input, earlier)
+  };
   return [
     { approvalPlans: { ...task.approvalPlans, [gate]: plan } },
     { type: 'approval_planned', gate, plan, added }
   ];
+};
+
+/** Whether a held question is the requester's own to answer. */
+const isAskedOf = (blocked: Blocked, memberId: string): boolean =>
+  'memberId' in blocked.askedOf && blocked.askedOf.memberId === memberId;
+
+/** The task's guards once these paths are counted, and the event when they grew. */
+const guardedBy = (
+  task: Task,
+  context: DecideContext,
+  paths: readonly string[]
+): [readonly Guard[], DomainEvent[]] => {
+  const guards = withGuards(task.guards, guardsForPaths(context.config.guards, paths));
+  return guards.length === task.guards.length
+    ? [task.guards, []]
+    : [guards, [{ type: 'guards_changed', guards }]];
 };
 
 /** Whether the actor is the one the task is assigned to, so it may report the build. */
@@ -467,10 +562,13 @@ export const decide = (
       const allowed =
         (actor.kind === 'agent' && actor.role === 'interviewer') ||
         (member !== undefined &&
-          hasRole(member, 'contributor') &&
-          (member.id === task.requesterId || hasRole(member, 'maintainer')));
+          can(member, 'request') &&
+          (member.id === task.requesterId || can(member, 'triage')));
       if (!allowed) return fail('not_allowed');
       if (task.paused) return fail('paused');
+      // Only the interview's own question to the requester can be skipped; a hold for anyone else
+      // (the owner, for a guarded request) stays until they answer.
+      if (task.blocked && !isAskedOf(task.blocked, task.requesterId)) return fail('blocked');
       // Submitting as is closes an open interview question: triage decides with what is there.
       const [moved, event] = moveTo(task, 'triage', { blocked: null });
       const events: DomainEvent[] = task.blocked
@@ -481,14 +579,14 @@ export const decide = (
 
     case 'accept': {
       if (task.stage !== 'triage') return fail('wrong_stage');
-      if (!isMemberWith(actor, context, 'maintainer')) return fail('not_allowed');
+      if (!memberCan(actor, context, 'triage')) return fail('not_allowed');
       const [moved, event] = moveTo(task, 'speccing');
       return ok(moved, [event]);
     }
 
     case 'decline': {
       if (task.stage !== 'triage') return fail('wrong_stage');
-      if (!isMemberWith(actor, context, 'maintainer')) return fail('not_allowed');
+      if (!memberCan(actor, context, 'triage')) return fail('not_allowed');
       const [moved, event] = moveTo(task, 'declined');
       return ok(moved, [event, { type: 'closed', stage: 'declined', reason: command.reason }]);
     }
@@ -496,16 +594,22 @@ export const decide = (
     case 'post_spec': {
       if (task.stage !== 'speccing') return fail('wrong_stage');
       const allowed =
-        (actor.kind === 'agent' && actor.role === 'spec') ||
-        isMemberWith(actor, context, 'contributor');
+        (actor.kind === 'agent' && actor.role === 'spec') || memberCan(actor, context, 'request');
       if (!allowed) return fail('not_allowed');
       const predicted = computeLane(command.predictedPaths, context.config.laneMatcher);
       const lane = task.lane ? stricterLane(task.lane, predicted) : predicted;
       const specVersion = task.specVersion + 1;
       const userVisible = task.userVisible || command.userVisible;
-      const [moved, stageEvent] = moveTo(task, 'spec_review', { lane, specVersion, userVisible });
+      const [guards, guardEvents] = guardedBy(task, context, command.predictedPaths);
+      const [moved, stageEvent] = moveTo(task, 'spec_review', {
+        lane,
+        specVersion,
+        userVisible,
+        guards
+      });
       const events: DomainEvent[] = [{ type: 'spec_versioned', version: specVersion }];
       if (lane !== task.lane) events.push({ type: 'lane_changed', from: task.lane, to: lane });
+      events.push(...guardEvents);
       if (userVisible !== task.userVisible)
         events.push({ type: 'user_visible_changed', userVisible });
       events.push(stageEvent);
@@ -516,9 +620,9 @@ export const decide = (
       if (task.stage !== 'spec_review' && task.stage !== 'verifying') return fail('wrong_stage');
       if (actor.kind !== 'member') return fail('agents_cannot_approve');
       const member = memberFor(actor, context);
-      if (member === undefined || !hasRole(member, 'contributor')) return fail('not_allowed');
-      if (task.lane === null) return fail('no_lane');
       const gate: Gate = task.stage;
+      if (member === undefined || !can(member, GATE_ACTIONS[gate])) return fail('not_allowed');
+      if (task.lane === null) return fail('no_lane');
       const subject = gateSubject(task, gate);
       if (subject === null) return fail('no_head');
       // Nobody can approve before the approval chooser has said who needs to.
@@ -527,12 +631,7 @@ export const decide = (
       const result = evaluatePolicy(
         effectivePolicy(context.config, task, gate),
         [...context.approvals, approval],
-        {
-          members: context.members,
-          requesterId: task.requesterId,
-          userVisible: task.userVisible,
-          subject
-        }
+        policyContext(context.config, task, gate, { members: context.members, subject })
       );
       const recorded: DomainEvent = {
         type: 'approval_recorded',
@@ -549,14 +648,12 @@ export const decide = (
     }
 
     case 'request_changes': {
-      if (!isMemberWith(actor, context, 'contributor')) return fail('not_allowed');
+      if (task.stage !== 'spec_review' && task.stage !== 'verifying') return fail('wrong_stage');
+      if (!memberCan(actor, context, GATE_ACTIONS[task.stage])) return fail('not_allowed');
       const why: DomainEvent = { type: 'changes_requested', stage: task.stage, note: command.note };
-      if (task.stage === 'spec_review') {
-        const [moved, stageEvent] = moveTo(task, 'speccing');
-        return ok(moved, [why, stageEvent]);
-      }
       if (task.stage === 'verifying') return backToBuilding(task, context, why);
-      return fail('wrong_stage');
+      const [moved, stageEvent] = moveTo(task, 'speccing');
+      return ok(moved, [why, stageEvent]);
     }
 
     case 'dispatch': {
@@ -569,11 +666,12 @@ export const decide = (
       if (command.assignee.kind === 'agent') {
         if (command.assignee.role !== buildRoleFor(task.kind)) return fail('not_allowed');
         if (!settings.agentsBuild) return fail('agents_cannot_build_lane');
+        if (humanBuildReason(context.config, task) !== null) return fail('needs_developer');
         if (command.openInLane >= settings.wip) return fail('wip_limit');
       } else {
         const assigneeId = command.assignee.memberId;
         const assignee = context.members.find((member) => member.id === assigneeId);
-        if (assignee === undefined || !hasRole(assignee, 'maintainer')) {
+        if (assignee === undefined || !can(assignee, 'build')) {
           return fail('not_allowed');
         }
       }
@@ -582,15 +680,22 @@ export const decide = (
     }
 
     case 'claim': {
-      if (actor.kind !== 'member' || !isMemberWith(actor, context, 'maintainer')) {
+      if (actor.kind !== 'member' || !memberCan(actor, context, 'build')) {
         return fail('not_allowed');
       }
+      // Nobody builds what they may not read.
+      if (task.guards.includes('confidential') && !memberCan(actor, context, 'see_confidential'))
+        return fail('not_allowed');
       const assignee: Assignee = { kind: 'member', memberId: actor.memberId };
       if (task.stage === 'ready') {
         const [moved, stageEvent] = moveTo(task, 'building', { assignee });
         return ok(moved, [stageEvent, { type: 'assigned', assignee }]);
       }
+      // Taking a build over from the agent is anyone's who may build; from another person, only
+      // someone who may steer the work.
       if (task.stage === 'building') {
+        if (task.assignee?.kind === 'member' && !memberCan(actor, context, 'steer'))
+          return fail('not_allowed');
         return ok({ ...task, assignee }, [{ type: 'assigned', assignee }]);
       }
       return fail('wrong_stage');
@@ -602,7 +707,7 @@ export const decide = (
         actor.kind === 'member' &&
         task.assignee?.kind === 'member' &&
         task.assignee.memberId === actor.memberId;
-      if (!isAssignee && !isMemberWith(actor, context, 'maintainer')) return fail('not_allowed');
+      if (!isAssignee && !memberCan(actor, context, 'steer')) return fail('not_allowed');
       const [moved, stageEvent] = moveTo(task, 'ready', { assignee: null });
       return ok(moved, [stageEvent, { type: 'assigned', assignee: null }]);
     }
@@ -620,8 +725,32 @@ export const decide = (
       };
       const actual = computeLane(command.changedPaths, context.config.laneMatcher);
       const lane = stricterLane(task.lane ?? 'standard', actual);
-      const laneEvents: DomainEvent[] =
-        lane !== task.lane ? [{ type: 'lane_changed', from: task.lane, to: lane }] : [];
+      const [guards, guardEvents] = guardedBy(task, context, command.changedPaths);
+      const laneEvents: DomainEvent[] = [
+        ...(lane !== task.lane
+          ? [{ type: 'lane_changed', from: task.lane, to: lane } as const]
+          : []),
+        ...guardEvents
+      ];
+      task = { ...task, guards };
+
+      // A secret committed to the branch must never reach a pull request people or bots read.
+      const secrets = secretFiles(command.changedPaths);
+      if (secrets.length) {
+        const blocked: Blocked = {
+          question: `The branch adds or changes files that hold secrets: ${secrets.join(', ')}. Remove them from the branch and its history, rotate anything exposed, then build again or cancel.`,
+          askedOf: { role: 'owner' }
+        };
+        const [moved, stageEvent] = moveTo(task, 'ready', { lane, assignee: null, blocked });
+        return ok(moved, [
+          pushed,
+          ...laneEvents,
+          { type: 'guardrail_tripped', guardrail: 'secret_files', details: secrets.join(', ') },
+          stageEvent,
+          { type: 'assigned', assignee: null },
+          { type: 'blocked', blocked }
+        ]);
+      }
 
       if (assignee.kind === 'agent' && !context.config.lanes[lane].agentsBuild) {
         const touched = redPaths(command.changedPaths, context.config.laneMatcher);
@@ -727,7 +856,7 @@ export const decide = (
       let reviewer: ReviewerRole | 'member';
       if (actor.kind === 'agent' && (REVIEWER_ROLES as readonly string[]).includes(actor.role)) {
         reviewer = actor.role as ReviewerRole;
-      } else if (isMemberWith(actor, context, 'maintainer')) {
+      } else if (memberCan(actor, context, 'steer')) {
         reviewer = 'member';
       } else {
         return fail('not_allowed');
@@ -752,7 +881,7 @@ export const decide = (
 
     case 'choose': {
       if (task.stage !== 'choosing') return fail('wrong_stage');
-      const isMaintainer = isMemberWith(actor, context, 'maintainer');
+      const isMaintainer = memberCan(actor, context, 'steer');
       const allowed =
         (actor.kind === 'agent' && actor.role === 'chooser') ||
         actor.kind === 'engine' ||
@@ -844,17 +973,25 @@ export const decide = (
 
     case 'block': {
       if (task.blocked) return fail('already_blocked');
-      const allowed = actor.kind !== 'member' || isMemberWith(actor, context, 'contributor');
+      const allowed = actor.kind !== 'member' || memberCan(actor, context, 'comment');
       if (!allowed) return fail('not_allowed');
-      const blocked: Blocked = { question: command.question, askedOf: command.askedOf };
+      // A handoff is engine-routed from agent output; a person's own question is a plain one.
+      const handoff = actor.kind === 'member' ? undefined : command.handoff;
+      const blocked: Blocked = {
+        question: command.question,
+        askedOf: command.askedOf,
+        ...(handoff ? { handoff } : {}),
+        ...(command.options?.length ? { options: command.options } : {})
+      };
       return ok({ ...task, blocked }, [{ type: 'blocked', blocked }]);
     }
 
     case 'answer': {
       if (!task.blocked) return fail('not_blocked');
       const member = memberFor(actor, context);
-      if (member === undefined) return fail('not_allowed');
+      if (member === undefined || !can(member, 'answer')) return fail('not_allowed');
       const askedOf = task.blocked.askedOf;
+      // An owner may answer any question, so nothing waits on someone who is away.
       const allowed =
         hasRole(member, 'owner') ||
         ('memberId' in askedOf ? askedOf.memberId === member.id : hasRole(member, askedOf.role));
@@ -863,13 +1000,13 @@ export const decide = (
     }
 
     case 'pause': {
-      if (!isMemberWith(actor, context, 'maintainer')) return fail('not_allowed');
+      if (!memberCan(actor, context, 'steer')) return fail('not_allowed');
       if (task.paused) return fail('already_paused');
       return ok({ ...task, paused: true }, [{ type: 'paused' }]);
     }
 
     case 'resume': {
-      if (!isMemberWith(actor, context, 'maintainer')) return fail('not_allowed');
+      if (!memberCan(actor, context, 'steer')) return fail('not_allowed');
       if (!task.paused) return fail('not_paused');
       return ok({ ...task, paused: false }, [{ type: 'resumed' }]);
     }
@@ -881,8 +1018,7 @@ export const decide = (
       const allowed =
         (actor.kind === 'engine' && task.kind === 'onboarding') ||
         (member !== undefined &&
-          (hasRole(member, 'maintainer') ||
-            (member.id === task.requesterId && hasRole(member, 'contributor'))));
+          (can(member, 'steer') || (member.id === task.requesterId && can(member, 'request'))));
       if (!allowed) return fail('not_allowed');
       const [moved, event] = moveTo(task, 'cancelled', { assignee: null, blocked: null });
       return ok(moved, [event, { type: 'closed', stage: 'cancelled', reason: command.reason }]);

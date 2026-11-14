@@ -6,6 +6,9 @@ type Queryable = Pool | PoolClient;
 
 export type LearningStatus = 'proposed' | 'accepted' | 'rejected' | 'applied';
 
+/** Where the learner is with rewriting an edit that no longer applies; null when none was asked. */
+export type LearningRewrite = 'requested' | 'failed';
+
 export interface LearningRow {
   readonly id: string;
   readonly projectId: string;
@@ -25,6 +28,8 @@ export interface LearningRow {
   readonly decisionNote: string | null;
   readonly prNumber: number | null;
   readonly prUrl: string | null;
+  readonly rewrite: LearningRewrite | null;
+  readonly rewrittenAt: Date | null;
   readonly createdAt: Date;
 }
 
@@ -33,7 +38,7 @@ const COLUMNS = `
   t.title as "taskTitle", l.title, l.text as lesson, l.evidence->>'text' as evidence, l.target,
   l.file, l.find, l.proposed_change as text, l.status, l.decided_by as "decidedBy",
   l.decided_at as "decidedAt", l.decision_note as "decisionNote", l.pr_number as "prNumber",
-  l.pr_url as "prUrl", l.created_at as "createdAt"`;
+  l.pr_url as "prUrl", l.rewrite, l.rewritten_at as "rewrittenAt", l.created_at as "createdAt"`;
 
 export interface NewLearning {
   readonly title: string;
@@ -92,6 +97,61 @@ export const loadLearning = async (
       [projectId, id]
     )
   ).rows[0] ?? null;
+
+/** Hands a proposed learning whose edit no longer applies back to the learner; asking twice is a no-op. */
+export const requestLearningRewrite = async (db: Queryable, id: string) => {
+  await db.query(
+    `update learnings set rewrite = 'requested'
+     where id = $1 and status = 'proposed' and rewrite is null`,
+    [id]
+  );
+};
+
+/** The oldest learning of a task waiting for the learner to rewrite its edit, if any. */
+export const learningAwaitingRewrite = async (
+  db: Queryable,
+  taskId: string
+): Promise<LearningRow | null> =>
+  (
+    await db.query<LearningRow>(
+      `select ${COLUMNS} from learnings l left join tasks t on t.id = l.task_id
+       where l.task_id = $1 and l.status = 'proposed' and l.rewrite = 'requested'
+       order by l.created_at limit 1`,
+      [taskId]
+    )
+  ).rows[0] ?? null;
+
+/** Tasks with a learning waiting for the learner to rewrite its edit. */
+export const listTasksAwaitingRewrite = async (
+  db: Queryable,
+  projectId: string
+): Promise<string[]> =>
+  (
+    await db.query<{ id: string }>(
+      `select distinct task_id as id from learnings
+       where project_id = $1 and status = 'proposed' and rewrite = 'requested' and task_id is not null`,
+      [projectId]
+    )
+  ).rows.map((row) => row.id);
+
+/** Replaces the edit of a learning waiting for its rewrite; people decide it again from here. */
+export const rewriteLearningEdit = async (db: Queryable, id: string, edit: NewLearning['edit']) => {
+  await db.query(
+    `update learnings set file = $2, find = $3, proposed_change = $4, rewrite = null,
+       rewritten_at = now()
+     where id = $1 and status = 'proposed' and rewrite = 'requested'`,
+    [id, edit.file, edit.find ?? null, edit.text]
+  );
+};
+
+/** The learner could not rewrite the edit, so the learning is left for people to reject. */
+export const failLearningRewrite = async (db: Queryable, id: string) => {
+  await db.query(
+    `update learnings set rewrite = 'failed'
+     where id = $1 and status = 'proposed' and rewrite = 'requested'`,
+    [id]
+  );
+};
 
 /** Locks a learning until the transaction ends, so two decisions on it run one after the other. */
 export const lockLearning = async (db: Queryable, id: string) => {

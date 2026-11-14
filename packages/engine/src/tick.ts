@@ -1,9 +1,16 @@
-import { buildRoleFor, ENGINE, nextAgentRoles, parseProjectConfig } from '@officina/core';
+import {
+  buildRoleFor,
+  ENGINE,
+  humanBuildReason,
+  nextAgentRoles,
+  parseProjectConfig
+} from '@officina/core';
 import {
   applyCommand,
   countOpenAgentWork,
   listActiveTaskIds,
   listTasksAwaitingLearning,
+  listTasksAwaitingRewrite,
   loadTaskContext
 } from '@officina/db';
 import { RUNNER_ROLES, type RunnerRole } from '@officina/runner';
@@ -44,7 +51,8 @@ export const collectDueSteps = async (
 
     if (task.stage === 'ready' && task.lane && !task.blocked && !task.paused) {
       const config = parseProjectConfig(context.rawConfig);
-      if (config.ok && config.config.lanes[task.lane].agentsBuild) {
+      // A task a person must build waits for a maintainer to claim it.
+      if (config.ok && humanBuildReason(config.config, task) === null) {
         const result = await applyCommand(deps.pool, {
           taskId,
           command: {
@@ -64,9 +72,11 @@ export const collectDueSteps = async (
 
     dueFor(taskId, nextAgentRoles(task));
   }
-  for (const taskId of await listTasksAwaitingLearning(deps.pool, projectId)) {
-    due.push({ taskId, role: 'learner' });
-  }
+  const learning = new Set([
+    ...(await listTasksAwaitingLearning(deps.pool, projectId)),
+    ...(await listTasksAwaitingRewrite(deps.pool, projectId))
+  ]);
+  for (const taskId of learning) due.push({ taskId, role: 'learner' });
   return { dispatched, due };
 };
 

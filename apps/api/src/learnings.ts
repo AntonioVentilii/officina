@@ -1,10 +1,11 @@
-import { editsProject, hasRole, type Role } from '@officina/core';
+import { can, editsProject, type Role } from '@officina/core';
 import {
   decideLearning,
   inTransaction,
   loadLearning,
   loadProject,
   lockLearning,
+  requestLearningRewrite,
   type LearningRow,
   type ProjectRecord
 } from '@officina/db';
@@ -43,9 +44,6 @@ export const applyEdit = (
   return { ok: true, text: current.replace(learning.find, () => learning.text) };
 };
 
-/** The one branch a learning's pull request is opened from, so a retry and a reject find it. */
-const branchFor = (learning: LearningRow) => `officina/learning-${learning.id.slice(0, 8)}`;
-
 /** Agent docs learnings say so in their scope, so they read as changes to `docs/ai` in the history. */
 const titleFor = (learning: LearningRow) => {
   const summary = learning.title.charAt(0).toLowerCase() + learning.title.slice(1);
@@ -53,13 +51,24 @@ const titleFor = (learning: LearningRow) => {
   return `docs(${scope}): ${summary}`.slice(0, 120);
 };
 
-/** Opens the pull request with exactly the edit people saw; a branch an earlier attempt left is reused. */
+/**
+ * A rewritten edit gets a branch of its own: one an accept left before the rewrite starts from an
+ * older default branch, while retries of the same edit keep reusing theirs.
+ */
+const branchFor = (learning: LearningRow) =>
+  `officina/learning-${learning.id.slice(0, 8)}` +
+  (learning.rewrittenAt ? `-${learning.rewrittenAt.getTime().toString(36)}` : '');
+
+/**
+ * Opens the pull request with exactly the edit people saw; a branch an earlier attempt left is
+ * reused. When the default branch changed so the edit no longer applies, nothing is written.
+ */
 const openLearningPullRequest = async (
   github: LearningGitHub,
   project: ProjectRecord,
   learning: LearningRow,
   context: { readonly publicUrl: string; readonly note: string | undefined }
-): Promise<{ number: number; url: string }> => {
+): Promise<{ ok: true; pr: { number: number; url: string } } | { ok: false; why: string }> => {
   if (project.installationId === null)
     throw new TaskCommandError('the GitHub App is not installed on this repository');
   const ref = { installationId: project.installationId, repo: project.repo };
@@ -69,8 +78,7 @@ const openLearningPullRequest = async (
     branch: project.defaultBranch
   });
   const edited = applyEdit(current?.text ?? null, learning);
-  if (!edited.ok)
-    throw new TaskCommandError(`the edit no longer applies (${edited.why}); reject it instead`);
+  if (!edited.ok) return edited;
   const branch = branchFor(learning);
   const title = titleFor(learning);
   await github.createBranch({ ...ref, branch, from: project.defaultBranch });
@@ -89,7 +97,7 @@ const openLearningPullRequest = async (
   const link = learning.taskNumber
     ? taskLink(context.publicUrl, project.id, learning.taskNumber)
     : 'an Officina task';
-  return github.openPullRequest({
+  const pr = await github.openPullRequest({
     ...ref,
     base: project.defaultBranch,
     branch,
@@ -103,6 +111,46 @@ const openLearningPullRequest = async (
       .filter(Boolean)
       .join('\n\n')
   });
+  return { ok: true, pr };
+};
+
+/** Why a learning cannot be accepted while its edit is being rewritten, or after that failed. */
+const REWRITE_BLOCKS = {
+  requested:
+    'the learner is rewriting this edit against the current file; decide it once it is back',
+  failed: 'the edit no longer applies and the learner could not rewrite it; reject it instead'
+} as const;
+
+/**
+ * Opens the pull request of a project learning being accepted, or hands an edit the default branch
+ * has moved past back to the learner to be rewritten, and then returns null.
+ */
+const acceptIntoPullRequest = async (
+  client: PoolClient,
+  learning: LearningRow,
+  {
+    github,
+    target,
+    note
+  }: {
+    readonly github: LearningGitHub | undefined;
+    readonly target: Target;
+    readonly note: string | undefined;
+  }
+): Promise<{ number: number; url: string } | null> => {
+  if (learning.rewrite) throw new TaskCommandError(REWRITE_BLOCKS[learning.rewrite]);
+  if (!github) throw new TaskCommandError('the GitHub App is not configured');
+  const project = (await loadProject(client, target.projectId))!;
+  const opened = await openLearningPullRequest(github, project, learning, {
+    publicUrl: target.publicUrl,
+    note
+  });
+  if (opened.ok) return opened.pr;
+  // The learner works per task; a learning without one cannot be rewritten.
+  if (learning.taskId === null)
+    throw new TaskCommandError(`the edit no longer applies (${opened.why}); reject it instead`);
+  await requestLearningRewrite(client, learning.id);
+  return null;
 };
 
 /**
@@ -118,11 +166,14 @@ const closeLeftPullRequest = async (
   if (!github || !editsProject(learning.target)) return;
   const project = (await loadProject(client, projectId))!;
   if (project.installationId === null) return;
-  await github.closePullRequestsFrom({
-    installationId: project.installationId,
-    repo: project.repo,
-    branch: branchFor(learning)
-  });
+  // The branch of the edit as it stands, and the first one, which an accept before a rewrite used.
+  const branches = new Set([branchFor(learning), branchFor({ ...learning, rewrittenAt: null })]);
+  for (const branch of branches)
+    await github.closePullRequestsFrom({
+      installationId: project.installationId,
+      repo: project.repo,
+      branch
+    });
 };
 
 /**
@@ -130,7 +181,8 @@ const closeLeftPullRequest = async (
  * learning is recorded for Officina's maintainers, whose repository Officina does not write to.
  * Either way people merge, never Officina. The learning stays locked from the first read to the
  * decision, so a second decision made meanwhile waits and then finds this one, and never leaves a
- * pull request for a learning it rejected.
+ * pull request for a learning it rejected. An edit the default branch has moved past goes back to
+ * the learner to be rewritten, and the learning stays proposed until people see the new edit.
  */
 export const decide = async (
   pool: Pool,
@@ -138,7 +190,7 @@ export const decide = async (
   target: Target,
   input: { id: string; decision: 'accept' | 'reject'; note?: string | undefined }
 ): Promise<LearningRow> => {
-  if (!hasRole({ id: target.memberId, role: target.role, domains: [] }, 'maintainer'))
+  if (!can(target, 'decide_learnings'))
     throw new TaskCommandError('only maintainers and owners decide on learnings');
   return inTransaction(pool, async (client) => {
     await lockLearning(client, input.id);
@@ -148,12 +200,13 @@ export const decide = async (
       throw new TaskCommandError('this learning was already decided');
     let pr: { number: number; url: string } | undefined;
     if (input.decision === 'accept' && editsProject(learning.target)) {
-      if (!github) throw new TaskCommandError('the GitHub App is not configured');
-      const project = (await loadProject(client, target.projectId))!;
-      pr = await openLearningPullRequest(github, project, learning, {
-        publicUrl: target.publicUrl,
+      const opened = await acceptIntoPullRequest(client, learning, {
+        github,
+        target,
         note: input.note
       });
+      if (!opened) return (await loadLearning(client, target.projectId, learning.id))!;
+      pr = opened;
     }
     if (input.decision === 'reject')
       await closeLeftPullRequest(client, github, target.projectId, learning);
