@@ -175,6 +175,8 @@ export interface TaskDetail extends Card {
     /** What agents need from a person to go on; empty for an ordinary question. */
     readonly needs: readonly string[];
     readonly options: readonly QuestionOption[];
+    /** The task version the question was read at; a picked option sends it back. */
+    readonly version: number;
   } | null;
   readonly repo: string | null;
   readonly pullRequestUrl: string | null;

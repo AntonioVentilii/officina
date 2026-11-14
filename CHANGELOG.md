@@ -1,5 +1,52 @@
 # Changelog
 
+## [1.6.0](https://github.com/AntonioVentilii/officina/compare/v1.5.1...v1.6.0) (2026-11-14)
+
+
+### Features
+
+* **engine,api:** what the repository's own bots and CI do on a pull request reaches the task ([#125](https://github.com/AntonioVentilii/officina/issues/125)) ([4ba4cd7](https://github.com/AntonioVentilii/officina/commit/4ba4cd7b2d2103501ab115dc29d5ec10a7c30cb5))
+
+
+### Bug Fixes
+
+* **api,db:** open a request that skips the interview and submit it in one transaction ([#110](https://github.com/AntonioVentilii/officina/issues/110)) ([a01ba7a](https://github.com/AntonioVentilii/officina/commit/a01ba7a10f76f8d2b924b9266d2aa97fa3be35ff))
+* **db:** a workspace name is unique ([#128](https://github.com/AntonioVentilii/officina/issues/128)) ([8b439e8](https://github.com/AntonioVentilii/officina/commit/8b439e8beed4e54ba070b9a5a7d4404ddf6cd20c))
+* **engine:** the learner's briefs end like every brief ([#124](https://github.com/AntonioVentilii/officina/issues/124)) ([7784bc5](https://github.com/AntonioVentilii/officina/commit/7784bc584f63f7b01e5dc74984079913d03f7e83))
+
+
+### Code Refactoring
+
+* **db:** each query lives in the module that owns its table ([#132](https://github.com/AntonioVentilii/officina/issues/132)) ([ff6d395](https://github.com/AntonioVentilii/officina/commit/ff6d3959e17a81716e8c2ad16d44b7a33edb3299))
+
+
+### Tests
+
+* **api,github:** cover the user token refresh, the token request and review comment pages ([#130](https://github.com/AntonioVentilii/officina/issues/130)) ([f040211](https://github.com/AntonioVentilii/officina/commit/f0402115443c5c3f05b899d4ad30259c06bb09c9))
+* **engine:** a result for a head or spec version replaced during the run is discarded ([#126](https://github.com/AntonioVentilii/officina/issues/126)) ([017b072](https://github.com/AntonioVentilii/officina/commit/017b072deee65a54579917bf64f6814d74032e29))
+
+
+### Continuous Integration
+
+* **repo:** pin the CI workflow's actions to commit SHAs ([#127](https://github.com/AntonioVentilii/officina/issues/127)) ([b756692](https://github.com/AntonioVentilii/officina/commit/b7566925e7a812200599558ad33a22d215bcc653))
+
+## [1.5.1](https://github.com/AntonioVentilii/officina/compare/v1.5.0...v1.5.1) (2026-11-14)
+
+
+### Bug Fixes
+
+* **api:** a learning that replaces a whole line keeps the line break after it ([#121](https://github.com/AntonioVentilii/officina/issues/121)) ([f4e6924](https://github.com/AntonioVentilii/officina/commit/f4e692462f127e7bfae7c2bda586b2c166fa249e))
+
+
+### Code Refactoring
+
+* **core,db,api:** one list of approval gates and one approval state for the board and the CLI ([#111](https://github.com/AntonioVentilii/officina/issues/111)) ([2ea1876](https://github.com/AntonioVentilii/officina/commit/2ea18760c591d8cb714e3b27a7519d18c7f13d6f))
+
+
+### Tests
+
+* **db:** build the missing member id with a random uuid ([#123](https://github.com/AntonioVentilii/officina/issues/123)) ([09be0fd](https://github.com/AntonioVentilii/officina/commit/09be0fd3a8f3e2f0662b4016b7e161eb69fcb1c7))
+
 ## [1.5.0](https://github.com/AntonioVentilii/officina/compare/v1.4.0...v1.5.0) (2026-11-14)
 
 
