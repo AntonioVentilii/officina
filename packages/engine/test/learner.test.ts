@@ -3,10 +3,13 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  failIdleLearningRewrite,
+  failOrphanedRuns,
   insertLearnings,
   listLearnings,
   requestLearningRewrite,
-  saveAgentVersion
+  saveAgentVersion,
+  startLearningRewriteRun
 } from '@officina/db';
 import { RUNNER_ROLES } from '@officina/runner';
 import { Pool } from 'pg';
@@ -248,6 +251,145 @@ describe.skipIf(!url)('learner', () => {
     expect(await runAgentStep(deps, taskId, 'learner')).toEqual({
       status: 'skipped',
       reason: 'not_due'
+    });
+  });
+
+  test('a rewrite the project cannot run fails instead of waiting on every pass', async () => {
+    const { taskId } = await staleLearning();
+    await pool.query('update projects set agent_environment_id = null where id = $1', [
+      seeded.projectId
+    ]);
+    const agents = createFakePort(() => []);
+    const deps = { pool, github: fakeGitHub(), agents, publicUrl: 'x' };
+    expect(await runAgentStep(deps, taskId, 'learner')).toEqual({
+      status: 'skipped',
+      reason: 'no_environment'
+    });
+    expect((await listLearnings(pool, seeded.projectId))[0]).toMatchObject({ rewrite: 'failed' });
+    expect((await collectDueSteps({ pool }, seeded.projectId)).due).toEqual([]);
+    expect(agents.sessions).toHaveLength(0);
+  });
+
+  /** Waits until `ready` holds, as a step running in the background gets there. */
+  const until = async (ready: () => boolean | Promise<boolean>) => {
+    for (let wait = 0; !(await ready()); wait++) {
+      if (wait > 200) throw new Error('the step never got there');
+      await Bun.sleep(10);
+    }
+  };
+  /** Never resolves, as a step whose engine restarted at that point would look from the database. */
+  const forever = () => new Promise<never>(() => {});
+  const learnerRunsActive = async (taskId: string) =>
+    (
+      await pool.query(
+        "select 1 from runs where task_id = $1 and agent_role = 'learner' and status = 'running'",
+        [taskId]
+      )
+    ).rowCount === 1;
+  const rewriteState = async () => (await listLearnings(pool, seeded.projectId))[0]!.rewrite;
+
+  test('a rewrite whose run the engine lost is tried once more, then fails', async () => {
+    const { taskId } = await staleLearning();
+    const agents = createFakePort(() => [forever]);
+    const deps = { pool, github: fakeGitHub(), agents, publicUrl: 'x' };
+    const loseARun = async (sessions: number) => {
+      void runAgentStep(deps, taskId, 'learner');
+      await until(() => agents.sessions.length === sessions);
+      expect(await failOrphanedRuns(pool)).toHaveLength(1);
+    };
+
+    await loseARun(1);
+    expect((await listLearnings(pool, seeded.projectId))[0]).toMatchObject({
+      rewrite: 'requested'
+    });
+    await loseARun(2);
+    expect(await runAgentStep(deps, taskId, 'learner')).toEqual({
+      status: 'skipped',
+      reason: 'not_due'
+    });
+    expect((await listLearnings(pool, seeded.projectId))[0]).toMatchObject({ rewrite: 'failed' });
+    expect(agents.sessions).toHaveLength(2);
+  });
+
+  test('a rewrite run lost right after its claim still counts', async () => {
+    const { taskId } = await staleLearning();
+    // The engine dies before the session exists: the token it asks for never comes.
+    const github = { ...fakeGitHub(), installationToken: forever } as unknown as GitHubPort;
+    const agents = createFakePort(() => []);
+    const deps = { pool, github, agents, publicUrl: 'x' };
+    for (const _ of [1, 2]) {
+      void runAgentStep(deps, taskId, 'learner');
+      await until(() => learnerRunsActive(taskId));
+      expect(await failOrphanedRuns(pool)).toHaveLength(1);
+    }
+    expect(await rewriteState()).toBe('requested');
+    expect(await runAgentStep(deps, taskId, 'learner')).toEqual({
+      status: 'skipped',
+      reason: 'not_due'
+    });
+    expect(await rewriteState()).toBe('failed');
+    expect(agents.sessions).toHaveLength(0);
+  });
+
+  test('a pass the project cannot run leaves a rewrite whose run is in progress to that run', async () => {
+    const { taskId } = await staleLearning();
+    const agents = createFakePort(() => [forever]);
+    const deps = { pool, github: fakeGitHub(), agents, publicUrl: 'x' };
+    void runAgentStep(deps, taskId, 'learner');
+    await until(() => agents.sessions.length === 1);
+    await pool.query('update projects set agent_environment_id = null where id = $1', [
+      seeded.projectId
+    ]);
+    expect(await runAgentStep(deps, taskId, 'learner')).toEqual({
+      status: 'skipped',
+      reason: 'no_environment'
+    });
+    expect(await rewriteState()).toBe('requested');
+  });
+
+  describe('claiming and failing a rewrite at the same time', () => {
+    const NEW_RUN = { stage: 'done', role: 'learner', agentVersion: 1, runner: 'managed_agents' };
+
+    /** Holds the learning's lock in a transaction of its own, as the other side would. */
+    const holdingTheLearning = async (id: string) => {
+      const other = await pool.connect();
+      await other.query('begin');
+      await other.query('select 1 from learnings where id = $1 for update', [id]);
+      return {
+        query: (sql: string, values: unknown[]) => other.query(sql, values),
+        commit: async () => {
+          await other.query('commit');
+          other.release();
+        }
+      };
+    };
+
+    test('a pass that read the rewrite before another failed it does not claim it', async () => {
+      const { taskId, id } = await staleLearning();
+      const failing = await holdingTheLearning(id);
+      const claim = startLearningRewriteRun(pool, { ...NEW_RUN, taskId }, id, 2);
+      await Bun.sleep(50);
+      await failing.query("update learnings set rewrite = 'failed' where id = $1", [id]);
+      await failing.commit();
+
+      expect(await claim).toEqual({ ok: false, error: 'settled' });
+      expect(await learnerRunsActive(taskId)).toBe(false);
+    });
+
+    test('a failure that waited on a claim leaves the rewrite to the run claimed', async () => {
+      const { taskId, id } = await staleLearning();
+      const claiming = await holdingTheLearning(id);
+      const failure = failIdleLearningRewrite(pool, id);
+      await Bun.sleep(50);
+      await claiming.query(
+        `insert into runs (task_id, stage, runner, agent_role, agent_version, status, learning_id)
+         values ($1, 'done', 'managed_agents', 'learner', 1, 'running', $2)`,
+        [taskId, id]
+      );
+      await claiming.commit();
+
+      expect(await failure).toBe(false);
+      expect(await rewriteState()).toBe('requested');
     });
   });
 

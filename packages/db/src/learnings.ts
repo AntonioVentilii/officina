@@ -1,6 +1,8 @@
 import type { LearningTarget } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
 import { RUN_IS_ACTIVE } from './run-status';
+import { startRun, type NewRun } from './runs';
+import { inTransaction } from './store';
 
 type Queryable = Pool | PoolClient;
 
@@ -133,6 +135,69 @@ export const listTasksAwaitingRewrite = async (
       [projectId]
     )
   ).rows.map((row) => row.id);
+
+/**
+ * Locks a learning still waiting for its rewrite, then reads, after the lock, whether a learner run
+ * holds its task and how many runs this request was given (those since its last rewrite). Whoever
+ * claims or fails a rewrite holds this lock, so neither acts on what the other has just changed.
+ */
+const lockWaitingRewrite = async (db: PoolClient, id: string) => {
+  const locked = await db.query(
+    `select 1 from learnings where id = $1 and status = 'proposed' and rewrite = 'requested'
+     for update`,
+    [id]
+  );
+  if (!locked.rowCount) return null;
+  const { rows } = await db.query<{ busy: boolean; runs: number }>(
+    `select exists (
+         select 1 from runs r
+         where r.task_id = l.task_id and r.agent_role = 'learner' and r.status ${RUN_IS_ACTIVE}
+       ) as busy,
+       (select count(*)::int from runs r
+        where r.learning_id = l.id and (l.rewritten_at is null or r.created_at > l.rewritten_at)
+       ) as runs
+     from learnings l where l.id = $1`,
+    [id]
+  );
+  return rows[0]!;
+};
+
+const markRewriteFailed = (db: PoolClient, id: string) =>
+  db.query("update learnings set rewrite = 'failed' where id = $1", [id]);
+
+/**
+ * Claims a run for a learning's rewrite. A rewrite settled meanwhile is `settled`; one that already
+ * had `attempts` runs, all lost, is failed instead, so no further session is spent on it. The run
+ * names its learning in the insert that claims it, so a run lost right after counts too.
+ */
+export const startLearningRewriteRun = (
+  pool: Pool,
+  run: Omit<NewRun, 'learningId'>,
+  learningId: string,
+  attempts: number
+): Promise<{ ok: true; runId: string } | { ok: false; error: 'already_running' | 'settled' }> =>
+  inTransaction(pool, async (db) => {
+    const waiting = await lockWaitingRewrite(db, learningId);
+    if (!waiting) return { ok: false, error: 'settled' };
+    if (waiting.busy) return { ok: false, error: 'already_running' };
+    if (waiting.runs >= attempts) {
+      await markRewriteFailed(db, learningId);
+      return { ok: false, error: 'settled' };
+    }
+    return startRun(db, { ...run, learningId });
+  });
+
+/**
+ * Fails a rewrite the learner cannot run, unless a learner run is in progress on its task: that run
+ * may still deliver. Says whether it failed it.
+ */
+export const failIdleLearningRewrite = (pool: Pool, id: string): Promise<boolean> =>
+  inTransaction(pool, async (db) => {
+    const waiting = await lockWaitingRewrite(db, id);
+    if (!waiting || waiting.busy) return false;
+    await markRewriteFailed(db, id);
+    return true;
+  });
 
 /** Replaces the edit of a learning waiting for its rewrite; people decide it again from here. */
 export const rewriteLearningEdit = async (db: Queryable, id: string, edit: NewLearning['edit']) => {
