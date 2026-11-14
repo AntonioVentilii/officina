@@ -60,16 +60,22 @@ export const createGitHubAccounts = (deps: {
   const expired = (at: Date | null) => at !== null && at.getTime() - REFRESH_MARGIN_MS < Date.now();
 
   /** A usable token for acting as the member, refreshed when needed; `null` when not linked or revoked. */
-  const tokenFor = async (memberId: string): Promise<{ token: string; login: string } | null> => {
+  const tokenFor = async (
+    memberId: string
+  ): Promise<{ token: string; login: string; userId: number } | null> => {
     const account: GitHubAccountRow | null = await loadGitHubAccount(pool, memberId);
     if (!account) return null;
     if (!expired(account.accessExpiresAt)) {
-      return { token: box.open(account.accessTokenEnc), login: account.login };
+      return {
+        token: box.open(account.accessTokenEnc),
+        login: account.login,
+        userId: account.githubUserId
+      };
     }
     if (!account.refreshTokenEnc || expired(account.refreshExpiresAt)) return null;
     const tokens = await deps.auth.refresh(box.open(account.refreshTokenEnc));
     await store(memberId, { id: account.githubUserId, login: account.login }, tokens);
-    return { token: tokens.accessToken, login: account.login };
+    return { token: tokens.accessToken, login: account.login, userId: account.githubUserId };
   };
 
   return { complete, tokenFor };

@@ -1,5 +1,6 @@
 export { migrate } from './migrate';
 export * from './store';
+export * from './task-history';
 export * from './github';
 export * from './runs';
 export * from './run-status';

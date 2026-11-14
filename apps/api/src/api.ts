@@ -149,15 +149,19 @@ const requestSchema = z.strictObject({
 
 const commentSchema = z.strictObject({ body: z.string().trim().min(1).max(20_000) });
 
-/** Only a path on this site, so a sign-in can never be turned into a redirect elsewhere. */
-const localPath = (value: unknown): string | null =>
-  typeof value === 'string' &&
-  value.startsWith('/') &&
-  !value.startsWith('//') &&
-  !value.includes('\\') &&
-  value.length <= 4_000
-    ? value
-    : null;
+/** Stands for this site when a path is resolved; never used as an address. */
+const HERE = 'http://officina.invalid';
+
+/**
+ * Only a path on this site, so a sign-in can never be turned into a redirect elsewhere. The value is
+ * resolved the way a browser resolves a `Location` (which drops tabs and newlines and reads `\` as
+ * `/`), and anything that lands on another origin is refused; what is returned is that resolution.
+ */
+const localPath = (value: unknown): string | null => {
+  if (typeof value !== 'string' || !value.startsWith('/') || value.length > 4_000) return null;
+  const url = URL.parse(value, HERE);
+  return url && url.origin === HERE ? `${url.pathname}${url.search}${url.hash}` : null;
+};
 
 const consentSchema = z.strictObject({
   params: z.record(z.string(), z.string().max(4_000)),
