@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.2](https://github.com/AntonioVentilii/officina/compare/v1.7.1...v1.7.2) (2026-11-14)
+
+
+### Documentation
+
+* **repo:** the last four advisories are fixed in the released 1.7.1 ([#158](https://github.com/AntonioVentilii/officina/issues/158)) ([fbe5f32](https://github.com/AntonioVentilii/officina/commit/fbe5f32be869bde7ad09377c84fe4c234528d89c))
+
 ## [1.7.1](https://github.com/AntonioVentilii/officina/compare/v1.7.0...v1.7.1) (2026-11-14)
 
 
