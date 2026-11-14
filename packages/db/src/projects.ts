@@ -1,6 +1,5 @@
 import type { Role } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
-import { RUN_IS_ACTIVE } from './run-status';
 
 type Queryable = Pool | PoolClient;
 
@@ -154,20 +153,3 @@ export const listSchedulableProjectIds = async (db: Queryable): Promise<string[]
        order by created_at`
     )
   ).rows.map((row) => row.id);
-
-/**
- * Runs left `running` by a previous engine process can never finish: their stream is gone. They are
- * failed so the step can run again; a result the run already recorded is kept beside the error.
- * Assumes a single scheduler instance.
- */
-export const failOrphanedRuns = async (
-  db: Queryable
-): Promise<{ id: string; externalId: string | null }[]> =>
-  (
-    await db.query<{ id: string; external_id: string | null }>(
-      `update runs set status = 'failed', finished_at = now(),
-         result = coalesce(result, '{}'::jsonb)
-           || '{"error": "the engine restarted while this run was in progress"}'::jsonb
-       where status ${RUN_IS_ACTIVE} returning id, external_id`
-    )
-  ).rows.map((row) => ({ id: row.id, externalId: row.external_id }));
