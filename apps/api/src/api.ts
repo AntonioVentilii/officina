@@ -170,6 +170,8 @@ const consentSchema = z.strictObject({
 
 const learningDecisionSchema = z.strictObject({
   decision: z.enum(['accept', 'reject']),
+  /** When the edit the person read was last rewritten (`null`: never), so an accept is of that edit. */
+  rewrittenAt: z.iso.datetime().nullable(),
   note: z.string().trim().max(2_000).optional()
 });
 
