@@ -439,6 +439,7 @@ describe.skipIf(!url)('engine', () => {
       tokenFor: async (memberId) => ({ token: `token-${memberId}`, login: 'antonio' }),
       asUser: {
         pullRequest: notExpected,
+        reviews: notExpected,
         approve: notExpected,
         mergeWhenReady: notExpected,
         requestCopilotReview: async (...args) => {
@@ -1017,6 +1018,7 @@ describe.skipIf(!url)('engine', () => {
           merged: false,
           head: { sha: 'abc' }
         }),
+        reviews: async () => [],
         approve: async () => {
           userCalls.push('approve');
           return {};

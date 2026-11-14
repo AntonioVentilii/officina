@@ -23,6 +23,8 @@ describe.skipIf(!url)('approving on GitHub for the verifier', () => {
     options: { linked?: boolean; fail?: boolean; head?: string; noSeat?: boolean } = {}
   ) => {
     const calls: { method: string; args: unknown[] }[] = [];
+    // The reviews on GitHub: an approval the fake accepted is there on the next read.
+    const reviews: { login: string; state: string; commitId: string | null }[] = [];
     const onBehalf: OnBehalf = {
       publicUrl: 'https://o.example',
       tokenFor: async (memberId) =>
@@ -37,9 +39,14 @@ describe.skipIf(!url)('approving on GitHub for the verifier', () => {
             head: { sha: options.head ?? 'abc' }
           };
         },
+        reviews: async (...args) => {
+          calls.push({ method: 'reviews', args });
+          return reviews;
+        },
         approve: async (...args) => {
           calls.push({ method: 'approve', args });
           if (options.fail) throw new Error('Review cannot be requested from the author');
+          reviews.push({ login: 'Antonio', state: 'APPROVED', commitId: args[3] });
           return {};
         },
         mergeWhenReady: async (...args) => {
@@ -85,8 +92,8 @@ describe.skipIf(!url)('approving on GitHub for the verifier', () => {
     await approveOnGitHub(pool, onBehalf, input(taskId));
     await approveOnGitHub(pool, onBehalf, input(taskId));
 
-    expect(calls.map((call) => call.method)).toEqual(['pullRequest', 'approve']);
-    expect(calls[1]!.args).toEqual([
+    expect(calls.map((call) => call.method)).toEqual(['pullRequest', 'reviews', 'approve']);
+    expect(calls[2]!.args).toEqual([
       `token-${seeded.ownerId}`,
       'ViciApp/vici-app',
       42,
@@ -112,8 +119,40 @@ describe.skipIf(!url)('approving on GitHub for the verifier', () => {
     });
     const { onBehalf, calls } = fake({ head: 'status1' });
     await approveOnGitHub(pool, onBehalf, input(taskId));
-    expect(calls.map((call) => call.method)).toEqual(['pullRequest', 'approve']);
-    expect(calls[1]!.args[3]).toBe('status1');
+    expect(calls.map((call) => call.method)).toEqual(['pullRequest', 'reviews', 'approve']);
+    expect(calls[2]!.args[3]).toBe('status1');
+  });
+
+  test('an approval whose record was lost is recorded on the next pass, never sent twice', async () => {
+    const taskId = await createTaskInMerging(pool, seeded);
+    // The record fails right after GitHub took the approval, as when the database drops.
+    await pool.query(`
+      create function refuse_approved() returns trigger language plpgsql as $$
+        begin raise exception 'connection lost'; end $$;
+      create trigger refuse_approved before insert on task_events
+        for each row when (new.type = 'github_approved') execute function refuse_approved();
+    `);
+    const { onBehalf, calls } = fake();
+    await expect(approveOnGitHub(pool, onBehalf, input(taskId))).rejects.toThrow('connection lost');
+    expect(await events(taskId)).toEqual([]);
+
+    await pool.query('drop trigger refuse_approved on task_events');
+    await approveOnGitHub(pool, onBehalf, input(taskId));
+    await approveOnGitHub(pool, onBehalf, input(taskId));
+    expect(calls.map((call) => call.method)).toEqual([
+      'pullRequest',
+      'reviews',
+      'approve',
+      'pullRequest',
+      'reviews'
+    ]);
+    expect(await events(taskId)).toEqual([
+      {
+        type: 'github_approved',
+        payload: { login: 'antonio', headSha: 'abc' },
+        member: seeded.ownerId
+      }
+    ]);
   });
 
   test('a head pushed after the verification is recorded and never approved', async () => {
