@@ -1,6 +1,7 @@
 import { TERMINAL_STAGES, redactDeep } from '@officina/core';
 import type { StoredTaskContext } from './types';
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
+import { RUN_IS_ACTIVE } from './run-status';
 import { loadTask } from './store';
 
 export type RunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
@@ -219,14 +220,6 @@ export const githubReviewsSinceLastPush = async (
     )
   ).rows;
 
-export const listComments = async (pool: Pool, taskId: string): Promise<string[]> =>
-  (
-    await pool.query<{ body: string }>(
-      'select body from comments where task_id = $1 order by created_at',
-      [taskId]
-    )
-  ).rows.map((row) => row.body);
-
 export const hasTaskEvent = async (pool: Pool, taskId: string, type: string, payload: unknown) =>
   ((
     await pool.query(
@@ -244,3 +237,20 @@ export const latestChooserResult = async (pool: Pool, taskId: string): Promise<u
       [taskId]
     )
   ).rows[0]?.result ?? null;
+
+/**
+ * Runs left `running` by a previous engine process can never finish: their stream is gone. They are
+ * failed so the step can run again; a result the run already recorded is kept beside the error.
+ * Assumes a single scheduler instance.
+ */
+export const failOrphanedRuns = async (
+  db: Pool | PoolClient
+): Promise<{ id: string; externalId: string | null }[]> =>
+  (
+    await db.query<{ id: string; external_id: string | null }>(
+      `update runs set status = 'failed', finished_at = now(),
+         result = coalesce(result, '{}'::jsonb)
+           || '{"error": "the engine restarted while this run was in progress"}'::jsonb
+       where status ${RUN_IS_ACTIVE} returning id, external_id`
+    )
+  ).rows.map((row) => ({ id: row.id, externalId: row.external_id }));
