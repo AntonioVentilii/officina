@@ -780,4 +780,19 @@ describe('GitHub user authorization', () => {
     const failed = authWith(() => json({ access_token: 'ghu_ignored' }, 500)).auth.refresh('ghr');
     await expect(failed).rejects.toThrow(`GitHub 500 on ${TOKEN_PATH}: no token`);
   });
+
+  test('an error page that is not JSON is a GitHub error with its status', async () => {
+    const outage = authWith(
+      () => new Response('<html>Unicorn!</html>', { status: 502 })
+    ).auth.refresh('ghr');
+    await expect(outage).rejects.toBeInstanceOf(GitHubError);
+    await expect(outage).rejects.toThrow(`GitHub 502 on ${TOKEN_PATH}: not JSON`);
+
+    const empty = authWith(() => new Response('', { status: 200 })).auth.exchangeCode('x');
+    await expect(empty).rejects.toThrow(`GitHub 200 on ${TOKEN_PATH}: not JSON`);
+
+    // An array is JSON but not the object GitHub answers with.
+    const list = authWith(() => json([])).auth.exchangeCode('x');
+    await expect(list).rejects.toThrow(`GitHub 200 on ${TOKEN_PATH}: not JSON`);
+  });
 });
