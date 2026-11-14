@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.7.4](https://github.com/AntonioVentilii/officina/compare/v1.7.3...v1.7.4) (2026-11-14)
+
+
+### Bug Fixes
+
+* **api,db:** decide a learning without a transaction held across its GitHub calls ([#176](https://github.com/AntonioVentilii/officina/issues/176)) ([597a88a](https://github.com/AntonioVentilii/officina/commit/597a88a1ac6e221a29626414fe496a78c5b6213f))
+* **api:** back off while scheduler passes keep failing ([#177](https://github.com/AntonioVentilii/officina/issues/177)) ([2400061](https://github.com/AntonioVentilii/officina/commit/2400061823dca5a49a7b1e3d8e98c0ca1b5d7ab0))
+
+
+### Code Refactoring
+
+* **api,board:** read each value the board shows from the one place that owns it ([#179](https://github.com/AntonioVentilii/officina/issues/179)) ([f2802c1](https://github.com/AntonioVentilii/officina/commit/f2802c10789ca2c7e06adeccc716137d4e7b28d3))
+
+
+### Tests
+
+* **api:** cover a collaborator's review and a deleted config in webhooks ([#175](https://github.com/AntonioVentilii/officina/issues/175)) ([5b7d8a6](https://github.com/AntonioVentilii/officina/commit/5b7d8a682680b86c308b6f107d631965aeb7438c))
+* **api:** cover the connector's review and hand-in tools and its client checks ([#180](https://github.com/AntonioVentilii/officina/issues/180)) ([f09e4a6](https://github.com/AntonioVentilii/officina/commit/f09e4a6f2e0f7150878e8a504722e15cb164fe20))
+* **db,api:** age webhook deliveries from the named claim and retention windows ([#178](https://github.com/AntonioVentilii/officina/issues/178)) ([ed55e1c](https://github.com/AntonioVentilii/officina/commit/ed55e1c7fc76562ea2550a094cccff76aaa431c7))
+* db` pass locally. New tests in `apps/api/test/connector.test.ts`. ([f09e4a6](https://github.com/AntonioVentilii/officina/commit/f09e4a6f2e0f7150878e8a504722e15cb164fe20))
+
 ## [1.7.3](https://github.com/AntonioVentilii/officina/compare/v1.7.2...v1.7.3) (2026-11-14)
 
 
