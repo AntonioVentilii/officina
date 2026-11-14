@@ -1,4 +1,5 @@
 import { Glob } from 'bun';
+import type { HandoffNeed } from './handoffs';
 
 /**
  * The security wall. A guard marks a task that touches something no agent may handle on its own:
@@ -42,6 +43,17 @@ export const guardsInRequest = (text: string, confidentialTerms: readonly string
   );
   return terms.length ? [...found, 'confidential'] : found;
 };
+
+/** The guard each handoff need calls for: an agent needing one is as guarded as a request asking. */
+const HANDOFF_GUARDS: Readonly<Partial<Record<HandoffNeed, Guard>>> = {
+  secrets: 'secrets',
+  access: 'access',
+  publishing: 'publishing'
+};
+
+/** The guards a handoff's needs call for. */
+export const guardsForHandoff = (needs: readonly HandoffNeed[]): Guard[] =>
+  needs.flatMap((need) => HANDOFF_GUARDS[need] ?? []);
 
 export interface GuardPaths {
   /** Files whose content is confidential: agents read them but never quote them outside. */

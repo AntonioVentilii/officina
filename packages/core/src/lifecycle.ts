@@ -7,7 +7,16 @@ import {
   type ProjectConfig,
   type Requirement
 } from './config';
-import { OWNER_GUARDS, guardsForPaths, secretFiles, withGuards, type Guard } from './guards';
+import {
+  GUARD_LABELS,
+  OWNER_GUARDS,
+  guardsForHandoff,
+  guardsForPaths,
+  guardsInRequest,
+  secretFiles,
+  withGuards,
+  type Guard
+} from './guards';
 import type { HandoffNeed } from './handoffs';
 import { computeLane, redPaths, stricterLane, type Lane } from './lanes';
 import { GATE_ACTIONS, PERMISSIONS, can, canAnswer, readsTask, type Action } from './permissions';
@@ -237,6 +246,8 @@ export type Command =
       readonly options?: Blocked['options'];
     }
   | { readonly type: 'answer'; readonly text: string }
+  /** A person's words on the task after its request, a comment: they guard it as the request's would. */
+  | { readonly type: 'guard_words'; readonly text: string }
   | { readonly type: 'pause' }
   | { readonly type: 'resume' }
   | { readonly type: 'cancel'; readonly reason: string };
@@ -500,16 +511,62 @@ const withPlan = (
 const isAskedOf = (blocked: Blocked, memberId: string): boolean =>
   'memberId' in blocked.askedOf && blocked.askedOf.memberId === memberId;
 
+/** The task's guards once these are added, and the event when they grew. */
+const withAdded = (task: Task, added: readonly Guard[]): [readonly Guard[], DomainEvent[]] => {
+  const guards = withGuards(task.guards, added);
+  return guards.length === task.guards.length
+    ? [task.guards, []]
+    : [guards, [{ type: 'guards_changed', guards }]];
+};
+
 /** The task's guards once these paths are counted, and the event when they grew. */
 const guardedBy = (
   task: Task,
   context: DecideContext,
   paths: readonly string[]
-): [readonly Guard[], DomainEvent[]] => {
-  const guards = withGuards(task.guards, guardsForPaths(context.config.guards, paths));
-  return guards.length === task.guards.length
-    ? [task.guards, []]
-    : [guards, [{ type: 'guards_changed', guards }]];
+): [readonly Guard[], DomainEvent[]] =>
+  withAdded(task, guardsForPaths(context.config.guards, paths));
+
+/**
+ * The question a guarded request waits on, asked of whoever may `publish`. Submitting as is cannot
+ * skip it; the owner answers, and the request goes on like any other, or cancels it.
+ */
+export const ownerHold = (guards: readonly Guard[]): Blocked => ({
+  question: `This request is about ${guards.map((guard) => GUARD_LABELS[guard]).join(', ')}. Agents never reveal secrets or confidential content, and never publish, deploy or change access on their own. The owner decides: answer to let the work go on, or cancel it.`,
+  askedOf: { role: PERMISSIONS.publish }
+});
+
+/** Whether a held question already waits on whoever may `publish`, who alone lifts a hold. */
+const heldForOwner = (blocked: Blocked | null): boolean =>
+  blocked !== null && 'role' in blocked.askedOf && blocked.askedOf.role === PERMISSIONS.publish;
+
+/** The guards a person's words on a task call for, by the request's rule, that it lacks so far. */
+export const guardsAddedBy = (
+  task: Pick<Task, 'guards'>,
+  config: Pick<ProjectConfig, 'guards'>,
+  text: string
+): Guard[] =>
+  guardsInRequest(text, config.guards.confidentialTerms).filter(
+    (guard) => !task.guards.includes(guard)
+  );
+
+/**
+ * What a person's words on a task (an answer or a comment) guard. Words that add a guard from
+ * someone who may not `publish` hold the task for the owner, as a guarded request is born held,
+ * unless it already waits on the owner.
+ */
+const guardedByWords = (
+  task: Task,
+  context: DecideContext,
+  member: Member,
+  text: string
+): [Task, DomainEvent[]] => {
+  const added = guardsAddedBy(task, context.config, text);
+  const [guards, events] = withAdded(task, added);
+  if (!events.length) return [task, []];
+  if (can(member, 'publish') || heldForOwner(task.blocked)) return [{ ...task, guards }, events];
+  const blocked = ownerHold(added);
+  return [{ ...task, guards, blocked }, [...events, { type: 'blocked', blocked }]];
 };
 
 /** Whether the actor is the one the task is assigned to, so it may report the build. */
@@ -696,6 +753,7 @@ const WITH_PULL_REQUEST: ReadonlySet<Stage> = new Set(['building', ...GITHUB_REV
 const ALLOWED_WHILE_HELD: ReadonlySet<Command['type']> = new Set([
   'submit_request',
   'answer',
+  'guard_words',
   'resume',
   'cancel',
   'block',
@@ -1054,7 +1112,9 @@ export const decide = (
         ...(handoff ? { handoff } : {}),
         ...(command.options?.length ? { options: command.options } : {})
       };
-      return ok({ ...task, blocked }, [{ type: 'blocked', blocked }]);
+      // Needing a secret, access or publishing guards the task as asking for it would.
+      const [guards, guardEvents] = withAdded(task, guardsForHandoff(handoff?.needs ?? []));
+      return ok({ ...task, blocked, guards }, [...guardEvents, { type: 'blocked', blocked }]);
     }
 
     case 'answer': {
@@ -1064,7 +1124,21 @@ export const decide = (
         return fail('not_allowed');
       // An answer is written in the thread, and nobody writes where they may not read.
       if (!readsTask(member, task)) return fail('not_allowed');
-      return ok({ ...task, blocked: null }, [{ type: 'unblocked', answer: command.text }]);
+      const [answered, guardEvents] = guardedByWords(
+        { ...task, blocked: null },
+        context,
+        member,
+        command.text
+      );
+      return ok(answered, [{ type: 'unblocked', answer: command.text }, ...guardEvents]);
+    }
+
+    case 'guard_words': {
+      const member = memberFor(actor, context);
+      if (member === undefined || !can(member, 'comment') || !readsTask(member, task))
+        return fail('not_allowed');
+      const [guarded, events] = guardedByWords(task, context, member, command.text);
+      return ok(guarded, events);
     }
 
     case 'pause': {

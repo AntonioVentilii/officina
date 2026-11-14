@@ -1,8 +1,9 @@
 import {
-  GUARD_LABELS,
-  PERMISSIONS,
+  TERMINAL_STAGES,
   can,
+  guardsAddedBy,
   guardsInRequest,
+  ownerHold,
   readsTask,
   type Blocked,
   type Guard,
@@ -12,7 +13,8 @@ import {
   parseProjectConfig,
   type Actor,
   type ApprovalPlan,
-  type Command
+  type Command,
+  type Task
 } from '@officina/core';
 import {
   addComment,
@@ -26,6 +28,7 @@ import {
   listProjectMembers,
   listRuns,
   listTaskSummaries,
+  loadProjectConfig,
   loadProjectMember,
   loadTask,
   loadTaskContext,
@@ -191,13 +194,29 @@ const guardRequest = (
 };
 
 /**
- * The question a guarded request waits on, asked of whoever may `publish`. Submitting as is cannot
- * skip it; the owner answers, and the request goes on like any other, or cancels it.
+ * Writes a member's comment. Words that guard the task by the request's rule apply that guard in the
+ * same transaction; words that guard nothing new, or a closed task nothing runs on any more, change
+ * no task.
  */
-const ownerHold = (guards: readonly Guard[]): Blocked => ({
-  question: `This request is about ${guards.map((guard) => GUARD_LABELS[guard]).join(', ')}. Agents never reveal secrets or confidential content, and never publish, deploy or change access on their own. The owner decides: answer to let the work go on, or cancel it.`,
-  askedOf: { role: PERMISSIONS.publish }
-});
+const writeComment = async (
+  pool: Pool,
+  input: ProjectActor & { readonly taskId: string; readonly task: Task; readonly text: string }
+): Promise<void> => {
+  const actor: Actor = { kind: 'member', memberId: input.memberId };
+  const config = parseProjectConfig(await loadProjectConfig(pool, input.projectId));
+  const guards = config.ok ? guardsAddedBy(input.task, config.config, input.text) : [];
+  if (TERMINAL_STAGES.has(input.task.stage) || !guards.length) {
+    await addComment(pool, input.taskId, actor, input.text);
+    return;
+  }
+  const result = await applyCommand(pool, {
+    taskId: input.taskId,
+    command: { type: 'guard_words', text: input.text },
+    actor,
+    onApplied: (client) => addComment(client, input.taskId, actor, input.text)
+  });
+  if (!result.ok) throw new TaskCommandError(ERROR_TEXT[result.error]);
+};
 
 /** A member's comment on a task's conversation; watchers read but do not comment. */
 export const commentAs = async (
@@ -212,7 +231,7 @@ export const commentAs = async (
   if (!taskId || !stored) throw new TaskCommandError('task not found', 404);
   if (!readsTask(member, stored.task))
     throw new TaskCommandError('only members who may read this task can comment on it', 403);
-  await addComment(pool, taskId, { kind: 'member', memberId: input.memberId }, input.text);
+  await writeComment(pool, { ...input, taskId, task: stored.task });
 };
 
 export type TaskAction =

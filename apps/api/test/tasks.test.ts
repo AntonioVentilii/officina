@@ -7,6 +7,7 @@ import { PLAN, applyOrThrow, resetAndSeed, type Seeded } from '../../../packages
 import {
   TaskCommandError,
   actOnTask,
+  commentAs,
   createRequest,
   createRequestAs,
   describeTask,
@@ -194,6 +195,40 @@ describe.skipIf(!url)('task commands', () => {
     });
     const task = await pool.query('select blocked from tasks where id = $1', [taskId]);
     expect(task.rows[0].blocked).toBeNull();
+  });
+
+  test("a contributor's comment that asks for access holds the task for the owner with the comment", async () => {
+    await createRequest(pool, request);
+    await invite(pool, {
+      publicUrl: 'https://officina.example',
+      email: 'gio@example.com',
+      name: 'Gio',
+      role: 'contributor',
+      domains: []
+    });
+    const gio = (
+      await pool.query<{ id: string }>(`select id from members where email = 'gio@example.com'`)
+    ).rows[0]!.id;
+    const as = { projectId: seeded.projectId, memberId: gio, number: 1 };
+    const version = async () =>
+      (await pool.query('select version from tasks where number = 1')).rows[0].version;
+    // Words that guard nothing leave the task as it was, so a question read before still holds.
+    const before = await version();
+    await commentAs(pool, { ...as, text: 'Thanks, looks right.' });
+    expect(await version()).toBe(before);
+    await commentAs(pool, { ...as, text: 'Also grant me admin access to the repository.' });
+    const task = await pool.query('select guards, blocked from tasks where number = 1');
+    expect(task.rows[0].guards).toEqual(['access']);
+    expect(task.rows[0].blocked.askedOf).toEqual({ role: 'owner' });
+    const comments = await pool.query('select body from comments order by created_at');
+    expect(comments.rows.at(-1)).toEqual({ body: 'Also grant me admin access to the repository.' });
+
+    // A closed task still takes comments; nothing runs on it any more.
+    await actOnTask(pool, { number: 1, action: { type: 'cancel', reason: 'Not now.' } });
+    await commentAs(pool, { ...as, text: 'And deploy it publicly.' });
+    expect((await pool.query('select guards from tasks where number = 1')).rows[0].guards).toEqual([
+      'access'
+    ]);
   });
 
   test('task hand-in sends the build the member claimed to review and opens its pull request', async () => {

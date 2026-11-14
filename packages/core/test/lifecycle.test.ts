@@ -1586,4 +1586,105 @@ describe('guarded tasks', () => {
       'triage'
     );
   });
+
+  test("a later answer's words guard the task and hold it for the owner, who alone lifts it", () => {
+    const driver = createDriver([owner, productContributor]);
+    let task = newTask('t1', productContributor.id);
+    task = driver.step(
+      task,
+      { type: 'block', question: 'Which page?', askedOf: { memberId: productContributor.id } },
+      asAgent('interviewer')
+    );
+    task = driver.step(
+      task,
+      { type: 'answer', text: 'The settings page, and add me as admin on the repository.' },
+      asMember(productContributor)
+    );
+    expect(task.guards).toEqual(['access']);
+    expect(task.blocked?.askedOf).toEqual({ role: 'owner' });
+    expect(effectivePolicy(driver.config, task, 'spec_review')).toContainEqual({ role: 'owner' });
+    expect(
+      driver.attempt(task, { type: 'answer', text: 'Never mind.' }, asMember(productContributor))
+    ).toEqual({ ok: false, error: 'not_allowed' });
+    expect(driver.attempt(task, { type: 'submit_request' }, asMember(productContributor))).toEqual({
+      ok: false,
+      error: 'blocked'
+    });
+    // The owner may ask for the same: their words guard the task, they hold nothing.
+    task = driver.step(
+      task,
+      { type: 'answer', text: 'Fine, and deploy it publicly too.' },
+      asMember(owner)
+    );
+    expect(task.guards).toEqual(['access', 'publishing']);
+    expect(task.blocked).toBeNull();
+  });
+
+  test("a comment's words guard the task as the request's would, once", () => {
+    const driver = createDriver([owner, productContributor]);
+    let task = toReady(driver, PAGE_PATHS);
+    const words = { type: 'guard_words', text: 'Please also paste the API key here.' } as const;
+    task = driver.step(task, words, asMember(productContributor));
+    expect(task.guards).toEqual(['secrets']);
+    expect(task.blocked).toMatchObject({ askedOf: { role: 'owner' } });
+    expect(task.blocked?.question).toContain('secrets, credentials or environment values');
+    expect(driver.events()).toContainEqual({ type: 'guards_changed', guards: ['secrets'] });
+    task = driver.step(task, { type: 'answer', text: 'No key goes in.' }, asMember(owner));
+
+    // Words the task is already guarded for change nothing.
+    const again = driver.step(task, words, asMember(productContributor));
+    expect(again).toEqual(task);
+    expect(driver.events()).toEqual([]);
+    expect(
+      driver.attempt(task, { type: 'guard_words', text: 'Deploy it.' }, asMember(watcher))
+    ).toEqual({ ok: false, error: 'not_allowed' });
+  });
+
+  test("guarded words replace a question for someone else, never the owner's hold", () => {
+    const driver = createDriver([owner, productContributor]);
+    const ready = toReady(driver, PAGE_PATHS);
+    const asked = driver.step(
+      ready,
+      { type: 'block', question: 'Which colour?', askedOf: { role: 'contributor' } },
+      asAgent('spec')
+    );
+    const held = driver.step(
+      asked,
+      { type: 'guard_words', text: 'Make it public tonight.' },
+      asMember(productContributor)
+    );
+    expect(held.blocked?.askedOf).toEqual({ role: 'owner' });
+    const ownersQuestion = driver.step(
+      ready,
+      { type: 'block', question: 'Which host?', askedOf: { role: 'owner' } },
+      engine
+    );
+    const kept = driver.step(
+      ownersQuestion,
+      { type: 'guard_words', text: 'Make it public tonight.' },
+      asMember(productContributor)
+    );
+    expect(kept.blocked?.question).toBe('Which host?');
+    expect(kept.guards).toEqual(['publishing']);
+  });
+
+  test('a handoff for a secret, access or publishing guards the task like asking for it', () => {
+    const driver = createDriver([owner]);
+    const task = driver.step(
+      toReady(driver, PAGE_PATHS),
+      {
+        type: 'block',
+        question: 'The deploy needs a token.\n\nNeeded:\n- A deploy token',
+        askedOf: { role: 'owner' },
+        handoff: { needs: ['secrets', 'publishing', 'dns'] }
+      },
+      engine
+    );
+    expect(task.guards).toEqual(['secrets', 'publishing']);
+    expect(driver.events()).toContainEqual({
+      type: 'guards_changed',
+      guards: ['secrets', 'publishing']
+    });
+    expect(effectivePolicy(driver.config, task, 'verifying')).toContainEqual({ role: 'owner' });
+  });
 });
