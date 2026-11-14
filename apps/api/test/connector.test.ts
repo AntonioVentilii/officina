@@ -9,7 +9,7 @@ import {
 import { Pool } from 'pg';
 import { resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
 import { createApp } from '../src/app';
-import { invite, loginLink } from '../src/people';
+import { accessLogView, invite, loginLink } from '../src/people';
 
 const url = process.env.TEST_DATABASE_URL;
 const PUBLIC_URL = 'https://officina.example';
@@ -607,6 +607,10 @@ describe.skipIf(!url)('connector for Claude', () => {
 
     expect((await revoke(cookie, listed[0].id)).status).toBe(200);
     expect((await rpc(tokens.access_token, 'tools/list')).status).toBe(401);
+    const log = await accessLogView(pool, seeded.projectId);
+    expect(
+      log.filter((event) => event.type === 'connector_revoked').map((event) => event.text)
+    ).toEqual(["revoked Claude's access"]);
     const refresh = {
       grant_type: 'refresh_token',
       refresh_token: tokens.refresh_token,

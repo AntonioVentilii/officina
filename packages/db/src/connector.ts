@@ -137,6 +137,18 @@ const clientName = async (db: Queryable, clientId: string): Promise<string> =>
     .rows[0]?.name ?? 'an app';
 
 /**
+ * Serializes everything that changes one grant's tokens, rotation and revocation alike: each takes
+ * this lock before touching the rows, so a revoke waits for a rotation in flight and then deletes
+ * the tokens it issued too.
+ */
+export const lockConnectorGrant = async (client: PoolClient, grantId: string) => {
+  await client.query(
+    "select pg_advisory_xact_lock(hashtextextended('connector_grant:' || $1, 0))",
+    [grantId]
+  );
+};
+
+/**
  * Rotates a refresh token of the given client: spends it and issues the grant's next access and
  * refresh tokens, in one transaction that holds the token's row. A token presented a second time
  * means it leaked or was replayed, so the whole grant is revoked and both parties must authorize
@@ -149,6 +161,16 @@ export const rotateConnectorRefreshToken = async (
   input: { clientId: string; accessTtlMs: number; refreshTtlMs: number }
 ): Promise<ConnectorTokens | null> =>
   inTransaction(pool, async (client) => {
+    // The grant first, then its row: the same order a revoke takes, so the two never deadlock.
+    const grantId = (
+      await client.query<{ grant_id: string }>(
+        `select grant_id from connector_tokens
+         where token_hash = $1 and kind = 'refresh' and client_id = $2`,
+        [hashToken(token), input.clientId]
+      )
+    ).rows[0]?.grant_id;
+    if (!grantId) return null;
+    await lockConnectorGrant(client, grantId);
     const found = (
       await client.query<{
         grantId: string;
@@ -226,18 +248,26 @@ export const listConnectorGrants = async (
     )
   ).rows;
 
-/** Revokes one of a member's grants: every token it issued stops working at once. */
-export const revokeConnectorGrant = async (
-  db: Queryable,
-  memberId: string,
-  grantId: string
-): Promise<boolean> =>
-  ((
-    await db.query('delete from connector_tokens where grant_id = $1 and member_id = $2', [
-      grantId,
-      memberId
-    ])
-  ).rowCount ?? 0) > 0;
+/**
+ * Revokes one of a member's grants: every token it issued stops working at once, and the access log
+ * records it in the same transaction.
+ */
+export const revokeConnectorGrant = (pool: Pool, memberId: string, grantId: string) =>
+  inTransaction(pool, async (client): Promise<boolean> => {
+    await lockConnectorGrant(client, grantId);
+    const { rows } = await client.query<{ client_id: string }>(
+      'delete from connector_tokens where grant_id = $1 and member_id = $2 returning client_id',
+      [grantId, memberId]
+    );
+    const clientId = rows[0]?.client_id;
+    if (!clientId) return false;
+    await recordAccessEvent(client, {
+      memberId,
+      type: 'connector_revoked',
+      detail: { client: await clientName(client, clientId), reason: 'revoked' }
+    });
+    return true;
+  });
 
 /**
  * Deletes codes and tokens that can no longer be used, and clients that registered but never
