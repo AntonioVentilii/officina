@@ -198,7 +198,7 @@ export const adoptOutsidePushes = async (
     const context = await loadTaskContext(pool, taskId);
     if (!movableFromOutside(context)) continue;
     const { task } = context;
-    if ((await latestBuildRun(pool, taskId, BUILD_ROLES))?.status === 'running') continue;
+    if ((await latestBuild(pool, taskId, BUILD_ROLES))?.status === 'running') continue;
     const ref = { installationId: context.installationId, repo: context.repo };
     const expected = await expectedHead(pool, taskId);
     if ((await github.pullRequestHead({ ...ref, pullRequest: context.pullRequest })) === expected)
