@@ -1,7 +1,5 @@
 import type { Task } from '@officina/core';
 
-export type { Actor } from '@officina/core';
-
 export interface StoredTaskContext {
   readonly task: Task;
   readonly version: number;
