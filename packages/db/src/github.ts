@@ -212,9 +212,9 @@ export const forwardedReviewIds = async (pool: Pool, taskId: string): Promise<nu
 
 /**
  * Whether the engine's auto-merge attempt for the task's latest handoff at merging is spent: one
- * failed (tried once, since it may have turned auto-merge on anyway), or one turned it on and
- * nothing turned it off since. A hold that turned it off while a review bot's comment settled
- * leaves it to be tried again.
+ * failed (tried once, since it may have turned auto-merge on anyway), or one turned it on
+ * (`turnedAutoMergeOn`, the older approval that recorded it included) and nothing turned it off
+ * since. A hold that turned it off while a review bot's comment settled leaves it to be tried again.
  */
 export const autoMergeSpent = async (pool: Pool, taskId: string): Promise<boolean> =>
   (
@@ -222,7 +222,7 @@ export const autoMergeSpent = async (pool: Pool, taskId: string): Promise<boolea
       `select exists (select 1 from task_events e where e.task_id = $1
          and e.id > ${sinceHandoff('$1')}
          and (e.type = 'github_auto_merge_failed'
-           or (e.type = 'github_auto_merge' and not exists (select 1 from task_events c
+           or (${turnedAutoMergeOn('e')} and not exists (select 1 from task_events c
              where c.task_id = $1 and c.type = 'github_auto_merge_cancelled' and c.id > e.id)))
        ) as spent`,
       [taskId]

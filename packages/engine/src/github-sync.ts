@@ -12,7 +12,8 @@ import {
   latestVerifier,
   listStaleAutoMerges,
   loadTask,
-  loadTaskContext
+  loadTaskContext,
+  type StoredTaskContext
 } from '@officina/db';
 import type { GitHubAsUser, GitHubClient, RepoRef } from '@officina/github';
 import type { Pool } from 'pg';
@@ -333,28 +334,39 @@ const awaitMerge = async (pool: Pool, input: { taskId: string; pullRequest: numb
  * hold turned it off while a review bot's comment settled (`autoMergeSpent`). A failure may
  * still have turned it on (the request reached GitHub but the answer did not), so it is recorded
  * as unsettled and `cancelStaleAutoMerges` turns it off before a person is asked to merge.
+ *
+ * `false` says a review bot's comment is still settling, so nothing was asked of GitHub. Checked
+ * after the attempt: the webhook records a comment before the hold it turns auto-merge off for,
+ * so a hold seen here comes with its comment, and auto-merge stays off until it is dealt with.
  */
 const autoMergeOnGitHub = async (
   pool: Pool,
-  input: { taskId: string; actor: Actor; merge: () => Promise<'auto_merge' | 'merged'> }
-) => {
-  if (await autoMergeSpent(pool, input.taskId)) return;
+  input: {
+    context: StoredTaskContext;
+    actor: Actor;
+    merge: () => Promise<'auto_merge' | 'merged'>;
+  }
+): Promise<boolean> => {
+  const taskId = input.context.task.id;
+  if (await autoMergeSpent(pool, taskId)) return true;
+  if (await hasPendingBotComments(pool, input.context)) return false;
   try {
     const merge = await input.merge();
     await appendTaskEvent(pool, {
-      taskId: input.taskId,
+      taskId,
       actor: input.actor,
       type: 'github_auto_merge',
       payload: { merge }
     });
   } catch (error) {
     await appendTaskEvent(pool, {
-      taskId: input.taskId,
+      taskId,
       actor: input.actor,
       type: 'github_auto_merge_failed',
       payload: { error: (error as Error).message.slice(0, 500) }
     });
   }
+  return true;
 };
 
 /**
@@ -616,12 +628,14 @@ const finishVerifiedSpec = async (
   // After the status commit, so the approval covers the final head. A result that skipped
   // people's verification has no verifier to approve as.
   if (await autoVerified(pool, taskId)) {
-    if (autoMerge)
-      await autoMergeOnGitHub(pool, {
-        taskId,
+    const tried =
+      !autoMerge ||
+      (await autoMergeOnGitHub(pool, {
+        context,
         actor: ENGINE,
         merge: () => github.mergeWhenReady({ ...ref, pullRequest, expectedHead: expected })
-      });
+      }));
+    if (!tried) return;
   } else if (onBehalf) {
     await approveOnGitHub(pool, onBehalf, {
       taskId,
@@ -633,13 +647,16 @@ const finishVerifiedSpec = async (
     // Only on top of the verifier's own approval, so it never stands in for a missing review.
     const approved = await hasTaskEvent(pool, taskId, 'github_approved', { headSha: expected });
     const account = autoMerge && approved ? await verifierAccount(pool, onBehalf, taskId) : null;
-    if (account)
-      await autoMergeOnGitHub(pool, {
-        taskId,
+    const tried =
+      !account ||
+      (await autoMergeOnGitHub(pool, {
+        context,
         actor: account.actor,
         merge: () =>
           onBehalf.asUser.mergeWhenReady(account.token, context.repo, pullRequest, expected)
-      });
+      }));
+    // A bot's comment arrived after the check above: neither handed to GitHub nor to a person.
+    if (!tried) return;
   }
   if (!(await handedToGitHub(pool, taskId))) await awaitMerge(pool, { taskId, pullRequest });
 };
