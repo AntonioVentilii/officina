@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { Client } from 'pg';
+import { Client, Pool } from 'pg';
 import {
   AGENT_ROLES,
   GUARDS,
@@ -9,7 +9,7 @@ import {
   STAGES,
   TASK_KINDS
 } from '@officina/core';
-import { migrate } from '../src';
+import { migrate, upsertWorkspace } from '../src';
 
 const url = process.env.TEST_DATABASE_URL;
 
@@ -42,7 +42,8 @@ describe.skipIf(!url)('migrations', () => {
       '0012_webhook_handled.sql',
       '0013_member_activity.sql',
       '0014_task_guards.sql',
-      '0015_learning_rewrite.sql'
+      '0015_learning_rewrite.sql',
+      '0016_workspace_name_unique.sql'
     ]);
     expect(await migrate(client)).toEqual([]);
   });
@@ -95,6 +96,50 @@ describe.skipIf(!url)('migrations', () => {
     await expect(
       client.query(`update tasks set stage = 'shipped' where id = $1`, [taskId])
     ).rejects.toThrow('tasks_stage_check');
+  });
+
+  test('a workspace name held twice before names were unique keeps both workspaces', async () => {
+    await client.query(
+      "delete from schema_migrations where name = '0016_workspace_name_unique.sql'"
+    );
+    await client.query('drop index workspaces_name');
+    const { rows } = await client.query<{ id: string }>(
+      `insert into workspaces (name, created_at)
+       values ('twin', now() - interval '1 day'), ('twin', now()) returning id`
+    );
+    expect(await migrate(client)).toEqual(['0016_workspace_name_unique.sql']);
+    const names = await client.query<{ id: string; name: string }>(
+      "select id, name from workspaces where name like 'twin%' order by created_at"
+    );
+    expect(names.rows).toEqual([
+      { id: rows[0]!.id, name: 'twin' },
+      { id: rows[1]!.id, name: `twin (${rows[1]!.id})` }
+    ]);
+    await expect(client.query("insert into workspaces (name) values ('twin')")).rejects.toThrow(
+      'workspaces_name'
+    );
+  });
+
+  test('two registrations of a new workspace name at once land on one workspace', async () => {
+    const pool = new Pool({ connectionString: url });
+    const [first, second] = [await pool.connect(), await pool.connect()];
+    try {
+      await first.query('begin');
+      await second.query('begin');
+      const created = await upsertWorkspace(first, 'atlas');
+      const racing = upsertWorkspace(second, 'atlas');
+      // The second registration is in flight, waiting on the first, when the first commits.
+      await Bun.sleep(50);
+      await first.query('commit');
+      expect(await racing).toBe(created);
+      await second.query('commit');
+      const count = await client.query("select 1 from workspaces where name = 'atlas'");
+      expect(count.rowCount).toBe(1);
+    } finally {
+      first.release();
+      second.release();
+      await pool.end();
+    }
   });
 
   test('two processes migrating at once apply each migration once', async () => {
