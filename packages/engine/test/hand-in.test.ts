@@ -14,6 +14,7 @@ import { handInBuild, openMissingPullRequests, type HandInPort } from '../src';
 
 const url = process.env.TEST_DATABASE_URL;
 const PUBLIC_URL = 'https://officina.example';
+const SPEC = 'docs/specs/room.md';
 
 /**
  * GitHub as a developer's push left it: one changed file on the task branch. `openFails` is how
@@ -213,19 +214,25 @@ describe.skipIf(!url)('a developer hands in a build', () => {
     expect(rows[0]?.github_pr).toBe(7);
   });
 
-  test('a hand-in whose spec status write lost the race to the catch-up still completes', async () => {
+  /**
+   * A task branch whose spec says Approved. `write` stands for GitHub answering the hand-in's
+   * status write: `land` puts that status commit on the branch, and `catchUp` runs the scheduler's
+   * catch-up opening the same pull request meanwhile.
+   */
+  const specRace = async (
+    write: (land: () => void, catchUp: () => Promise<unknown>) => Promise<unknown>
+  ) => {
     await pool.query(
       `update projects set config = jsonb_set(config, '{docs,spec_dir}', '"docs/specs"')
        where id = $1`,
       [seeded.projectId]
     );
-    const spec = 'docs/specs/room.md';
     const files = new Map([['dev1', '# Room\n\nStatus: Approved\n']]);
     let head = 'dev1';
     const port = {
       pushFacts: async () => ({
         headSha: head,
-        changedPaths: ['src/app.ts', spec],
+        changedPaths: ['src/app.ts', SPEC],
         addedPaths: [],
         diffLines: 12
       }),
@@ -234,37 +241,67 @@ describe.skipIf(!url)('a developer hands in a build', () => {
         return text === undefined ? null : { text, sha: `blob-${input.branch}` };
       },
       openPullRequest: async () => ({ number: 7, url: 'https://github.com/x/pull/7' }),
-      // The catch-up opening the same pull request writes the same status first.
-      updateFile: async (input: { text: string }) => {
-        files.set('status1', input.text);
-        head = 'status1';
-        throw new GitHubError(409, `/contents/${spec}`, 'is at status1');
-      },
-      commitChanges: async () => ({ parents: ['dev1'], paths: [spec] }),
+      updateFile: (input: { text: string }) =>
+        write(
+          () => {
+            files.set('status1', input.text);
+            head = 'status1';
+          },
+          () => openMissingPullRequests(pool, port, [taskId], PUBLIC_URL)
+        ),
+      commitChanges: async () => ({ parents: ['dev1'], paths: [SPEC] }),
       commentOnIssue: async () => undefined
     } as unknown as HandInPort;
     const taskId = await waitingForDeveloper();
     const dev = await developer('dev@example.com', 'Dev');
     await applyOrThrow(pool, taskId, { type: 'claim' }, dev);
+    return {
+      taskId,
+      handIn: () =>
+        handInBuild(
+          { pool, github: port, publicUrl: PUBLIC_URL },
+          {
+            taskId,
+            memberId: dev.memberId,
+            prTitle: 'feat(room): port the design',
+            verified: [],
+            notVerified: []
+          }
+        ),
+      statuses: async () =>
+        (
+          await pool.query<{ payload: unknown }>(
+            "select payload from task_events where task_id = $1 and type = 'spec_status_set'",
+            [taskId]
+          )
+        ).rows.map((row) => row.payload)
+    };
+  };
 
-    expect(
-      await handInBuild(
-        { pool, github: port, publicUrl: PUBLIC_URL },
-        {
-          taskId,
-          memberId: dev.memberId,
-          prTitle: 'feat(room): port the design',
-          verified: [],
-          notVerified: []
-        }
-      )
-    ).toEqual({ ok: true, stage: 'reviewing', pullRequest: 7 });
-    const { rows } = await pool.query<{ payload: unknown }>(
-      "select payload from task_events where task_id = $1 and type = 'spec_status_set'",
-      [taskId]
-    );
-    expect(rows.map((row) => row.payload)).toEqual([
-      { status: 'In progress (#7)', path: spec, commitSha: 'status1' }
+  test('a hand-in whose spec status write lost the race to the catch-up still completes', async () => {
+    const race = await specRace(async (land) => {
+      // The catch-up opening the same pull request wrote the same status first.
+      land();
+      throw new GitHubError(409, `/contents/${SPEC}`, 'is at status1');
+    });
+
+    expect(await race.handIn()).toEqual({ ok: true, stage: 'reviewing', pullRequest: 7 });
+    expect(await race.statuses()).toEqual([
+      { status: 'In progress (#7)', path: SPEC, commitSha: 'status1' }
+    ]);
+  });
+
+  test('the status the winning opening wrote is recorded once though the losing one recorded it first', async () => {
+    const race = await specRace(async (land, catchUp) => {
+      land();
+      // Before the write's answer arrives, the catch-up finds the status commit and records it.
+      expect(await catchUp()).toEqual([]);
+      return { commitSha: 'status1', parentSha: 'dev1' };
+    });
+
+    expect(await race.handIn()).toEqual({ ok: true, stage: 'reviewing', pullRequest: 7 });
+    expect(await race.statuses()).toEqual([
+      { status: 'In progress (#7)', path: SPEC, commitSha: 'status1' }
     ]);
   });
 });

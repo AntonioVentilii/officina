@@ -349,3 +349,25 @@ export const recordHeadCarried = (
     });
     return true;
   });
+
+/**
+ * Records the spec status a task's branch carries (`spec_status_set`), once per status, checked
+ * under the task's row lock: two openings of the same pull request that both reach the status
+ * leave one entry, and `false` says it was already recorded.
+ */
+export const recordSpecStatus = (
+  pool: Pool,
+  taskId: string,
+  payload: { readonly status: string } & Record<string, unknown>
+): Promise<boolean> =>
+  inTransaction(pool, async (client) => {
+    await client.query('select 1 from tasks where id = $1 for update', [taskId]);
+    const recorded = await client.query(
+      `select 1 from task_events
+       where task_id = $1 and type = 'spec_status_set' and payload @> $2::jsonb`,
+      [taskId, JSON.stringify({ status: payload.status })]
+    );
+    if (recorded.rowCount) return false;
+    await appendTaskEvent(client, { taskId, actor: ENGINE, type: 'spec_status_set', payload });
+    return true;
+  });
