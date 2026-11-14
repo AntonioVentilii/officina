@@ -71,7 +71,7 @@ Both in workspace `vici`, owned by the instance owner:
 | `ViciApp/vici-app`      | `010b5462-fb9f-4c75-8b71-39643a8b1e7a` |
 | `ViciApp/vici-dataroom` | `51a5f429-8c43-4d48-97d2-fef64c1bbf62` |
 
-A push to a project's default branch that changes `.github/officina.yml` refreshes its stored config, which needs the App subscribed to `push`. Until 2026-11-14 it was not, no push ever arrived, and both configs went stale. To check that pushes arrive, count them on the server: `select count(*), max(received_at) from webhook_deliveries where event = 'push'`. To reload a config by hand, run `add-project` for the repository again (step 5 below, without `--config-file`): it rereads the config from the default branch and keeps every member's role. It also applies the onboarding gate (`docs/architecture.md` section 5), so check first that every page the config requires is on the default branch, or the project's builds wait for an onboarding task.
+A push to a project's default branch that changes `.github/officina.yml` refreshes its stored config when the new file is valid; a missing or invalid file is reported and the last valid config stays in force. It needs the App subscribed to `push`. Until 2026-11-14 it was not, no push ever arrived, and both configs went stale. To check that pushes arrive, count them on the server: `select count(*), max(received_at) from webhook_deliveries where event = 'push'`. To reload a config by hand, run `add-project` for the repository again (step 5 below, without `--config-file`): it rereads the config from the default branch and keeps every member's role. It also applies the onboarding gate (`docs/architecture.md` section 5), so check first that every page the config requires is on the default branch, or the project's builds wait for an onboarding task.
 
 ## First deploy (done 2026-09-26)
 
@@ -80,7 +80,7 @@ Kept as the runbook for a second instance.
 1. Create and attach Postgres to `vici-officina`.
 2. Stage `GITHUB_WEBHOOK_SECRET`, then `fly deploy`; confirm `https://vici-officina.fly.dev/health`, a log line `api listening` with `engine: true`, and `anthropic credentials` with `mode: federation`.
 3. Sync the agents: `fly ssh console --app vici-officina -C "bun apps/api/src/cli.ts setup-agents"`. Since agents sync on every boot this is now only a manual override.
-4. Install the GitHub App on `ViciApp/vici-app` only (selected repositories).
+4. Install the GitHub App on the projects' repositories only (selected repositories): today `ViciApp/vici-app` and `ViciApp/vici-dataroom`.
 5. Register the project: `fly ssh console --app vici-officina -C "bun apps/api/src/cli.ts add-project --workspace vici --repo ViciApp/vici-app --owner-email <email> --owner-name Antonio"`. Until `.github/officina.yml` is merged in vici-app, pass it with `--config-file`.
 6. Activate the GitHub App webhook with the same `GITHUB_WEBHOOK_SECRET`.
 7. Set a monthly spend limit on the Officina Anthropic workspace.
@@ -91,4 +91,3 @@ Kept as the runbook for a second instance.
 - Add the **Commit statuses: read-only** permission and the `status` event to the GitHub App, then accept the new permission on each installation, so a failing commit status (CI outside GitHub Actions, a deploy preview) reaches the builder like a failing check suite.
 - Set a monthly spend limit on the Officina Anthropic workspace.
 - Merge `.github/officina.yml` and `docs/ai/officina.md` in vici-app, then drop the machine-local config copy.
-- No webhook delivery has been received yet; the first event on vici-app will confirm the signature path.
