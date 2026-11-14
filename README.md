@@ -61,7 +61,7 @@ A maintainer can **claim the build** from the agent, before it starts or while i
 | 🚦 **Mechanical risk lanes**      | Path globs in `.github/officina.yml` put every change in a lane (`green`, `standard`, `red`), recomputed from the **real diff** after every build round. The stricter lane wins; a model never decides risk.                                                                                                           |
 | ✅ **People decide, agents do**   | The spec is always a human decision, and so is the result, unless a project explicitly lets low-risk changes through. Agents never merge and never approve their own work. A pull request merges by itself only where the project allows it and the chooser decides that result can: otherwise a person presses merge. |
 | 🎯 **Checks, not diffs**          | The chooser turns a change into a short checklist for the right people: "open Battles, the label reads _On the line_". Text changes come with before/after tables in every locale.                                                                                                                                     |
-| ⚙️ **Deterministic engine**       | Scheduling, state transitions, leases, budgets, retries and recovery are plain code. Models run only inside stage agents and return typed contracts the engine validates.                                                                                                                                              |
+| ⚙️ **Deterministic engine**       | Scheduling, state transitions, budgets, retries and recovery are plain code. Models run only inside stage agents and return typed contracts the engine validates.                                                                                                                                                      |
 | 🔐 **No keys to steal**           | Production holds no Anthropic API key: the Fly machine proves its identity with OIDC and gets a short-lived token. GitHub tokens are scoped to one repository and the permissions a role needs.                                                                                                                        |
 | 🐙 **GitHub stays the authority** | Officina opens branches and pull requests through its GitHub App and respects your CI and branch rules. Reviews left on GitHub flow back to the builder; approvals can be submitted as the verifier.                                                                                                                   |
 | 🧪 **It learns from every merge** | After each task the learner looks at what slowed it down and proposes an exact edit to the project docs or an agent prompt. People accept it, and it lands as a pull request.                                                                                                                                          |
@@ -113,7 +113,7 @@ Each role is a versioned prompt in [`agents/`](./agents), synced to Claude Manag
 
 | Role                                                        | Does                                                                                        |       Can write?        |
 | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------- | :---------------------: |
-| 🎤 [Interviewer](./agents/interviewer.md)                   | Asks the requester up to four questions until the request is specific                       |           no            |
+| 🎤 [Interviewer](./agents/interviewer.md)                   | Asks the requester up to `MAX_INTERVIEW_QUESTIONS` questions until the request is specific  |           no            |
 | 📝 [Spec](./agents/spec.md)                                 | Reads the repo and writes a spec with file scope and a predicted lane                       |           no            |
 | 🔨 [Builder](./agents/builder.md)                           | Implements the approved spec on the task branch and runs the project's checks               |       its branch        |
 | 📏 [Spec reviewer](./agents/reviewer_spec.md)               | Checks the diff does what the spec says, no more                                            |           no            |
@@ -140,7 +140,7 @@ Checks:
 
 ```bash
 bun run lint && bun run typecheck
-bun run test       # core, GitHub, runner and the API suites that need no database; no network
+bun run test       # core, GitHub, runner, the API suites that need no database and the board; no network
 bun run test:db    # database, engine and API against a throwaway Postgres
 ```
 
