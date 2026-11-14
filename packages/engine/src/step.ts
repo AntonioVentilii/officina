@@ -1,6 +1,5 @@
 import {
   branchForTask,
-  catalogPagesToRead,
   commandForOutput,
   isBuildRole,
   nextAgentRoles,
@@ -42,7 +41,13 @@ import {
 import type { Pool } from 'pg';
 import { MAX_INTERVIEW_QUESTIONS, buildBrief, type ChooserContext } from './brief';
 import { runLearnerStep } from './learner';
-import { postChecklist, syncSpecStatus, taskLink, type SyncGitHubPort } from './github-sync';
+import {
+  postChecklist,
+  readPushedHead,
+  syncSpecStatus,
+  taskLink,
+  type SyncGitHubPort
+} from './github-sync';
 
 export { taskLink };
 
@@ -383,21 +388,13 @@ export const runAgentStep = async (
         return { status: 'blocked', reason };
       }
       if (built.outcome === 'pushed') {
-        const facts = await deps.github.pushFacts({
-          ...repoRef,
+        const facts = await readPushedHead(deps.github, {
+          ref: repoRef,
           base: context.defaultBranch,
-          branch: taskBranch
+          branch: taskBranch,
+          catalogs: config.docs.standards.catalogs
         });
-        // The catalog check reads the pages as pushed, so an edit that does not name the new file
-        // does not pass for listing it.
-        const catalogPages: Record<string, string | null> = {};
-        for (const page of catalogPagesToRead(config.docs.standards.catalogs, facts.addedPaths)) {
-          catalogPages[page] =
-            // At the head the diff was read from, so a later push cannot change what is checked.
-            (await deps.github.readFile({ ...repoRef, path: page, branch: facts.headSha }))?.text ??
-            null;
-        }
-        roleOutput = { role, output: built, facts: { ...facts, catalogPages } } as RoleOutput;
+        roleOutput = { role, output: built, facts } as RoleOutput;
       } else {
         roleOutput = { role, output: built } as RoleOutput;
       }

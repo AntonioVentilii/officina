@@ -1,5 +1,6 @@
 export { buildBrief, type BriefInput } from './brief';
 export {
+  adoptOutsidePushes,
   approveOnGitHub,
   checklistMarkdown,
   cancelStaleAutoMerges,

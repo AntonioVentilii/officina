@@ -1,5 +1,21 @@
-import { branchForTask, parseProjectConfig, type Actor } from '@officina/core';
-import { appendTaskEvent, hasTaskEvent, loadTask, loadTaskContext } from '@officina/db';
+import {
+  BUILD_ROLES,
+  GITHUB_REVIEWABLE,
+  branchForTask,
+  catalogPagesToRead,
+  parseProjectConfig,
+  type Actor,
+  type Catalog,
+  type PushedHead
+} from '@officina/core';
+import {
+  appendTaskEvent,
+  applyCommand,
+  hasRunningRun,
+  hasTaskEvent,
+  loadTask,
+  loadTaskContext
+} from '@officina/db';
 import type { GitHubAsUser, GitHubClient, RepoRef } from '@officina/github';
 import type { Pool } from 'pg';
 
@@ -132,6 +148,64 @@ const expectedHead = async (pool: Pool, taskId: string): Promise<string | null> 
     )
   ).rows[0]?.sha ?? null;
 
+/**
+ * What a branch's head holds, read from GitHub: the real diff against the base, and the catalog
+ * pages its new files fall under as of that head, so a later push cannot change what is checked
+ * and an edit that does not name a new file does not pass for listing it.
+ */
+export const readPushedHead = async (
+  github: Pick<SyncGitHubPort, 'pushFacts' | 'readFile'>,
+  input: { ref: RepoRef; base: string; branch: string; catalogs: readonly Catalog[] }
+): Promise<PushedHead> => {
+  const facts = await github.pushFacts({ ...input.ref, base: input.base, branch: input.branch });
+  const catalogPages: Record<string, string | null> = {};
+  for (const page of catalogPagesToRead(input.catalogs, facts.addedPaths)) {
+    catalogPages[page] =
+      (await github.readFile({ ...input.ref, path: page, branch: facts.headSha }))?.text ?? null;
+  }
+  return { ...facts, catalogPages };
+};
+
+/**
+ * Takes in a head on a task's pull request that Officina did not push: a review bot's fix, a
+ * person's commit, an update from the default branch. Read from the pull request on every pass, so
+ * a missed webhook cannot hide one, and run before `finishVerifiedSpecs` in the same pass, so
+ * Officina's own status commit is recorded before it is looked for. Skipped while a build run is
+ * still going: its push, and the status commit after it, are not recorded yet.
+ */
+export const adoptOutsidePushes = async (
+  pool: Pool,
+  github: Pick<SyncGitHubPort, 'pullRequestHead' | 'pushFacts' | 'readFile'>,
+  taskIds: readonly string[]
+) => {
+  for (const taskId of taskIds) {
+    const context = await loadTaskContext(pool, taskId);
+    if (!context || !context.pullRequest || !context.installationId) continue;
+    const { task } = context;
+    if (!GITHUB_REVIEWABLE.has(task.stage) || task.blocked || task.paused) continue;
+    if (await hasRunningRun(pool, taskId, BUILD_ROLES)) continue;
+    const ref: RepoRef = { installationId: context.installationId, repo: context.repo };
+    const expected = await expectedHead(pool, taskId);
+    if ((await github.pullRequestHead({ ...ref, pullRequest: context.pullRequest })) === expected)
+      continue;
+    const config = parseProjectConfig(context.rawConfig);
+    if (!config.ok) continue;
+    const head = await readPushedHead(github, {
+      ref,
+      base: context.defaultBranch,
+      branch: branchForTask(context.number),
+      catalogs: config.config.docs.standards.catalogs
+    });
+    if (head.headSha === expected) continue;
+    await applyCommand(pool, {
+      taskId,
+      command: { type: 'outside_push', ...head },
+      actor: ENGINE,
+      guard: (current) => current.stage === task.stage && current.headSha === task.headSha
+    });
+  }
+};
+
 /** The id of the event that last moved the task into `merging`, in SQL for a task id `$1`. */
 const SINCE_MERGING = `coalesce((select max(id) from task_events where task_id = $1
   and type = 'stage_changed' and payload->>'to' = 'merging'), 0)`;
@@ -158,7 +232,8 @@ const resolveForwardedThreads = async (
   const reviewIds = (
     await pool.query<{ review_id: string }>(
       `select distinct payload->>'githubReviewId' as review_id from task_events
-       where task_id = $1 and type = 'review_recorded' and payload->>'reviewer' = 'github'`,
+       where task_id = $1 and type = 'review_recorded' and payload->>'reviewer' = 'github'
+         and payload ? 'githubReviewId'`,
       [input.taskId]
     )
   ).rows.map((row) => Number(row.review_id));

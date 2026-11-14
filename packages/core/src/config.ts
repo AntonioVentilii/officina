@@ -109,7 +109,13 @@ const projectConfigSchema = z
          * Once a result is verified (or auto-verified), turn on GitHub's auto-merge so the branch
          * rules decide when it lands. Left out, it is off and a person merges on GitHub.
          */
-        auto_merge: z.boolean().optional()
+        auto_merge: z.boolean().optional(),
+        /**
+         * GitHub accounts of review bots the repository runs (CodeRabbit, a Claude action and the
+         * like) whose comments on the pull request and review overviews reach the builder. Bots
+         * that comment on the code count without being listed; Copilot's verdict is always read.
+         */
+        review_bots: z.array(z.string().min(1)).optional()
       })
       .optional(),
     runtime: z
@@ -178,7 +184,11 @@ export interface ProjectConfig {
   readonly verify: readonly string[];
   readonly release: { readonly onMerge: ReleaseOnMerge };
   readonly runtime: { readonly allowedHosts: readonly string[] };
-  readonly pullRequest: { readonly titlePattern: string | null; readonly autoMerge: boolean };
+  readonly pullRequest: {
+    readonly titlePattern: string | null;
+    readonly autoMerge: boolean;
+    readonly reviewBots: readonly string[];
+  };
   readonly board: { readonly look: BoardLook };
   readonly lanes: Readonly<Record<Lane, LaneSettings>>;
   readonly laneMatcher: LaneMatcher;
@@ -304,7 +314,8 @@ export const parseProjectConfig = (input: unknown): ConfigResult => {
       runtime: { allowedHosts: raw.runtime?.allowed_hosts ?? [] },
       pullRequest: {
         titlePattern: raw.pull_request?.title_pattern ?? null,
-        autoMerge: raw.pull_request?.auto_merge ?? false
+        autoMerge: raw.pull_request?.auto_merge ?? false,
+        reviewBots: raw.pull_request?.review_bots ?? []
       },
       board: { look: raw.board?.look ?? 'modernista' },
       lanes: {

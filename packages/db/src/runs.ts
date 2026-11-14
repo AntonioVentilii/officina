@@ -120,6 +120,21 @@ export const countOpenAgentWork = async (pool: Pool, projectId: string, lane: st
     ).rows[0]!.count
   );
 
+/** Whether a run of one of these roles is still going on the task, so its work may still land. */
+export const hasRunningRun = async (
+  pool: Pool,
+  taskId: string,
+  roles: readonly string[]
+): Promise<boolean> =>
+  Boolean(
+    (
+      await pool.query(
+        `select 1 from runs where task_id = $1 and status = 'running' and agent_role = any($2)`,
+        [taskId, roles]
+      )
+    ).rowCount
+  );
+
 export const listActiveTaskIds = async (pool: Pool, projectId: string): Promise<string[]> =>
   (
     await pool.query<{ id: string }>(

@@ -1,4 +1,5 @@
 import {
+  adoptOutsidePushes,
   collectDueSteps,
   cancelStaleAutoMerges,
   finishVerifiedSpecs,
@@ -101,13 +102,14 @@ export const startEngine = async (input: {
       const due = [];
       for (const projectId of await listSchedulableProjectIds(input.pool)) {
         due.push(...(await collectDueSteps(deps, projectId)).due);
-        await finishVerifiedSpecs(
-          input.pool,
-          input.github,
-          await listActiveTaskIds(input.pool, projectId),
-          input.onBehalf
-        ).catch((error: unknown) =>
-          input.log('spec status update failed', { projectId, error: (error as Error).message })
+        const active = await listActiveTaskIds(input.pool, projectId);
+        // Before the merge work below, which writes Officina's own status commit on the branch.
+        await adoptOutsidePushes(input.pool, input.github, active).catch((error: unknown) =>
+          input.log('outside push check failed', { projectId, error: (error as Error).message })
+        );
+        await finishVerifiedSpecs(input.pool, input.github, active, input.onBehalf).catch(
+          (error: unknown) =>
+            input.log('spec status update failed', { projectId, error: (error as Error).message })
         );
         await cancelStaleAutoMerges(input.pool, input.github, projectId).catch((error: unknown) =>
           input.log('auto-merge cancel failed', { projectId, error: (error as Error).message })

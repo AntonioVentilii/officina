@@ -1,10 +1,18 @@
-import { parseProjectConfigYaml, type Actor, type Command } from '@officina/core';
+import {
+  parseProjectConfig,
+  parseProjectConfigYaml,
+  type Actor,
+  type GitHubFeedbackSource
+} from '@officina/core';
 import {
   appendTaskEvent,
   applyCommand,
   findProjectsByRepo,
+  findTasksByCommit,
   findTasksByPullRequest,
+  loadTaskContext,
   markLearningsApplied,
+  taskHeadFor,
   unlinkPullRequest,
   updateProjectConfig
 } from '@officina/db';
@@ -68,16 +76,32 @@ const refreshConfigs = async (
 
 type ReviewNotes = { readonly notes: string; readonly overviewOnly: boolean };
 
+/** The bots a task's project lists as its own reviewers (`pull_request.review_bots`). */
+const reviewBotsOf = async (pool: Pool, taskId: string): Promise<ReadonlySet<string>> => {
+  const context = await loadTaskContext(pool, taskId);
+  const config = context ? parseProjectConfig(context.rawConfig) : null;
+  return new Set(config?.ok ? config.config.pullRequest.reviewBots : []);
+};
+
+/** Notes for the builder about feedback that left nothing on the code: a verdict, an overview. */
+const overviewNotes = (what: string, by: string, body: string): string =>
+  [
+    `${what} by @${by} on the pull request, with no comment on the code. Check each point of it against the code: change what is right, and say in \`reviewReply\` what you checked and why the rest needs no change. Finish \`unchanged\` when nothing does.`,
+    body.trim()
+  ].join('\n\n');
+
 /**
  * A review left on the pull request becomes notes for the builder. A bot counts when it left inline
- * comments, and Copilot also when it left none but gave a verdict: a green or blue one can
- * still name a risk in its overview, and the builder checks each point as it would an inline one.
- * A person counts when they asked for changes, because a plain comment may only be a question.
+ * comments; with none, Copilot counts when it gave a verdict (a green or blue one can still name a
+ * risk in its overview) and a bot the project lists as a reviewer counts when it wrote anything.
+ * The builder checks each point as it would an inline one. A person counts when they asked for
+ * changes, because a plain comment may only be a question.
  */
 const reviewNotes = async (
   github: ConfigReader,
   installationId: number,
-  action: Extract<WebhookAction, { kind: 'pull_request_reviewed' }>
+  action: Extract<WebhookAction, { kind: 'pull_request_reviewed' }>,
+  reviewBots: ReadonlySet<string>
 ): Promise<ReviewNotes | null> => {
   if (!action.bot && action.state !== 'changes_requested') return null;
   const comments = github.reviewComments
@@ -88,14 +112,14 @@ const reviewNotes = async (
         reviewId: action.reviewId
       })
     : [];
-  const overviewOnly = action.bot && comments.length === 0;
-  // Only Copilot's verdict is read from the body; another bot with nothing inline asks for nothing.
-  if (overviewOnly && (!COPILOT_REVIEWERS.has(action.by) || copilotVerdict(action.body) === null))
-    return null;
+  if (action.bot && comments.length === 0) {
+    const copilot = COPILOT_REVIEWERS.has(action.by) && copilotVerdict(action.body) !== null;
+    const listed = reviewBots.has(action.by) && action.body.trim() !== '';
+    if (!copilot && !listed) return null;
+    return { notes: overviewNotes('Review', action.by, action.body), overviewOnly: true };
+  }
   const notes = [
-    overviewOnly
-      ? `Review by @${action.by} on the pull request, with no comment on the code. Check each point of its verdict and overview against the code: change what is right, and say in \`reviewReply\` what you checked and why the rest needs no change. Finish \`unchanged\` when nothing does.`
-      : `Review by @${action.by} on the pull request. Address each point, or explain in the code why it does not apply.`,
+    `Review by @${action.by} on the pull request. Address each point, or explain in the code why it does not apply.`,
     action.body.trim(),
     ...comments.map(
       (comment) => `- \`${comment.path}${comment.line ? `:${comment.line}` : ''}\`: ${comment.body}`
@@ -103,14 +127,14 @@ const reviewNotes = async (
   ]
     .filter(Boolean)
     .join('\n\n');
-  return { notes, overviewOnly };
+  return { notes, overviewOnly: false };
 };
 
 /**
- * Whether the task's last request for changes was an overview-only review by the same bot. Copilot
- * may review every push, and its overview of the builder's answer would otherwise send the task
- * back again and again; a review asking for changes on the code, or any other reviewer's, still
- * counts.
+ * Whether the task's last request for changes was an overview-only review or comment by the same
+ * bot. A bot may review every push, and its overview of the builder's answer would otherwise send
+ * the task back again and again; a review asking for changes on the code, or any other reviewer's,
+ * still counts.
  */
 const answeredOverviewLast = async (pool: Pool, taskId: string, by: string): Promise<boolean> =>
   Boolean(
@@ -125,26 +149,6 @@ const answeredOverviewLast = async (pool: Pool, taskId: string, by: string): Pro
       )
     ).rows[0]?.last
   );
-
-/**
- * The head a review is about, in the task's terms. Officina's own commits that only set the spec's
- * status line sit on top of the reviewed work, so a review of one of them is a review of the task's
- * head; any other commit is passed through and judged by the lifecycle.
- */
-const reviewedHead = async (pool: Pool, taskId: string, commitId: string): Promise<string> => {
-  const row = (
-    await pool.query<{ head_sha: string | null }>(
-      `select t.head_sha from tasks t
-       where t.id = $1 and exists (
-         select 1 from task_events e where e.task_id = t.id and e.type = 'spec_status_set'
-           and e.payload->>'commitSha' = $2
-           and e.id > coalesce((select max(p.id) from task_events p
-             where p.task_id = t.id and p.type = 'pushed'), 0))`,
-      [taskId, commitId]
-    )
-  ).rows[0];
-  return row?.head_sha ?? commitId;
-};
 
 /**
  * Turns auto-merge off when a task just left `merging`, whatever moved it (a review, failing
@@ -179,6 +183,45 @@ const stopAutoMerge = async (
   }
 };
 
+/** Sends one task back to its builder with feedback left on GitHub, once per answer. */
+const forwardFeedback = async (
+  pool: Pool,
+  github: ConfigReader,
+  input: {
+    taskId: string;
+    installationId: number;
+    repo: string;
+    prNumber: number;
+    by: string;
+    headSha: string;
+    source: GitHubFeedbackSource;
+    review: ReviewNotes;
+  }
+): Promise<WebhookOutcome> => {
+  const { taskId, review } = input;
+  if (review.overviewOnly && (await answeredOverviewLast(pool, taskId, input.by)))
+    return { taskId, ok: false, error: 'overview_already_answered' };
+  const result = await applyCommand(pool, {
+    taskId,
+    command: {
+      type: 'github_review',
+      headSha: input.headSha,
+      by: input.by,
+      source: input.source,
+      notes: review.notes,
+      overviewOnly: review.overviewOnly
+    },
+    actor: ENGINE
+  });
+  await stopAutoMerge(pool, github, input, result);
+  return result.ok ? { taskId, ok: true } : { taskId, ok: false, error: result.error };
+};
+
+/** The installation the repository's project is reached through, if it has one. */
+const installationOf = async (pool: Pool, repo: string): Promise<number | null> =>
+  (await findProjectsByRepo(pool, repo)).find((candidate) => candidate.installationId !== null)
+    ?.installationId ?? null;
+
 const handleReview = async (
   pool: Pool,
   github: ConfigReader | undefined,
@@ -187,42 +230,97 @@ const handleReview = async (
   if (!github) return [];
   const taskIds = await findTasksByPullRequest(pool, action.repo, action.prNumber);
   if (taskIds.length === 0) return [];
-  const project = (await findProjectsByRepo(pool, action.repo)).find(
-    (candidate) => candidate.installationId !== null
-  );
-  if (!project?.installationId) return [];
-  const review = await reviewNotes(github, project.installationId, action);
-  if (!review) return [];
+  const installationId = await installationOf(pool, action.repo);
+  if (!installationId) return [];
   const outcomes: WebhookOutcome[] = [];
   for (const taskId of taskIds) {
-    if (review.overviewOnly && (await answeredOverviewLast(pool, taskId, action.by))) {
-      outcomes.push({ taskId, ok: false, error: 'overview_already_answered' });
-      continue;
-    }
+    const review = await reviewNotes(
+      github,
+      installationId,
+      action,
+      await reviewBotsOf(pool, taskId)
+    );
+    if (!review) continue;
+    outcomes.push(
+      await forwardFeedback(pool, github, {
+        taskId,
+        installationId,
+        repo: action.repo,
+        prNumber: action.prNumber,
+        by: action.by,
+        headSha: await taskHeadFor(pool, taskId, action.commitId),
+        source: { reviewId: action.reviewId },
+        review
+      })
+    );
+  }
+  return outcomes;
+};
+
+/**
+ * A comment on the pull request from a bot the project lists as a reviewer, such as a review
+ * action's summary, reaches the builder like a review that left nothing on the code. A comment is
+ * tied to no commit, so it is taken to be about the head the task holds when it arrives.
+ */
+const handleComment = async (
+  pool: Pool,
+  github: ConfigReader | undefined,
+  action: Extract<WebhookAction, { kind: 'pull_request_commented' }>
+): Promise<WebhookOutcome[]> => {
+  if (!github || action.body.trim() === '') return [];
+  const installationId = await installationOf(pool, action.repo);
+  if (!installationId) return [];
+  const outcomes: WebhookOutcome[] = [];
+  for (const taskId of await findTasksByPullRequest(pool, action.repo, action.prNumber)) {
+    if (!(await reviewBotsOf(pool, taskId)).has(action.by)) continue;
+    const headSha = (await loadTaskContext(pool, taskId))?.task.headSha;
+    if (!headSha) continue;
+    outcomes.push(
+      await forwardFeedback(pool, github, {
+        taskId,
+        installationId,
+        repo: action.repo,
+        prNumber: action.prNumber,
+        by: action.by,
+        headSha,
+        source: { commentId: action.commentId },
+        review: { notes: overviewNotes('Comment', action.by, action.body), overviewOnly: true }
+      })
+    );
+  }
+  return outcomes;
+};
+
+/**
+ * A failed check suite or commit status on a task's head sends the work back to the builder with
+ * what failed, from review up to merging, so nobody checks or merges a head with red checks.
+ */
+const handleChecksFailed = async (
+  pool: Pool,
+  github: ConfigReader | undefined,
+  action: Extract<WebhookAction, { kind: 'checks_failed' }>
+): Promise<WebhookOutcome[]> => {
+  const installationId = await installationOf(pool, action.repo);
+  const outcomes: WebhookOutcome[] = [];
+  for (const taskId of await findTasksByCommit(pool, action.repo, action.headSha)) {
     const result = await applyCommand(pool, {
       taskId,
       command: {
-        type: 'github_review',
-        headSha: await reviewedHead(pool, taskId, action.commitId),
-        by: action.by,
-        reviewId: action.reviewId,
-        notes: review.notes,
-        overviewOnly: review.overviewOnly
+        type: 'ci_failed',
+        headSha: await taskHeadFor(pool, taskId, action.headSha),
+        details: action.details
       },
       actor: ENGINE
     });
     outcomes.push(result.ok ? { taskId, ok: true } : { taskId, ok: false, error: result.error });
-    await stopAutoMerge(
-      pool,
-      github,
-      {
-        taskId,
-        installationId: project.installationId,
-        repo: action.repo,
-        prNumber: action.prNumber
-      },
-      result
-    );
+    const prNumber = (await loadTaskContext(pool, taskId))?.pullRequest;
+    if (installationId && prNumber)
+      await stopAutoMerge(
+        pool,
+        github,
+        { taskId, installationId, repo: action.repo, prNumber },
+        result
+      );
   }
   return outcomes;
 };
@@ -262,35 +360,16 @@ export const handleWebhookAction = async (
 ): Promise<WebhookOutcome[]> => {
   if (action.kind === 'push') return refreshConfigs(pool, github, action);
   if (action.kind === 'pull_request_reviewed') return handleReview(pool, github, action);
+  if (action.kind === 'pull_request_commented') return handleComment(pool, github, action);
   if (action.kind === 'pull_request_closed') return handleClosed(pool, action);
+  if (action.kind === 'checks_failed') return handleChecksFailed(pool, github, action);
 
-  const targets: { prNumber: number; command: Command }[] =
-    action.kind === 'pull_request_merged'
-      ? [{ prNumber: action.prNumber, command: { type: 'merged' } }]
-      : action.prNumbers.map((prNumber) => ({
-          prNumber,
-          command: { type: 'ci_failed', details: action.details }
-        }));
-
-  const outcomes: WebhookOutcome[] = [];
-  const installationId = (await findProjectsByRepo(pool, action.repo)).find(
-    (candidate) => candidate.installationId !== null
-  )?.installationId;
   // A merged learning pull request is not a task; it marks its learning applied.
-  if (action.kind === 'pull_request_merged')
-    await markLearningsApplied(pool, action.repo, action.prNumber);
-  for (const { prNumber, command } of targets) {
-    for (const taskId of await findTasksByPullRequest(pool, action.repo, prNumber)) {
-      const result = await applyCommand(pool, { taskId, command, actor: ENGINE });
-      outcomes.push(result.ok ? { taskId, ok: true } : { taskId, ok: false, error: result.error });
-      if (installationId)
-        await stopAutoMerge(
-          pool,
-          github,
-          { taskId, installationId, repo: action.repo, prNumber },
-          result
-        );
-    }
+  await markLearningsApplied(pool, action.repo, action.prNumber);
+  const outcomes: WebhookOutcome[] = [];
+  for (const taskId of await findTasksByPullRequest(pool, action.repo, action.prNumber)) {
+    const result = await applyCommand(pool, { taskId, command: { type: 'merged' }, actor: ENGINE });
+    outcomes.push(result.ok ? { taskId, ok: true } : { taskId, ok: false, error: result.error });
   }
   return outcomes;
 };

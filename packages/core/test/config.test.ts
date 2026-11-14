@@ -118,6 +118,27 @@ describe('project config', () => {
     expect(on.ok && on.config.pullRequest.autoMerge).toBe(true);
   });
 
+  test('no review bot is listed unless the project names its own', () => {
+    const none = parseProjectConfig({ version: 1, docs: { entry: 'AGENTS.md' } });
+    expect(none.ok && none.config.pullRequest.reviewBots).toEqual([]);
+    const listed = parseProjectConfig({
+      version: 1,
+      docs: { entry: 'AGENTS.md' },
+      pull_request: { review_bots: ['coderabbitai[bot]', 'claude[bot]'] }
+    });
+    expect(listed.ok && listed.config.pullRequest.reviewBots).toEqual([
+      'coderabbitai[bot]',
+      'claude[bot]'
+    ]);
+    expect(
+      parseProjectConfig({
+        version: 1,
+        docs: { entry: 'AGENTS.md' },
+        pull_request: { review_bots: [''] }
+      }).ok
+    ).toBe(false);
+  });
+
   test('auto_verify is a green-lane setting only', () => {
     const green = parseProjectConfig({
       version: 1,
