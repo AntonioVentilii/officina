@@ -100,15 +100,6 @@ export const loadLearning = async (
     )
   ).rows[0] ?? null;
 
-/** Hands a proposed learning whose edit no longer applies back to the learner; asking twice is a no-op. */
-export const requestLearningRewrite = async (db: Queryable, id: string) => {
-  await db.query(
-    `update learnings set rewrite = 'requested'
-     where id = $1 and status = 'proposed' and rewrite is null`,
-    [id]
-  );
-};
-
 /** The oldest learning of a task waiting for the learner to rewrite its edit, if any. */
 export const learningAwaitingRewrite = async (
   db: Queryable,
@@ -217,43 +208,6 @@ export const failLearningRewrite = async (db: Queryable, id: string) => {
     [id]
   );
 };
-
-/** Locks a learning until the transaction ends, so two decisions on it run one after the other. */
-export const lockLearning = async (db: Queryable, id: string) => {
-  await db.query('select 1 from learnings where id = $1 for update', [id]);
-};
-
-/** Records a decision once: a learning that is no longer proposed cannot be decided again. */
-export const decideLearning = async (
-  db: Queryable,
-  input: {
-    id: string;
-    status: 'accepted' | 'rejected';
-    memberId: string;
-    note: string | null;
-    prNumber?: number;
-    prUrl?: string;
-    /** The commit Officina wrote on the learning's branch, and the one it was written on. */
-    branchCommit?: { sha: string; parentSha: string };
-  }
-): Promise<boolean> =>
-  ((
-    await db.query(
-      `update learnings set status = $2, decided_by = $3, decided_at = now(), decision_note = $4,
-         pr_number = $5, pr_url = $6, branch_sha = $7, branch_parent_sha = $8
-       where id = $1 and status = 'proposed'`,
-      [
-        input.id,
-        input.status,
-        input.memberId,
-        input.note,
-        input.prNumber ?? null,
-        input.prUrl ?? null,
-        input.branchCommit?.sha ?? null,
-        input.branchCommit?.parentSha ?? null
-      ]
-    )
-  ).rowCount ?? 0) === 1;
 
 /** A merged learning pull request makes its learning applied. */
 export const markLearningsApplied = async (db: Queryable, repo: string, prNumber: number) =>

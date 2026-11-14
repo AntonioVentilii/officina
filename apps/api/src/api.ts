@@ -38,7 +38,8 @@ import {
 } from './board';
 import { checkAuthorization, consentRedirect } from './connector';
 import type { GitHubAccounts, GitHubSignInProblem } from './github-accounts';
-import { decide as decideLearning, type LearningGitHub } from './learnings';
+import type { LearningGitHub } from './learning-pull-request';
+import { decide as decideLearning } from './learnings';
 import { notificationsView } from './notifications';
 import { INVITE_TTL_DAYS, accessLogView, inviteAgain, membersView } from './people';
 import type { BoardEvent, RealtimeHub } from './realtime';
