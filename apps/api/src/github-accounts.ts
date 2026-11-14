@@ -1,8 +1,10 @@
 import {
   forgetSpentGitHubAccount,
+  forgetSpentGitHubAccountIn,
   linkGitHubAccount,
   loadGitHubAccount,
   memberForGitHubUser,
+  refreshingGitHubAccount,
   saveGitHubAccount,
   saveRefreshedGitHubTokens,
   type GitHubAccountRow
@@ -13,7 +15,7 @@ import {
   type GitHubUserAuth,
   type UserTokens
 } from '@officina/github';
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import type { TokenBox } from './token-box';
 
 /**
@@ -26,15 +28,22 @@ export type GitHubSignInProblem =
 /** Refresh a little before GitHub would refuse the token. */
 const REFRESH_MARGIN_MS = 5 * 60 * 1000;
 
+/** A token for acting as a member on GitHub, and the GitHub user it acts as. */
+interface ActingToken {
+  readonly token: string;
+  readonly login: string;
+  readonly userId: number;
+}
+
 /**
- * The account a failed refresh save left dead could not be forgotten either. It goes to the server
- * log, so the save's own error is the one the caller gets.
+ * The account a spent refresh token left dead could not be forgotten either. It goes to the server
+ * log, so the caller gets the refresh's own outcome.
  */
 const logForgetFailure = (memberId: string) => (error: unknown) => {
   console.error(
     JSON.stringify({
       at: new Date().toISOString(),
-      message: 'could not forget a GitHub account whose renewed tokens were lost',
+      message: 'could not forget a GitHub account that can no longer be refreshed',
       memberId,
       error: error instanceof Error ? error.message : String(error)
     })
@@ -94,37 +103,12 @@ export const createGitHubAccounts = (deps: {
   };
 
   /**
-   * Stores the tokens a refresh gave over the account the refresh started from, so a refresh never
-   * overwrites a newer connection; `false` when the member disconnected or reconnected meanwhile.
-   * GitHub spent the old refresh token in giving them, so a save that fails leaves the account dead:
-   * it is forgotten and the member told to reconnect, and the save's error still reaches the caller.
-   */
-  const keepRefreshed = async (
-    account: GitHubAccountRow,
-    spentRefreshEnc: string,
-    tokens: UserTokens
-  ): Promise<boolean> => {
-    const user = { id: account.githubUserId, login: account.login };
-    try {
-      return await saveRefreshedGitHubTokens(
-        pool,
-        sealed(account.memberId, user, tokens),
-        spentRefreshEnc
-      );
-    } catch (error) {
-      await forgetSpentGitHubAccount(pool, account.memberId, spentRefreshEnc).catch(
-        logForgetFailure(account.memberId)
-      );
-      throw error;
-    }
-  };
-
-  /**
    * The tokens a refresh gives, or null when GitHub refuses the refresh token: a refresh whose
    * answer was lost spent it, so the account can never act again. It is forgotten and the member
    * told to reconnect, rather than left showing as connected while every refresh fails.
    */
   const refreshed = async (
+    db: PoolClient,
     account: GitHubAccountRow,
     refreshTokenEnc: string
   ): Promise<UserTokens | null> => {
@@ -132,32 +116,74 @@ export const createGitHubAccounts = (deps: {
       return await deps.auth.refresh(box.open(refreshTokenEnc));
     } catch (error) {
       if (!(error instanceof RefreshTokenRefused)) throw error;
-      await forgetSpentGitHubAccount(pool, account.memberId, refreshTokenEnc).catch(
-        logForgetFailure(account.memberId)
-      );
+      await forgetSpentGitHubAccountIn(
+        db,
+        account.memberId,
+        refreshTokenEnc,
+        'refresh_refused'
+      ).catch(logForgetFailure(account.memberId));
       return null;
     }
   };
 
   const expired = (at: Date | null) => at !== null && at.getTime() - REFRESH_MARGIN_MS < Date.now();
 
-  /** A usable token for acting as the member, refreshed when needed; `null` when not linked or revoked. */
-  const tokenFor = async (
-    memberId: string
-  ): Promise<{ token: string; login: string; userId: number } | null> => {
-    const account: GitHubAccountRow | null = await loadGitHubAccount(pool, memberId);
-    if (!account) return null;
-    if (!expired(account.accessExpiresAt)) {
-      return {
-        token: box.open(account.accessTokenEnc),
-        login: account.login,
-        userId: account.githubUserId
-      };
+  const acting = (account: GitHubAccountRow, accessToken: string): ActingToken => ({
+    token: accessToken,
+    login: account.login,
+    userId: account.githubUserId
+  });
+
+  /** The account's own access token, while it has not expired. */
+  const current = (account: GitHubAccountRow): ActingToken | null =>
+    expired(account.accessExpiresAt) ? null : acting(account, box.open(account.accessTokenEnc));
+
+  /**
+   * Renews an expired token, one refresh of an account at a time: a second caller waits for the
+   * first and uses what it stored, rather than presenting the refresh token the first spent and
+   * having the account forgotten although the refresh worked. The new tokens are stored only over
+   * the account the refresh started from, so a refresh never overwrites a newer connection: `null`
+   * when the member disconnected or reconnected meanwhile. GitHub spent the old refresh token in
+   * giving them, so tokens that are not stored leave the account dead: once the refresh's
+   * transaction is undone it is forgotten and the member told to reconnect, and the error still
+   * reaches the caller.
+   */
+  const renewed = async (memberId: string): Promise<ActingToken | null> => {
+    // Holds the refresh token once GitHub has given new tokens for it, and so spent it.
+    const spent: { refreshTokenEnc?: string } = {};
+    try {
+      return await refreshingGitHubAccount(pool, memberId, async (db, account) => {
+        if (!account) return null;
+        const renewedMeanwhile = current(account);
+        if (renewedMeanwhile) return renewedMeanwhile;
+        const refreshTokenEnc = account.refreshTokenEnc;
+        if (!refreshTokenEnc || expired(account.refreshExpiresAt)) return null;
+        const tokens = await refreshed(db, account, refreshTokenEnc);
+        if (!tokens) return null;
+        spent.refreshTokenEnc = refreshTokenEnc;
+        const user = { id: account.githubUserId, login: account.login };
+        const saved = await saveRefreshedGitHubTokens(
+          db,
+          sealed(memberId, user, tokens),
+          refreshTokenEnc
+        );
+        return saved ? acting(account, tokens.accessToken) : null;
+      });
+    } catch (error) {
+      if (spent.refreshTokenEnc) {
+        await forgetSpentGitHubAccount(pool, memberId, spent.refreshTokenEnc, 'refresh_lost').catch(
+          logForgetFailure(memberId)
+        );
+      }
+      throw error;
     }
-    if (!account.refreshTokenEnc || expired(account.refreshExpiresAt)) return null;
-    const tokens = await refreshed(account, account.refreshTokenEnc);
-    if (!tokens || !(await keepRefreshed(account, account.refreshTokenEnc, tokens))) return null;
-    return { token: tokens.accessToken, login: account.login, userId: account.githubUserId };
+  };
+
+  /** A usable token for acting as the member, refreshed when needed; `null` when not linked or revoked. */
+  const tokenFor = async (memberId: string): Promise<ActingToken | null> => {
+    const account = await loadGitHubAccount(pool, memberId);
+    if (!account) return null;
+    return current(account) ?? renewed(memberId);
   };
 
   return { complete, tokenFor };

@@ -443,7 +443,10 @@ describe.skipIf(!url)('GitHub sign-in', () => {
 
       expect(await accounts.tokenFor(seeded.ownerId)).toBeNull();
       expect(await accountRows()).toHaveLength(0);
-      expect(await githubLog()).toEqual([LOST, 'Antonio connected GitHub as @antonio']);
+      expect(await githubLog()).toEqual([
+        'Antonio lost GitHub @antonio: GitHub no longer accepts its token, so it must reconnect',
+        'Antonio connected GitHub as @antonio'
+      ]);
       // Forgotten once: nothing is left to refresh with.
       expect(await accounts.tokenFor(seeded.ownerId)).toBeNull();
       expect(refusals).toHaveLength(1);
@@ -484,6 +487,40 @@ describe.skipIf(!url)('GitHub sign-in', () => {
       };
       return { refresh, reached, answer: () => answer() };
     };
+
+    const waitsForARefresh = async () =>
+      (
+        await pool.query<{ waiting: boolean }>(
+          "select exists (select 1 from pg_locks where locktype = 'advisory' and not granted) as waiting"
+        )
+      ).rows[0]!.waiting;
+
+    test('that another caller needs meanwhile is waited for, so the spent token is never presented again', async () => {
+      const paused = pausedRefresh();
+      let asked = 0;
+      const accounts = expiredAccount(async () => {
+        asked += 1;
+        if (asked === 1) return paused.refresh();
+        // GitHub spent the token in answering the first refresh.
+        throw new RefreshTokenRefused(200, '/login/oauth/access_token', 'bad_refresh_token');
+      });
+      expect(await accounts.complete('c', seeded.ownerId)).toMatchObject({ ok: true });
+      const first = accounts.tokenFor(seeded.ownerId);
+      await paused.reached;
+      let finished = false;
+      const second = accounts.tokenFor(seeded.ownerId).finally(() => {
+        finished = true;
+      });
+      while (!finished && !(await waitsForARefresh())) await Bun.sleep(5);
+      paused.answer();
+
+      const fresh = { token: 'ghu_new', login: 'antonio', userId: 42 };
+      expect(await first).toEqual(fresh);
+      expect(await second).toEqual(fresh);
+      expect(asked).toBe(1);
+      expect(await accountRows()).toHaveLength(1);
+      expect(await githubLog()).toEqual(['Antonio connected GitHub as @antonio']);
+    });
 
     test('never brings back an account the member disconnected meanwhile', async () => {
       const paused = pausedRefresh();

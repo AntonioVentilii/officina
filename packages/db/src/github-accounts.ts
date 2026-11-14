@@ -179,27 +179,62 @@ export const loadGitHubAccount = async (
   ).rows[0] ?? null;
 
 /**
- * Forgets a linked account whose refresh token GitHub has already spent, when the tokens it gave in
- * exchange could not be stored or GitHub now refuses it, and records in the access log that the
- * member must reconnect. Only
- * the row still holding that spent token goes, so an account reconnected meanwhile stays. The GitHub
- * sign-in stays too: signing in with GitHub stores fresh tokens again.
+ * Runs `work` as the only refresh of the member's GitHub account, with the account as it stands
+ * once any refresh in flight has finished, inside the transaction `work` writes with. A second
+ * refresh waits and then sees the tokens the first stored, so it never presents the refresh token
+ * the first one spent. Linking and unlinking do not wait for a refresh.
  */
-export const forgetSpentGitHubAccount = (pool: Pool, memberId: string, refreshTokenEnc: string) =>
+export const refreshingGitHubAccount = <T>(
+  pool: Pool,
+  memberId: string,
+  work: (db: PoolClient, account: GitHubAccountRow | null) => Promise<T>
+): Promise<T> =>
   inTransaction(pool, async (db) => {
-    const { rows } = await db.query<{ login: string }>(
-      `delete from github_accounts where member_id = $1 and refresh_token_enc = $2
-       returning login`,
-      [memberId, refreshTokenEnc]
-    );
-    if (!rows[0]) return false;
-    await recordAccessEvent(db, {
-      memberId,
-      type: 'github_unlinked',
-      detail: { login: rows[0].login, reason: 'refresh_lost' }
-    });
-    return true;
+    await db.query("select pg_advisory_xact_lock(hashtextextended('github_refresh:' || $1, 0))", [
+      memberId
+    ]);
+    return work(db, await loadGitHubAccount(db, memberId));
   });
+
+/**
+ * Why a spent account was forgotten: the tokens a refresh gave could not be stored, or GitHub
+ * refused the refresh token itself.
+ */
+export type SpentGitHubAccountReason = 'refresh_lost' | 'refresh_refused';
+
+/**
+ * Forgets a linked account whose refresh token GitHub has already spent, and records in the access
+ * log that the member must reconnect, and why. Only the row still holding that spent token goes, so
+ * an account reconnected meanwhile stays. The GitHub sign-in stays too: signing in with GitHub
+ * stores fresh tokens again.
+ */
+export const forgetSpentGitHubAccountIn = async (
+  db: PoolClient,
+  memberId: string,
+  refreshTokenEnc: string,
+  reason: SpentGitHubAccountReason
+): Promise<boolean> => {
+  const { rows } = await db.query<{ login: string }>(
+    `delete from github_accounts where member_id = $1 and refresh_token_enc = $2
+     returning login`,
+    [memberId, refreshTokenEnc]
+  );
+  if (!rows[0]) return false;
+  await recordAccessEvent(db, {
+    memberId,
+    type: 'github_unlinked',
+    detail: { login: rows[0].login, reason }
+  });
+  return true;
+};
+
+/** `forgetSpentGitHubAccountIn` in a transaction of its own. */
+export const forgetSpentGitHubAccount = (
+  pool: Pool,
+  memberId: string,
+  refreshTokenEnc: string,
+  reason: SpentGitHubAccountReason
+) => inTransaction(pool, (db) => forgetSpentGitHubAccountIn(db, memberId, refreshTokenEnc, reason));
 
 export const memberForGitHubUser = async (db: Queryable, githubUserId: number) =>
   (
