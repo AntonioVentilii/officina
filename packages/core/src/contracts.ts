@@ -10,6 +10,7 @@ import {
 import { CHECK_DEPTHS, MERGE_MODES, type Blocked, type Command, type Task } from './lifecycle';
 import { redactDeep } from './guards';
 import { questionOptionsSchema } from './questions';
+import { APPROVER_ROLES } from './roles';
 import { TASK_BRANCH_PREFIX } from './steps';
 
 /*
@@ -20,7 +21,7 @@ import { TASK_BRANCH_PREFIX } from './steps';
 
 const text = z.string().trim().min(1);
 
-const askedOfSchema = z.enum(['requester', 'maintainer', 'owner']);
+const askedOfSchema = z.enum(['requester', ...APPROVER_ROLES]);
 
 /**
  * The builder's answer to a GitHub review it was sent back for, posted on the pull request: what it
@@ -130,7 +131,7 @@ const extraApprovalSchema = z.union([
     domain: text.max(50).regex(/^[a-z][a-z0-9-]*$/, 'a lowercase domain name'),
     reason: text.max(300)
   }),
-  z.strictObject({ role: z.enum(['maintainer', 'owner']), reason: text.max(300) })
+  z.strictObject({ role: z.enum(APPROVER_ROLES), reason: text.max(300) })
 ]);
 
 /** One wording change people check, as it reads before and after. */
