@@ -40,7 +40,19 @@ export const stopAutoMergeOnLeaving = async (
   const leftMerging =
     result.ok &&
     result.events.some((event) => event.type === 'stage_changed' && event.from === 'merging');
-  if (!leftMerging) return;
+  if (leftMerging) await holdAutoMerge(pool, github, input);
+};
+
+/**
+ * Turns auto-merge off and records it, whatever turned it on: as soon as something that may send
+ * the work back appears, GitHub must not land the head first. A failure is left to
+ * `cancelStaleAutoMerges`.
+ */
+export const holdAutoMerge = async (
+  pool: Pool,
+  github: Pick<GitHubClient, 'cancelAutoMerge'>,
+  input: { readonly taskId: string; readonly ref: RepoRef; readonly pullRequest: number }
+) => {
   try {
     await cancelTaskAutoMerge(pool, github, {
       id: input.taskId,

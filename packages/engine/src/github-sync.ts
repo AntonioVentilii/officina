@@ -16,6 +16,7 @@ import {
 import type { GitHubAsUser, GitHubClient, RepoRef } from '@officina/github';
 import type { Pool } from 'pg';
 import { cancelTaskAutoMerge } from './auto-merge';
+import { hasPendingBotComments } from './github-feedback';
 
 /**
  * A markdown link to a task. A bare `#N` would link the repository's issue or pull request N.
@@ -610,6 +611,8 @@ const finishVerifiedSpec = async (
     await holdMerge(pool, { taskId, pullRequest, head });
     return;
   }
+  // A review bot's comment still settling may send the work back: nothing is handed to GitHub yet.
+  if (await hasPendingBotComments(pool, context)) return;
   // GitHub merges on its own only when the project allows it and the chooser chose it for this
   // result; anything else is merged by a person.
   const autoMerge =
