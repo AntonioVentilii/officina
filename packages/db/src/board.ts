@@ -13,6 +13,8 @@ export interface BoardTaskRow {
   readonly stage: Task['stage'];
   readonly lane: Task['lane'];
   readonly blocked: Task['blocked'];
+  /** The row's version: every decision applied to the task bumps it. */
+  readonly version: number;
   readonly paused: boolean;
   readonly userVisible: boolean;
   readonly assignee: Task['assignee'];
@@ -36,7 +38,7 @@ export interface BoardTaskRow {
 }
 
 const BOARD_COLUMNS = `
-  t.id, t.kind, t.number, t.title, t.stage, t.lane, t.blocked, t.paused,
+  t.id, t.kind, t.number, t.title, t.stage, t.lane, t.blocked, t.version, t.paused,
   t.user_visible as "userVisible", t.assignee, t.requester_id as "requesterId",
   m.display_name as "requesterName", t.spec_version as "specVersion", t.head_sha as "headSha",
   t.fix_rounds as "fixRounds", t.approval_plans as "approvalPlans", t.guards,
