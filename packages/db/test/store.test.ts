@@ -6,6 +6,7 @@ import {
   createTask,
   failOrphanedRuns,
   failStaleRuns,
+  finishRun,
   loadTask,
   startRun
 } from '../src';
@@ -279,6 +280,19 @@ describe.skipIf(!url)('task store', () => {
     expect(rows).toEqual([
       { id: stale, status: 'failed' },
       { id: recent, status: 'running' }
+    ]);
+
+    await finishRun(pool, stale, { status: 'succeeded', costCents: 7, result: { late: true } });
+    const late = await pool.query<{ status: string; cost: number; result: unknown }>(
+      'select status, list_cost_cents as cost, result from runs where id = $1',
+      [stale]
+    );
+    expect(late.rows).toEqual([
+      {
+        status: 'failed',
+        cost: 7,
+        result: { error: 'the run was still in progress long past its deadline', late: true }
+      }
     ]);
   });
 });
