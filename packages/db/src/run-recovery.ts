@@ -40,3 +40,25 @@ export const failTakenOverRuns = async (
       [BUILD_ROLES]
     )
   ).rows.map((row) => ({ id: row.id, externalId: row.external_id }));
+
+/**
+ * Runs still in progress long after they started, such as one whose step ended without recording
+ * it; a session has a deadline of its own, so a limit well past it finds only those. They are
+ * failed, like an orphaned run, so the role can be claimed again, and the caller interrupts their
+ * sessions.
+ */
+export const failStaleRuns = async (
+  db: Pool | PoolClient,
+  olderThanMs: number
+): Promise<{ id: string; externalId: string | null }[]> =>
+  (
+    await db.query<{ id: string; external_id: string | null }>(
+      `update runs set status = 'failed', finished_at = now(),
+         result = coalesce(result, '{}'::jsonb)
+           || '{"error": "the run was still in progress long past its deadline"}'::jsonb
+       where status ${RUN_IS_ACTIVE}
+         and coalesce(started_at, created_at) < now() - make_interval(secs => $1::double precision / 1000)
+       returning id, external_id`,
+      [olderThanMs]
+    )
+  ).rows.map((row) => ({ id: row.id, externalId: row.external_id }));
