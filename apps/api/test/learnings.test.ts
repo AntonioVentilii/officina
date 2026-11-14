@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import type { LearningTarget } from '@officina/core';
 import {
+  claimLearningDecision,
   failLearningRewrite,
   insertLearnings,
   listLearnings,
@@ -154,34 +155,107 @@ describe.skipIf(!url)('learning decisions', () => {
     publicUrl: 'https://o.example'
   });
 
-  test('a reject made while an accept is opening its pull request waits and finds it decided', async () => {
-    const learning = await propose('docs');
-    const github = fakeGitHub();
+  /** A port whose pull request opens only once `release` is called, as when GitHub is slow. */
+  const slowOpening = (github: ReturnType<typeof fakeGitHub>) => {
     let release = () => {};
     const opening = new Promise<void>((resolve) => (release = resolve));
-    const slow = {
+    const port: LearningGitHub = {
       ...github.port,
-      openPullRequest: async (input: Parameters<LearningGitHub['openPullRequest']>[0]) => {
+      openPullRequest: async (input) => {
         await opening;
         return github.port.openPullRequest(input);
       }
     };
-    const accepting = decide(pool, slow, owner(), {
+    const updated = async () => {
+      while (!github.calls.some((call) => call.method === 'updateFile')) await Bun.sleep(5);
+    };
+    return { port, release, updated };
+  };
+
+  test('a decision made while an accept is opening its pull request is refused, and the accept lands', async () => {
+    const learning = await propose('docs');
+    const github = fakeGitHub();
+    const slow = slowOpening(github);
+    const accepting = decide(pool, slow.port, owner(), {
       id: learning.id,
       decision: 'accept',
       rewrittenAt: null
     });
-    while (!github.calls.some((call) => call.method === 'updateFile')) await Bun.sleep(5);
-    const rejecting = decide(pool, github.port, owner(), {
-      id: learning.id,
-      decision: 'reject',
-      rewrittenAt: null
-    });
-    await Bun.sleep(50);
-    release();
+    await slow.updated();
+    await expect(
+      decide(pool, github.port, owner(), { id: learning.id, decision: 'reject', rewrittenAt: null })
+    ).rejects.toThrow('someone is deciding this learning right now');
+    slow.release();
 
     expect(await accepting).toMatchObject({ status: 'accepted', prNumber: 77 });
-    await expect(rejecting).rejects.toThrow('already decided');
+    expect(github.calls.some((call) => call.method === 'closePullRequestsFrom')).toBe(false);
+  });
+
+  test('an accept holds no database connection while it waits on GitHub', async () => {
+    const learning = await propose('docs');
+    const single = new Pool({ connectionString: url, max: 1 });
+    const slow = slowOpening(fakeGitHub());
+    try {
+      const accepting = decide(single, slow.port, owner(), {
+        id: learning.id,
+        decision: 'accept',
+        rewrittenAt: null
+      });
+      await slow.updated();
+      const free = await Promise.race([
+        single.query('select 1').then(() => true),
+        Bun.sleep(1000).then(() => false)
+      ]);
+      slow.release();
+      await accepting;
+      expect(free).toBe(true);
+    } finally {
+      slow.release();
+      await single.end();
+    }
+  });
+
+  test('an accept is recorded at the time it is written, after its GitHub calls', async () => {
+    const learning = await propose('docs');
+    const github = fakeGitHub();
+    let opened: Date | undefined;
+    const port: LearningGitHub = {
+      ...github.port,
+      openPullRequest: async (input) => {
+        await Bun.sleep(20);
+        opened = (await pool.query<{ at: Date }>('select clock_timestamp() as at')).rows[0]!.at;
+        return github.port.openPullRequest(input);
+      }
+    };
+    const decided = await decide(pool, port, owner(), {
+      id: learning.id,
+      decision: 'accept',
+      rewrittenAt: null
+    });
+    expect(decided.decidedAt!.getTime()).toBeGreaterThanOrEqual(opened!.getTime());
+  });
+
+  test('a claim a stopped process left is taken over once its lease ran out, writing the edit once', async () => {
+    const learning = await propose('docs');
+    expect(await claimLearningDecision(pool, seeded.projectId, learning.id)).toBeString();
+    const github = fakeGitHub();
+    await expect(
+      decide(pool, github.port, owner(), { id: learning.id, decision: 'accept', rewrittenAt: null })
+    ).rejects.toThrow('someone is deciding this learning right now');
+    expect(github.calls).toEqual([]);
+
+    await pool.query(
+      "update learnings set decision_claimed_at = now() - interval '11 minutes' where id = $1",
+      [learning.id]
+    );
+    expect(
+      await decide(pool, github.port, owner(), {
+        id: learning.id,
+        decision: 'accept',
+        rewrittenAt: null
+      })
+    ).toMatchObject({ status: 'accepted', prNumber: 77 });
+    expect(github.calls.filter((call) => call.method === 'updateFile')).toHaveLength(1);
   });
 
   test('accepting a learning records the commit Officina wrote on its branch, and only that', async () => {
