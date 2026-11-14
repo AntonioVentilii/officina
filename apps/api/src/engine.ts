@@ -1,5 +1,6 @@
 import {
   adoptOutsidePushes,
+  forwardSettledComments,
   collectDueSteps,
   cancelStaleAutoMerges,
   finishVerifiedSpecs,
@@ -114,6 +115,9 @@ export const startEngine = async (input: {
         // which writes Officina's own status commit on the branch.
         await adoptOutsidePushes(input.pool, input.github, active).catch((error: unknown) =>
           input.log('outside push check failed', { projectId, error: (error as Error).message })
+        );
+        await forwardSettledComments(input.pool, input.github, active).catch((error: unknown) =>
+          input.log('bot comment forwarding failed', { projectId, error: (error as Error).message })
         );
         due.push(...(await collectDueSteps(deps, projectId)).due);
         const unfinished = await finishVerifiedSpecs(

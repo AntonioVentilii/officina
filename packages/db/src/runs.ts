@@ -180,7 +180,7 @@ export const saveAgentVersion = async (pool: Pool, record: AgentVersionRecord) =
 };
 
 /** Where the current build round's feedback starts: the builder's last push or unchanged finish. */
-const SINCE_LAST_BUILD = `id > coalesce((select max(id) from task_events where task_id = $1
+export const SINCE_LAST_BUILD = `id > coalesce((select max(id) from task_events where task_id = $1
   and type in ('pushed', 'build_unchanged')), 0)`;
 
 /**

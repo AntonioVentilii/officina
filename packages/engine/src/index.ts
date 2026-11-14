@@ -16,3 +16,10 @@ export { handInBuild, type HandInPort } from './hand-in';
 export { collectDueSteps, tick } from './tick';
 export { learningProblems } from './learner';
 export { ensureOnboarding, openOnboardingIn } from './onboarding';
+export {
+  forwardFeedback,
+  forwardSettledComments,
+  overviewNotes,
+  reviewBotsIn,
+  type ReviewNotes
+} from './github-feedback';

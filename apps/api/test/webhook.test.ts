@@ -265,7 +265,7 @@ describe.skipIf(!url)('api', () => {
     expect(details.rows[0]?.details).toBe('vercel: failure (Build failed)');
   });
 
-  test('a comment or an overview from a review bot the project lists reaches the builder, once per answer', async () => {
+  test('a review bot the project lists has its comments recorded, and its overview reaches the builder', async () => {
     const commenting = createApp({
       pool,
       webhookSecret: SECRET,
@@ -282,14 +282,15 @@ describe.skipIf(!url)('api', () => {
     const comment = async (
       delivery: string,
       login: string,
-      body = 'The cache key is never cleared.'
+      action = 'created',
+      body = 'Working...'
     ) =>
       (
         await deliver(commenting, {
           event: 'issue_comment',
           delivery,
           payload: {
-            action: 'created',
+            action,
             issue: { number: 42, pull_request: {} },
             comment: { id: 31, body, user: { login, type: 'Bot' } },
             repository
@@ -299,31 +300,24 @@ describe.skipIf(!url)('api', () => {
 
     // A bot the project does not list, such as a deploy preview, asks for nothing.
     expect(await comment('c-1', 'vercel[bot]')).toEqual({ status: 'applied', outcomes: [] });
+    // A listed bot's comment and its edit are recorded; the scheduler forwards it once it settles.
     expect(await comment('c-2', 'coderabbitai[bot]')).toEqual({
       status: 'applied',
       outcomes: [{ taskId, ok: true }]
     });
-    expect((await loadTask(pool, taskId))?.task).toMatchObject({ stage: 'building', fixRounds: 1 });
-    const recorded = await pool.query<{ notes: string; comment: string }>(
-      `select payload->>'notes' as notes, payload->>'githubCommentId' as comment from task_events
-       where task_id = $1 and type = 'review_recorded' and payload->>'reviewer' = 'github'`,
+    await comment('c-3', 'coderabbitai[bot]', 'edited', 'The cache key is never cleared.');
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({ stage: 'merging' });
+    const seen = await pool.query<{ body: string }>(
+      `select payload->>'body' as body from task_events
+       where task_id = $1 and type = 'github_comment_seen' order by id`,
       [taskId]
     );
-    expect(recorded.rows[0]?.comment).toBe('31');
-    expect(recorded.rows[0]?.notes).toContain('The cache key is never cleared.');
+    expect(seen.rows.map((row) => row.body)).toEqual([
+      'Working...',
+      'The cache key is never cleared.'
+    ]);
 
-    // Its next word on the builder's answer is not sent back again.
-    await applyCommand(pool, {
-      taskId,
-      command: { type: 'unchanged', note: 'The key is cleared on logout.' },
-      actor: { kind: 'agent', role: 'builder', version: 1 }
-    });
-    expect(await comment('c-3', 'coderabbitai[bot]', 'Still looks off.')).toEqual({
-      status: 'applied',
-      outcomes: [{ taskId, ok: false, error: 'overview_already_answered' }]
-    });
-
-    // A review by the same bot with nothing on the code counts too, as an overview.
+    // A review by the same bot with nothing on the code counts as an overview at once.
     const reviewed = await deliver(commenting, {
       event: 'pull_request_review',
       delivery: 'c-4',
@@ -341,7 +335,33 @@ describe.skipIf(!url)('api', () => {
         repository
       }
     });
-    expect(await reviewed.json()).toEqual({
+    expect(await reviewed.json()).toEqual({ status: 'applied', outcomes: [{ taskId, ok: true }] });
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({ stage: 'building', fixRounds: 1 });
+
+    // Its next overview on the builder's answer is not sent back again.
+    await applyCommand(pool, {
+      taskId,
+      command: { type: 'unchanged', note: 'The key is cleared on logout.' },
+      actor: { kind: 'agent', role: 'builder', version: 1 }
+    });
+    const again = await deliver(commenting, {
+      event: 'pull_request_review',
+      delivery: 'c-5',
+      payload: {
+        action: 'submitted',
+        review: {
+          id: 13,
+          state: 'commented',
+          body: 'Still looks off.',
+          commit_id: 'abc',
+          author_association: 'NONE',
+          user: { login: 'coderabbitai[bot]', type: 'Bot' }
+        },
+        pull_request: { number: 42 },
+        repository
+      }
+    });
+    expect(await again.json()).toEqual({
       status: 'applied',
       outcomes: [{ taskId, ok: false, error: 'overview_already_answered' }]
     });
