@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { DEFAULT_BOARD_LOOK, type BoardLook, type Role } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
+import { purgeExpiredOAuthStates } from './github-accounts';
 import { recordFirstSignIn } from './members';
 import { inTransaction } from './store';
 
@@ -139,11 +140,10 @@ export const purgeExpiredCredentials = async (
                      and (newer.created_at, newer.token_hash) > (l.created_at, l.token_hash))`
   );
   const sessions = await db.query('delete from sessions where expires_at <= now()');
-  const states = await db.query('delete from oauth_states where expires_at <= now()');
   return {
     loginLinks: links.rowCount ?? 0,
     sessions: sessions.rowCount ?? 0,
-    oauthStates: states.rowCount ?? 0
+    oauthStates: await purgeExpiredOAuthStates(db)
   };
 };
 

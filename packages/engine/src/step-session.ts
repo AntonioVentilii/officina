@@ -5,8 +5,8 @@ import {
   feedbackSinceLastPush,
   githubReviewsSinceLastPush,
   latestPushedPaths,
-  listComments,
   listProjectMemberProfiles,
+  listTaskComments,
   setRunExternalId
 } from '@officina/db';
 import { executeRun, type RunnerRole } from '@officina/runner';
@@ -79,7 +79,9 @@ const briefFor = async (step: Step, inputs: StepInputs) => {
     protectedPaths: config.lanes.red.paths,
     confidentialPaths: config.guards.confidential,
     requestThread:
-      role === 'spec' || role === 'interviewer' ? await listComments(pool, taskId) : [],
+      role === 'spec' || role === 'interviewer'
+        ? (await listTaskComments(pool, taskId)).map((comment) => comment.body)
+        : [],
     feedback: step.builds ? await feedbackSinceLastPush(pool, taskId) : [],
     firstRound: context.task.headSha === null,
     prTitlePattern: config.pullRequest.titlePattern,

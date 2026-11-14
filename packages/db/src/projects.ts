@@ -1,18 +1,18 @@
-import { BUILD_ROLES, type Role } from '@officina/core';
+import type { Role } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
-import { RUN_IS_ACTIVE } from './run-status';
 
 type Queryable = Pool | PoolClient;
 
-export const upsertWorkspace = async (db: Queryable, name: string): Promise<string> => {
-  const existing = await db.query<{ id: string }>('select id from workspaces where name = $1', [
-    name
-  ]);
-  if (existing.rows[0]) return existing.rows[0].id;
-  return (
-    await db.query<{ id: string }>('insert into workspaces (name) values ($1) returning id', [name])
+/** One statement, so two registrations of a new name at once land on the same workspace. */
+export const upsertWorkspace = async (db: Queryable, name: string): Promise<string> =>
+  (
+    await db.query<{ id: string }>(
+      `insert into workspaces (name) values ($1)
+       on conflict (name) do update set name = excluded.name
+       returning id`,
+      [name]
+    )
   ).rows[0]!.id;
-};
 
 export const upsertMember = async (
   db: Queryable,
@@ -166,42 +166,3 @@ export const listSchedulableProjectIds = async (db: Queryable): Promise<string[]
        order by created_at`
     )
   ).rows.map((row) => row.id);
-
-/**
- * Runs left `running` by a previous engine process can never finish: their stream is gone. They are
- * failed so the step can run again; a result the run already recorded is kept beside the error.
- * Assumes a single scheduler instance.
- */
-export const failOrphanedRuns = async (
-  db: Queryable
-): Promise<{ id: string; externalId: string | null }[]> =>
-  (
-    await db.query<{ id: string; external_id: string | null }>(
-      `update runs set status = 'failed', finished_at = now(),
-         result = coalesce(result, '{}'::jsonb)
-           || '{"error": "the engine restarted while this run was in progress"}'::jsonb
-       where status ${RUN_IS_ACTIVE} returning id, external_id`
-    )
-  ).rows.map((row) => ({ id: row.id, externalId: row.external_id }));
-
-/**
- * Build runs still in progress on a task a member took over, whatever stage the member's work has
- * reached since (a hand-in moves it on before the next pass): their result no longer applies (the
- * engine's `sameWork`), and their session would only spend. They are failed, like an orphaned run,
- * and the caller interrupts their sessions.
- */
-export const failTakenOverRuns = async (
-  db: Queryable
-): Promise<{ id: string; externalId: string | null }[]> =>
-  (
-    await db.query<{ id: string; external_id: string | null }>(
-      `update runs r set status = 'failed', finished_at = now(),
-         result = coalesce(r.result, '{}'::jsonb)
-           || '{"error": "a member took the build over while this run was in progress"}'::jsonb
-       from tasks t
-       where t.id = r.task_id and r.status ${RUN_IS_ACTIVE} and r.agent_role = any($1::text[])
-         and t.assignee->>'kind' = 'member'
-       returning r.id, r.external_id`,
-      [BUILD_ROLES]
-    )
-  ).rows.map((row) => ({ id: row.id, externalId: row.external_id }));
