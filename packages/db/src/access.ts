@@ -51,21 +51,20 @@ export const recordAccessEvent = async (db: Queryable, event: AccessEventInput) 
  * Records that a member used Officina from a connector app, at most once a day per app: an app
  * refreshes its token every hour it is in use, and the log should say which days it was used, not
  * each hour. The app is told apart by its client id, since two apps may share a name; the name is
- * kept only for the sentence.
+ * kept only for the sentence. The day's row is a unique key (migration 0018), so two refreshes at
+ * the same moment still leave one.
  */
 export const recordConnectorUse = async (
   db: Queryable,
   use: { readonly memberId: string; readonly clientId: string; readonly clientName: string }
 ) => {
-  const type: AccessEventType = 'connector_used';
   await db.query(
     `insert into access_events (member_id, type, detail)
-     select $1, $2, jsonb_build_object('clientId', $3::text, 'client', $4::text)
-     where not exists (
-       select 1 from access_events
-       where member_id = $1 and type = $2 and detail->>'clientId' = $3
-         and created_at >= date_trunc('day', now()))`,
-    [use.memberId, type, use.clientId, use.clientName]
+     values ($1, 'connector_used', jsonb_build_object('clientId', $2::text, 'client', $3::text))
+     on conflict (member_id, (detail ->> 'clientId'), ((created_at at time zone 'UTC')::date))
+       where type = 'connector_used'
+     do nothing`,
+    [use.memberId, use.clientId, use.clientName]
   );
 };
 
