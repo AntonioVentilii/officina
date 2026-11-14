@@ -2,22 +2,21 @@ import { branchForLearning, can, editsProject, type Role } from '@officina/core'
 import {
   claimLearningDecision,
   decideLearning,
+  holdLearningDecision,
   loadLearning,
   loadProject,
   releaseLearningDecision,
   requestLearningRewrite,
-  type LearningRow,
-  type ProjectRecord
+  type LearningRow
 } from '@officina/db';
-import type { GitHubClient, RepoRef } from '@officina/github';
-import { taskLink } from '@officina/engine';
 import type { Pool } from 'pg';
+import {
+  openLearningPullRequest,
+  type Hold,
+  type LearningGitHub,
+  type OpenedLearning
+} from './learning-pull-request';
 import { TaskCommandError } from './tasks';
-
-export type LearningGitHub = Pick<
-  GitHubClient,
-  'readFile' | 'updateFile' | 'createBranch' | 'openPullRequest' | 'closePullRequestsFrom'
->;
 
 interface Target {
   readonly projectId: string;
@@ -26,115 +25,6 @@ interface Target {
   readonly publicUrl: string;
 }
 
-/**
- * The output contract trims the text, so a replaced line would lose the line break that ended it
- * and the next line would join the addition. The break comes back as the replaced line had it, so a
- * file with CRLF line endings keeps them.
- */
-const withLineBreakOf = (find: string, text: string) =>
-  text.endsWith('\n') ? text : `${text}${/\r?\n$/.exec(find)?.[0] ?? ''}`;
-
-/** The file with the learning's edit applied, or why it no longer applies. */
-export const applyEdit = (
-  current: string | null,
-  learning: Pick<LearningRow, 'find' | 'text'>
-): { ok: true; text: string } | { ok: false; why: string } => {
-  if (learning.find === null) {
-    const base = current ?? '';
-    const separator =
-      base === '' || base.endsWith('\n\n') ? '' : base.endsWith('\n') ? '\n' : '\n\n';
-    return { ok: true, text: `${base}${separator}${learning.text.trimEnd()}\n` };
-  }
-  if (current === null) return { ok: false, why: 'the file no longer exists' };
-  const count = current.split(learning.find).length - 1;
-  if (count !== 1) return { ok: false, why: `the text to replace now appears ${count} times` };
-  const text = withLineBreakOf(learning.find, learning.text);
-  // A function replacer, so `$&` or `$$` in the text land as written rather than as patterns.
-  return { ok: true, text: current.replace(learning.find, () => text) };
-};
-
-/** Agent docs learnings say so in their scope, so they read as changes to `docs/ai` in the history. */
-const titleFor = (learning: LearningRow) => {
-  const summary = learning.title.charAt(0).toLowerCase() + learning.title.slice(1);
-  const scope = learning.target === 'docs' ? 'ai' : 'learning';
-  return `docs(${scope}): ${summary}`.slice(0, 120);
-};
-
-/** A learning's pull request, and the commit Officina wrote on its branch when it wrote one. */
-interface OpenedLearning {
-  readonly number: number;
-  readonly url: string;
-  readonly branchCommit?: { readonly sha: string; readonly parentSha: string };
-}
-
-/**
- * Writes the edit on the learning's branch, unless a branch an earlier attempt left already holds
- * it, and returns the commit written and the one it was written on, when GitHub names them.
- */
-const writeEdit = async (
-  github: LearningGitHub,
-  file: RepoRef & { readonly path: string; readonly branch: string },
-  edit: { readonly text: string; readonly message: string }
-): Promise<OpenedLearning['branchCommit']> => {
-  const onBranch = await github.readFile(file);
-  if (onBranch?.text === edit.text) return undefined;
-  const written = await github.updateFile({ ...file, ...edit, sha: onBranch?.sha });
-  return written.commitSha && written.parentSha
-    ? { sha: written.commitSha, parentSha: written.parentSha }
-    : undefined;
-};
-
-/**
- * Opens the pull request with exactly the edit people saw; a branch an earlier attempt left is
- * reused. When the default branch changed so the edit no longer applies, nothing is written.
- */
-const openLearningPullRequest = async (
-  github: LearningGitHub,
-  project: ProjectRecord,
-  learning: LearningRow,
-  context: { readonly publicUrl: string; readonly note: string | undefined }
-): Promise<{ ok: true; pr: OpenedLearning } | { ok: false; why: string }> => {
-  if (project.installationId === null)
-    throw new TaskCommandError('the GitHub App is not installed on this repository');
-  const ref = { installationId: project.installationId, repo: project.repo };
-  const current = await github.readFile({
-    ...ref,
-    path: learning.file,
-    branch: project.defaultBranch
-  });
-  const edited = applyEdit(current?.text ?? null, learning);
-  if (!edited.ok) return edited;
-  const branch = branchForLearning(learning);
-  const title = titleFor(learning);
-  await github.createBranch({ ...ref, branch, from: project.defaultBranch });
-  const branchCommit = await writeEdit(
-    github,
-    { ...ref, path: learning.file, branch },
-    {
-      text: edited.text,
-      message: title
-    }
-  );
-  const link = learning.taskNumber
-    ? taskLink(context.publicUrl, project.id, learning.taskNumber)
-    : 'an Officina task';
-  const pr = await github.openPullRequest({
-    ...ref,
-    base: project.defaultBranch,
-    branch,
-    title,
-    body: [
-      `A learning from ${link}, accepted on the board.`,
-      `**Lesson.** ${learning.lesson}`,
-      `**Evidence.** ${learning.evidence}`,
-      context.note ? `**Note from the reviewer.** ${context.note}` : null
-    ]
-      .filter(Boolean)
-      .join('\n\n')
-  });
-  return { ok: true, pr: { ...pr, ...(branchCommit ? { branchCommit } : {}) } };
-};
-
 /** Why a learning cannot be accepted while its edit is being rewritten, or after that failed. */
 const REWRITE_BLOCKS = {
   requested:
@@ -142,35 +32,54 @@ const REWRITE_BLOCKS = {
   failed: 'the edit no longer applies and the learner could not rewrite it; reject it instead'
 } as const;
 
+/** Said when the claim of a decision was taken over, after its lease ran out, by another one. */
+const TAKEN_OVER = 'someone else decided this learning meanwhile; look at it again';
+
+/** A decision under way: the learning as it was when claimed, and the claim that records it. */
+interface Claimed {
+  readonly learning: LearningRow;
+  readonly claim: string;
+}
+
+interface Decision {
+  readonly pool: Pool;
+  readonly github: LearningGitHub | undefined;
+  readonly target: Target;
+  readonly decision: 'accept' | 'reject';
+  readonly note: string | undefined;
+}
+
+/** The `Hold` of a claimed decision. */
+const holding =
+  (pool: Pool, { learning, claim }: Claimed): Hold =>
+  async () => {
+    if (!(await holdLearningDecision(pool, learning.id, claim)))
+      throw new TaskCommandError(TAKEN_OVER);
+  };
+
 /**
  * Opens the pull request of a project learning being accepted, or hands an edit the default branch
  * has moved past back to the learner to be rewritten, and then returns null.
  */
 const acceptIntoPullRequest = async (
-  pool: Pool,
-  learning: LearningRow,
-  {
-    github,
-    target,
-    note
-  }: {
-    readonly github: LearningGitHub | undefined;
-    readonly target: Target;
-    readonly note: string | undefined;
-  }
+  { pool, github, target, note }: Decision,
+  claimed: Claimed
 ): Promise<OpenedLearning | null> => {
+  const { learning } = claimed;
   if (learning.rewrite) throw new TaskCommandError(REWRITE_BLOCKS[learning.rewrite]);
   if (!github) throw new TaskCommandError('the GitHub App is not configured');
   const project = (await loadProject(pool, target.projectId))!;
   const opened = await openLearningPullRequest(github, project, learning, {
     publicUrl: target.publicUrl,
-    note
+    note,
+    hold: holding(pool, claimed)
   });
   if (opened.ok) return opened.pr;
   // The learner works per task; a learning without one cannot be rewritten.
   if (learning.taskId === null)
     throw new TaskCommandError(`the edit no longer applies (${opened.why}); reject it instead`);
-  await requestLearningRewrite(pool, learning.id);
+  if (!(await requestLearningRewrite(pool, learning.id, claimed.claim)))
+    throw new TaskCommandError(TAKEN_OVER);
   return null;
 };
 
@@ -179,26 +88,30 @@ const acceptIntoPullRequest = async (
  * learning closes it, so nobody merges an edit people turned down.
  */
 const closeLeftPullRequest = async (
-  pool: Pool,
-  github: LearningGitHub | undefined,
-  projectId: string,
-  learning: LearningRow
+  { pool, github, target }: Decision,
+  learning: LearningRow,
+  hold: Hold
 ): Promise<void> => {
   if (!github || !editsProject(learning.target)) return;
-  const project = (await loadProject(pool, projectId))!;
+  const project = (await loadProject(pool, target.projectId))!;
   if (project.installationId === null) return;
   // The branch of the edit as it stands, and the first one, which an accept before a rewrite used.
   const branches = new Set([
     branchForLearning(learning),
     branchForLearning({ ...learning, rewrittenAt: null })
   ]);
-  for (const branch of branches)
+  for (const branch of branches) {
+    await hold();
     await github.closePullRequestsFrom({
       installationId: project.installationId,
       repo: project.repo,
       branch
     });
+  }
 };
+
+/** A rejected learning stays rejected, so closing what an accept left after it needs no claim. */
+const settled: Hold = async () => {};
 
 interface DecisionInput {
   readonly id: string;
@@ -221,12 +134,6 @@ const decidable = (learning: LearningRow | null, input: DecisionInput): Learning
     throw new TaskCommandError('the edit was rewritten since you read it; read it again first');
   return learning;
 };
-
-/** A decision under way: the learning as it was when claimed, and the claim that records it. */
-interface Claimed {
-  readonly learning: LearningRow;
-  readonly claim: string;
-}
 
 /**
  * Claims the learning for this decision, if it can still be decided as asked. One another decision
@@ -251,55 +158,18 @@ const claimDecision = async (
   }
 };
 
-interface Decision {
-  readonly pool: Pool;
-  readonly github: LearningGitHub | undefined;
-  readonly target: Target;
-  readonly decision: 'accept' | 'reject';
-  readonly note: string | undefined;
-}
-
 /**
- * The claim was taken over once its lease ran out, and the learning decided by someone else. If
- * they rejected it, the pull request this accept just opened is closed, as their reject would have.
+ * The claim was taken over and the learning decided by someone else. If they rejected it while the
+ * pull request of this accept was being opened, it is closed now, as their reject would have.
  */
 const decidedMeanwhile = async (
   decision: Decision,
   learning: LearningRow,
   pr: OpenedLearning | undefined
 ): Promise<never> => {
-  const { pool, github, target } = decision;
-  const now = await loadLearning(pool, target.projectId, learning.id);
-  if (pr && now?.status === 'rejected')
-    await closeLeftPullRequest(pool, github, target.projectId, learning);
-  throw new TaskCommandError('this learning was already decided');
-};
-
-/** Makes the GitHub calls of a claimed decision, then records it under the claim. */
-const decideClaimed = async (
-  decision: Decision,
-  { learning, claim }: Claimed
-): Promise<LearningRow> => {
-  const { pool, target } = decision;
-  const reload = async () => (await loadLearning(pool, target.projectId, learning.id))!;
-  let pr: OpenedLearning | undefined;
-  if (decision.decision === 'accept' && editsProject(learning.target)) {
-    const opened = await acceptIntoPullRequest(pool, learning, decision);
-    if (!opened) return reload();
-    pr = opened;
-  }
-  if (decision.decision === 'reject')
-    await closeLeftPullRequest(pool, decision.github, target.projectId, learning);
-  const recorded = await decideLearning(pool, {
-    id: learning.id,
-    claim,
-    status: decision.decision === 'accept' ? 'accepted' : 'rejected',
-    memberId: target.memberId,
-    note: decision.note ?? null,
-    ...pullRequestOf(pr)
-  });
-  if (!recorded) await decidedMeanwhile(decision, learning, pr);
-  return reload();
+  const now = await loadLearning(decision.pool, decision.target.projectId, learning.id);
+  if (pr && now?.status === 'rejected') await closeLeftPullRequest(decision, learning, settled);
+  throw new TaskCommandError(TAKEN_OVER);
 };
 
 /** What a decision records of the pull request an accept opened, if it opened one. */
@@ -311,6 +181,34 @@ const pullRequestOf = (pr: OpenedLearning | undefined) =>
         ...(pr.branchCommit ? { branchCommit: pr.branchCommit } : {})
       }
     : {};
+
+/**
+ * Makes the GitHub calls of a claimed decision, renewing the claim before each write, then records
+ * it under the claim. A decision that finds its claim taken over stops before its next write.
+ */
+const decideClaimed = async (decision: Decision, claimed: Claimed): Promise<LearningRow> => {
+  const { pool, target } = decision;
+  const { learning, claim } = claimed;
+  const reload = async () => (await loadLearning(pool, target.projectId, learning.id))!;
+  let pr: OpenedLearning | undefined;
+  if (decision.decision === 'accept' && editsProject(learning.target)) {
+    const opened = await acceptIntoPullRequest(decision, claimed);
+    if (!opened) return reload();
+    pr = opened;
+  }
+  if (decision.decision === 'reject')
+    await closeLeftPullRequest(decision, learning, holding(pool, claimed));
+  const recorded = await decideLearning(pool, {
+    id: learning.id,
+    claim,
+    status: decision.decision === 'accept' ? 'accepted' : 'rejected',
+    memberId: target.memberId,
+    note: decision.note ?? null,
+    ...pullRequestOf(pr)
+  });
+  if (!recorded) await decidedMeanwhile(decision, learning, pr);
+  return reload();
+};
 
 /**
  * Accepting a learning for the project's docs or agent docs opens a pull request with exactly the

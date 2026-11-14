@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
-import type { LearningTarget } from '@officina/core';
+import { branchForLearning, type LearningTarget } from '@officina/core';
 import {
   claimLearningDecision,
   failLearningRewrite,
@@ -10,7 +10,8 @@ import {
 } from '@officina/db';
 import { Pool } from 'pg';
 import { createTaskInMerging, resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
-import { applyEdit, decide, type LearningGitHub } from '../src/learnings';
+import { applyEdit, type LearningGitHub } from '../src/learning-pull-request';
+import { decide } from '../src/learnings';
 import { invite } from '../src/people';
 import { TaskCommandError } from '../src/tasks';
 import { handleWebhookAction } from '../src/webhooks';
@@ -148,6 +149,12 @@ describe.skipIf(!url)('learning decisions', () => {
     return (await listLearnings(pool, seeded.projectId))[0]!;
   };
 
+  /** Hands a learning back to the learner, as an accept that found its edit stale does. */
+  const handBack = async (id: string) => {
+    const claim = await claimLearningDecision(pool, seeded.projectId, id);
+    expect(await requestLearningRewrite(pool, id, claim!)).toBe(true);
+  };
+
   const owner = () => ({
     projectId: seeded.projectId,
     memberId: seeded.ownerId,
@@ -155,33 +162,47 @@ describe.skipIf(!url)('learning decisions', () => {
     publicUrl: 'https://o.example'
   });
 
-  /** A port whose pull request opens only once `release` is called, as when GitHub is slow. */
-  const slowOpening = (github: ReturnType<typeof fakeGitHub>) => {
+  /**
+   * A port whose first call of `method` answers only once `release` is called, as when GitHub is
+   * slow; `reached` waits until that call has started.
+   */
+  const slowAt = (github: ReturnType<typeof fakeGitHub>, method: keyof LearningGitHub) => {
     let release = () => {};
-    const opening = new Promise<void>((resolve) => (release = resolve));
-    const port: LearningGitHub = {
-      ...github.port,
-      openPullRequest: async (input) => {
-        await opening;
-        return github.port.openPullRequest(input);
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let entered = false;
+    const real = github.port[method] as (input: unknown) => Promise<unknown>;
+    const port: LearningGitHub = Object.assign({}, github.port, {
+      [method]: async (input: unknown) => {
+        if (!entered) {
+          entered = true;
+          await gate;
+        }
+        return real(input);
       }
+    });
+    const reached = async () => {
+      while (!entered) await Bun.sleep(5);
     };
-    const updated = async () => {
-      while (!github.calls.some((call) => call.method === 'updateFile')) await Bun.sleep(5);
-    };
-    return { port, release, updated };
+    return { port, release, reached };
   };
+
+  /** Ages a learning's claim past its lease, as if the process holding it had stopped. */
+  const expireClaim = (id: string) =>
+    pool.query(
+      "update learnings set decision_claimed_at = now() - interval '11 minutes' where id = $1",
+      [id]
+    );
 
   test('a decision made while an accept is opening its pull request is refused, and the accept lands', async () => {
     const learning = await propose('docs');
     const github = fakeGitHub();
-    const slow = slowOpening(github);
+    const slow = slowAt(github, 'openPullRequest');
     const accepting = decide(pool, slow.port, owner(), {
       id: learning.id,
       decision: 'accept',
       rewrittenAt: null
     });
-    await slow.updated();
+    await slow.reached();
     await expect(
       decide(pool, github.port, owner(), { id: learning.id, decision: 'reject', rewrittenAt: null })
     ).rejects.toThrow('someone is deciding this learning right now');
@@ -194,14 +215,14 @@ describe.skipIf(!url)('learning decisions', () => {
   test('an accept holds no database connection while it waits on GitHub', async () => {
     const learning = await propose('docs');
     const single = new Pool({ connectionString: url, max: 1 });
-    const slow = slowOpening(fakeGitHub());
+    const slow = slowAt(fakeGitHub(), 'openPullRequest');
     try {
       const accepting = decide(single, slow.port, owner(), {
         id: learning.id,
         decision: 'accept',
         rewrittenAt: null
       });
-      await slow.updated();
+      await slow.reached();
       const free = await Promise.race([
         single.query('select 1').then(() => true),
         Bun.sleep(1000).then(() => false)
@@ -244,10 +265,7 @@ describe.skipIf(!url)('learning decisions', () => {
     ).rejects.toThrow('someone is deciding this learning right now');
     expect(github.calls).toEqual([]);
 
-    await pool.query(
-      "update learnings set decision_claimed_at = now() - interval '11 minutes' where id = $1",
-      [learning.id]
-    );
+    await expireClaim(learning.id);
     expect(
       await decide(pool, github.port, owner(), {
         id: learning.id,
@@ -369,6 +387,98 @@ describe.skipIf(!url)('learning decisions', () => {
     });
   });
 
+  test('an accept that lost its claim makes no further write, and the one that took over lands', async () => {
+    const learning = await propose('docs');
+    const github = fakeGitHub();
+    const slow = slowAt(github, 'readFile');
+    const stale = decide(pool, slow.port, owner(), {
+      id: learning.id,
+      decision: 'accept',
+      rewrittenAt: null
+    });
+    await slow.reached();
+    await expireClaim(learning.id);
+    expect(
+      await decide(pool, github.port, owner(), {
+        id: learning.id,
+        decision: 'accept',
+        rewrittenAt: null
+      })
+    ).toMatchObject({ status: 'accepted', prNumber: 77 });
+    slow.release();
+
+    await expect(stale).rejects.toThrow('someone else decided this learning meanwhile');
+    for (const method of ['createBranch', 'updateFile', 'openPullRequest'])
+      expect(github.calls.filter((call) => call.method === method)).toHaveLength(1);
+  });
+
+  test('an accept that lost its claim to a reject hands nothing back to the learner', async () => {
+    const learning = await propose('docs');
+    const github = fakeGitHub({ base: '# Agents\n\n## Copy and tone\n' });
+    const slow = slowAt(github, 'readFile');
+    const stale = decide(pool, slow.port, owner(), {
+      id: learning.id,
+      decision: 'accept',
+      rewrittenAt: null
+    });
+    await slow.reached();
+    await expireClaim(learning.id);
+    await decide(pool, github.port, owner(), {
+      id: learning.id,
+      decision: 'reject',
+      rewrittenAt: null
+    });
+    slow.release();
+
+    await expect(stale).rejects.toThrow('someone else decided this learning meanwhile');
+    expect((await listLearnings(pool, seeded.projectId))[0]).toMatchObject({
+      status: 'rejected',
+      rewrite: null
+    });
+  });
+
+  test('a reject that lost its claim to an accept leaves that accept and its pull request alone', async () => {
+    const learning = await propose('docs');
+    await handBack(learning.id);
+    await rewriteLearningEdit(pool, learning.id, {
+      file: 'AGENTS.md',
+      find: '## Copy\n',
+      text: '## Copy\n\nEvery live locale.\n'
+    });
+    const [rewritten] = await listLearnings(pool, seeded.projectId);
+    const github = fakeGitHub();
+    // The reject closes the current branch first, then waits on GitHub closing the first one.
+    let closes = 0;
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const port: LearningGitHub = {
+      ...github.port,
+      closePullRequestsFrom: async (input) => {
+        if (++closes === 2) await gate;
+        return github.port.closePullRequestsFrom(input);
+      }
+    };
+    const stale = decide(pool, port, owner(), {
+      id: learning.id,
+      decision: 'reject',
+      rewrittenAt: null
+    });
+    while (closes < 2) await Bun.sleep(5);
+    await expireClaim(learning.id);
+    expect(
+      await decide(pool, github.port, owner(), {
+        id: learning.id,
+        decision: 'accept',
+        rewrittenAt: rewritten!.rewrittenAt!.toISOString()
+      })
+    ).toMatchObject({ status: 'accepted', prNumber: 77 });
+    release();
+
+    await expect(stale).rejects.toThrow('someone else decided this learning meanwhile');
+    expect((await listLearnings(pool, seeded.projectId))[0]!.status).toBe('accepted');
+    expect([...github.open]).toEqual([branchForLearning(rewritten!)]);
+  });
+
   test('an accept that failed halfway can be accepted again, writing the edit once', async () => {
     const learning = await propose('docs');
     const github = fakeGitHub({ failOpening: 1 });
@@ -438,7 +548,7 @@ describe.skipIf(!url)('learning decisions', () => {
 
   test('an edit is accepted only as the person read it, never once it was rewritten since', async () => {
     const learning = await propose('docs');
-    await requestLearningRewrite(pool, learning.id);
+    await handBack(learning.id);
     await rewriteLearningEdit(pool, learning.id, {
       file: 'AGENTS.md',
       find: '## Copy\n',
@@ -472,7 +582,7 @@ describe.skipIf(!url)('learning decisions', () => {
 
   test('a rewritten edit opens its pull request from a branch of its own', async () => {
     const learning = await propose('docs');
-    await requestLearningRewrite(pool, learning.id);
+    await handBack(learning.id);
     await rewriteLearningEdit(pool, learning.id, {
       file: 'AGENTS.md',
       find: '## Copy\n',
@@ -493,7 +603,7 @@ describe.skipIf(!url)('learning decisions', () => {
 
   test('rejecting a rewritten learning closes what an accept left on its first branch too', async () => {
     const learning = await propose('docs');
-    await requestLearningRewrite(pool, learning.id);
+    await handBack(learning.id);
     await rewriteLearningEdit(pool, learning.id, {
       file: 'AGENTS.md',
       find: '## Copy\n',
