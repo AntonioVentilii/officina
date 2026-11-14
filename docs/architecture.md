@@ -164,7 +164,7 @@ Model ids live in one place, `packages/runner/src/models.ts`, by tier. The Opus 
 | **Learner**                    | full task history (thread, spec versions, runs, reviews, overrides) | read-only                                                   | 0-3 learnings, each with evidence and a proposed change                                                             |
 | **Onboarder**                  | the onboarding spec, the code and git history, the required pages   | edit, bash, git on its `officina/*` branch, agent docs only | `pushed` with branch, verify results and follow-ups (smells found), `failed`, or `blocked`                          |
 
-Builder profiles (`frontend`, `backend`, `infra`, `tests`) are prompt and tool overlays on the builder role, chosen from the spec's file scope.
+Builder profiles (`frontend`, `backend`, `infra`, `tests`), prompt and tool overlays on the builder role chosen from the spec's file scope, are planned; today every build task gets the one builder.
 
 The builder and the onboarder are the two **build roles** (`BUILD_ROLES` in `packages/core`): each kind of task has one, the engine dispatches it, and only it may push the task branch. The onboarder writes the docs its prompt describes from the code itself, never by copying the standard; a push that changes anything outside the entry document, `CLAUDE.md` and the agent docs folder trips the `outside_agent_docs` guardrail and blocks the task for a maintainer. The smells it finds come back as follow-ups that the engine puts in the pull request body.
 
@@ -181,7 +181,7 @@ The runner interface is small: `start(role, task, step) -> run`, a stream of nor
 | One step of one task           | Session                             | `github_repository` resource checked out at the task branch; `initial_events` carries the step input |
 | Live log on the board          | Session event stream                | normalized into `run_events`; webhooks for state changes                                             |
 | Cost per step and per task     | `usage.list_cost`, session `budget` | budget per step comes from the lane config; a paused-at-budget session asks a maintainer             |
-| Risky tool call needs a person | `always_ask` permission policy      | surfaces in the inbox as a confirmation request                                                      |
+| Which tool calls need a person | `always_allow` permission policy    | none waits on a person; web tools are off, and write tools are off for read-only roles               |
 
 - **Secrets never enter the sandbox.** Git access goes through the Anthropic-side git proxy, which injects the repository token after the request leaves the container. Other credentials use vault `environment_variable` entries limited to specific hosts.
 - **Results come through one tool.** Every role ends by calling a custom `submit_result` tool whose input schema is generated from the role's output contract. The engine validates the call; an invalid result goes back to the agent with the problems listed, and a third invalid result fails the run.
@@ -321,7 +321,7 @@ lanes:
 - **The catalog check runs after every build round too**, from the real diff like the lane: a file the branch adds (new, copied or renamed to a new path) under a `docs.catalogs` glob that the catalog page, read as pushed, does not name (by its path or its file name) is a finding (`unlisted_files`, `unlistedFiles` in `packages/core/src/catalogs.ts`); an edit to the page that says nothing about the file does not count. It sends the work straight back to the builder with the finding as a note, keeping the head, as one more bounded fix round, so a shared file nobody listed never reaches the reviewers. It holds for a person building the task as much as for an agent.
 - **Credentials stay outside sandboxes** (git proxy and vault on Managed Agents; OIDC on the fallback runner). Officina's own secrets live in the deployment's secret store.
 - **Branch protection remains the final authority.** Officina assumes the repository requires human review and passing CI, and never works around it.
-- **Tool calls that need a person** use `always_ask` and route to the inbox; unattended safety evaluation is not treated as a human checkpoint.
+- **No tool call waits on a person.** The agents' tools run under `always_allow` (`buildDefinition` in `packages/runner/src/definitions.ts`): which tools a role has, the token it gets and the checks after each run are what limit it. What needs a person comes back as a result instead: `needs_person`, a question, or a guardrail that blocks the task. Unattended safety evaluation is not treated as a human checkpoint.
 
 ## 14. Phases
 
