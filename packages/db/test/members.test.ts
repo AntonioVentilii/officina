@@ -195,7 +195,7 @@ describe.skipIf(!url)('member activity', () => {
       (await pool.query('select 1 from login_links where member_id = $1', [tim])).rowCount
     ).toBe(0);
     expect(await mint(await addMember('Gio', 'contributor'))).toMatchObject({ ok: true });
-    expect(await mint(seeded.ownerId.replace(/.$/, '0'))).toEqual({
+    expect(await mint(crypto.randomUUID())).toEqual({
       ok: false,
       error: 'not_member'
     });
