@@ -210,6 +210,25 @@ export const forwardedReviewIds = async (pool: Pool, taskId: string): Promise<nu
     )
   ).rows.map((row) => Number(row.review_id));
 
+/**
+ * Whether the engine's auto-merge attempt for the task's latest handoff at merging is spent: one
+ * failed (tried once, since it may have turned auto-merge on anyway), or one turned it on and
+ * nothing turned it off since. A hold that turned it off while a review bot's comment settled
+ * leaves it to be tried again.
+ */
+export const autoMergeSpent = async (pool: Pool, taskId: string): Promise<boolean> =>
+  (
+    await pool.query<{ spent: boolean }>(
+      `select exists (select 1 from task_events e where e.task_id = $1
+         and e.id > ${sinceHandoff('$1')}
+         and (e.type = 'github_auto_merge_failed'
+           or (e.type = 'github_auto_merge' and not exists (select 1 from task_events c
+             where c.task_id = $1 and c.type = 'github_auto_merge_cancelled' and c.id > e.id)))
+       ) as spent`,
+      [taskId]
+    )
+  ).rows[0]?.spent ?? false;
+
 /** Whether GitHub may merge the pull request on its own (`autoMergeIsOn`). */
 export const handedToGitHub = async (pool: Pool, taskId: string): Promise<boolean> =>
   (await pool.query<{ handed: boolean }>(`select ${autoMergeIsOn('$1')} as handed`, [taskId]))

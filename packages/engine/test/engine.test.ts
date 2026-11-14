@@ -1842,7 +1842,8 @@ describe.skipIf(!url)('engine', () => {
     ]);
   });
 
-  test('an auto-merge that may or may not have been turned on is turned off before a person is asked', async () => {
+  /** An auto-verified task in merging whose project and chooser both want GitHub to merge. */
+  const autoMergingTask = async () => {
     const config = Bun.YAML.parse(CONFIG_YAML) as Record<string, unknown>;
     await pool.query('update projects set config = $2 where id = $1', [
       seeded.projectId,
@@ -1869,6 +1870,11 @@ describe.skipIf(!url)('engine', () => {
           [taskId]
         )
       ).rows.map((row) => row.type);
+    return { taskId, types };
+  };
+
+  test('an auto-merge that may or may not have been turned on is turned off before a person is asked', async () => {
+    const { taskId, types } = await autoMergingTask();
     const github = fakeGitHub({
       branchHead: 'abc',
       written: { commitSha: 'abc2', parentSha: 'abc' },
@@ -1884,6 +1890,30 @@ describe.skipIf(!url)('engine', () => {
       'awaiting_merge'
     ]);
     expect(github.calls.filter((call) => call.method === 'mergeWhenReady')).toHaveLength(1);
+  });
+
+  test('auto-merge turned off while a review bot comment settled is turned on again, once', async () => {
+    const { taskId, types } = await autoMergingTask();
+    const github = fakeGitHub({
+      branchHead: 'abc',
+      written: { commitSha: 'abc2', parentSha: 'abc' }
+    });
+    await finishVerifiedSpecs(pool, github.port, [taskId]);
+    // What the webhook records when it holds the merge for a bot's comment.
+    await appendTaskEvent(pool, {
+      taskId,
+      actor: { kind: 'engine' },
+      type: 'github_auto_merge_cancelled',
+      payload: { pullRequest: 42 }
+    });
+    await finishVerifiedSpecs(pool, github.port, [taskId]);
+    await finishVerifiedSpecs(pool, github.port, [taskId]);
+    expect(await types()).toEqual([
+      'github_auto_merge',
+      'github_auto_merge_cancelled',
+      'github_auto_merge'
+    ]);
+    expect(github.calls.filter((call) => call.method === 'mergeWhenReady')).toHaveLength(2);
   });
 
   test('a push after the verification holds the pull request and turns auto-merge off', async () => {

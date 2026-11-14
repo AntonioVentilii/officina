@@ -1,6 +1,7 @@
 import { branchForTask, ENGINE, parseProjectConfig, taskUrl, type Actor } from '@officina/core';
 import {
   appendTaskEvent,
+  autoMergeSpent,
   autoVerified,
   expectedHead,
   forwardedReviewIds,
@@ -328,7 +329,8 @@ const awaitMerge = async (pool: Pool, input: { taskId: string; pullRequest: numb
 /**
  * Turns on GitHub's auto-merge, pinned to the verified head, so checks, resolved threads and any
  * required review still decide when it lands: as the verifier, or as the App for a result that
- * skipped people's verification. Tried once per time the task reaches merging. A failure may
+ * skipped people's verification. Tried once per time the task reaches merging, and again after a
+ * hold turned it off while a review bot's comment settled (`autoMergeSpent`). A failure may
  * still have turned it on (the request reached GitHub but the answer did not), so it is recorded
  * as unsettled and `cancelStaleAutoMerges` turns it off before a person is asked to merge.
  */
@@ -336,13 +338,7 @@ const autoMergeOnGitHub = async (
   pool: Pool,
   input: { taskId: string; actor: Actor; merge: () => Promise<'auto_merge' | 'merged'> }
 ) => {
-  if (
-    await hasEventSinceMerging(pool, input.taskId, [
-      'github_auto_merge',
-      'github_auto_merge_failed'
-    ])
-  )
-    return;
+  if (await autoMergeSpent(pool, input.taskId)) return;
   try {
     const merge = await input.merge();
     await appendTaskEvent(pool, {
