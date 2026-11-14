@@ -7,7 +7,7 @@ in. Commands act as the project owner unless you pass `--as <email>`.
 ## The board
 
 Everything below can also be done on the board at the public URL. Get a sign-in link (it works once, for
-the minutes `SIGN_IN_TTL_MINUTES` in `apps/api/src/people.ts` sets):
+the number of minutes set by `SIGN_IN_TTL_MINUTES` in `apps/api/src/people.ts`):
 
 ```bash
 scripts/officina login-link
@@ -15,7 +15,7 @@ scripts/officina login-link
 
 The first time someone signs in, the board shows a short guide: how to make a request, three examples to start from, what the yellow block means and how to add Officina to Claude. **Guide** in the sidebar opens it again.
 
-To bring someone in, give them a role and send them the link it prints (valid for the days `INVITE_TTL_DAYS` in the same file sets):
+To bring someone in, give them a role and send them the link it prints (valid for the number of days set by `INVITE_TTL_DAYS` in the same file):
 
 ```bash
 scripts/officina invite --email gio@example.com --name "Gio" --role contributor --domains product
