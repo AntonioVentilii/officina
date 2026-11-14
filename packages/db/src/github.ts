@@ -161,7 +161,7 @@ export const wasAutoVerified = (task: string): string =>
  * carried (`sinceHandoff`): what the engine does on GitHub at merging is done once per head.
  */
 export const hasEventSinceMerging = async (
-  pool: Pool,
+  pool: Pool | PoolClient,
   taskId: string,
   types: readonly string[]
 ): Promise<boolean> =>
@@ -323,6 +323,27 @@ export const findTasksByCommit = async (
   ).rows.map((row) => row.id);
 
 /**
+ * Runs `work` under the task's row lock, which every command takes, only while the task is still at
+ * `stage` and `headSha`: a command that would move it waits until `work` is done. `null` says the
+ * task had moved already and `work` did not run.
+ */
+export const whileTaskAt = <T>(
+  pool: Pool,
+  at: { readonly taskId: string; readonly stage: string; readonly headSha: string | null },
+  work: (client: PoolClient) => Promise<T>
+): Promise<T | null> =>
+  inTransaction(pool, async (client) => {
+    const row = (
+      await client.query<{ stage: string; head_sha: string | null }>(
+        'select stage, head_sha from tasks where id = $1 for update',
+        [at.taskId]
+      )
+    ).rows[0];
+    if (row?.stage !== at.stage || row.head_sha !== at.headSha) return null;
+    return work(client);
+  });
+
+/**
  * Records that a new head carries the change people verified (`head_carried`), only while the task
  * is still at the stage and head it was compared at and its expected head is still the one
  * compared, checked under the task's row lock that every command takes: a push or a carry that
@@ -338,20 +359,17 @@ export const recordHeadCarried = (
     readonly headSha: string;
   }
 ): Promise<boolean> =>
-  inTransaction(pool, async (client) => {
-    const row = (
-      await client.query<{ stage: string; head_sha: string | null }>(
-        'select stage, head_sha from tasks where id = $1 for update',
-        [input.taskId]
-      )
-    ).rows[0];
-    if (row?.stage !== input.stage || row.head_sha !== input.taskHead) return false;
-    if ((await expectedHead(client, input.taskId)) !== input.from) return false;
-    await appendTaskEvent(client, {
-      taskId: input.taskId,
-      actor: ENGINE,
-      type: 'head_carried',
-      payload: { headSha: input.headSha, from: input.from }
-    });
-    return true;
-  });
+  whileTaskAt(
+    pool,
+    { taskId: input.taskId, stage: input.stage, headSha: input.taskHead },
+    async (client) => {
+      if ((await expectedHead(client, input.taskId)) !== input.from) return false;
+      await appendTaskEvent(client, {
+        taskId: input.taskId,
+        actor: ENGINE,
+        type: 'head_carried',
+        payload: { headSha: input.headSha, from: input.from }
+      });
+      return true;
+    }
+  ).then((recorded) => recorded ?? false);
