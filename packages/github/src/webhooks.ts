@@ -46,6 +46,8 @@ export type WebhookAction =
       readonly commentId: number;
       readonly by: string;
       readonly body: string;
+      /** When GitHub last saw it edited, so an edit delivered late never replaces a newer one. */
+      readonly updatedAt: string | null;
     }
   | {
       /** A check suite or a commit status failed on a commit, whichever branch holds it. */
@@ -144,7 +146,12 @@ export const parseWebhookEvent = (event: string | null, payload: unknown): Webho
     const body = payload as {
       action?: string;
       issue?: { number?: number; pull_request?: unknown };
-      comment?: { id?: number; body?: string | null; user?: { login?: string; type?: string } };
+      comment?: {
+        id?: number;
+        body?: string | null;
+        updated_at?: string;
+        user?: { login?: string; type?: string };
+      };
     };
     const comment = body.comment;
     // A person's comment may only be a question; what a person wants changed comes as a review.
@@ -158,7 +165,8 @@ export const parseWebhookEvent = (event: string | null, payload: unknown): Webho
       prNumber: body.issue.number,
       commentId: comment.id,
       by: comment.user.login,
-      body: comment.body ?? ''
+      body: comment.body ?? '',
+      updatedAt: comment.updated_at ?? null
     };
   }
 
