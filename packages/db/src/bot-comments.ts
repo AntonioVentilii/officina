@@ -12,17 +12,36 @@ export interface BotComment {
 
 /**
  * Records a review bot's comment, or its new text after an edit. Bots often post a placeholder and
- * edit it as they work, so a comment is forwarded only once it stops changing (`settledBotComments`).
+ * edit it as they work, so a comment is forwarded only once it stops changing (`unhandledBotComments`).
  */
 export const recordBotComment = (pool: Pool, taskId: string, comment: BotComment) =>
   appendTaskEvent(pool, { taskId, actor: ENGINE, type: 'github_comment_seen', payload: comment });
 
 /**
- * The bot comments of the current build round that have not changed for `quietSeconds` and whose
- * latest text has not been forwarded yet, oldest first, each as it last read. A comment from before
- * the builder's last push or answer was about work that is no longer the head.
+ * Records that these comments, as they last read, were dealt with: forwarded to the builder, or
+ * left out because the builder already answered that bot's last overview.
  */
-export const settledBotComments = async (
+export const markBotCommentsHandled = async (
+  pool: Pool,
+  taskId: string,
+  commentIds: readonly number[]
+) => {
+  for (const commentId of commentIds)
+    await appendTaskEvent(pool, {
+      taskId,
+      actor: ENGINE,
+      type: 'github_comment_handled',
+      payload: { commentId }
+    });
+};
+
+/**
+ * The bot comments of the current build round that have not changed for `quietSeconds` and whose
+ * latest text was not dealt with yet (`markBotCommentsHandled`), oldest first, each as it last
+ * read. With no quiet time, every comment still waiting. A comment from before the builder's last
+ * push or answer was about work that is no longer the head.
+ */
+export const unhandledBotComments = async (
   pool: Pool,
   taskId: string,
   quietSeconds: number
@@ -37,9 +56,9 @@ export const settledBotComments = async (
          order by payload->>'commentId', id desc
        ) latest
        where latest.created_at <= now() - make_interval(secs => $2)
-         and not exists (select 1 from task_events f where f.task_id = $1
-           and f.type = 'review_recorded' and f.payload->>'githubCommentId' = latest.comment_id
-           and f.id > latest.id)
+         and not exists (select 1 from task_events h where h.task_id = $1
+           and h.type = 'github_comment_handled' and h.payload->>'commentId' = latest.comment_id
+           and h.id > latest.id)
        order by latest.id`,
       [taskId, quietSeconds]
     )

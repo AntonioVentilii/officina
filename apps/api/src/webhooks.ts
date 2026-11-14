@@ -14,6 +14,7 @@ import {
 } from '@officina/db';
 import {
   forwardFeedback,
+  holdAutoMerge,
   overviewNotes,
   reviewBotsIn,
   stopAutoMergeOnLeaving,
@@ -185,16 +186,26 @@ const handleReview = async (
  */
 const handleComment = async (
   pool: Pool,
+  github: ConfigReader | undefined,
   action: Extract<WebhookAction, { kind: 'pull_request_commented' }>
 ): Promise<WebhookOutcome[]> => {
   const outcomes: WebhookOutcome[] = [];
   for (const taskId of await findTasksByPullRequest(pool, action.repo, action.prNumber)) {
-    if (!reviewBotsIn(await loadTaskContext(pool, taskId)).has(action.by)) continue;
+    const context = await loadTaskContext(pool, taskId);
+    if (!context || !reviewBotsIn(context).has(action.by)) continue;
     await recordBotComment(pool, taskId, {
       commentId: action.commentId,
       by: action.by,
       body: action.body
     });
+    // GitHub must not merge while the comment settles: it may send the work back.
+    const cancel = cancelPort(github);
+    if (cancel && context.task.stage === 'merging' && context.installationId)
+      await holdAutoMerge(pool, cancel, {
+        taskId,
+        ref: { installationId: context.installationId, repo: action.repo },
+        pullRequest: action.prNumber
+      });
     outcomes.push({ taskId, ok: true });
   }
   return outcomes;
@@ -269,7 +280,7 @@ export const handleWebhookAction = async (
 ): Promise<WebhookOutcome[]> => {
   if (action.kind === 'push') return refreshConfigs(pool, github, action);
   if (action.kind === 'pull_request_reviewed') return handleReview(pool, github, action);
-  if (action.kind === 'pull_request_commented') return handleComment(pool, action);
+  if (action.kind === 'pull_request_commented') return handleComment(pool, github, action);
   if (action.kind === 'pull_request_closed') return handleClosed(pool, action);
   if (action.kind === 'checks_failed') return handleChecksFailed(pool, github, action);
 

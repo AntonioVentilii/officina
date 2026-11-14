@@ -266,10 +266,17 @@ describe.skipIf(!url)('api', () => {
   });
 
   test('a review bot the project lists has its comments recorded, and its overview reaches the builder', async () => {
+    let cancelled = 0;
     const commenting = createApp({
       pool,
       webhookSecret: SECRET,
-      github: { fileContent: async () => null, reviewComments: async () => [] }
+      github: {
+        fileContent: async () => null,
+        reviewComments: async () => [],
+        cancelAutoMerge: async () => {
+          cancelled += 1;
+        }
+      }
     });
     await pool.query(
       `update projects set github_installation_id = 99,
@@ -307,6 +314,8 @@ describe.skipIf(!url)('api', () => {
     });
     await comment('c-3', 'coderabbitai[bot]', 'edited', 'The cache key is never cleared.');
     expect((await loadTask(pool, taskId))?.task).toMatchObject({ stage: 'merging' });
+    // GitHub must not merge while the comment settles.
+    expect(cancelled).toBe(2);
     const seen = await pool.query<{ body: string }>(
       `select payload->>'body' as body from task_events
        where task_id = $1 and type = 'github_comment_seen' order by id`,

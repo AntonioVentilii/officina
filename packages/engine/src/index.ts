@@ -11,7 +11,7 @@ export {
 } from './github-sync';
 export { runAgentStep, type EngineDependencies, type GitHubPort } from './step';
 export { adoptOutsidePushes, openMissingPullRequests, type AdoptPort } from './pull-request';
-export { stopAutoMergeOnLeaving } from './auto-merge';
+export { holdAutoMerge, stopAutoMergeOnLeaving } from './auto-merge';
 export { handInBuild, type HandInPort } from './hand-in';
 export { collectDueSteps, tick } from './tick';
 export { learningProblems } from './learner';
