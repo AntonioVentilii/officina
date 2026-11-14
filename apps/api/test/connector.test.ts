@@ -429,13 +429,18 @@ describe.skipIf(!url)('connector for Claude', () => {
     expect(shown).toContain('See it: https://preview.example.com/room (Preview)');
 
     expect(await tool(token, 'answer_question', { number: 1 })).toMatchObject({ isError: true });
-    const unknown = await tool(token, 'answer_question', { number: 1, option: 'z' });
+    const unpinned = await tool(token, 'answer_question', { number: 1, option: 'b' });
+    expect(unpinned.content[0]!.text).toContain('needs the version of the question');
+    const version = Number(/pass its letter as option and (\d+) as version/.exec(shown)?.[1]);
+    expect(version).toBeGreaterThan(0);
+    const unknown = await tool(token, 'answer_question', { number: 1, option: 'z', version });
     expect(unknown).toMatchObject({ isError: true });
     expect(unknown.content[0]!.text).toContain('no such option');
     const answered = await tool(token, 'answer_question', {
       number: 1,
       option: 'b',
-      answer: 'Keep it short.'
+      answer: 'Keep it short.',
+      version
     });
     expect(answered.isError).toBe(false);
     expect((await tool(token, 'show_task', { number: 1 })).content[0]!.text).toContain(
