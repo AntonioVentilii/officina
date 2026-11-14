@@ -9,6 +9,7 @@ import {
 } from './handoffs';
 import { CHECK_DEPTHS, MERGE_MODES, type Blocked, type Command, type Task } from './lifecycle';
 import { redactDeep } from './guards';
+import { INPUT_LIMITS, checksSchema } from './limits';
 import { questionOptionsSchema } from './questions';
 import { APPROVER_ROLES } from './roles';
 import { TASK_BRANCH_PREFIX } from './steps';
@@ -75,9 +76,9 @@ const pushedFields = {
     .max(200)
     .regex(new RegExp(`^${TASK_BRANCH_PREFIX}`), `branch must start with ${TASK_BRANCH_PREFIX}`),
   /** The pull request title, in the repository's required format. */
-  prTitle: text.max(120),
-  verified: z.array(text.max(500)).max(30),
-  notVerified: z.array(text.max(500)).max(30)
+  prTitle: text.max(INPUT_LIMITS.prTitle.max),
+  verified: checksSchema,
+  notVerified: checksSchema
 };
 
 export const builderOutputSchema = z.discriminatedUnion('outcome', [
