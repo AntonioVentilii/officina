@@ -1,4 +1,5 @@
 import {
+  adoptOutsidePushes,
   collectDueSteps,
   cancelStaleAutoMerges,
   finishVerifiedSpecs,
@@ -109,11 +110,17 @@ export const startEngine = async (input: {
       }
       const due = [];
       for (const projectId of await listSchedulableProjectIds(input.pool)) {
+        const active = await listActiveTaskIds(input.pool, projectId);
+        // Before the due steps, so they follow the head taken in, and before the merge work below,
+        // which writes Officina's own status commit on the branch.
+        await adoptOutsidePushes(input.pool, input.github, active).catch((error: unknown) =>
+          input.log('outside push check failed', { projectId, error: (error as Error).message })
+        );
         due.push(...(await collectDueSteps(deps, projectId)).due);
         const unfinished = await finishVerifiedSpecs(
           input.pool,
           input.github,
-          await listActiveTaskIds(input.pool, projectId),
+          active,
           input.onBehalf
         ).catch((error: unknown) => [{ error: (error as Error).message }]);
         for (const failure of unfinished) {

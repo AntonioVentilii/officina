@@ -25,6 +25,7 @@ import {
 } from '../../db/test/seed';
 import { createFakePort, idle, toolUse, type ScriptItem } from '../../runner/test/fake-port';
 import {
+  adoptOutsidePushes,
   cancelStaleAutoMerges,
   finishVerifiedSpecs,
   openMissingPullRequests,
@@ -33,6 +34,7 @@ import {
   type OnBehalf,
   syncSpecStatus,
   tick,
+  type AdoptPort,
   type GitHubPort
 } from '../src';
 
@@ -86,6 +88,8 @@ const fakeGitHub = (
     /** The pull request's state on GitHub; open by default. */
     prState?: { state: string; merged: boolean };
     mergeFails?: boolean;
+    /** What `failedChecks` reports as already failed on a commit. */
+    failed?: string[];
     /** How many times opening the pull request fails before it works. */
     openFails?: number;
     /** How many times writing a file (the spec status) fails before it works. */
@@ -161,8 +165,12 @@ const fakeGitHub = (
     },
     cancelAutoMerge: async (...args: unknown[]) => {
       calls.push({ method: 'cancelAutoMerge', args });
+    },
+    failedChecks: async (...args: unknown[]) => {
+      calls.push({ method: 'failedChecks', args });
+      return options.failed ?? [];
     }
-  } as unknown as GitHubPort;
+  } as unknown as GitHubPort & AdoptPort;
   return { port, calls };
 };
 
@@ -574,7 +582,7 @@ describe.skipIf(!url)('engine', () => {
         type: 'github_review',
         headSha: 'abc',
         by: 'copilot',
-        reviewId: 5,
+        source: { reviewId: 5 },
         notes: 'Typo.',
         overviewOnly: false
       },
@@ -613,7 +621,7 @@ describe.skipIf(!url)('engine', () => {
         type: 'github_review',
         headSha: 'def',
         by: 'copilot',
-        reviewId: 6,
+        source: { reviewId: 6 },
         notes: 'Again.',
         overviewOnly: false
       },
@@ -690,7 +698,7 @@ describe.skipIf(!url)('engine', () => {
         type: 'github_review',
         headSha: head,
         by: 'copilot-pull-request-reviewer[bot]',
-        reviewId: 8,
+        source: { reviewId: 8 },
         notes: '### 🔵 Needs a closer look\n\nThe functions build was unavailable.',
         overviewOnly: true
       },
@@ -1298,6 +1306,85 @@ describe.skipIf(!url)('engine', () => {
       [clean]
     );
     expect(await mergeEvents(clean)).toEqual(['awaiting_merge']);
+  });
+
+  test('a head pushed from outside Officina is taken in and reviewed again, once', async () => {
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    // While a build is still going its own push is not recorded yet: nothing is taken in.
+    const { runId } = (await startRun(pool, {
+      taskId,
+      stage: 'merging',
+      role: 'builder',
+      agentVersion: 1,
+      runner: 'managed_agents'
+    })) as { ok: true; runId: string };
+    const bot = fakeGitHub({ branchHead: 'bot1' });
+    await adoptOutsidePushes(pool, bot.port, [taskId]);
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({
+      stage: 'merging',
+      headSha: 'abc'
+    });
+    await pool.query(`update runs set status = 'succeeded' where id = $1`, [runId]);
+
+    await adoptOutsidePushes(pool, bot.port, [taskId]);
+    await adoptOutsidePushes(pool, bot.port, [taskId]);
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({
+      stage: 'reviewing',
+      headSha: 'bot1',
+      reviews: {}
+    });
+    const pushed = await pool.query<{ payload: Record<string, unknown> }>(
+      `select payload from task_events where task_id = $1 and type = 'pushed' order by id`,
+      [taskId]
+    );
+    expect(pushed.rows.map((row) => row.payload)).toEqual([
+      expect.not.objectContaining({ outside: true }),
+      expect.objectContaining({ headSha: 'bot1', outside: true })
+    ]);
+    // The second pass found the head it had taken in and read nothing more.
+    expect(bot.calls.filter((call) => call.method === 'pushFacts')).toHaveLength(1);
+    // It left merging, so auto-merge is off even if a person turned it on, with no trail here.
+    expect(bot.calls.filter((call) => call.method === 'cancelAutoMerge')).toHaveLength(1);
+    const cancelled = await pool.query(
+      `select 1 from task_events where task_id = $1 and type = 'github_auto_merge_cancelled'`,
+      [taskId]
+    );
+    expect(cancelled.rowCount).toBe(1);
+  });
+
+  test('checks already red on a head taken in from outside send it back to the builder', async () => {
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    const bot = fakeGitHub({ branchHead: 'bot1', failed: ['GitHub Actions: failure'] });
+    await adoptOutsidePushes(pool, bot.port, [taskId]);
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({
+      stage: 'building',
+      headSha: 'bot1'
+    });
+    expect(bot.calls.find((call) => call.method === 'failedChecks')?.args[0]).toMatchObject({
+      sha: 'bot1'
+    });
+    const failed = await pool.query<{ details: string }>(
+      `select payload->>'details' as details from task_events where task_id = $1 and type = 'ci_failed'`,
+      [taskId]
+    );
+    expect(failed.rows.map((row) => row.details)).toEqual(['GitHub Actions: failure']);
+  });
+
+  test("Officina's own status commit on the verified head is not a push from outside", async () => {
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    const github = fakeGitHub({
+      branchHead: 'abc',
+      written: { commitSha: 'abc2', parentSha: 'abc' }
+    });
+    await finishVerifiedSpecs(pool, github.port, [taskId]);
+    await adoptOutsidePushes(pool, github.port, [taskId]);
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({
+      stage: 'merging',
+      headSha: 'abc'
+    });
   });
 
   test('repeated invalid results fail the run and ask a maintainer', async () => {
