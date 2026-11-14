@@ -25,6 +25,8 @@ export type AccessActor = { readonly memberId: string } | 'cli' | null;
 
 export interface AccessEventInput {
   readonly memberId: string;
+  /** The project the event is about, when it is about one: only that project's log shows it. */
+  readonly projectId?: string;
   readonly type: AccessEventType;
   readonly detail?: Readonly<Record<string, string>>;
   readonly actor?: AccessActor;
@@ -36,13 +38,14 @@ const actorId = (actor: AccessActor | undefined) =>
 
 export const recordAccessEvent = async (db: Queryable, event: AccessEventInput) => {
   await db.query(
-    `insert into access_events (member_id, actor_member_id, type, detail)
-     values ($1, $2, $3, $4)`,
+    `insert into access_events (member_id, actor_member_id, type, detail, project_id)
+     values ($1, $2, $3, $4, $5)`,
     [
       event.memberId,
       actorId(event.actor),
       event.type,
-      JSON.stringify({ ...event.detail, ...actorDetail(event.actor) })
+      JSON.stringify({ ...event.detail, ...actorDetail(event.actor) }),
+      event.projectId ?? null
     ]
   );
 };
@@ -79,7 +82,8 @@ export interface AccessEventRow {
 
 /**
  * The latest access events of a project's members, newest first. A member of another project in
- * the workspace stays out.
+ * the workspace stays out, and so does an event about another project, such as an invite to it,
+ * or a past one whose project could no longer be named.
  */
 export const listAccessEvents = async (
   db: Queryable,
@@ -94,6 +98,7 @@ export const listAccessEvents = async (
        join members m on m.id = e.member_id
        left join members a on a.id = e.actor_member_id
        where e.member_id in (select member_id from project_roles where project_id = $1)
+         and (e.project_id is null or e.project_id = $1) and not e.hidden
        order by e.created_at desc, e.id desc
        limit $2`,
       [projectId, limit]

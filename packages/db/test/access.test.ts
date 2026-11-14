@@ -1,7 +1,9 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
+import { join } from 'node:path';
 import { Pool } from 'pg';
 import {
   issueConnectorTokens,
+  listAccessEvents,
   lockConnectorGrant,
   recordConnectorUse,
   registerConnectorClient,
@@ -116,5 +118,83 @@ describe.skipIf(!url)('access log', () => {
     expect(
       (await pool.query('select 1 from connector_tokens where grant_id = $1', [grantId])).rowCount
     ).toBe(0);
+  });
+
+  test('the migration gives past project events their project and hides those it cannot place', async () => {
+    const { rows } = await pool.query<{ id: string; member: string }>(
+      `with p as (insert into projects (workspace_id, name, github_repo)
+                  select workspace_id, 'secret', 'ViciApp/secret' from projects where id = $1
+                  returning id, workspace_id),
+            m as (insert into members (workspace_id, display_name, email)
+                  select workspace_id, 'Bea', 'bea@example.com' from p returning id),
+            r as (insert into project_roles (project_id, member_id, role)
+                  select p.id, m.id, 'contributor' from p, m
+                  union all select $1, m.id, 'contributor' from m
+                  union all select p.id, $2, 'owner' from p
+                  returning project_id)
+       select p.id, m.id as member from p, m limit 1`,
+      [seeded.projectId, seeded.ownerId]
+    );
+    const [{ id: other, member: bea }] = rows as [{ id: string; member: string }];
+    const legacy = async (type: string, detail: object, actor: string | null = null) =>
+      (
+        await pool.query<{ id: string }>(
+          `insert into access_events (member_id, actor_member_id, type, detail)
+           values ($1, $2, $3, $4) returning id::text`,
+          [bea, actor, type, JSON.stringify(detail)]
+        )
+      ).rows[0]!.id;
+    const here = await legacy('invited', {
+      project: 'ViciApp/vici-app',
+      role: 'contributor',
+      via: 'cli'
+    });
+    const there = await legacy('invited', {
+      project: 'ViciApp/secret',
+      role: 'contributor',
+      via: 'cli'
+    });
+    const gone = await legacy('invited', { project: 'ViciApp/gone', role: 'owner', via: 'cli' });
+    const sent = await legacy('sign_in_link_created', {}, seeded.ownerId);
+    // Sent from the board by someone who no longer shares a project with Bea.
+    const stranger = (
+      await pool.query<{ id: string }>(
+        `insert into members (workspace_id, display_name, email)
+         select workspace_id, 'Cy', 'cy@example.com' from projects where id = $1 returning id`,
+        [seeded.projectId]
+      )
+    ).rows[0]!.id;
+    const stranded = await legacy('sign_in_link_created', {}, stranger);
+    const cli = await legacy('sign_in_link_created', { via: 'cli' });
+    const signedIn = await legacy('signed_in', { method: 'link' });
+
+    const sql = await Bun.file(
+      join(import.meta.dir, '..', 'migrations', '0024_access_event_project.sql')
+    ).text();
+    await pool.query(sql.slice(sql.indexOf('update access_events')));
+
+    const { rows: events } = await pool.query<{
+      id: string;
+      project_id: string | null;
+      hidden: boolean;
+    }>('select id::text, project_id, hidden from access_events where member_id = $1', [bea]);
+    const placed = new Map(events.map((row) => [row.id, row.project_id]));
+    expect(placed.get(here)).toBe(seeded.projectId);
+    expect(placed.get(there)).toBe(other);
+    expect([seeded.projectId, other]).toContain(placed.get(sent)!);
+    expect(placed.get(cli)).toBeNull();
+    expect(placed.get(signedIn)).toBeNull();
+    // What cannot be placed is kept, hidden, and in no project's log.
+    expect(events.filter((row) => row.hidden).map((row) => row.id)).toEqual(
+      expect.arrayContaining([gone, stranded])
+    );
+    expect(events.filter((row) => row.hidden)).toHaveLength(2);
+    const shown = [
+      ...(await listAccessEvents(pool, seeded.projectId, 100)),
+      ...(await listAccessEvents(pool, other, 100))
+    ].map((event) => event.id);
+    expect(shown).toEqual(expect.arrayContaining([here, there, sent, cli, signedIn]));
+    expect(shown).not.toContain(gone);
+    expect(shown).not.toContain(stranded);
   });
 });

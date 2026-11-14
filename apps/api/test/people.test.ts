@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { issueConnectorTokens, registerConnectorClient } from '@officina/db';
 import { Pool } from 'pg';
 import { resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
-import { invite, loginLink, membersText } from '../src/people';
+import { accessLogView, invite, inviteAgain, loginLink, membersText } from '../src/people';
 
 const url = process.env.TEST_DATABASE_URL;
 const PUBLIC_URL = 'https://officina.example';
@@ -88,6 +88,56 @@ describe.skipIf(!url)('members command', () => {
         'Tim      contributor  not yet               2026-11-12 22:15 UTC  not yet (valid until 2099-01-01 22:15 UTC)  -                     no'
       ].join('\n')
     );
+  });
+
+  test("a project's access log leaves out the invites and links of the member's other projects", async () => {
+    await pool.query(
+      `insert into projects (workspace_id, name, github_repo)
+       select workspace_id, 'secret', 'ViciApp/secret' from projects where id = $1`,
+      [seeded.projectId]
+    );
+    const other = (
+      await pool.query<{ id: string }>(
+        "select id from projects where github_repo = 'ViciApp/secret'"
+      )
+    ).rows[0]!.id;
+    const inviteBea = (repo: string, role: string) =>
+      invite(pool, {
+        publicUrl: PUBLIC_URL,
+        email: 'bea@example.com',
+        name: 'Bea',
+        role,
+        domains: [],
+        repo
+      });
+    await inviteBea('ViciApp/vici-app', 'contributor');
+    await inviteBea('ViciApp/secret', 'maintainer');
+    await loginLink(pool, { publicUrl: PUBLIC_URL, email: 'bea@example.com' });
+    await pool.query(
+      "insert into project_roles (project_id, member_id, role) values ($1, $2, 'owner')",
+      [other, seeded.ownerId]
+    );
+    await inviteAgain(pool, {
+      publicUrl: PUBLIC_URL,
+      projectId: other,
+      viewerRole: 'owner',
+      viewerId: seeded.ownerId,
+      memberId: await memberId('Bea')
+    });
+
+    const texts = async (projectId: string) =>
+      (await accessLogView(pool, projectId))
+        .filter((event) => event.member === 'Bea')
+        .map((event) => event.text);
+    expect(await texts(seeded.projectId)).toEqual([
+      'was sent a sign-in link from the server CLI',
+      'was invited to ViciApp/vici-app as contributor from the server CLI'
+    ]);
+    expect(await texts(other)).toEqual([
+      'was sent a sign-in link by Antonio',
+      'was sent a sign-in link from the server CLI',
+      'was invited to ViciApp/secret as maintainer from the server CLI'
+    ]);
   });
 
   test('an unknown repository is named in the error', async () => {

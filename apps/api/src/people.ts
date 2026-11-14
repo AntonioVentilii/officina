@@ -86,6 +86,7 @@ export const invite = async (
   const token = await createLoginLink(pool, memberId, INVITE_TTL_MS);
   await recordAccessEvent(pool, {
     memberId,
+    projectId,
     type: 'invited',
     detail: { role: input.role, project: (await loadProject(pool, projectId))!.repo },
     actor: 'cli'
@@ -141,6 +142,7 @@ export const inviteAgain = async (
   if (result.ok) {
     await recordAccessEvent(pool, {
       memberId: input.memberId,
+      projectId: input.projectId,
       type: 'sign_in_link_created',
       actor: { memberId: input.viewerId }
     });
