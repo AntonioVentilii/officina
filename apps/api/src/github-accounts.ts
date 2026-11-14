@@ -1,4 +1,5 @@
 import {
+  linkGitHubAccount,
   loadGitHubAccount,
   memberForGitHubUser,
   saveGitHubAccount,
@@ -20,16 +21,19 @@ export const createGitHubAccounts = (deps: {
 }) => {
   const { pool, box } = deps;
 
-  const store = async (memberId: string, user: { id: number; login: string }, tokens: UserTokens) =>
-    saveGitHubAccount(pool, {
-      memberId,
-      githubUserId: user.id,
-      login: user.login,
-      accessTokenEnc: box.seal(tokens.accessToken),
-      accessExpiresAt: tokens.accessExpiresAt,
-      refreshTokenEnc: tokens.refreshToken ? box.seal(tokens.refreshToken) : null,
-      refreshExpiresAt: tokens.refreshExpiresAt
-    });
+  const sealed = (
+    memberId: string,
+    user: { id: number; login: string },
+    tokens: UserTokens
+  ): GitHubAccountRow => ({
+    memberId,
+    githubUserId: user.id,
+    login: user.login,
+    accessTokenEnc: box.seal(tokens.accessToken),
+    accessExpiresAt: tokens.accessExpiresAt,
+    refreshTokenEnc: tokens.refreshToken ? box.seal(tokens.refreshToken) : null,
+    refreshExpiresAt: tokens.refreshExpiresAt
+  });
 
   /**
    * Completes an authorization: links the account to the signed-in member, or, for a sign-in, finds
@@ -46,14 +50,18 @@ export const createGitHubAccounts = (deps: {
     const user = await deps.asUser.user(tokens.accessToken);
     if (claim && !(await claim()))
       return { ok: false, why: 'The GitHub sign-in expired; try again.' };
-    const memberId = linkTo ?? (await memberForGitHubUser(pool, user.id));
+    if (linkTo) {
+      await linkGitHubAccount(pool, sealed(linkTo, user, tokens));
+      return { ok: true, memberId: linkTo, login: user.login };
+    }
+    const memberId = await memberForGitHubUser(pool, user.id);
     if (!memberId) {
       return {
         ok: false,
         why: `@${user.login} is not linked to a member yet: sign in with an invite link, then connect GitHub`
       };
     }
-    await store(memberId, user, tokens);
+    await saveGitHubAccount(pool, sealed(memberId, user, tokens));
     return { ok: true, memberId, login: user.login };
   };
 
@@ -74,7 +82,10 @@ export const createGitHubAccounts = (deps: {
     }
     if (!account.refreshTokenEnc || expired(account.refreshExpiresAt)) return null;
     const tokens = await deps.auth.refresh(box.open(account.refreshTokenEnc));
-    await store(memberId, { id: account.githubUserId, login: account.login }, tokens);
+    await saveGitHubAccount(
+      pool,
+      sealed(memberId, { id: account.githubUserId, login: account.login }, tokens)
+    );
     return { token: tokens.accessToken, login: account.login, userId: account.githubUserId };
   };
 

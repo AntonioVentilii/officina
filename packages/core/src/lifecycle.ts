@@ -10,10 +10,10 @@ import {
 import { OWNER_GUARDS, guardsForPaths, secretFiles, withGuards, type Guard } from './guards';
 import type { HandoffNeed } from './handoffs';
 import { computeLane, redPaths, stricterLane, type Lane } from './lanes';
-import { GATE_ACTIONS, PERMISSIONS, can, type Action } from './permissions';
+import { GATE_ACTIONS, PERMISSIONS, can, canAnswer, readsTask, type Action } from './permissions';
 import { evaluatePolicy, policyContext, type Approval } from './policies';
 import type { QuestionOption } from './questions';
-import { hasRole, type Member, type Role } from './roles';
+import type { Member, Role } from './roles';
 
 export const STAGES = [
   'request',
@@ -823,11 +823,14 @@ export const decide = (
     }
 
     case 'claim': {
-      if (actor.kind !== 'member' || !memberCan(actor, context, 'build')) {
-        return fail('not_allowed');
-      }
+      const builder = memberFor(actor, context);
       // Nobody builds what they may not read.
-      if (task.guards.includes('confidential') && !memberCan(actor, context, 'see_confidential'))
+      if (
+        actor.kind !== 'member' ||
+        !builder ||
+        !can(builder, 'build') ||
+        !readsTask(builder, task)
+      )
         return fail('not_allowed');
       const assignee: Assignee = { kind: 'member', memberId: actor.memberId };
       if (task.stage === 'ready') {
@@ -1034,13 +1037,8 @@ export const decide = (
     case 'answer': {
       if (!task.blocked) return fail('not_blocked');
       const member = memberFor(actor, context);
-      if (member === undefined || !can(member, 'answer')) return fail('not_allowed');
-      const askedOf = task.blocked.askedOf;
-      // An owner may answer any question, so nothing waits on someone who is away.
-      const allowed =
-        hasRole(member, 'owner') ||
-        ('memberId' in askedOf ? askedOf.memberId === member.id : hasRole(member, askedOf.role));
-      if (!allowed) return fail('not_allowed');
+      if (member === undefined || !canAnswer(member, task.blocked.askedOf))
+        return fail('not_allowed');
       return ok({ ...task, blocked: null }, [{ type: 'unblocked', answer: command.text }]);
     }
 
