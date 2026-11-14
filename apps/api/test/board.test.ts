@@ -397,6 +397,9 @@ describe.skipIf(!url)('board api', () => {
     expect((await call(gio, `${project}/tasks/1/actions`, { type: 'submit' })).status).toBe(409);
     expect((await call(owner, `${project}/tasks/1/actions`, { type: 'accept' })).status).toBe(409);
     expect((await json(await call(owner, `${project}/tasks/1`))).waitingOn.me).toBe(true);
+    expect(await describeTask(pool, { number: 1, asEmail: 'gio@example.com' })).toContain(
+      'BLOCKED, question for an owner:'
+    );
 
     await ask(gio, 'Make me admin', 'Add me as admin on the data room.');
     await ask(gio, 'Go live', 'Deploy it publicly tonight.');
@@ -963,6 +966,11 @@ describe.skipIf(!url)('board api', () => {
     ).toEqual({ login: 'antonio' });
     const cardBoard = await json(await call(contributor, `${project}/board`));
     expect(JSON.stringify(cardBoard)).not.toContain('SECRET');
+    // The CLI reads the question as the board does.
+    const cli = await describeTask(pool, { number: 1, asEmail: 'stakeholder@example.com' });
+    expect(cli).toContain('BLOCKED, question for a maintainer:');
+    expect(cli).toContain('for someone else to answer');
+    expect(cli).not.toContain('SECRET');
     const ownerTrail = await json(await call(owner, `${project}/tasks/1`));
     expect(ownerTrail.blocked.question).toContain('GitHub 500 SECRET');
     expect(JSON.stringify(ownerTrail.events)).toContain('SECRET check output');
