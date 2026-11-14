@@ -139,6 +139,18 @@ export const loadProjectConfig = async (db: Queryable, projectId: string): Promi
   (await db.query<{ config: unknown }>('select config from projects where id = $1', [projectId]))
     .rows[0]?.config;
 
+/**
+ * The project's config, read under the project's row lock inside the caller's transaction, so
+ * everything decided from it holds until the transaction ends.
+ */
+export const lockProjectConfig = async (client: PoolClient, projectId: string): Promise<unknown> =>
+  (
+    await client.query<{ config: unknown }>(
+      'select config from projects where id = $1 for update',
+      [projectId]
+    )
+  ).rows[0]?.config;
+
 export const updateProjectConfig = async (db: Queryable, projectId: string, config: unknown) => {
   await db.query('update projects set config = $2 where id = $1', [
     projectId,
