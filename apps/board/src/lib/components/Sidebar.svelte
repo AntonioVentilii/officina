@@ -8,6 +8,7 @@
     LogOut,
     Monitor,
     Moon,
+    PlugZap,
     SquareKanban,
     Sun,
     Users
@@ -88,6 +89,9 @@
         <a href="/members" class:on={path === '/members'}><Users size={16} />Members</a>
       </li>
     {/if}
+    <li>
+      <a href="/connect" class:on={path === '/connect'}><PlugZap size={16} />Connected apps</a>
+    </li>
     <li>
       <button onclick={() => (guide.open = true)}><BookOpen size={16} />Guide</button>
     </li>

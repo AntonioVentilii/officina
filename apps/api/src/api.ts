@@ -8,6 +8,7 @@ import {
   githubLoginOf,
   unlinkGitHubAccount,
   endSession,
+  listConnectorGrants,
   listMemberProjects,
   loadRun,
   loginLinkMember,
@@ -15,6 +16,7 @@ import {
   recordAccessEvent,
   memberForSession,
   redeemLoginLink,
+  revokeConnectorGrant,
   SESSION_TTL_MS,
   spendOAuthState,
   type MemberProject,
@@ -440,10 +442,7 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
       .get('/api/connector/authorization', async ({ request, query }) => {
         const signed = await signedIn(request);
         const checked = await checkAuthorization(pool, deps.publicUrl, query);
-        if (!checked.ok) {
-          if (checked.redirectable) return { redirect: checked.redirect };
-          throw new HttpError(400, checked.problem);
-        }
+        if (!checked.ok) throw new HttpError(400, checked.problem);
         return {
           client: checked.request.client.name,
           returnsTo: new URL(checked.request.redirectUri).host,
@@ -456,10 +455,7 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
         const signed = await signedIn(request);
         const { params, allow } = parse(consentSchema, body);
         const checked = await checkAuthorization(pool, deps.publicUrl, params);
-        if (!checked.ok) {
-          if (checked.redirectable) return { redirect: checked.redirect };
-          throw new HttpError(400, checked.problem);
-        }
+        if (!checked.ok) throw new HttpError(400, checked.problem);
         const back = await consentRedirect(
           pool,
           deps.publicUrl,
@@ -472,6 +468,28 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
           detail: { client: checked.request.client.name }
         });
         return { redirect: back };
+      })
+      // The apps the member allowed, each one revocable from the board at any time.
+      .get('/api/connector/grants', async ({ request }) => {
+        const signed = await signedIn(request);
+        const grants = await listConnectorGrants(pool, signed.member.id);
+        return {
+          grants: grants.map((grant) => ({
+            id: grant.grantId,
+            client: grant.clientName,
+            returnsTo: [...new Set(grant.redirectUris.map((uri) => new URL(uri).host))],
+            renewedAt: grant.renewedAt
+          }))
+        };
+      })
+      .post('/api/connector/grants/:grantId/revoke', async ({ request, params }) => {
+        mutation(request);
+        const signed = await signedIn(request);
+        // A code the board words itself, the same for an id that is not one and one that is gone.
+        const grantId = z.uuid().safeParse(params.grantId);
+        if (!grantId.success || !(await revokeConnectorGrant(pool, signed.member.id, grantId.data)))
+          throw new HttpError(404, 'unknown_grant');
+        return { ok: true };
       })
       .get('/api/stream', async ({ request }) => stream(await signedIn(request), request))
       .get('/api/projects/:projectId/board', async ({ request, params }) => {

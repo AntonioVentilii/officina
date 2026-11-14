@@ -309,9 +309,27 @@ export interface Notice {
   readonly createdAt: string;
 }
 
+/** An app the member allowed to act as them through the connector, until they revoke it. */
+export interface ConnectedApp {
+  readonly id: string;
+  /** The name the app gave itself when it registered; Officina has not verified it. */
+  readonly client: string;
+  readonly returnsTo: readonly string[];
+  readonly renewedAt: string;
+}
+
 /** Why a GitHub sign-in did not complete, as the API puts it in `/signin?error=`. */
 export type GitHubSignInProblem =
   'github_mismatch' | 'github_expired' | 'github_not_linked' | 'github_linked_elsewhere';
 
 /** Why the connector's consent page cannot show a request, as the API sends it. */
-export type AuthorizationProblem = 'unknown_client' | 'unregistered_redirect';
+export type AuthorizationProblem =
+  | 'unknown_client'
+  | 'unregistered_redirect'
+  | 'unsupported_response_type'
+  | 'pkce_required'
+  | 'unknown_resource'
+  | 'unknown_scope';
+
+/** Why a connected app could not be revoked, as the API sends it. */
+export type ConnectedAppProblem = 'unknown_grant';

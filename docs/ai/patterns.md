@@ -21,7 +21,7 @@ The patterns Officina really uses, each with one place to copy from. [`../archit
 ## Seams
 
 - **Ports, not clients, inside the engine.** `GitHubPort` (`packages/engine/src/step.ts`) and `ManagedAgentsPort` (`packages/runner/src/port.ts`) are `Pick`s or interfaces over the real clients; tests pass fakes. The real clients are built only in `apps/api`.
-- **Text written by people or agents is fenced as data in a brief**, with a fence longer than any backtick run inside it: `fence` in `packages/engine/src/brief.ts`, which every brief uses.
+- **Text written by people or agents is fenced as data in a brief**, with a fence longer than any backtick run inside it: `fence` in `packages/engine/src/brief.ts`, which every brief uses, and so does the connector's `show_task` (`apps/api/src/connector/tools.ts`).
 - **Config is parsed once into a normalized shape.** Code reads `ProjectConfig` from `parseProjectConfig` (`packages/core/src/config.ts`), with defaults filled in, never the raw YAML.
 
 ## API and board

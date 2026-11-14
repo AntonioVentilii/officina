@@ -201,6 +201,44 @@ export const memberForConnectorToken = async (
     )
   ).rows[0]?.member_id ?? null;
 
+export interface ConnectorGrant {
+  readonly grantId: string;
+  readonly clientName: string;
+  readonly redirectUris: readonly string[];
+  /** When the app last got a token for this grant: when it was allowed, or last refreshed. */
+  readonly renewedAt: Date;
+}
+
+/** The apps a member allowed that can still act for them, one row per grant. */
+export const listConnectorGrants = async (
+  db: Queryable,
+  memberId: string
+): Promise<ConnectorGrant[]> =>
+  (
+    await db.query<ConnectorGrant>(
+      `select t.grant_id as "grantId", c.name as "clientName", c.redirect_uris as "redirectUris",
+         max(t.created_at) as "renewedAt"
+       from connector_tokens t join connector_clients c on c.id = t.client_id
+       where t.member_id = $1 and t.expires_at > now()
+       group by t.grant_id, c.name, c.redirect_uris
+       order by max(t.created_at) desc`,
+      [memberId]
+    )
+  ).rows;
+
+/** Revokes one of a member's grants: every token it issued stops working at once. */
+export const revokeConnectorGrant = async (
+  db: Queryable,
+  memberId: string,
+  grantId: string
+): Promise<boolean> =>
+  ((
+    await db.query('delete from connector_tokens where grant_id = $1 and member_id = $2', [
+      grantId,
+      memberId
+    ])
+  ).rowCount ?? 0) > 0;
+
 /**
  * Deletes codes and tokens that can no longer be used, and clients that registered but never
  * completed an authorization within a day, since registering needs no account.

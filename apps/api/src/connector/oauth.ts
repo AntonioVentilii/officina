@@ -142,66 +142,52 @@ export interface AuthorizationRequest {
 }
 
 /**
- * Why an authorization request is shown to the person rather than sent back to the client. Only
- * the code leaves the API; the board's consent page words each one.
+ * Why an authorization request is shown to the person instead of going on to consent. Only the
+ * code leaves the API; the board's consent page words each one.
  */
-export type AuthorizationProblem = 'unknown_client' | 'unregistered_redirect';
+export type AuthorizationProblem =
+  | 'unknown_client'
+  | 'unregistered_redirect'
+  | 'unsupported_response_type'
+  | 'pkce_required'
+  | 'unknown_resource'
+  | 'unknown_scope';
 
 /**
- * Checks an authorization request. Problems with the client or the redirect are shown to the
- * person (`redirectable: false`): sending them to an unverified address would make Officina an
- * open redirect. Anything else goes back to the client as an OAuth error.
+ * Checks an authorization request. Every problem is shown to the person on the board, never sent
+ * to the redirect: a client registers itself, so its redirect is only trusted once the person has
+ * seen where it leads and decided (RFC 9700, 4.11.2).
  */
 export const checkAuthorization = async (
   pool: Pool,
   publicUrl: string,
   query: Record<string, unknown>
 ): Promise<
-  | { ok: true; request: AuthorizationRequest }
-  | { ok: false; redirectable: false; problem: AuthorizationProblem }
-  | { ok: false; redirectable: true; redirect: string }
+  { ok: true; request: AuthorizationRequest } | { ok: false; problem: AuthorizationProblem }
 > => {
   const value = (key: string) => (typeof query[key] === 'string' ? (query[key] as string) : null);
+  const fail = (problem: AuthorizationProblem) => ({ ok: false as const, problem });
   const clientId = value('client_id');
   const client = clientId ? await loadConnectorClient(pool, clientId) : null;
-  if (!client)
-    return {
-      ok: false,
-      redirectable: false,
-      problem: 'unknown_client'
-    };
+  if (!client) return fail('unknown_client');
   const requested = value('redirect_uri');
   const redirectUri =
     requested ?? (client.redirectUris.length === 1 ? client.redirectUris[0]! : null);
   if (!redirectUri || !redirectMatches(client.redirectUris, redirectUri))
-    return {
-      ok: false,
-      redirectable: false,
-      problem: 'unregistered_redirect'
-    };
+    return fail('unregistered_redirect');
   const state = value('state');
-  const fail = (error: string, description: string) => {
-    const url = new URL(redirectUri);
-    url.searchParams.set('error', error);
-    url.searchParams.set('error_description', description);
-    if (state) url.searchParams.set('state', state);
-    return { ok: false as const, redirectable: true as const, redirect: url.href };
-  };
-  if (value('response_type') !== 'code')
-    return fail('unsupported_response_type', 'only the code flow is supported');
+  if (value('response_type') !== 'code') return fail('unsupported_response_type');
   const codeChallenge = value('code_challenge');
   if (
     value('code_challenge_method') !== 'S256' ||
     !codeChallenge ||
     !/^[A-Za-z0-9_-]{43,128}$/.test(codeChallenge)
   )
-    return fail('invalid_request', 'PKCE with code_challenge_method S256 is required');
+    return fail('pkce_required');
   const resource = value('resource') ?? mcpResource(publicUrl);
-  if (resource.replace(/\/$/, '') !== mcpResource(publicUrl))
-    return fail('invalid_target', `this server only issues tokens for ${mcpResource(publicUrl)}`);
+  if (resource.replace(/\/$/, '') !== mcpResource(publicUrl)) return fail('unknown_resource');
   const scope = value('scope');
-  if (scope && !scope.split(' ').every((item) => item === SCOPE))
-    return fail('invalid_scope', `the only scope is ${SCOPE}`);
+  if (scope && !scope.split(' ').every((item) => item === SCOPE)) return fail('unknown_scope');
   return {
     ok: true,
     request: { client, redirectUri, codeChallenge, resource: mcpResource(publicUrl), state }

@@ -67,13 +67,11 @@ export const createConnector = (deps: {
           return oauthFailure(error);
         }
       })
-      // Checked here so a bad client or redirect is shown before anyone signs in; the board's
-      // consent page checks it again when the person decides.
+      // Checked here so a bad request is shown before anyone signs in, on the board and never at
+      // the client's redirect; the consent page checks it again when the person decides.
       .get('/oauth/authorize', async ({ request, query }) => {
         const checked = await checkAuthorization(pool, publicUrl, query);
-        if (!checked.ok && !checked.redirectable)
-          return Response.redirect(`${board}/connect?error=${checked.problem}`, 302);
-        if (!checked.ok) return Response.redirect(checked.redirect, 302);
+        if (!checked.ok) return Response.redirect(`${board}/connect?error=${checked.problem}`, 302);
         return Response.redirect(`${board}/connect${new URL(request.url).search}`, 302);
       })
       .post('/oauth/token', async ({ body }) => {
