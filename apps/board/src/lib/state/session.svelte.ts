@@ -1,5 +1,5 @@
 import { ApiError, get, post } from '$lib/api';
-import type { Me, Project } from '$lib/types';
+import type { Me, Permission, Project } from '$lib/types';
 
 const PROJECT_KEY = 'officina.project';
 
@@ -29,8 +29,13 @@ class Session {
     this.me?.projects.find((project) => project.id === this.projectId) ?? null
   );
 
-  /** Maintainers and owners see costs, commits and agent runs; everyone else sees the essentials. */
-  technical = $derived(this.project?.role === 'owner' || this.project?.role === 'maintainer');
+  /** Whether the member may take an action in the selected project, as the API decided. */
+  can(action: Permission): boolean {
+    return this.project?.can.includes(action) ?? false;
+  }
+
+  /** Who sees costs, commits and agent runs; everyone else sees the essentials. */
+  technical = $derived(this.project?.can.includes('see_runs') ?? false);
 
   async load() {
     try {

@@ -1,4 +1,4 @@
-import { TERMINAL_STAGES } from '@officina/core';
+import { TERMINAL_STAGES, redactDeep } from '@officina/core';
 import type { Actor, StoredTaskContext } from './types';
 import type { Pool, PoolClient } from 'pg';
 import { loadTask } from './store';
@@ -49,11 +49,15 @@ export const latestBuildRun = async (
     )
   ).rows[0] ?? null;
 
+/**
+ * Records one event of a run. Agent messages, tool output and rejected results all pass through
+ * here before anyone can read them in the run log, so secrets are redacted on the way in.
+ */
 export const appendRunEvent = async (pool: Pool, runId: string, type: string, payload: unknown) => {
   await pool.query('insert into run_events (run_id, type, payload) values ($1, $2, $3)', [
     runId,
     type,
-    JSON.stringify(payload)
+    JSON.stringify(redactDeep(payload))
   ]);
 };
 

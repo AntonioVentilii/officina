@@ -1,5 +1,67 @@
 # Changelog
 
+## [1.5.0](https://github.com/AntonioVentilii/officina/compare/v1.4.0...v1.5.0) (2026-11-14)
+
+
+### Features
+
+* **db,engine,api,board:** an edit the default branch moved past goes back to the learner to be rewritten ([#119](https://github.com/AntonioVentilii/officina/issues/119)) ([e86c263](https://github.com/AntonioVentilii/officina/commit/e86c263f4f15e3d80e463e1db36bf94c557951ec))
+
+
+### Bug Fixes
+
+* **api,github:** close the pull request a failed accept left when its learning is rejected ([#106](https://github.com/AntonioVentilii/officina/issues/106)) ([85127e8](https://github.com/AntonioVentilii/officina/commit/85127e8c15f8ed63bfad14cd5c0d371dfd30dd0f))
+
+
+### Build System
+
+* board`. ([e86c263](https://github.com/AntonioVentilii/officina/commit/e86c263f4f15e3d80e463e1db36bf94c557951ec))
+
+## [1.4.0](https://github.com/AntonioVentilii/officina/compare/v1.3.0...v1.4.0) (2026-11-13)
+
+
+### Features
+
+* **core,api,board:** make roles and permissions explicit in one matrix ([#114](https://github.com/AntonioVentilii/officina/issues/114)) ([ffe7224](https://github.com/AntonioVentilii/officina/commit/ffe7224722912d30b834a7b7962953616b78b576))
+* **core,db,engine,api,board:** a security wall for secrets, access, publishing and confidential content ([#117](https://github.com/AntonioVentilii/officina/issues/117)) ([0971172](https://github.com/AntonioVentilii/officina/commit/097117273ec326901478f9e7ed75a07c8d3086fc))
+* **core,engine,api,board:** agents hand work to the right person, from the owner to a developer who builds it ([#116](https://github.com/AntonioVentilii/officina/issues/116)) ([b7c6c19](https://github.com/AntonioVentilii/officina/commit/b7c6c1946f27c21d00436320f67e0403331fd0e5))
+* **core,engine,api,board:** questions offer options with previews people choose from ([#115](https://github.com/AntonioVentilii/officina/issues/115)) ([9c532b8](https://github.com/AntonioVentilii/officina/commit/9c532b80d92d5867d73cef083161bedf4daaf2f4))
+
+
+### Build System
+
+* board`. ([9c532b8](https://github.com/AntonioVentilii/officina/commit/9c532b80d92d5867d73cef083161bedf4daaf2f4))
+
+## [1.3.0](https://github.com/AntonioVentilii/officina/compare/v1.2.1...v1.3.0) (2026-11-13)
+
+
+### Features
+
+* **db,api,board:** show owners who accepted their invite and who is active ([#112](https://github.com/AntonioVentilii/officina/issues/112)) ([1029308](https://github.com/AntonioVentilii/officina/commit/1029308d469430669285ffd2bbdedf7b78932bf6))
+
+
+### Bug Fixes
+
+* **api:** land a learning's replacement text exactly as written ([#103](https://github.com/AntonioVentilii/officina/issues/103)) ([1023d00](https://github.com/AntonioVentilii/officina/commit/1023d002456bd2f554b1baefe9b98047440ff615))
+* **engine,github:** take the spec status commit whose answer was lost as the task's head ([#108](https://github.com/AntonioVentilii/officina/issues/108)) ([d02ab16](https://github.com/AntonioVentilii/officina/commit/d02ab169c7bb591c45287c65a705ebc4377acf96))
+
+
+### Documentation
+
+* **repo:** match the README, AGENTS.md and architecture to the code ([#102](https://github.com/AntonioVentilii/officina/issues/102)) ([f463738](https://github.com/AntonioVentilii/officina/commit/f463738dc115e2aa6bb8331d293c4a5c4590a0f4))
+
+
+### Code Refactoring
+
+* **db:** read the auto-merge trail with one SQL rule shared by the board and the engine ([#105](https://github.com/AntonioVentilii/officina/issues/105)) ([2e69c52](https://github.com/AntonioVentilii/officina/commit/2e69c526b9ee5a510491fd8e0a69c35fc9c8db9c))
+
+
+### Tests
+
+* **api:** a member of one project cannot read, act on or decide a second real project's work ([#107](https://github.com/AntonioVentilii/officina/issues/107)) ([649ab31](https://github.com/AntonioVentilii/officina/commit/649ab3122deefb3ef6ba72cbceaa585a857dfa8a))
+* **api:** every board route that changes something refuses a request without the request header ([#104](https://github.com/AntonioVentilii/officina/issues/104)) ([cf8da07](https://github.com/AntonioVentilii/officina/commit/cf8da07b57b8095578faa35539f829d6e1c27fac))
+* **core:** who may decline, cancel, send back, release, pause and resume a task ([#109](https://github.com/AntonioVentilii/officina/issues/109)) ([eb78282](https://github.com/AntonioVentilii/officina/commit/eb78282bcd5a042fdcea01e09fd1401647b29194))
+
 ## [1.2.1](https://github.com/AntonioVentilii/officina/compare/v1.2.0...v1.2.1) (2026-11-13)
 
 

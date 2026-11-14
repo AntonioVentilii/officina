@@ -1,8 +1,12 @@
 import {
   BUILD_ROLES,
   branchForTask,
+  catalogPagesToRead,
   parseProjectConfig,
   type AgentOutput,
+  type Catalog,
+  type CatalogPages,
+  type PushFacts,
   type Stage
 } from '@officina/core';
 import {
@@ -16,6 +20,27 @@ import type { Pool } from 'pg';
 import { syncSpecStatus, taskLink, type SyncGitHubPort } from './github-sync';
 
 export type PullRequestPort = Pick<GitHubClient, 'openPullRequest'> & SyncGitHubPort;
+
+export type PushFactsPort = Pick<GitHubClient, 'pushFacts' | 'readFile'>;
+
+/**
+ * What was really pushed to a task branch, read from GitHub, never from whoever pushed it, with the
+ * catalog pages as pushed: an edit that does not name a new file does not pass for listing it.
+ */
+export const readPush = async (
+  github: PushFactsPort,
+  ref: { readonly installationId: number; readonly repo: string },
+  input: { readonly base: string; readonly branch: string; readonly catalogs: readonly Catalog[] }
+): Promise<PushFacts & { readonly catalogPages: CatalogPages }> => {
+  const facts = await github.pushFacts({ ...ref, base: input.base, branch: input.branch });
+  const catalogPages: Record<string, string | null> = {};
+  for (const page of catalogPagesToRead(input.catalogs, facts.addedPaths)) {
+    // At the head the diff was read from, so a later push cannot change what is checked.
+    catalogPages[page] =
+      (await github.readFile({ ...ref, path: page, branch: facts.headSha }))?.text ?? null;
+  }
+  return { ...facts, catalogPages };
+};
 
 /** What a build round that pushed tells the pull request. */
 export type PushedBuild = Extract<AgentOutput<'builder' | 'onboarder'>, { outcome: 'pushed' }>;

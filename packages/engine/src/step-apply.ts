@@ -1,6 +1,6 @@
 import {
-  catalogPagesToRead,
   commandForOutput,
+  questionMarkdown,
   type AgentOutput,
   type RoleOutput,
   type Task
@@ -17,7 +17,7 @@ import {
 import type { RunnerRole } from '@officina/runner';
 import type { PoolClient } from 'pg';
 import { postChecklist, taskLink } from './github-sync';
-import { openTaskPullRequest, type PushedBuild } from './pull-request';
+import { openTaskPullRequest, readPush, type PushedBuild } from './pull-request';
 import type { StepInputs } from './step-session';
 import type { Step, StepResult } from './step';
 import type { GitHubReview } from './validators';
@@ -32,21 +32,12 @@ const sameWork = (seen: Task) => (current: Task) =>
 
 /** A build result with the facts of what was really pushed, read from GitHub. */
 const pushedOutput = async (step: Step, built: PushedBuild): Promise<RoleOutput> => {
-  const { github } = step.deps;
-  const facts = await github.pushFacts({
-    ...step.repoRef,
+  const facts = await readPush(step.deps.github, step.repoRef, {
     base: step.context.defaultBranch,
-    branch: step.taskBranch
+    branch: step.taskBranch,
+    catalogs: step.config.docs.standards.catalogs
   });
-  // The catalog check reads the pages as pushed, so an edit that does not name the new file does
-  // not pass for listing it.
-  const catalogPages: Record<string, string | null> = {};
-  for (const page of catalogPagesToRead(step.config.docs.standards.catalogs, facts.addedPaths)) {
-    catalogPages[page] =
-      // At the head the diff was read from, so a later push cannot change what is checked.
-      (await github.readFile({ ...step.repoRef, path: page, branch: facts.headSha }))?.text ?? null;
-  }
-  return { role: step.role, output: built, facts: { ...facts, catalogPages } } as RoleOutput;
+  return { role: step.role, output: built, facts } as RoleOutput;
 };
 
 /** Writes what a result adds besides its command, in the same transaction as the command. */
@@ -58,11 +49,13 @@ const recordAlongside =
       // The thread keeps the whole conversation, so the spec writer and people read it as one.
       const body =
         interview.outcome === 'question'
-          ? interview.question
-          : [
-              `**Summary.** ${interview.summary}`,
-              `**Done when:**\n${interview.acceptance.map((item) => `- ${item}`).join('\n')}`
-            ].join('\n\n');
+          ? questionMarkdown(interview.question, interview.options)
+          : interview.outcome === 'needs_person'
+            ? `${interview.why}\n\n**Needed:**\n${interview.asks.map((ask) => `- ${ask}`).join('\n')}`
+            : [
+                `**Summary.** ${interview.summary}`,
+                `**Done when:**\n${interview.acceptance.map((item) => `- ${item}`).join('\n')}`
+              ].join('\n\n');
       await addComment(client, step.taskId, step.actor, body);
       if (interview.outcome === 'complete') {
         await setTaskTitle(client, step.taskId, interview.title);

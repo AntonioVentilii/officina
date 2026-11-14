@@ -8,6 +8,7 @@
 import { join } from 'node:path';
 import { ENGINE, type Actor, type Command } from '@officina/core';
 import {
+  addComment,
   appendRunEvent,
   applyCommand,
   createLoginLink,
@@ -591,6 +592,51 @@ const seedDemo = async (pool: Pool) => {
     by: giulia,
     paths: [UI]
   });
+
+  // A request the interviewer asked about, offering options with a preview of each.
+  const { task: interviewed } = await createTask(demo.pool, {
+    projectId: demo.projectId,
+    title: 'Tell people about the weekly prize',
+    requesterId: ownerId
+  });
+  await addComment(
+    demo.pool,
+    interviewed.id,
+    owner,
+    'Nobody knows there is a weekly prize. Tell people about it.'
+  );
+  await apply(
+    demo,
+    interviewed.id,
+    {
+      type: 'block',
+      question: 'Where should people learn about the weekly prize?',
+      askedOf: { memberId: ownerId },
+      options: [
+        {
+          label: 'A line under the title',
+          detail: 'Quiet; nothing else on the page moves.',
+          preview: { kind: 'text', before: 'Leaderboard', after: 'Leaderboard · Prize: 500 coins' }
+        },
+        {
+          label: 'A banner above the list',
+          detail: 'Hard to miss, pushes the list down.',
+          preview: {
+            kind: 'html',
+            body: '<div style="padding:12px 14px;background:#ffe14d;font-weight:700">This week’s prize: 500 coins</div><ol style="padding-left:20px"><li>Giulia, 1,240</li><li>Marco, 1,180</li><li>Antonio, 990</li></ol>'
+          }
+        },
+        {
+          label: 'Only in the rules',
+          preview: {
+            kind: 'markdown',
+            body: '### Weekly prize\n\nThe top player on Sunday at midnight wins **500 coins**.'
+          }
+        }
+      ]
+    },
+    agent('interviewer')
+  );
 
   const declined = await seed(demo, {
     title: 'Replace the confetti animation',

@@ -20,6 +20,7 @@
   import MemberAvatar from './MemberAvatar.svelte';
   import RunRow from './RunRow.svelte';
   import StageTrack from './StageTrack.svelte';
+  import TaskPeople from './TaskPeople.svelte';
   import Timeline from './Timeline.svelte';
 
   interface Props {
@@ -189,6 +190,11 @@
             </section>
           {/if}
 
+          <section>
+            <h3 class="caps">People</h3>
+            <TaskPeople people={task.people} guards={task.guards} />
+          </section>
+
           {#if task.checklist?.checklist?.length && (task.stage === 'verifying' || session.technical)}
             <section>
               <h3 class="caps">What to check</h3>
@@ -221,8 +227,6 @@
           <details class="more">
             <summary class="caps">Details</summary>
             <dl class="facts">
-              <dt>Requester</dt>
-              <dd><MemberAvatar name={task.requester} size={18} />{task.requester}</dd>
               <dt>Opened</dt>
               <dd title={dateTime(task.createdAt)}>{ago(task.createdAt, clock.now)}</dd>
               <dt>In this stage</dt>
