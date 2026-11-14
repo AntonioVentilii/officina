@@ -221,7 +221,9 @@ const ACCESS_SENTENCES: Readonly<Record<AccessEventType, (d: Detail, by: string)
   connector_refused: (d) => `refused ${d.client}`,
   connector_used: (d) => `used Officina from ${d.client}`,
   connector_revoked: (d) =>
-    `lost ${d.client}'s access: a spent token was presented again, so it must reconnect`
+    d.reason === 'revoked'
+      ? `revoked ${d.client}'s access`
+      : `lost ${d.client}'s access: a spent token was presented again, so it must reconnect`
 };
 
 /** One access event as a sentence about its member, for the board and the CLI alike. */

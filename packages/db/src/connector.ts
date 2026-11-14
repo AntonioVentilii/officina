@@ -226,18 +226,25 @@ export const listConnectorGrants = async (
     )
   ).rows;
 
-/** Revokes one of a member's grants: every token it issued stops working at once. */
-export const revokeConnectorGrant = async (
-  db: Queryable,
-  memberId: string,
-  grantId: string
-): Promise<boolean> =>
-  ((
-    await db.query('delete from connector_tokens where grant_id = $1 and member_id = $2', [
-      grantId,
-      memberId
-    ])
-  ).rowCount ?? 0) > 0;
+/**
+ * Revokes one of a member's grants: every token it issued stops working at once, and the access log
+ * records it in the same transaction.
+ */
+export const revokeConnectorGrant = (pool: Pool, memberId: string, grantId: string) =>
+  inTransaction(pool, async (client): Promise<boolean> => {
+    const { rows } = await client.query<{ client_id: string }>(
+      'delete from connector_tokens where grant_id = $1 and member_id = $2 returning client_id',
+      [grantId, memberId]
+    );
+    const clientId = rows[0]?.client_id;
+    if (!clientId) return false;
+    await recordAccessEvent(client, {
+      memberId,
+      type: 'connector_revoked',
+      detail: { client: await clientName(client, clientId), reason: 'revoked' }
+    });
+    return true;
+  });
 
 /**
  * Deletes codes and tokens that can no longer be used, and clients that registered but never
