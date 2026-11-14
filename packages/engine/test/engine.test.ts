@@ -34,6 +34,7 @@ import {
   type OnBehalf,
   syncSpecStatus,
   tick,
+  type AdoptPort,
   type GitHubPort
 } from '../src';
 
@@ -85,6 +86,8 @@ const fakeGitHub = (
     /** The pull request's head; by default the branch head after any status commit written. */
     prHead?: string;
     mergeFails?: boolean;
+    /** What `failedChecks` reports as already failed on a commit. */
+    failed?: string[];
     /** How many times opening the pull request fails before it works. */
     openFails?: number;
     /** How many times writing a file (the spec status) fails before it works. */
@@ -156,8 +159,12 @@ const fakeGitHub = (
     },
     cancelAutoMerge: async (...args: unknown[]) => {
       calls.push({ method: 'cancelAutoMerge', args });
+    },
+    failedChecks: async (...args: unknown[]) => {
+      calls.push({ method: 'failedChecks', args });
+      return options.failed ?? [];
     }
-  } as unknown as GitHubPort;
+  } as unknown as GitHubPort & AdoptPort;
   return { port, calls };
 };
 
@@ -1281,6 +1288,32 @@ describe.skipIf(!url)('engine', () => {
     ]);
     // The second pass found the head it had taken in and read nothing more.
     expect(bot.calls.filter((call) => call.method === 'pushFacts')).toHaveLength(1);
+    // It left merging, so auto-merge is off even if a person turned it on, with no trail here.
+    expect(bot.calls.filter((call) => call.method === 'cancelAutoMerge')).toHaveLength(1);
+    const cancelled = await pool.query(
+      `select 1 from task_events where task_id = $1 and type = 'github_auto_merge_cancelled'`,
+      [taskId]
+    );
+    expect(cancelled.rowCount).toBe(1);
+  });
+
+  test('checks already red on a head taken in from outside send it back to the builder', async () => {
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    const bot = fakeGitHub({ branchHead: 'bot1', failed: ['GitHub Actions: failure'] });
+    await adoptOutsidePushes(pool, bot.port, [taskId]);
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({
+      stage: 'building',
+      headSha: 'bot1'
+    });
+    expect(bot.calls.find((call) => call.method === 'failedChecks')?.args[0]).toMatchObject({
+      sha: 'bot1'
+    });
+    const failed = await pool.query<{ details: string }>(
+      `select payload->>'details' as details from task_events where task_id = $1 and type = 'ci_failed'`,
+      [taskId]
+    );
+    expect(failed.rows.map((row) => row.details)).toEqual(['GitHub Actions: failure']);
   });
 
   test("Officina's own status commit on the verified head is not a push from outside", async () => {

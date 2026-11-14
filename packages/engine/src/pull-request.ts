@@ -13,13 +13,15 @@ import {
 import {
   applyCommand,
   expectedHead,
+  type ApplyResult,
   latestBuildRun,
   linkPullRequest,
   loadTaskContext,
   type StoredTaskContext
 } from '@officina/db';
-import type { GitHubClient } from '@officina/github';
+import type { GitHubClient, RepoRef } from '@officina/github';
 import type { Pool } from 'pg';
+import { stopAutoMergeOnLeaving } from './auto-merge';
 import { syncSpecStatus, taskLink, type SyncGitHubPort } from './github-sync';
 
 export type PullRequestPort = Pick<GitHubClient, 'openPullRequest'> & SyncGitHubPort;
@@ -161,9 +163,34 @@ const movableFromOutside = (
  * Officina's own status commit is recorded before it is looked for. Skipped while a build run is
  * still going: its push, and the status commit after it, are not recorded yet.
  */
+export type AdoptPort = PushFactsPort &
+  Pick<GitHubClient, 'pullRequestHead' | 'failedChecks' | 'cancelAutoMerge'>;
+
+/**
+ * What follows a head taken in: auto-merge off if the task left `merging`, since GitHub would land
+ * the new head once its checks pass, and the checks already red on it sent to the builder, since
+ * GitHub reported them before any task held that commit and nothing will report them again.
+ */
+const afterAdoption = async (
+  pool: Pool,
+  github: AdoptPort,
+  input: { taskId: string; ref: RepoRef; pullRequest: number; headSha: string },
+  adopted: ApplyResult
+) => {
+  await stopAutoMergeOnLeaving(pool, github, input, adopted);
+  if (!adopted.ok || adopted.task.stage !== 'reviewing') return;
+  const failures = await github.failedChecks({ ...input.ref, sha: input.headSha });
+  if (failures.length === 0) return;
+  await applyCommand(pool, {
+    taskId: input.taskId,
+    command: { type: 'ci_failed', headSha: input.headSha, details: failures.join('; ') },
+    actor: ENGINE
+  });
+};
+
 export const adoptOutsidePushes = async (
   pool: Pool,
-  github: PushFactsPort & Pick<GitHubClient, 'pullRequestHead'>,
+  github: AdoptPort,
   taskIds: readonly string[]
 ) => {
   for (const taskId of taskIds) {
@@ -183,11 +210,17 @@ export const adoptOutsidePushes = async (
       catalogs: config.config.docs.standards.catalogs
     });
     if (head.headSha === expected) continue;
-    await applyCommand(pool, {
+    const adopted = await applyCommand(pool, {
       taskId,
       command: { type: 'outside_push', ...head },
       actor: ENGINE,
       guard: (current) => current.stage === task.stage && current.headSha === task.headSha
     });
+    await afterAdoption(
+      pool,
+      github,
+      { taskId, ref, pullRequest: context.pullRequest, headSha: head.headSha },
+      adopted
+    );
   }
 };

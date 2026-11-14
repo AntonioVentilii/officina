@@ -1,3 +1,4 @@
+import { statusFailure, suiteFailure, type CheckSuite, type CommitStatus } from './checks';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
 /** Checks GitHub's `X-Hub-Signature-256` header against the raw request body, in constant time. */
@@ -54,8 +55,6 @@ export type WebhookAction =
       readonly details: string;
     };
 
-const FAILED_CONCLUSIONS = new Set(['failure', 'timed_out', 'action_required', 'startup_failure']);
-const FAILED_STATUSES = new Set(['failure', 'error']);
 const TRUSTED_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
 
 interface RepoPayload {
@@ -165,37 +164,18 @@ export const parseWebhookEvent = (event: string | null, payload: unknown): Webho
   if (event === 'check_suite') {
     const body = payload as {
       action?: string;
-      check_suite?: { conclusion?: string | null; head_sha?: string; app?: { name?: string } };
+      check_suite?: CheckSuite & { head_sha?: string };
     };
     const suite = body.check_suite;
-    if (body.action !== 'completed' || !suite?.conclusion || !suite.head_sha) return null;
-    if (!FAILED_CONCLUSIONS.has(suite.conclusion)) return null;
-    return {
-      kind: 'checks_failed',
-      repo,
-      headSha: suite.head_sha,
-      details: `${suite.app?.name ?? 'checks'}: ${suite.conclusion}`
-    };
+    if (body.action !== 'completed' || !suite?.head_sha) return null;
+    const details = suiteFailure(suite);
+    return details ? { kind: 'checks_failed', repo, headSha: suite.head_sha, details } : null;
   }
 
-  // Commit statuses are what CI outside GitHub Actions reports with, such as a deploy preview.
   if (event === 'status') {
-    const body = payload as {
-      sha?: string;
-      state?: string;
-      context?: string;
-      description?: string | null;
-      target_url?: string | null;
-    };
-    if (!body.sha || !body.state || !FAILED_STATUSES.has(body.state)) return null;
-    const details = [
-      `${body.context ?? 'status'}: ${body.state}`,
-      body.description ? `(${body.description})` : null,
-      body.target_url ?? null
-    ]
-      .filter(Boolean)
-      .join(' ');
-    return { kind: 'checks_failed', repo, headSha: body.sha, details };
+    const body = payload as CommitStatus & { sha?: string };
+    const details = body.sha ? statusFailure(body) : null;
+    return details && body.sha ? { kind: 'checks_failed', repo, headSha: body.sha, details } : null;
   }
 
   return null;

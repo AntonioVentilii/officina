@@ -6,7 +6,6 @@ import {
 } from '@officina/core';
 import {
   answeredOverviewLast,
-  appendTaskEvent,
   applyCommand,
   findProjectsByRepo,
   findTasksByCommit,
@@ -15,8 +14,10 @@ import {
   markLearningsApplied,
   reviewedHead,
   unlinkPullRequest,
-  updateProjectConfig
+  updateProjectConfig,
+  type ApplyResult
 } from '@officina/db';
+import { stopAutoMergeOnLeaving } from '@officina/engine';
 import {
   COPILOT_REVIEWERS,
   copilotVerdict,
@@ -129,37 +130,24 @@ const reviewNotes = async (
   return { notes, overviewOnly: false };
 };
 
-/**
- * Turns auto-merge off when a task just left `merging`, whatever moved it (a review, failing
- * checks): Officina never turns it on, but a person may have on GitHub, and the work must be
- * checked again before anything lands. A failure is left to `cancelStaleAutoMerges`, which retries
- * while the task's trail records auto-merge as on.
- */
+/** Turns auto-merge off when the command moved the task out of `merging` (`stopAutoMergeOnLeaving`). */
 const stopAutoMerge = async (
   pool: Pool,
   github: ConfigReader | undefined,
   input: { taskId: string; installationId: number; repo: string; prNumber: number },
-  result: Awaited<ReturnType<typeof applyCommand>>
+  result: ApplyResult
 ) => {
-  const leftMerging =
-    result.ok &&
-    result.events.some((event) => event.type === 'stage_changed' && event.from === 'merging');
-  if (!leftMerging || !github?.cancelAutoMerge) return;
-  try {
-    await github.cancelAutoMerge({
-      installationId: input.installationId,
-      repo: input.repo,
-      pullRequest: input.prNumber
-    });
-    await appendTaskEvent(pool, {
+  if (!github?.cancelAutoMerge) return;
+  await stopAutoMergeOnLeaving(
+    pool,
+    { cancelAutoMerge: github.cancelAutoMerge },
+    {
       taskId: input.taskId,
-      actor: ENGINE,
-      type: 'github_auto_merge_cancelled',
-      payload: { pullRequest: input.prNumber }
-    });
-  } catch {
-    // Left to `cancelStaleAutoMerges`.
-  }
+      ref: { installationId: input.installationId, repo: input.repo },
+      pullRequest: input.prNumber
+    },
+    result
+  );
 };
 
 /** Sends one task back to its builder with feedback left on GitHub, once per answer. */
