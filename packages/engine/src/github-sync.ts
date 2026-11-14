@@ -25,10 +25,11 @@ export const taskLink = (publicUrl: string, projectId: string, taskNumber: numbe
 /** Acting on GitHub as a member (the verifier, the requester), with their own linked account. */
 export interface OnBehalf {
   readonly publicUrl: string;
-  tokenFor(memberId: string): Promise<{ token: string; login: string } | null>;
+  /** The member's token, login and GitHub's stable user id, which survives a renamed login. */
+  tokenFor(memberId: string): Promise<{ token: string; login: string; userId: number } | null>;
   readonly asUser: Pick<
     GitHubAsUser,
-    'pullRequest' | 'approve' | 'mergeWhenReady' | 'requestCopilotReview'
+    'pullRequest' | 'reviews' | 'approve' | 'mergeWhenReady' | 'requestCopilotReview'
   >;
 }
 
@@ -70,9 +71,42 @@ const approvingAccount = async (pool: Pool, onBehalf: OnBehalf, taskId: string) 
 };
 
 /**
+ * Approves exactly the verified head as the member, unless their approval of it is already on
+ * GitHub: an approval whose record was lost (the process died, or the write failed, right after
+ * GitHub took it) must not be sent twice.
+ */
+const approveOnce = async (
+  onBehalf: OnBehalf,
+  account: { token: string; login: string; userId: number },
+  input: { repo: string; pullRequest: number; headSha: string; body: string }
+) => {
+  const reviews = await onBehalf.asUser.reviews(account.token, input.repo, input.pullRequest);
+  // The member's latest review of this head is what stands: an approval later followed by a
+  // request for changes is not one. Comments change nothing, so they are left out.
+  const latest = reviews
+    .filter(
+      (review) =>
+        review.userId === account.userId &&
+        review.commitId === input.headSha &&
+        review.state !== 'COMMENTED'
+    )
+    .at(-1);
+  if (latest?.state === 'APPROVED') return;
+  await onBehalf.asUser.approve(
+    account.token,
+    input.repo,
+    input.pullRequest,
+    input.headSha,
+    input.body
+  );
+};
+
+/**
  * Once a task is verified and its spec marked Implemented, approves the pull request on GitHub as
  * the member whose approval passed the gate, so their check counts as a review there. Without that
- * member's linked account nothing happens. It is tried once; a failure is recorded.
+ * member's linked account nothing happens. It is tried once; a failure is recorded. The approval is
+ * recorded outside the failure path: a record that fails is tried again on the next pass, which
+ * finds the approval already on GitHub and records it without approving again.
  */
 export const approveOnGitHub = async (
   pool: Pool,
@@ -91,6 +125,7 @@ export const approveOnGitHub = async (
   const account = await approvingAccount(pool, onBehalf, input.taskId);
   if (!account) return;
   const { actor } = account;
+  let approvedHead: string;
   try {
     const pr = await onBehalf.asUser.pullRequest(account.token, input.repo, input.pullRequest);
     if (pr.merged || pr.state !== 'open') return;
@@ -111,19 +146,13 @@ export const approveOnGitHub = async (
       });
       return;
     }
-    await onBehalf.asUser.approve(
-      account.token,
-      input.repo,
-      input.pullRequest,
-      expected,
-      `Verified in ${taskLink(onBehalf.publicUrl, input.projectId, input.taskNumber)}.`
-    );
-    await appendTaskEvent(pool, {
-      taskId: input.taskId,
-      actor,
-      type: 'github_approved',
-      payload: { login: account.login, headSha: expected }
+    await approveOnce(onBehalf, account, {
+      repo: input.repo,
+      pullRequest: input.pullRequest,
+      headSha: expected,
+      body: `Verified in ${taskLink(onBehalf.publicUrl, input.projectId, input.taskNumber)}.`
     });
+    approvedHead = expected;
   } catch (error) {
     await appendTaskEvent(pool, {
       taskId: input.taskId,
@@ -131,7 +160,14 @@ export const approveOnGitHub = async (
       type: 'github_approval_failed',
       payload: { login: account.login, error: (error as Error).message.slice(0, 500) }
     });
+    return;
   }
+  await appendTaskEvent(pool, {
+    taskId: input.taskId,
+    actor,
+    type: 'github_approved',
+    payload: { login: account.login, headSha: approvedHead }
+  });
 };
 
 /**

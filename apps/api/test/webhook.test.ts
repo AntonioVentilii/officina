@@ -12,6 +12,7 @@ import {
 import { Pool } from 'pg';
 import { createTaskInMerging, resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
 import { catchUpPullRequests, createApp, type PullRequestReader } from '../src';
+import { MAX_REQUEST_BYTES } from '../src/app';
 
 const url = process.env.TEST_DATABASE_URL;
 const SECRET = 'test-webhook-secret-with-enough-length';
@@ -61,6 +62,21 @@ describe.skipIf(!url)('api', () => {
     const response = await app.handle(new Request('http://officina.test/health'));
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ok: true });
+  });
+
+  test('a body larger than the cap is refused before it is read', async () => {
+    const server = createApp({ pool, webhookSecret: SECRET }).listen({ port: 0 });
+    try {
+      const response = await fetch(`http://localhost:${server.server!.port}/github/webhook`, {
+        method: 'POST',
+        headers: { 'x-github-event': 'push', 'x-github-delivery': 'd-big' },
+        body: 'x'.repeat(MAX_REQUEST_BYTES + 1)
+      });
+      expect(response.status).toBe(413);
+      expect((await pool.query('select 1 from webhook_deliveries')).rowCount).toBe(0);
+    } finally {
+      await server.stop();
+    }
   });
 
   test('a delivery with a bad signature is rejected and changes nothing', async () => {
