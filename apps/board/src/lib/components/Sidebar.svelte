@@ -101,11 +101,12 @@
       {#if session.me.github}
         <div class="github" title="Approvals you give here also approve on GitHub as you">
           <GitMerge size={13} />@{session.me.github.login}
+          <button class="connect" onclick={() => session.disconnectGitHub()}>Disconnect</button>
         </div>
       {:else}
-        <a class="github connect" href="/auth/github/start?mode=link" data-sveltekit-reload>
+        <button class="github connect" onclick={() => session.connectGitHub()}>
           <GitMerge size={13} />Connect GitHub
-        </a>
+        </button>
       {/if}
     {/if}
     <div class="looks" role="group" aria-label="Look">
@@ -331,7 +332,11 @@
     letter-spacing: 0.02em;
   }
 
-  .github.connect {
+  .connect {
+    border: 0;
+    background: none;
+    font: inherit;
+    cursor: pointer;
     color: var(--nav-text);
     text-decoration: underline;
     text-underline-offset: 3px;

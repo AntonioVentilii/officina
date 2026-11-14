@@ -146,16 +146,46 @@ describe.skipIf(!url)('GitHub sign-in', () => {
     };
   };
 
-  const signIn = async (app: ReturnType<typeof appFor>['app']) => {
-    const link = await loginLink(pool, { publicUrl: 'https://officina.example' });
-    const response = await app.handle(
+  const redeem = (
+    app: ReturnType<typeof appFor>['app'],
+    link: string,
+    cookie?: string,
+    replace?: boolean
+  ) =>
+    app.handle(
       new Request('http://local/auth/redeem', {
         method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-officina-request': '1' },
-        body: JSON.stringify({ token: link.slice(link.indexOf('#') + 1) })
+        headers: {
+          'content-type': 'application/json',
+          'x-officina-request': '1',
+          ...(cookie ? { cookie } : {})
+        },
+        body: JSON.stringify({ token: link.slice(link.indexOf('#') + 1), replace })
       })
     );
-    return response.headers.get('set-cookie')!.split(';')[0]!;
+
+  const sessionFrom = (response: Response) => response.headers.get('set-cookie')!.split(';')[0]!;
+
+  const signIn = async (app: ReturnType<typeof appFor>['app'], link?: string) =>
+    sessionFrom(
+      await redeem(app, link ?? (await loginLink(pool, { publicUrl: 'https://officina.example' })))
+    );
+
+  const inviteTim = () =>
+    invite(pool, {
+      publicUrl: 'https://officina.example',
+      email: 'tim@example.com',
+      name: 'Tim',
+      role: 'contributor',
+      domains: []
+    });
+
+  /** Where the browser is sent to authorize, and the cookie that binds the state to it. */
+  const authorization = (url: string, response: Response) => {
+    const state = new URL(url).searchParams.get('state')!;
+    const oauth = response.headers.getSetCookie()[0]!.split(';')[0]!;
+    expect(oauth).toBe(`officina_oauth=${state}`);
+    return { state, oauth };
   };
 
   const start = async (app: ReturnType<typeof appFor>['app'], mode: string, cookie?: string) => {
@@ -165,10 +195,19 @@ describe.skipIf(!url)('GitHub sign-in', () => {
       })
     );
     expect(response.status).toBe(302);
-    const state = new URL(response.headers.get('location')!).searchParams.get('state')!;
-    const oauth = response.headers.get('set-cookie')!.split(';')[0]!;
-    expect(oauth).toBe(`officina_oauth=${state}`);
-    return { state, oauth };
+    return authorization(response.headers.get('location')!, response);
+  };
+
+  const link = async (app: ReturnType<typeof appFor>['app'], cookie: string) => {
+    const response = await app.handle(
+      new Request('http://local/auth/github/link', {
+        method: 'POST',
+        headers: { 'x-officina-request': '1', cookie }
+      })
+    );
+    expect(response.status).toBe(200);
+    const { redirect } = (await response.json()) as { redirect: string };
+    return authorization(redirect, response);
   };
 
   const callback = (app: ReturnType<typeof appFor>['app'], state: string, cookie: string) =>
@@ -181,7 +220,7 @@ describe.skipIf(!url)('GitHub sign-in', () => {
   test('a signed-in member links their account, then can sign in with GitHub alone', async () => {
     const { app, accounts } = appFor({ id: 42, login: 'antonio' });
     const session = await signIn(app);
-    const { state, oauth } = await start(app, 'link', session);
+    const { state, oauth } = await link(app, session);
     const linked = await callback(app, state, oauth);
     expect(linked.headers.get('location')).toBe('/?github=linked');
     expect(await accounts.tokenFor(seeded.ownerId)).toEqual({
@@ -210,7 +249,7 @@ describe.skipIf(!url)('GitHub sign-in', () => {
     expect(replay.headers.get('location')).toContain('/signin?error=');
   });
 
-  test('linking an account another member had moves it, and the log says who lost it', async () => {
+  test('linking an account another member holds is refused, and the log records only the first link', async () => {
     await invite(pool, {
       publicUrl: 'https://officina.example',
       email: 'gio@example.com',
@@ -223,25 +262,23 @@ describe.skipIf(!url)('GitHub sign-in', () => {
     expect(await accounts.complete('c', seeded.ownerId)).toMatchObject({ ok: true });
     // Signing in with the account stores fresh tokens but links nothing new.
     expect(await accounts.complete('c', null)).toMatchObject({ ok: true });
-    expect(await accounts.complete('c', gio)).toMatchObject({ ok: true, memberId: gio });
+    expect(await accounts.complete('c', gio)).toEqual({
+      ok: false,
+      problem: 'github_linked_elsewhere'
+    });
 
-    expect(await accounts.tokenFor(seeded.ownerId)).toBeNull();
+    expect(await accounts.tokenFor(seeded.ownerId)).not.toBeNull();
     const github = (await accessLogView(pool, seeded.projectId))
       .filter((event) => event.type.startsWith('github_'))
-      .map((event) => `${event.member} ${event.text}`)
-      .reverse();
-    expect(github).toEqual([
-      'Antonio connected GitHub as @antonio',
-      'Antonio lost GitHub @antonio: it was connected by Gio',
-      'Gio connected GitHub as @antonio'
-    ]);
+      .map((event) => `${event.member} ${event.text}`);
+    expect(github).toEqual(['Antonio connected GitHub as @antonio']);
   });
 
   test('after a GitHub sign-in a member returns only to a path on this site', async () => {
     const { app } = appFor({ id: 42, login: 'antonio' });
     const session = await signIn(app);
-    const link = await start(app, 'link', session);
-    await callback(app, link.state, link.oauth);
+    const linked = await link(app, session);
+    await callback(app, linked.state, linked.oauth);
 
     const landing = async (next: string) => {
       const { state, oauth } = await start(app, 'signin');
@@ -331,5 +368,85 @@ describe.skipIf(!url)('GitHub sign-in', () => {
     );
     expect(await accounts.complete('c', seeded.ownerId)).toMatchObject({ ok: true });
     expect(await accounts.tokenFor(seeded.ownerId)).toBeNull();
+  });
+
+  const githubOwners = async () =>
+    (
+      await pool.query<{ subject: string; member_id: string }>(
+        "select subject, member_id from identities where provider = 'github' order by subject"
+      )
+    ).rows;
+
+  test('connecting GitHub starts only from a request the board sent', async () => {
+    const { app } = appFor({ id: 42, login: 'antonio' });
+    const session = await signIn(app);
+    const forged = await app.handle(
+      new Request('http://local/auth/github/link', { method: 'POST', headers: { cookie: session } })
+    );
+    expect(forged.status).toBe(403);
+
+    // A plain link only ever starts a sign-in, whoever is signed in.
+    const { state, oauth } = await start(app, 'link', session);
+    expect(state.startsWith('s.')).toBe(true);
+    const result = await callback(app, state, oauth);
+    expect(result.headers.get('location')).toContain('/signin?error=');
+    expect((await pool.query('select 1 from github_accounts')).rowCount).toBe(0);
+  });
+
+  test('a sign-in link for someone else replaces the session this browser holds only when asked', async () => {
+    const { app } = appFor({ id: 42, login: 'antonio' });
+    const owner = await signIn(app);
+    const timLink = await inviteTim();
+
+    const asked = await redeem(app, timLink, owner);
+    expect(asked.status).toBe(409);
+    expect(asked.headers.get('set-cookie')).toBeNull();
+
+    // The link was not spent: confirming signs in as Tim.
+    const confirmed = await redeem(app, timLink, owner, true);
+    expect(confirmed.status).toBe(200);
+    const me = (await (
+      await app.handle(
+        new Request('http://local/api/me', { headers: { cookie: sessionFrom(confirmed) } })
+      )
+    ).json()) as { member: { name: string } };
+    expect(me.member.name).toBe('Tim');
+
+    // A link for the member already signed in needs no confirmation.
+    const own = await loginLink(pool, { publicUrl: 'https://officina.example' });
+    expect((await redeem(app, own, owner)).status).toBe(200);
+  });
+
+  test('a GitHub account connected to one member is never moved to another', async () => {
+    const { app } = appFor({ id: 42, login: 'antonio' });
+    const owner = await signIn(app);
+    const first = await link(app, owner);
+    await callback(app, first.state, first.oauth);
+
+    const tim = await signIn(app, await inviteTim());
+    const second = await link(app, tim);
+    const refused = await callback(app, second.state, second.oauth);
+    expect(refused.headers.get('location')).toBe('/signin?error=github_linked_elsewhere');
+    const accounts = await pool.query('select member_id from github_accounts');
+    expect(accounts.rows).toEqual([{ member_id: seeded.ownerId }]);
+    expect(await githubOwners()).toEqual([{ subject: '42', member_id: seeded.ownerId }]);
+  });
+
+  test('connecting another GitHub account stops the previous one from signing in', async () => {
+    const before = appFor({ id: 42, login: 'antonio' });
+    const session = await signIn(before.app);
+    const first = await link(before.app, session);
+    await callback(before.app, first.state, first.oauth);
+
+    const after = appFor({ id: 43, login: 'antonio-work' });
+    const second = await link(after.app, session);
+    expect((await callback(after.app, second.state, second.oauth)).headers.get('location')).toBe(
+      '/?github=linked'
+    );
+    expect(await githubOwners()).toEqual([{ subject: '43', member_id: seeded.ownerId }]);
+
+    const old = await start(before.app, 'signin');
+    const refused = await callback(before.app, old.state, old.oauth);
+    expect(refused.headers.get('location')).toBe('/signin?error=github_not_linked');
   });
 });

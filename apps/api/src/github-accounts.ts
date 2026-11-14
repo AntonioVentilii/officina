@@ -13,7 +13,8 @@ import type { TokenBox } from './token-box';
  * Why a GitHub sign-in or link did not complete. Only the code reaches the browser, in the sign-in
  * page's address; the board words each one (`apps/board/src/routes/signin/+page.svelte`).
  */
-export type GitHubSignInProblem = 'github_mismatch' | 'github_expired' | 'github_not_linked';
+export type GitHubSignInProblem =
+  'github_mismatch' | 'github_expired' | 'github_not_linked' | 'github_linked_elsewhere';
 
 /** Refresh a little before GitHub would refuse the token. */
 const REFRESH_MARGIN_MS = 5 * 60 * 1000;
@@ -58,11 +59,14 @@ export const createGitHubAccounts = (deps: {
     const user = await deps.asUser.user(tokens.accessToken);
     if (claim && !(await claim())) return { ok: false, problem: 'github_expired' };
     if (linkTo) {
-      await linkGitHubAccount(pool, sealed(linkTo, user, tokens));
+      // An account another member holds stays theirs until they disconnect it.
+      const linked = await linkGitHubAccount(pool, sealed(linkTo, user, tokens));
+      if (!linked.ok) return { ok: false, problem: 'github_linked_elsewhere' };
       return { ok: true, memberId: linkTo, login: user.login };
     }
     const memberId = await memberForGitHubUser(pool, user.id);
     if (!memberId) return { ok: false, problem: 'github_not_linked' };
+    // The account is already this member's own, so storing its fresh tokens cannot be refused.
     await saveGitHubAccount(pool, sealed(memberId, user, tokens));
     return { ok: true, memberId, login: user.login };
   };
@@ -84,10 +88,11 @@ export const createGitHubAccounts = (deps: {
     }
     if (!account.refreshTokenEnc || expired(account.refreshExpiresAt)) return null;
     const tokens = await deps.auth.refresh(box.open(account.refreshTokenEnc));
-    await saveGitHubAccount(
+    const saved = await saveGitHubAccount(
       pool,
       sealed(memberId, { id: account.githubUserId, login: account.login }, tokens)
     );
+    if (!saved.ok) return null;
     return { token: tokens.accessToken, login: account.login, userId: account.githubUserId };
   };
 

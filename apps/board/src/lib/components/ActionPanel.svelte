@@ -220,9 +220,7 @@
           <div class="label">Merge the pull request on GitHub; the task closes itself.</div>
           {#if session.me?.githubAvailable}
             <div class="approval faint">
-              <a class="inline" href="/auth/github/start?mode=link" data-sveltekit-reload
-                >Connect GitHub</a
-              >
+              <button class="inline" onclick={() => session.connectGitHub()}>Connect GitHub</button>
               and your next verification approves the pull request on GitHub as you.
             </div>
           {/if}
@@ -550,6 +548,12 @@
   }
 
   .inline {
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
     text-decoration: underline;
     text-underline-offset: 3px;
   }

@@ -54,6 +54,16 @@ export const createInviteLink = (
     return { ok: true, token: await createLoginLink(client, input.memberId, input.ttlMs) };
   });
 
+/** The member a sign-in link signs in as, while it can still be used; it is not spent. */
+export const loginLinkMember = async (db: Queryable, token: string): Promise<string | null> =>
+  (
+    await db.query<{ member_id: string }>(
+      `select member_id from login_links
+       where token_hash = $1 and used_at is null and expires_at > now()`,
+      [hashToken(token)]
+    )
+  ).rows[0]?.member_id ?? null;
+
 /**
  * Spends a sign-in link and opens a session, both or neither: a failure after spending it would
  * otherwise burn the link without signing anyone in. A link works once, and only before it expires.

@@ -65,17 +65,26 @@ const COLUMNS = `member_id as "memberId", github_user_id::float8 as "githubUserI
   access_token_enc as "accessTokenEnc", access_expires_at as "accessExpiresAt",
   refresh_token_enc as "refreshTokenEnc", refresh_expires_at as "refreshExpiresAt"`;
 
+export type SaveGitHubAccountResult =
+  { readonly ok: true } | { readonly ok: false; readonly error: 'linked_elsewhere' };
+
 /**
- * Stores a member's GitHub account, its tokens and its identity, moving it from any other member;
- * returns whom it was moved from.
+ * Stores a member's GitHub account, its tokens and its identity. An account linked to another
+ * member stays theirs until they disconnect it, and relinking to another account drops the sign-in
+ * the member's previous account gave.
  */
-const writeGitHubAccount = async (db: PoolClient, account: GitHubAccountRow) => {
-  // A GitHub account belongs to one member: linking it elsewhere moves it.
-  const moved = await db.query<{ member_id: string; login: string }>(
-    `delete from github_accounts where github_user_id = $1 and member_id <> $2
-     returning member_id, login`,
-    [account.githubUserId, account.memberId]
+const writeGitHubAccount = async (
+  db: PoolClient,
+  account: GitHubAccountRow
+): Promise<SaveGitHubAccountResult> => {
+  const subject = String(account.githubUserId);
+  const taken = await db.query(
+    `select 1 from github_accounts where github_user_id = $1 and member_id <> $2
+     union all
+     select 1 from identities where provider = 'github' and subject = $3 and member_id <> $2`,
+    [account.githubUserId, account.memberId, subject]
   );
+  if (taken.rowCount) return { ok: false, error: 'linked_elsewhere' };
   await db.query(
     `insert into github_accounts (member_id, github_user_id, login, access_token_enc, access_expires_at,
        refresh_token_enc, refresh_expires_at, updated_at)
@@ -95,38 +104,40 @@ const writeGitHubAccount = async (db: PoolClient, account: GitHubAccountRow) => 
     ]
   );
   await db.query(
-    `insert into identities (provider, subject, member_id) values ('github', $1, $2)
-     on conflict (provider, subject) do update set member_id = excluded.member_id`,
-    [String(account.githubUserId), account.memberId]
+    "delete from identities where provider = 'github' and member_id = $1 and subject <> $2",
+    [account.memberId, subject]
   );
-  return moved.rows;
+  await db.query(
+    `insert into identities (provider, subject, member_id) values ('github', $1, $2)
+     on conflict (provider, subject) do nothing`,
+    [subject, account.memberId]
+  );
+  return { ok: true };
 };
 
 /** Stores fresh tokens for a member's GitHub account, as a sign-in or a refresh gets them. */
-export const saveGitHubAccount = (pool: Pool, account: GitHubAccountRow) =>
-  inTransaction(pool, async (db) => {
-    await writeGitHubAccount(db, account);
-  });
+export const saveGitHubAccount = (
+  pool: Pool,
+  account: GitHubAccountRow
+): Promise<SaveGitHubAccountResult> => inTransaction(pool, (db) => writeGitHubAccount(db, account));
 
 /**
- * Links a GitHub account to a member, all or nothing: moves it from any other member and records
- * both in the access log, the link for the member and its loss for whoever had it.
+ * Links a GitHub account to a member and records it in the access log, all or nothing. An account
+ * another member holds is refused, so nothing is recorded for it.
  */
-export const linkGitHubAccount = (pool: Pool, account: GitHubAccountRow) =>
+export const linkGitHubAccount = (
+  pool: Pool,
+  account: GitHubAccountRow
+): Promise<SaveGitHubAccountResult> =>
   inTransaction(pool, async (db) => {
-    for (const previous of await writeGitHubAccount(db, account)) {
-      await recordAccessEvent(db, {
-        memberId: previous.member_id,
-        type: 'github_unlinked',
-        detail: { login: previous.login, reason: 'moved' },
-        actor: { memberId: account.memberId }
-      });
-    }
+    const saved = await writeGitHubAccount(db, account);
+    if (!saved.ok) return saved;
     await recordAccessEvent(db, {
       memberId: account.memberId,
       type: 'github_linked',
       detail: { login: account.login }
     });
+    return saved;
   });
 
 export const loadGitHubAccount = async (

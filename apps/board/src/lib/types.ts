@@ -310,7 +310,8 @@ export interface Notice {
 }
 
 /** Why a GitHub sign-in did not complete, as the API puts it in `/signin?error=`. */
-export type GitHubSignInProblem = 'github_mismatch' | 'github_expired' | 'github_not_linked';
+export type GitHubSignInProblem =
+  'github_mismatch' | 'github_expired' | 'github_not_linked' | 'github_linked_elsewhere';
 
 /** Why the connector's consent page cannot show a request, as the API sends it. */
 export type AuthorizationProblem = 'unknown_client' | 'unregistered_redirect';

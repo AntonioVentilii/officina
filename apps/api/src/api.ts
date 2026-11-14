@@ -10,6 +10,7 @@ import {
   endSession,
   listMemberProjects,
   loadRun,
+  loginLinkMember,
   markNotificationRead,
   recordAccessEvent,
   memberForSession,
@@ -163,6 +164,11 @@ const localPath = (value: unknown): string | null => {
   return url && url.origin === HERE ? `${url.pathname}${url.search}${url.hash}` : null;
 };
 
+const redeemSchema = z.strictObject({
+  token: z.string().min(20).max(200),
+  replace: z.boolean().default(false)
+});
+
 const consentSchema = z.strictObject({
   params: z.record(z.string(), z.string().max(4_000)),
   allow: z.boolean()
@@ -216,6 +222,23 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
       domains: project.domains
     };
   };
+
+  const githubLogin = () => {
+    if (!deps.githubLogin) throw new HttpError(404, 'GitHub sign-in is not configured');
+    return deps.githubLogin;
+  };
+
+  const oauthCookie = (name: string, value: string) =>
+    [
+      `${name}=${value}`,
+      'Path=/auth/github',
+      'HttpOnly',
+      'SameSite=Lax',
+      `Max-Age=${OAUTH_TTL_MS / 1000}`,
+      secure ? 'Secure' : null
+    ]
+      .filter(Boolean)
+      .join('; ');
 
   const mutation = (request: Request) => {
     if (request.headers.get(REQUEST_HEADER) !== '1')
@@ -298,7 +321,15 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
       })
       .post('/auth/redeem', async ({ body, request, set }) => {
         mutation(request);
-        const { token } = parse(z.strictObject({ token: z.string().min(20).max(200) }), body);
+        const { token, replace } = parse(redeemSchema, body);
+        // A link for someone else never replaces the session this browser holds without a click.
+        const current = readCookie(request);
+        const signedInAs = current && !replace ? await memberForSession(pool, current) : null;
+        if (signedInAs) {
+          const linkFor = await loginLinkMember(pool, token);
+          if (linkFor && linkFor !== signedInAs.id)
+            throw new HttpError(409, 'this link signs in someone else');
+        }
         const redeemed = await redeemLoginLink(pool, token);
         if (!redeemed)
           throw new HttpError(410, 'this sign-in link was already used or has expired');
@@ -315,32 +346,28 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
         return { ok: true };
       })
       .get('/auth/options', () => ({ github: Boolean(deps.githubLogin) }))
-      // GitHub authorization: `link` connects the signed-in member's account, `signin` signs in with
-      // an account linked before. The state is single-use and bound to this browser by a cookie.
-      .get('/auth/github/start', async ({ request, query }) => {
-        if (!deps.githubLogin) throw new HttpError(404, 'GitHub sign-in is not configured');
-        let state = signinState();
-        if (query.mode === 'link') {
-          const memberId = (await signedIn(request)).member.id;
-          state = randomBytes(24).toString('base64url');
-          await createOAuthState(pool, state, memberId, OAUTH_TTL_MS);
-        }
-        const cookie = (name: string, value: string) =>
-          [
-            `${name}=${value}`,
-            'Path=/auth/github',
-            'HttpOnly',
-            'SameSite=Lax',
-            `Max-Age=${OAUTH_TTL_MS / 1000}`,
-            secure ? 'Secure' : null
-          ]
-            .filter(Boolean)
-            .join('; ');
+      // GitHub authorization: a link from the sign-in page signs in with an account linked before.
+      // The state is single-use and bound to this browser by a cookie.
+      .get('/auth/github/start', ({ query }) => {
+        const state = signinState();
         const next = localPath(query.next);
-        return redirect(deps.githubLogin.authorizeUrl(state), [
-          cookie(OAUTH_COOKIE, state),
-          cookie(NEXT_COOKIE, next ? encodeURIComponent(next) : '')
+        return redirect(githubLogin().authorizeUrl(state), [
+          oauthCookie(OAUTH_COOKIE, state),
+          oauthCookie(NEXT_COOKIE, next ? encodeURIComponent(next) : '')
         ]);
+      })
+      // Connecting the signed-in member's own account is a write, so it starts from the board.
+      .post('/auth/github/link', async ({ request, set }) => {
+        mutation(request);
+        const authorizeUrl = githubLogin().authorizeUrl;
+        const memberId = (await signedIn(request)).member.id;
+        const state = randomBytes(24).toString('base64url');
+        await createOAuthState(pool, state, memberId, OAUTH_TTL_MS);
+        set.headers['set-cookie'] = [
+          oauthCookie(OAUTH_COOKIE, state),
+          oauthCookie(NEXT_COOKIE, '')
+        ];
+        return { redirect: authorizeUrl(state) };
       })
       .get('/auth/github/callback', async ({ request, query }) => {
         if (!deps.githubLogin) throw new HttpError(404, 'GitHub sign-in is not configured');

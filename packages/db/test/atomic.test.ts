@@ -91,7 +91,7 @@ describe.skipIf(!url)('writes in several steps', () => {
     expect(await count('github_accounts')).toBe(1);
   });
 
-  test('a GitHub account whose move could not be logged stays with the member who had it', async () => {
+  test('a GitHub link whose log entry could not be written leaves no account behind', async () => {
     const account = {
       memberId: seeded.ownerId,
       githubUserId: 42,
@@ -101,18 +101,12 @@ describe.skipIf(!url)('writes in several steps', () => {
       refreshTokenEnc: null,
       refreshExpiresAt: null
     };
-    await linkGitHubAccount(pool, account);
-    const { rows } = await pool.query<{ id: string }>(
-      `insert into members (workspace_id, email, display_name)
-       select workspace_id, 'gio@example.com', 'Gio' from members where id = $1 returning id`,
-      [seeded.ownerId]
-    );
     await failInsertsInto('access_events');
-    await expect(linkGitHubAccount(pool, { ...account, memberId: rows[0]!.id })).rejects.toThrow(
+    await expect(linkGitHubAccount(pool, account)).rejects.toThrow(
       'insert into access_events failed'
     );
-    expect(await loadGitHubAccount(pool, seeded.ownerId)).toMatchObject({ githubUserId: 42 });
-    expect(await count('github_accounts')).toBe(1);
+    expect(await loadGitHubAccount(pool, seeded.ownerId)).toBeNull();
+    expect(await count('github_accounts')).toBe(0);
   });
 
   test('a request whose text could not be stored leaves no task behind', async () => {

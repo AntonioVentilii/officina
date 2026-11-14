@@ -1,5 +1,6 @@
 import { ApiError, get, post } from '$lib/api';
 import type { Me, Permission, Project } from '$lib/types';
+import { toasts } from './toasts.svelte';
 
 const PROJECT_KEY = 'officina.project';
 
@@ -58,6 +59,25 @@ class Session {
   selectProject(id: string) {
     this.projectId = id;
     store(PROJECT_KEY, id);
+  }
+
+  /** Connecting GitHub is a write, so it starts from a request this page sends, never a plain link. */
+  async connectGitHub() {
+    try {
+      const { redirect } = await post<{ redirect: string }>('/auth/github/link');
+      location.assign(redirect);
+    } catch (error) {
+      toasts.show('error', (error as Error).message);
+    }
+  }
+
+  async disconnectGitHub() {
+    try {
+      await post('/auth/github/unlink');
+      await this.load();
+    } catch (error) {
+      toasts.show('error', (error as Error).message);
+    }
   }
 
   async signOut() {
