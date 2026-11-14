@@ -441,7 +441,7 @@ describe('permissions', () => {
     ).toBe('cancelled');
   });
 
-  test('a watcher cannot send a spec or a result back, a contributor can', () => {
+  test('a watcher cannot send a spec or a result back, a contributor only where the policy names them', () => {
     const driver = createDriver([owner, productContributor, watcher]);
     const specReview = driver.step(
       driver.step(
@@ -465,12 +465,23 @@ describe('permissions', () => {
       expect(
         driver.attempt(task, { type: 'request_changes', note: 'no' }, asMember(watcher))
       ).toEqual({ ok: false, error: 'not_allowed' });
+    // The standard lane's plan approval names only the owner; its user-visible result, product.
     expect(
-      driver.step(
+      driver.attempt(
         specReview,
         { type: 'request_changes', note: 'name it Preferences' },
         asMember(productContributor)
+      )
+    ).toEqual({ ok: false, error: 'not_allowed' });
+    expect(
+      driver.step(
+        verifying,
+        { type: 'request_changes', note: 'name it Preferences' },
+        asMember(productContributor)
       ).stage
+    ).toBe('building');
+    expect(
+      driver.step(specReview, { type: 'request_changes', note: 'no' }, asMember(owner)).stage
     ).toBe('speccing');
   });
 
@@ -1516,6 +1527,46 @@ describe('guarded tasks', () => {
       error: 'not_allowed'
     });
     expect(driver.step(task, { type: 'claim' }, asMember(trusted)).stage).toBe('building');
+  });
+
+  test('nobody sends back or answers on a confidential task they may not read', () => {
+    const ceo = { id: 'tim', role: 'contributor', domains: ['product', 'confidential'] } as const;
+    const driver = createDriver([owner, productContributor, ceo], loadConfig(GUARDED));
+    let task = newTask('t1', owner.id);
+    task = driver.step(task, { type: 'submit_request' }, asMember(owner));
+    task = driver.step(task, { type: 'accept' }, asMember(owner));
+    task = driver.step(
+      task,
+      { type: 'post_spec', predictedPaths: ['room/investors.md'], userVisible: true },
+      asAgent('spec')
+    );
+    task = driver.step(
+      task,
+      {
+        type: 'plan_approval',
+        userVisible: true,
+        plan: { ...PLAN, extra: [{ requirement: { domain: 'product' }, reason: 'Copy.' }] }
+      },
+      asAgent('chooser')
+    );
+    const changes = { type: 'request_changes', note: 'no' } as const;
+    expect(driver.attempt(task, changes, asMember(productContributor))).toEqual({
+      ok: false,
+      error: 'not_allowed'
+    });
+    expect(driver.step(task, changes, asMember(ceo)).stage).toBe('speccing');
+
+    const asked = driver.step(
+      task,
+      { type: 'block', question: 'Which deck?', askedOf: { role: 'contributor' } },
+      asAgent('spec')
+    );
+    const answer = { type: 'answer', text: 'The new one.' } as const;
+    expect(driver.attempt(asked, answer, asMember(productContributor))).toEqual({
+      ok: false,
+      error: 'not_allowed'
+    });
+    expect(driver.step(asked, answer, asMember(ceo)).blocked).toBeNull();
   });
 
   test('submitting as is cannot skip a hold for the owner', () => {

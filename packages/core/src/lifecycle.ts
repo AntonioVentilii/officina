@@ -11,7 +11,13 @@ import { OWNER_GUARDS, guardsForPaths, secretFiles, withGuards, type Guard } fro
 import type { HandoffNeed } from './handoffs';
 import { computeLane, redPaths, stricterLane, type Lane } from './lanes';
 import { GATE_ACTIONS, PERMISSIONS, can, canAnswer, readsTask, type Action } from './permissions';
-import { evaluatePolicy, policyContext, type Approval } from './policies';
+import {
+  applicableRequirements,
+  eligibleMembers,
+  evaluatePolicy,
+  policyContext,
+  type Approval
+} from './policies';
 import type { QuestionOption } from './questions';
 import type { Member, Role } from './roles';
 
@@ -390,6 +396,20 @@ export const effectivePolicy = (
 /** Whether the task's guards call for the owner at both gates. */
 export const needsOwner = (task: Pick<Task, 'guards'>): boolean =>
   task.guards.some((guard) => OWNER_GUARDS.has(guard));
+
+/**
+ * Whether the policy in force at a gate names a member: whatever they decide there would meet one
+ * of its requirements, their own request included.
+ */
+const namedAt = (task: Task, context: DecideContext, gate: Gate, member: Member): boolean => {
+  const eligibility = {
+    ...policyContext(context.config, task, gate, { members: context.members, subject: '' }),
+    selfApproval: true
+  };
+  return applicableRequirements(effectivePolicy(context.config, task, gate), task.userVisible).some(
+    (requirement) => eligibleMembers(requirement, eligibility).some(({ id }) => id === member.id)
+  );
+};
 
 /**
  * Whether a result may skip people's verification: only in a green lane that opts in, only when a
@@ -792,7 +812,10 @@ export const decide = (
 
     case 'request_changes': {
       if (task.stage !== 'spec_review' && task.stage !== 'verifying') return fail('wrong_stage');
-      if (!memberCan(actor, context, GATE_ACTIONS[task.stage])) return fail('not_allowed');
+      const member = memberFor(actor, context);
+      // Sending the work back is for the people the gate's policy names, as approving it is.
+      if (member === undefined || !namedAt(task, context, task.stage, member))
+        return fail('not_allowed');
       const why: DomainEvent = { type: 'changes_requested', stage: task.stage, note: command.note };
       if (task.stage === 'verifying') return backToBuilding(task, context, why);
       const [moved, stageEvent] = moveTo(task, 'speccing');
@@ -1039,6 +1062,8 @@ export const decide = (
       const member = memberFor(actor, context);
       if (member === undefined || !canAnswer(member, task.blocked.askedOf))
         return fail('not_allowed');
+      // An answer is written in the thread, and nobody writes where they may not read.
+      if (!readsTask(member, task)) return fail('not_allowed');
       return ok({ ...task, blocked: null }, [{ type: 'unblocked', answer: command.text }]);
     }
 

@@ -208,7 +208,10 @@ export const commentAs = async (
   if (!member || !can(member, 'comment'))
     throw new TaskCommandError('watchers can read but not comment', 403);
   const taskId = await findTaskIdByNumber(pool, input.projectId, input.number);
-  if (!taskId) throw new TaskCommandError('task not found', 404);
+  const stored = taskId ? await loadTask(pool, taskId) : null;
+  if (!taskId || !stored) throw new TaskCommandError('task not found', 404);
+  if (!readsTask(member, stored.task))
+    throw new TaskCommandError('only members who may read this task can comment on it', 403);
   await addComment(pool, taskId, { kind: 'member', memberId: input.memberId }, input.text);
 };
 

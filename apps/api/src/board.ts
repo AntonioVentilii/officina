@@ -215,6 +215,16 @@ const optionsFor = (member: Member, blocked: Blocked) =>
 export const CONFIDENTIAL =
   "Confidential: only members who may see the project's confidential content can read this.";
 
+/** Why a person must build the task, if one must, in words only a viewer who reads the task sees. */
+const buildReasonFor = (
+  config: ProjectConfig | null,
+  row: BoardTaskRow,
+  viewer: Pick<BoardViewer, 'role' | 'domains'>
+): string | null => {
+  const reason = config && humanBuildReason(config, row);
+  return reason && !readsTask(viewer, row) ? CONFIDENTIAL : reason;
+};
+
 /** Free text a timeline event may carry, dropped for viewers who may not read the task. */
 const EVENT_TEXT = ['note', 'answer', 'reason', 'blocked'];
 
@@ -337,7 +347,7 @@ const waitingOn = (
       label: needs.length
         ? `Agents cannot go on: needs ${who} for ${needs.join(', ')}`
         : `A question for ${who}`,
-      me: canAnswer(member, row.blocked.askedOf)
+      me: readsTask(viewer, row) && canAnswer(member, row.blocked.askedOf)
     };
   }
   if (row.paused) return { kind: 'people', label: 'Paused', me: can(member, 'steer') };
@@ -380,7 +390,7 @@ const waitingOn = (
       };
     }
     case 'ready': {
-      const byPerson = facts.config && humanBuildReason(facts.config, row);
+      const byPerson = buildReasonFor(facts.config, row, viewer);
       if (byPerson)
         return {
           kind: 'people',
@@ -447,13 +457,15 @@ const buildActions = (row: BoardTaskRow, viewer: BoardViewer): BoardAction[] => 
 
 const actionsFor = (row: BoardTaskRow, viewer: BoardViewer): BoardAction[] => {
   const member = viewerMember(viewer);
-  if (TERMINAL_STAGES.has(row.stage)) return can(member, 'comment') ? ['comment'] : [];
+  // Nobody writes on a task they may not read: no comment, answer or changes.
+  const writes = readsTask(viewer, row);
+  if (TERMINAL_STAGES.has(row.stage)) return writes && can(member, 'comment') ? ['comment'] : [];
   const actions: BoardAction[] = [];
   const requester = row.requesterId === viewer.memberId;
   if (row.stage === 'request' && can(member, 'request') && (requester || can(member, 'triage')))
     actions.push('submit');
   if (row.blocked) {
-    if (canAnswer(member, row.blocked.askedOf)) actions.push('answer');
+    if (writes && canAnswer(member, row.blocked.askedOf)) actions.push('answer');
   } else if (!row.paused) {
     if (row.stage === 'triage' && can(member, 'triage')) actions.push('accept', 'decline');
     actions.push(...buildActions(row, viewer));
@@ -462,10 +474,10 @@ const actionsFor = (row: BoardTaskRow, viewer: BoardViewer): BoardAction[] => {
       can(member, GATE_ACTIONS[row.stage]) &&
       row.approvalPlans[row.stage]?.subject === gateSubject(row, row.stage)
     )
-      actions.push('approve', 'changes');
+      actions.push('approve', ...(writes ? (['changes'] as const) : []));
   }
   if (can(member, 'steer') || (requester && can(member, 'request'))) actions.push('cancel');
-  if (can(member, 'comment')) actions.push('comment');
+  if (writes && can(member, 'comment')) actions.push('comment');
   return actions;
 };
 
@@ -587,7 +599,12 @@ const GATE_PEOPLE = [
  * whom the chooser asked to check, and who merges. The requester approves only where a
  * requirement names them, or where the project lets them meet their own gates.
  */
-const peopleView = (row: BoardTaskRow, facts: ProjectFacts, approvals: readonly Approval[]) => {
+const peopleView = (
+  row: BoardTaskRow,
+  viewer: BoardViewer,
+  facts: ProjectFacts,
+  approvals: readonly Approval[]
+) => {
   const config = parseProjectConfig(facts.rawConfig);
   const name = (id: string) => facts.names.get(id) ?? 'a former member';
   const gates = config.ok
@@ -624,7 +641,7 @@ const peopleView = (row: BoardTaskRow, facts: ProjectFacts, approvals: readonly 
         };
       })
     : [];
-  const byPerson = facts.config && humanBuildReason(facts.config, row);
+  const byPerson = buildReasonFor(facts.config, row, viewer);
   const developers = facts.members
     .filter((member) => buildsIt(row, member))
     .map((member) => name(member.id));
@@ -764,7 +781,7 @@ export const taskView = async (
     })),
     runs: seesTechnical(viewer) ? runs.map((run) => runView(run, consoleWorkspace)) : [],
     plan: shown.value(planView(row, facts)),
-    people: peopleView(row, facts, approvals),
+    people: peopleView(row, viewer, facts, approvals),
     approval: approval && {
       gate: approval.gate,
       planned: approval.planned,

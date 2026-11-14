@@ -444,6 +444,100 @@ describe.skipIf(!url)('board api', () => {
     expect(cli).not.toContain('/pull/12');
   });
 
+  test('who may not read a confidential task reads no reason on it and writes nothing on it', async () => {
+    const hiddenText =
+      "Confidential: only members who may see the project's confidential content can read this.";
+    await pool.query(
+      `update projects set config = jsonb_set(config, '{guards}', $1::jsonb) where id = $2`,
+      [JSON.stringify({ confidential_terms: ['investor'] }), seeded.projectId]
+    );
+    const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    const member = (name: string, domains: string[]) =>
+      invite(pool, {
+        publicUrl: PUBLIC_URL,
+        email: `${name}@example.com`,
+        name,
+        role: 'contributor',
+        domains
+      }).then(signIn);
+    const gio = await member('gio', []);
+    const tim = await member('tim', ['confidential']);
+    await createRequest(pool, {
+      title: 'Investor deck',
+      request: 'Draft the investor deck.',
+      skipInterview: true
+    });
+    const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
+    const path = `/api/projects/${seeded.projectId}/tasks/1`;
+    const engine = { kind: 'engine' } as const;
+    await call(owner, `${path}/actions`, { type: 'accept' });
+    await applyCommand(pool, {
+      taskId,
+      command: { type: 'post_spec', predictedPaths: ['src/deck.ts'], userVisible: false },
+      actor: { kind: 'agent', role: 'spec', version: 1 }
+    });
+    await applyCommand(pool, {
+      taskId,
+      command: {
+        type: 'plan_approval',
+        userVisible: false,
+        plan: {
+          depth: 'glance',
+          rationale: 'The deck.',
+          extra: [],
+          verifiers: [],
+          build: 'person',
+          buildReason: 'The figures of the Series B round are in the room.'
+        }
+      },
+      actor: engine
+    });
+    await applyCommand(pool, {
+      taskId,
+      command: { type: 'approve' },
+      actor: { kind: 'member', memberId: seeded.ownerId }
+    });
+
+    const forGio = await json(await call(gio, path));
+    expect(forGio.waitingOn.label).toBe(
+      `Needs a developer: a developer claims the build. ${hiddenText}`
+    );
+    expect(forGio.people.build.reason).toBe(hiddenText);
+    expect(JSON.stringify(forGio)).not.toContain('Series B');
+    expect(forGio.actions).not.toContain('comment');
+    const board = await json(await call(gio, `/api/projects/${seeded.projectId}/board`));
+    expect(JSON.stringify(board)).not.toContain('Series B');
+    expect((await json(await call(tim, path))).people.build.reason).toContain('Series B');
+
+    expect((await call(gio, `${path}/comments`, { body: 'Who are they?' })).status).toBe(403);
+    expect((await call(tim, `${path}/comments`, { body: 'I can help.' })).status).toBe(200);
+
+    await applyCommand(pool, {
+      taskId,
+      command: {
+        type: 'block',
+        question: 'Which round?',
+        askedOf: { role: 'contributor' },
+        options: [{ label: 'Series B at 40 million' }, { label: 'Series A' }]
+      },
+      actor: engine
+    });
+    expect((await json(await call(gio, path))).actions).not.toContain('answer');
+    const { version } = (await json(await call(tim, path))).blocked;
+    const pick = { type: 'answer', text: '', option: 'a', version };
+    const answered = await call(gio, `${path}/actions`, pick);
+    expect(answered.status).toBe(409);
+    const comments = await pool.query<{ body: string }>(
+      'select body from comments where task_id = $1 order by created_at',
+      [taskId]
+    );
+    expect(comments.rows.map((row) => row.body)).toEqual([
+      'Draft the investor deck.',
+      'I can help.'
+    ]);
+    expect((await call(tim, `${path}/actions`, pick)).status).toBe(200);
+  });
+
   test('what agents cannot do, and what a developer must build, waits on the right person', async () => {
     const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
     const contributor = await signIn(
