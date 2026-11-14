@@ -1,7 +1,12 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { randomBytes } from 'node:crypto';
 import { findMemberByEmail, linkGitHubAccount, unlinkGitHubAccount } from '@officina/db';
-import { createGitHubAsUser, type UserTokens } from '@officina/github';
+import {
+  GitHubError,
+  RefreshTokenRefused,
+  createGitHubAsUser,
+  type UserTokens
+} from '@officina/github';
 import { Pool } from 'pg';
 import { resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
 import { createApp } from '../src/app';
@@ -428,6 +433,34 @@ describe.skipIf(!url)('GitHub sign-in', () => {
       expect(await accountRows()).toHaveLength(1);
     });
 
+    test('that GitHub refuses, its token spent by a refresh whose answer was lost, forgets the account and tells the member to reconnect', async () => {
+      const refusals: string[] = [];
+      const accounts = expiredAccount(async () => {
+        refusals.push('refused');
+        throw new RefreshTokenRefused(200, '/login/oauth/access_token', 'bad_refresh_token');
+      });
+      expect(await accounts.complete('c', seeded.ownerId)).toMatchObject({ ok: true });
+
+      expect(await accounts.tokenFor(seeded.ownerId)).toBeNull();
+      expect(await accountRows()).toHaveLength(0);
+      expect(await githubLog()).toEqual([
+        'Antonio lost GitHub @antonio: GitHub no longer accepts its token, so it must reconnect',
+        'Antonio connected GitHub as @antonio'
+      ]);
+      // Forgotten once: nothing is left to refresh with.
+      expect(await accounts.tokenFor(seeded.ownerId)).toBeNull();
+      expect(refusals).toHaveLength(1);
+    });
+
+    test('that fails for another reason keeps the account and passes the error on', async () => {
+      const accounts = expiredAccount(async () => {
+        throw new GitHubError(502, '/login/oauth/access_token', 'not JSON');
+      });
+      expect(await accounts.complete('c', seeded.ownerId)).toMatchObject({ ok: true });
+      await expect(accounts.tokenFor(seeded.ownerId)).rejects.toThrow('GitHub 502');
+      expect(await accountRows()).toHaveLength(1);
+    });
+
     test('whose account cannot be forgotten either still fails with the error of its save', async () => {
       const accounts = expiredAccount();
       expect(await accounts.complete('c', seeded.ownerId)).toMatchObject({ ok: true });
@@ -454,6 +487,40 @@ describe.skipIf(!url)('GitHub sign-in', () => {
       };
       return { refresh, reached, answer: () => answer() };
     };
+
+    const waitsForARefresh = async () =>
+      (
+        await pool.query<{ waiting: boolean }>(
+          "select exists (select 1 from pg_locks where locktype = 'advisory' and not granted) as waiting"
+        )
+      ).rows[0]!.waiting;
+
+    test('that another caller needs meanwhile is waited for, so the spent token is never presented again', async () => {
+      const paused = pausedRefresh();
+      let asked = 0;
+      const accounts = expiredAccount(async () => {
+        asked += 1;
+        if (asked === 1) return paused.refresh();
+        // GitHub spent the token in answering the first refresh.
+        throw new RefreshTokenRefused(200, '/login/oauth/access_token', 'bad_refresh_token');
+      });
+      expect(await accounts.complete('c', seeded.ownerId)).toMatchObject({ ok: true });
+      const first = accounts.tokenFor(seeded.ownerId);
+      await paused.reached;
+      let finished = false;
+      const second = accounts.tokenFor(seeded.ownerId).finally(() => {
+        finished = true;
+      });
+      while (!finished && !(await waitsForARefresh())) await Bun.sleep(5);
+      paused.answer();
+
+      const fresh = { token: 'ghu_new', login: 'antonio', userId: 42 };
+      expect(await first).toEqual(fresh);
+      expect(await second).toEqual(fresh);
+      expect(asked).toBe(1);
+      expect(await accountRows()).toHaveLength(1);
+      expect(await githubLog()).toEqual(['Antonio connected GitHub as @antonio']);
+    });
 
     test('never brings back an account the member disconnected meanwhile', async () => {
       const paused = pausedRefresh();

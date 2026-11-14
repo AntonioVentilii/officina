@@ -10,6 +10,15 @@ import { mergeWhenReadyWith } from './merge';
 const WEB = 'https://github.com';
 const TOKEN_PATH = '/login/oauth/access_token';
 
+/** GitHub's reason for refusing a refresh token: spent, revoked or expired. */
+const BAD_REFRESH_TOKEN = 'bad_refresh_token';
+
+/**
+ * GitHub will not refresh with this token again, typically because a refresh whose answer was lost
+ * spent it. Nothing but the person reconnecting brings the account back.
+ */
+export class RefreshTokenRefused extends GitHubError {}
+
 export interface OAuthAppOptions {
   readonly clientId: string;
   readonly clientSecret: string;
@@ -68,6 +77,8 @@ export const createGitHubUserAuth = (options: OAuthAppOptions) => {
     // An outage answers with an HTML page, so the body is parsed only after it is read whole.
     const text = await response.text();
     const body = jsonObject(text);
+    if (body?.error === BAD_REFRESH_TOKEN)
+      throw new RefreshTokenRefused(response.status, TOKEN_PATH, BAD_REFRESH_TOKEN);
     if (!response.ok || typeof body?.access_token !== 'string') {
       throw new GitHubError(
         response.status,
