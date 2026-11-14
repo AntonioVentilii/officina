@@ -2,19 +2,16 @@ import {
   GUARD_LABELS,
   PERMISSIONS,
   can,
-  effectivePolicy,
   guardsInRequest,
   type Blocked,
   type Guard,
   type Member,
-  evaluatePolicy,
   findOption,
   optionAnswer,
   parseProjectConfig,
-  policyContext,
   type Actor,
-  type Command,
-  type Gate
+  type ApprovalPlan,
+  type Command
 } from '@officina/core';
 import {
   addComment,
@@ -24,7 +21,6 @@ import {
   inTransaction,
   insertTask,
   latestChooserResult,
-  listApprovedSubjects,
   listProjectMemberProfiles,
   listProjectMembers,
   listRuns,
@@ -39,7 +35,13 @@ import {
 } from '@officina/db';
 import { checklistMarkdown, handInBuild, type HandInPort } from '@officina/engine';
 import { GitHubError } from '@officina/github';
-import { CONFIDENTIAL, consoleUrl, describeRequirement } from './board';
+import {
+  approvalState,
+  CONFIDENTIAL,
+  consoleUrl,
+  describeRequirement,
+  type ApprovalState
+} from './board';
 import type { Pool } from 'pg';
 
 /** A refused task command, with the HTTP status the API answers it with. */
@@ -361,6 +363,36 @@ const NEXT_STEP: Partial<Record<string, string>> = {
   cancelled: 'nothing: the task was cancelled'
 };
 
+/** The approval plan of the task's gate and who must still approve, for `describeTask`. */
+const approvalLines = (
+  approval: ApprovalState,
+  plan: ApprovalPlan | undefined,
+  names: ReadonlyMap<string, string>,
+  /** The task's words as this viewer may read them (a confidential task hides them). */
+  shown: (text: string) => string
+): string[] => {
+  if (!approval.planned || !plan)
+    return ['', 'Waiting for the approval chooser to decide who approves.'];
+  return [
+    '',
+    `Approval plan: check depth ${plan.depth}. ${shown(plan.rationale)}`,
+    ...plan.extra.map(
+      (item) => `  also needs ${describeRequirement(item.requirement)}: ${shown(item.reason)}`
+    ),
+    ...plan.verifiers.map(
+      (verifier) =>
+        `  asks ${names.get(verifier.memberId) ?? 'a former member'} to verify: ${shown(verifier.reason)}`
+    ),
+    '',
+    `Approval needed from: ${approval.pending.map(describeRequirement).join(', ') || 'nobody (satisfied)'}`,
+    ...(approval.waived.length
+      ? [
+          `Waived (nobody holds the role yet): ${approval.waived.map(describeRequirement).join(', ')}`
+        ]
+      : [])
+  ];
+};
+
 /** A human-readable status of one task: where it is, what it waits for, and what to do next. */
 export const describeTask = async (
   pool: Pool,
@@ -387,49 +419,16 @@ export const describeTask = async (
     lines.push('', `BLOCKED, question for ${who}:`, `  ${shown(task.blocked.question)}`);
   }
 
-  if ((task.stage === 'spec_review' || task.stage === 'verifying') && task.lane) {
-    const config = parseProjectConfig(context.rawConfig);
-    if (config.ok) {
-      const gate: Gate = task.stage;
-      const subject = gate === 'spec_review' ? `spec:${task.specVersion}` : `sha:${task.headSha}`;
-      const plan = task.approvalPlans[gate];
-      const names = new Map(
-        (await listProjectMemberProfiles(pool, projectId)).map((member) => [member.id, member.name])
-      );
-      if (plan?.subject !== subject) {
-        lines.push('', 'Waiting for the approval chooser to decide who approves.');
-      } else {
-        lines.push(
-          '',
-          `Approval plan: check depth ${plan.depth}. ${shown(plan.rationale)}`,
-          ...plan.extra.map(
-            (item) => `  also needs ${describeRequirement(item.requirement)}: ${shown(item.reason)}`
-          ),
-          ...plan.verifiers.map(
-            (verifier) =>
-              `  asks ${names.get(verifier.memberId) ?? 'a former member'} to verify: ${shown(verifier.reason)}`
-          )
-        );
-      }
-      const result = evaluatePolicy(
-        effectivePolicy(config.config, task, gate),
-        await listApprovedSubjects(pool, taskId),
-        policyContext(config.config, task, gate, {
-          members: await listProjectMembers(pool, projectId),
-          subject
-        })
-      );
-      lines.push(
-        '',
-        `Approval needed from: ${result.pending.map(describeRequirement).join(', ') || 'nobody (satisfied)'}`
-      );
-      if (result.waived.length) {
-        lines.push(
-          `Waived (nobody holds the role yet): ${result.waived.map(describeRequirement).join(', ')}`
-        );
-      }
-    }
-  }
+  const names = new Map(
+    (await listProjectMemberProfiles(pool, projectId)).map((member) => [member.id, member.name])
+  );
+  const approval = await approvalState(pool, task, {
+    members: await listProjectMembers(pool, projectId),
+    names,
+    rawConfig: context.rawConfig
+  });
+  if (approval)
+    lines.push(...approvalLines(approval, task.approvalPlans[approval.gate], names, shown));
 
   if (context.pullRequest && reads)
     lines.push('', `Pull request: https://github.com/${context.repo}/pull/${context.pullRequest}`);

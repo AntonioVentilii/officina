@@ -86,9 +86,10 @@ describe.skipIf(!url)('task commands', () => {
       { type: 'post_spec', predictedPaths: [COPY], userVisible: true },
       { kind: 'agent', role: 'spec', version: 1 }
     );
-    expect(await describeTask(pool, { number: 1 })).toContain(
-      'Waiting for the approval chooser to decide who approves.'
-    );
+    const unplanned = await describeTask(pool, { number: 1 });
+    expect(unplanned).toContain('Waiting for the approval chooser to decide who approves.');
+    // As on the board, nobody can approve before the chooser has planned the subject.
+    expect(unplanned).not.toContain('Approval needed from');
     await applyOrThrow(
       pool,
       taskId,

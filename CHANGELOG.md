@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.5.0](https://github.com/AntonioVentilii/officina/compare/v1.4.0...v1.5.0) (2026-11-14)
+
+
+### Features
+
+* **db,engine,api,board:** an edit the default branch moved past goes back to the learner to be rewritten ([#119](https://github.com/AntonioVentilii/officina/issues/119)) ([e86c263](https://github.com/AntonioVentilii/officina/commit/e86c263f4f15e3d80e463e1db36bf94c557951ec))
+
+
+### Bug Fixes
+
+* **api,github:** close the pull request a failed accept left when its learning is rejected ([#106](https://github.com/AntonioVentilii/officina/issues/106)) ([85127e8](https://github.com/AntonioVentilii/officina/commit/85127e8c15f8ed63bfad14cd5c0d371dfd30dd0f))
+
+
+### Build System
+
+* board`. ([e86c263](https://github.com/AntonioVentilii/officina/commit/e86c263f4f15e3d80e463e1db36bf94c557951ec))
+
 ## [1.4.0](https://github.com/AntonioVentilii/officina/compare/v1.3.0...v1.4.0) (2026-11-13)
 
 

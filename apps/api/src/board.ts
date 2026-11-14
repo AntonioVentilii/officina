@@ -13,6 +13,7 @@ import {
   gateSubject,
   hasRole,
   humanBuildReason,
+  isGate,
   optionKey,
   parseProjectConfig,
   policyContext,
@@ -243,7 +244,7 @@ const payloadFor = (
   return visible;
 };
 
-interface ApprovalState {
+export interface ApprovalState {
   readonly gate: Gate;
   readonly planned: boolean;
   readonly pending: readonly Requirement[];
@@ -263,28 +264,43 @@ interface ProjectFacts {
   readonly onboarding: number | null;
 }
 
-const approvalState = async (
+/**
+ * Where the task's gate stands: whether the approval chooser has planned its subject, who must
+ * still approve, and who has. `null` when the task is not at a gate. The board and `describeTask`
+ * both read it.
+ */
+export const approvalState = async (
   pool: Pool,
-  row: BoardTaskRow,
-  facts: ProjectFacts
+  task: Pick<
+    BoardTaskRow,
+    | 'id'
+    | 'stage'
+    | 'lane'
+    | 'approvalPlans'
+    | 'requesterId'
+    | 'userVisible'
+    | 'specVersion'
+    | 'headSha'
+    | 'guards'
+  >,
+  facts: Pick<ProjectFacts, 'members' | 'names' | 'rawConfig'>
 ): Promise<ApprovalState | null> => {
-  if ((row.stage !== 'spec_review' && row.stage !== 'verifying') || !row.lane) return null;
+  if (!isGate(task.stage) || !task.lane) return null;
   const config = parseProjectConfig(facts.rawConfig);
   if (!config.ok) return null;
-  const gate: Gate = row.stage;
-  const subject = gateSubject(row, gate) ?? '';
-  const plan = row.approvalPlans[gate];
+  const gate = task.stage;
+  const subject = gateSubject(task, gate);
   // Until the approval chooser has planned this subject, nobody can approve it yet.
-  if (plan?.subject !== subject)
+  if (!subject || task.approvalPlans[gate]?.subject !== subject)
     return { gate, planned: false, pending: [], waived: [], approvedBy: [], canApprove: [] };
-  const approvals = await listApprovedSubjects(pool, row.id);
-  const context = policyContext(config.config, row, gate, { members: facts.members, subject });
-  const policy = effectivePolicy(config.config, row, gate);
+  const approvals = await listApprovedSubjects(pool, task.id);
+  const context = policyContext(config.config, task, gate, { members: facts.members, subject });
+  const policy = effectivePolicy(config.config, task, gate);
   const result = evaluatePolicy(policy, approvals, context);
   // Only approvals that count are shown as approvals: someone the policy does not name (or who may
   // not see a confidential task) can record one, but it meets nothing.
   const counting = new Set(
-    applicableRequirements(policy, row.userVisible).flatMap((requirement) =>
+    applicableRequirements(policy, task.userVisible).flatMap((requirement) =>
       eligibleMembers(requirement, context).map((member) => member.id)
     )
   );
@@ -460,7 +476,7 @@ const actionsFor = (row: BoardTaskRow, viewer: BoardViewer): BoardAction[] => {
     if (row.stage === 'triage' && can(member, 'triage')) actions.push('accept', 'decline');
     actions.push(...buildActions(row, viewer));
     if (
-      (row.stage === 'spec_review' || row.stage === 'verifying') &&
+      isGate(row.stage) &&
       can(member, GATE_ACTIONS[row.stage]) &&
       row.approvalPlans[row.stage]?.subject === gateSubject(row, row.stage)
     )

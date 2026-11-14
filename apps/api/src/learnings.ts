@@ -16,7 +16,7 @@ import { TaskCommandError } from './tasks';
 
 export type LearningGitHub = Pick<
   GitHubClient,
-  'readFile' | 'updateFile' | 'createBranch' | 'openPullRequest'
+  'readFile' | 'updateFile' | 'createBranch' | 'openPullRequest' | 'closePullRequestsFrom'
 >;
 
 interface Target {
@@ -25,6 +25,14 @@ interface Target {
   readonly role: Role;
   readonly publicUrl: string;
 }
+
+/**
+ * The output contract trims the text, so a replaced line would lose the line break that ended it
+ * and the next line would join the addition. The break comes back as the replaced line had it, so a
+ * file with CRLF line endings keeps them.
+ */
+const withLineBreakOf = (find: string, text: string) =>
+  text.endsWith('\n') ? text : `${text}${/\r?\n$/.exec(find)?.[0] ?? ''}`;
 
 /** The file with the learning's edit applied, or why it no longer applies. */
 export const applyEdit = (
@@ -40,8 +48,9 @@ export const applyEdit = (
   if (current === null) return { ok: false, why: 'the file no longer exists' };
   const count = current.split(learning.find).length - 1;
   if (count !== 1) return { ok: false, why: `the text to replace now appears ${count} times` };
+  const text = withLineBreakOf(learning.find, learning.text);
   // A function replacer, so `$&` or `$$` in the text land as written rather than as patterns.
-  return { ok: true, text: current.replace(learning.find, () => learning.text) };
+  return { ok: true, text: current.replace(learning.find, () => text) };
 };
 
 /** Agent docs learnings say so in their scope, so they read as changes to `docs/ai` in the history. */
@@ -154,6 +163,29 @@ const acceptIntoPullRequest = async (
 };
 
 /**
+ * An accept whose decision failed to save may have left its pull request open; rejecting the
+ * learning closes it, so nobody merges an edit people turned down.
+ */
+const closeLeftPullRequest = async (
+  client: PoolClient,
+  github: LearningGitHub | undefined,
+  projectId: string,
+  learning: LearningRow
+): Promise<void> => {
+  if (!github || !editsProject(learning.target)) return;
+  const project = (await loadProject(client, projectId))!;
+  if (project.installationId === null) return;
+  // The branch of the edit as it stands, and the first one, which an accept before a rewrite used.
+  const branches = new Set([branchFor(learning), branchFor({ ...learning, rewrittenAt: null })]);
+  for (const branch of branches)
+    await github.closePullRequestsFrom({
+      installationId: project.installationId,
+      repo: project.repo,
+      branch
+    });
+};
+
+/**
  * Accepting a learning for the project's docs or agent docs opens a pull request with exactly the edit people saw; an agent
  * learning is recorded for Officina's maintainers, whose repository Officina does not write to.
  * Either way people merge, never Officina. The learning stays locked from the first read to the
@@ -185,6 +217,8 @@ export const decide = async (
       if (!opened) return (await loadLearning(client, target.projectId, learning.id))!;
       pr = opened;
     }
+    if (input.decision === 'reject')
+      await closeLeftPullRequest(client, github, target.projectId, learning);
     await decideLearning(client, {
       id: learning.id,
       status: input.decision === 'accept' ? 'accepted' : 'rejected',

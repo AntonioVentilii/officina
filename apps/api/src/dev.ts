@@ -6,7 +6,7 @@
  *   bun run dev:board    # the board with hot reload on :5173, proxied to this server
  */
 import { join } from 'node:path';
-import { ENGINE, type Actor, type Command } from '@officina/core';
+import { ENGINE, isGate, type Actor, type Command } from '@officina/core';
 import {
   addComment,
   appendRunEvent,
@@ -275,7 +275,7 @@ const seed = async (
     approve: async (actors: Actor[]) => {
       for (const actor of [...actors, demo.owner, demo.giulia]) {
         const before = await apply(demo, task.id, { type: 'approve' }, actor);
-        if (before.stage !== 'spec_review' && before.stage !== 'verifying') return;
+        if (!isGate(before.stage)) return;
       }
     },
     build: async (running = false) => {
