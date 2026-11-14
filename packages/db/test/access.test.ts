@@ -1,6 +1,12 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { Pool } from 'pg';
-import { issueConnectorTokens, recordConnectorUse, registerConnectorClient } from '../src';
+import {
+  issueConnectorTokens,
+  lockConnectorGrant,
+  recordConnectorUse,
+  registerConnectorClient,
+  revokeConnectorGrant
+} from '../src';
 import { resetAndSeed, type Seeded } from './seed';
 
 const url = process.env.TEST_DATABASE_URL;
@@ -78,5 +84,37 @@ describe.skipIf(!url)('access log', () => {
       other.release();
     }
     expect(await uses()).toHaveLength(1);
+  });
+
+  test('a revoke waits for a rotation in flight and deletes the tokens it issued too', async () => {
+    const app = await registerConnectorClient(pool, { name: 'Claude', redirectUris: [] });
+    await use(app.id);
+    const grantId = (
+      await pool.query<{ grant_id: string }>('select grant_id from connector_tokens limit 1')
+    ).rows[0]!.grant_id;
+    // A rotation holds the grant and its refresh row while it issues the next tokens.
+    const rotation = await pool.connect();
+    await rotation.query('begin');
+    await lockConnectorGrant(rotation, grantId);
+    await rotation.query(
+      "select 1 from connector_tokens where grant_id = $1 and kind = 'refresh' for update",
+      [grantId]
+    );
+    const revoked = revokeConnectorGrant(pool, seeded.ownerId, grantId);
+    await Bun.sleep(50);
+    await issueConnectorTokens(rotation, {
+      clientId: app.id,
+      memberId: seeded.ownerId,
+      resource: 'https://officina.example/mcp',
+      grantId,
+      accessTtlMs: 60_000,
+      refreshTtlMs: 60_000
+    });
+    await rotation.query('commit');
+    rotation.release();
+    expect(await revoked).toBe(true);
+    expect(
+      (await pool.query('select 1 from connector_tokens where grant_id = $1', [grantId])).rowCount
+    ).toBe(0);
   });
 });
