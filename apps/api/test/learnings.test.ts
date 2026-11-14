@@ -66,10 +66,14 @@ describe.skipIf(!url)('learning decisions', () => {
     await pool.end();
   });
 
-  /** Remembers what each branch holds, so a second accept sees what the first one wrote. */
+  /**
+   * Remembers what each branch holds and which pull requests are open, so a second decision sees
+   * what the first one left. A failed opening has opened it, as when GitHub's answer is lost.
+   */
   const fakeGitHub = (options: { failOpening?: number; base?: string } = {}) => {
     const calls: { method: string; args: Record<string, unknown> }[] = [];
     const written = new Map<string, string>();
+    const open = new Set<string>();
     let failOpening = options.failOpening ?? 0;
     const record = (method: string) => async (args: Record<string, unknown>) => {
       calls.push({ method, args });
@@ -80,7 +84,9 @@ describe.skipIf(!url)('learning decisions', () => {
           : { text, sha: 'blob2' };
       }
       if (method === 'updateFile') written.set(String(args.branch), String(args.text));
+      if (method === 'closePullRequestsFrom') open.delete(String(args.branch));
       if (method === 'openPullRequest') {
+        open.add(String(args.branch));
         if (failOpening-- > 0) throw new Error('GitHub 502 on /pulls');
         return { number: 77, url: 'https://github.com/x/pull/77' };
       }
@@ -90,9 +96,10 @@ describe.skipIf(!url)('learning decisions', () => {
       readFile: record('readFile'),
       updateFile: record('updateFile'),
       createBranch: record('createBranch'),
-      openPullRequest: record('openPullRequest')
+      openPullRequest: record('openPullRequest'),
+      closePullRequestsFrom: record('closePullRequestsFrom')
     } as unknown as LearningGitHub;
-    return { port, calls };
+    return { port, calls, open };
   };
 
   const propose = async (target: LearningTarget) => {
@@ -235,6 +242,27 @@ describe.skipIf(!url)('learning decisions', () => {
     expect(github.calls.filter((call) => call.method === 'updateFile')).toHaveLength(1);
   });
 
+  test('rejecting a learning closes the pull request an accept that failed halfway left open', async () => {
+    const learning = await propose('docs');
+    const github = fakeGitHub({ failOpening: 1 });
+    await expect(
+      decide(pool, github.port, owner(), { id: learning.id, decision: 'accept' })
+    ).rejects.toThrow('GitHub 502');
+    const branch = `officina/learning-${learning.id.slice(0, 8)}`;
+    expect([...github.open]).toEqual([branch]);
+
+    const decided = await decide(pool, github.port, owner(), {
+      id: learning.id,
+      decision: 'reject'
+    });
+    expect(decided).toMatchObject({ status: 'rejected', prNumber: null });
+    expect(github.open.size).toBe(0);
+    expect(github.calls.at(-1)).toEqual({
+      method: 'closePullRequestsFrom',
+      args: { installationId: 99, repo: 'ViciApp/vici-app', branch }
+    });
+  });
+
   test('an edit the default branch moved past goes back to the learner instead of failing', async () => {
     const learning = await propose('docs');
     const github = fakeGitHub({ base: '# Agents\n\n## Copy and tone\n' });
@@ -272,6 +300,25 @@ describe.skipIf(!url)('learning decisions', () => {
     expect(String(created.args.branch)).toMatch(
       new RegExp(`^officina/learning-${learning.id.slice(0, 8)}-[0-9a-z]+$`)
     );
+  });
+
+  test('rejecting a rewritten learning closes what an accept left on its first branch too', async () => {
+    const learning = await propose('docs');
+    await requestLearningRewrite(pool, learning.id);
+    await rewriteLearningEdit(pool, learning.id, {
+      file: 'AGENTS.md',
+      find: '## Copy\n',
+      text: '## Copy\n\nEvery live locale.\n'
+    });
+    const github = fakeGitHub();
+    await decide(pool, github.port, owner(), { id: learning.id, decision: 'reject' });
+    const closed = github.calls
+      .filter((call) => call.method === 'closePullRequestsFrom')
+      .map((call) => String(call.args.branch));
+    const first = `officina/learning-${learning.id.slice(0, 8)}`;
+    expect(closed).toHaveLength(2);
+    expect(closed).toContain(first);
+    expect(closed.find((branch) => branch !== first)).toMatch(new RegExp(`^${first}-[0-9a-z]+$`));
   });
 
   test('agent learnings are recorded without touching the repository; contributors cannot decide', async () => {
