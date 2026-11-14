@@ -18,7 +18,8 @@ create table sessions (
 create index sessions_by_member on sessions (member_id);
 
 -- Realtime: every change someone may be watching is announced on one channel, from the database
--- itself, so writes from the engine, the CLI and webhooks all reach open boards.
+-- itself, so writes from the engine, the CLI and webhooks all reach open boards. The channel's
+-- name is `CHANGE_CHANNEL` in packages/db/src/changes.ts, which the API listens with.
 create or replace function officina_notify() returns trigger
 language plpgsql as $$
 begin
