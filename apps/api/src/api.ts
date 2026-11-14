@@ -34,7 +34,7 @@ import {
   type BoardViewer
 } from './board';
 import { checkAuthorization, consentRedirect } from './connector';
-import type { GitHubAccounts } from './github-accounts';
+import type { GitHubAccounts, GitHubSignInProblem } from './github-accounts';
 import { decide as decideLearning, type LearningGitHub } from './learnings';
 import { notificationsView } from './notifications';
 import { accessLogView, inviteAgain, membersView } from './people';
@@ -348,20 +348,20 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
         const clearNext = `${NEXT_COOKIE}=; Path=/auth/github; HttpOnly; SameSite=Lax; Max-Age=0`;
         const rawNext = readCookie(request, NEXT_COOKIE);
         const next = (rawNext && localPath(decodeURIComponent(rawNext))) || '/';
-        const fail = (why: string) =>
-          redirect(`/signin?error=${encodeURIComponent(why)}`, [clear, clearNext]);
+        const fail = (problem: GitHubSignInProblem) =>
+          redirect(`/signin?error=${problem}`, [clear, clearNext]);
         const code = typeof query.code === 'string' ? query.code : null;
         const state = typeof query.state === 'string' ? query.state : null;
         if (!code || !state || readCookie(request, OAUTH_COOKIE) !== state)
-          return fail('The GitHub sign-in did not match this browser; try again.');
-        const expired = () => fail('The GitHub sign-in expired; try again.');
+          return fail('github_mismatch');
+        const expired = () => fail('github_expired');
         if (state.startsWith(SIGNIN_PREFIX)) {
           const expiresAt = signinExpiry(state);
           if (!expiresAt) return expired();
           const result = await deps.githubLogin.accounts.complete(code, null, () =>
             spendOAuthState(pool, state, expiresAt)
           );
-          if (!result.ok) return fail(result.why);
+          if (!result.ok) return fail(result.problem);
           const session = await createSession(pool, result.memberId);
           await recordAccessEvent(pool, {
             memberId: result.memberId,
@@ -373,7 +373,7 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
         const consumed = await consumeOAuthState(pool, state);
         if (!consumed) return expired();
         const result = await deps.githubLogin.accounts.complete(code, consumed.memberId);
-        if (!result.ok) return fail(result.why);
+        if (!result.ok) return fail(result.problem);
         return redirect('/?github=linked', [clear]);
       })
       .post('/auth/github/unlink', async ({ request }) => {
@@ -415,7 +415,7 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
         const checked = await checkAuthorization(pool, deps.publicUrl, query);
         if (!checked.ok) {
           if (checked.redirectable) return { redirect: checked.redirect };
-          throw new HttpError(400, checked.message);
+          throw new HttpError(400, checked.problem);
         }
         return {
           client: checked.request.client.name,
@@ -431,7 +431,7 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
         const checked = await checkAuthorization(pool, deps.publicUrl, params);
         if (!checked.ok) {
           if (checked.redirectable) return { redirect: checked.redirect };
-          throw new HttpError(400, checked.message);
+          throw new HttpError(400, checked.problem);
         }
         const back = await consentRedirect(
           pool,

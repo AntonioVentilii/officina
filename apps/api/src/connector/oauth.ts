@@ -142,6 +142,12 @@ export interface AuthorizationRequest {
 }
 
 /**
+ * Why an authorization request is shown to the person rather than sent back to the client. Only
+ * the code leaves the API; the board's consent page words each one.
+ */
+export type AuthorizationProblem = 'unknown_client' | 'unregistered_redirect';
+
+/**
  * Checks an authorization request. Problems with the client or the redirect are shown to the
  * person (`redirectable: false`): sending them to an unverified address would make Officina an
  * open redirect. Anything else goes back to the client as an OAuth error.
@@ -152,7 +158,7 @@ export const checkAuthorization = async (
   query: Record<string, unknown>
 ): Promise<
   | { ok: true; request: AuthorizationRequest }
-  | { ok: false; redirectable: false; message: string }
+  | { ok: false; redirectable: false; problem: AuthorizationProblem }
   | { ok: false; redirectable: true; redirect: string }
 > => {
   const value = (key: string) => (typeof query[key] === 'string' ? (query[key] as string) : null);
@@ -162,7 +168,7 @@ export const checkAuthorization = async (
     return {
       ok: false,
       redirectable: false,
-      message: 'This connector is not registered with Officina; remove it and add it again.'
+      problem: 'unknown_client'
     };
   const requested = value('redirect_uri');
   const redirectUri =
@@ -171,7 +177,7 @@ export const checkAuthorization = async (
     return {
       ok: false,
       redirectable: false,
-      message: 'The connector asked to return to an address it did not register.'
+      problem: 'unregistered_redirect'
     };
   const state = value('state');
   const fail = (error: string, description: string) => {

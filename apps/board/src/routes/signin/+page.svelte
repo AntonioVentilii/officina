@@ -2,7 +2,16 @@
   import { goto } from '$app/navigation';
   import { post } from '$lib/api';
   import Logo from '$lib/components/Logo.svelte';
+  import { wordsFor } from '$lib/format';
   import { session } from '$lib/state/session.svelte';
+  import type { GitHubSignInProblem } from '$lib/types';
+
+  const PROBLEMS: Record<GitHubSignInProblem, string> = {
+    github_mismatch: 'The GitHub sign-in did not match this browser; try again.',
+    github_expired: 'The GitHub sign-in expired; try again.',
+    github_not_linked:
+      'This GitHub account is not linked to a member yet: sign in with an invite link, then connect GitHub.'
+  };
 
   let status = $state<'working' | 'no-link' | 'failed'>('working');
   let message = $state('');
@@ -26,7 +35,7 @@
     const error = new URLSearchParams(location.search).get('error');
     if (error) {
       status = 'failed';
-      message = error;
+      message = wordsFor(PROBLEMS, error, 'The sign-in did not complete; try again.');
     }
   });
 

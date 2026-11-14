@@ -1,6 +1,13 @@
 <script lang="ts">
   import { PlugZap } from '@lucide/svelte';
   import { get, post } from '$lib/api';
+  import { wordsFor } from '$lib/format';
+  import type { AuthorizationProblem } from '$lib/types';
+
+  const PROBLEMS: Record<AuthorizationProblem, string> = {
+    unknown_client: 'This connector is not registered with Officina; remove it and add it again.',
+    unregistered_redirect: 'The connector asked to return to an address it did not register.'
+  };
 
   interface Request {
     readonly client: string;
@@ -19,7 +26,7 @@
 
   $effect(() => {
     if (params.error) {
-      failure = params.error;
+      failure = wordsFor(PROBLEMS, params.error, 'Officina cannot complete this connection.');
       return;
     }
     get<Request | { redirect: string }>(`/api/connector/authorization${location.search}`)
@@ -27,7 +34,7 @@
         if ('redirect' in answer) location.href = answer.redirect;
         else request = answer;
       })
-      .catch((error: Error) => (failure = error.message));
+      .catch((error: Error) => (failure = wordsFor(PROBLEMS, error.message, error.message)));
   });
 
   const decide = async (allow: boolean) => {
@@ -39,7 +46,8 @@
       });
       location.href = redirect;
     } catch (error) {
-      failure = (error as Error).message;
+      const { message } = error as Error;
+      failure = wordsFor(PROBLEMS, message, message);
       busy = false;
     }
   };

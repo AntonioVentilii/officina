@@ -268,23 +268,20 @@ describe.skipIf(!url)('GitHub sign-in', () => {
   test('a state from another browser, or an unknown GitHub account, never signs anyone in', async () => {
     const { app } = appFor({ id: 7, login: 'stranger' });
     const { state } = await start(app, 'signin');
+    // The sign-in page gets a code it words itself, never text to show as it is.
     const forged = await callback(app, state, 'officina_oauth=other');
-    expect(decodeURIComponent(forged.headers.get('location')!)).toContain(
-      'did not match this browser'
-    );
+    expect(forged.headers.get('location')).toBe('/signin?error=github_mismatch');
 
     const stale = `s.${Date.now() - 1000}.abc`;
     const expired = await callback(app, stale, `officina_oauth=${stale}`);
-    expect(decodeURIComponent(expired.headers.get('location')!)).toContain('expired');
+    expect(expired.headers.get('location')).toBe('/signin?error=github_expired');
     const stretched = `s.${Date.now() + 86_400_000}.abc`;
     const tooLong = await callback(app, stretched, `officina_oauth=${stretched}`);
-    expect(decodeURIComponent(tooLong.headers.get('location')!)).toContain('expired');
+    expect(tooLong.headers.get('location')).toBe('/signin?error=github_expired');
 
     const fresh = await start(app, 'signin');
     const unknown = await callback(app, fresh.state, fresh.oauth);
-    expect(decodeURIComponent(unknown.headers.get('location')!)).toContain(
-      '@stranger is not linked to a member yet'
-    );
+    expect(unknown.headers.get('location')).toBe('/signin?error=github_not_linked');
     expect(
       unknown.headers.getSetCookie().some((cookie) => cookie.startsWith('officina_session='))
     ).toBe(false);
