@@ -790,5 +790,9 @@ describe('GitHub user authorization', () => {
 
     const empty = authWith(() => new Response('', { status: 200 })).auth.exchangeCode('x');
     await expect(empty).rejects.toThrow(`GitHub 200 on ${TOKEN_PATH}: not JSON`);
+
+    // An array is JSON but not the object GitHub answers with.
+    const list = authWith(() => json([])).auth.exchangeCode('x');
+    await expect(list).rejects.toThrow(`GitHub 200 on ${TOKEN_PATH}: not JSON`);
   });
 });
