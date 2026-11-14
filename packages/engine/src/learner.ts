@@ -10,8 +10,7 @@ import {
   type ProjectConfig
 } from '@officina/core';
 import {
-  countLearningRewriteAttempt,
-  failExhaustedLearningRewrites,
+  failIdleLearningRewrite,
   failLearningRewrite,
   insertLearnings,
   learnerHasLooked,
@@ -23,7 +22,9 @@ import {
   listTaskRuns,
   loadTaskContext,
   rewriteLearningEdit,
+  startLearningRewriteRun,
   type LearningRow,
+  type NewRun,
   type RunRow,
   type StoredTaskContext,
   type TaskEventRow
@@ -290,36 +291,32 @@ export const runLearnerStep = async (
   taskId: string
 ): Promise<StepResult> => {
   const { pool } = deps;
-  // What the run is for is settled once, before it is claimed: a learning rejected meanwhile only
-  // makes its rewrite a no-op, and never turns the run into a second look back.
-  const due: { rewrite: LearningRow | null } = { rewrite: null };
+  // What the run is for is settled once, before it is claimed: a learning settled meanwhile is found
+  // so by the claim, and never turns the run into a second look back.
+  const rewrite: LearningRow | null = await learningAwaitingRewrite(pool, taskId);
   const claimed = await claimStep(pool, {
     taskId,
     role: 'learner',
     // One look back per task: a finished or failed attempt is never repeated. A rewrite people
     // asked for is due whenever it waits.
-    isDue: async (context) => {
-      await failExhaustedLearningRewrites(pool, taskId, REWRITE_ATTEMPTS);
-      due.rewrite = await learningAwaitingRewrite(pool, taskId);
-      return (
-        due.rewrite !== null ||
-        (context.task.stage === 'done' && !(await learnerHasLooked(pool, taskId)))
-      );
-    }
+    isDue: async (context) =>
+      rewrite !== null ||
+      (context.task.stage === 'done' && !(await learnerHasLooked(pool, taskId))),
+    ...(rewrite && {
+      start: (run: NewRun) => startLearningRewriteRun(pool, run, rewrite.id, REWRITE_ATTEMPTS)
+    })
   });
   if (!claimed.ok) {
     // A rewrite the project cannot run would otherwise wait on every pass, and block its accept.
-    if (due.rewrite && blockedByProject(claimed.reason))
-      await failLearningRewrite(pool, due.rewrite.id);
+    if (rewrite && blockedByProject(claimed.reason))
+      await failIdleLearningRewrite(pool, rewrite.id);
     return { status: 'skipped', reason: claimed.reason };
   }
   const step = claimed.step;
   const { context, config, runId, repoRef } = step;
   const checkEdits = learningProblems({ deps, repoRef, branch: context.defaultBranch, config });
 
-  const { rewrite } = due;
   if (rewrite) {
-    await countLearningRewriteAttempt(pool, rewrite.id);
     return learnerRun(deps, step, {
       brief: () => rewriteBrief(context, config, rewrite),
       validate: rewriteProblems(rewrite, checkEdits),

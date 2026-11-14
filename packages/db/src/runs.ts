@@ -8,15 +8,33 @@ export type RunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancell
 
 const UNIQUE_VIOLATION = '23505';
 
+export interface NewRun {
+  readonly taskId: string;
+  readonly stage: string;
+  readonly role: string;
+  readonly agentVersion: number;
+  readonly runner: string;
+  /** The learning whose rewrite the run is for, if it is one. */
+  readonly learningId?: string;
+}
+
 export const startRun = async (
-  pool: Pool,
-  input: { taskId: string; stage: string; role: string; agentVersion: number; runner: string }
+  db: Pool | PoolClient,
+  input: NewRun
 ): Promise<{ ok: true; runId: string } | { ok: false; error: 'already_running' }> => {
   try {
-    const { rows } = await pool.query<{ id: string }>(
-      `insert into runs (task_id, stage, runner, agent_role, agent_version, status, started_at)
-       values ($1, $2, $3, $4, $5, 'running', now()) returning id`,
-      [input.taskId, input.stage, input.runner, input.role, input.agentVersion]
+    const { rows } = await db.query<{ id: string }>(
+      `insert into runs (task_id, stage, runner, agent_role, agent_version, status, started_at,
+         learning_id)
+       values ($1, $2, $3, $4, $5, 'running', now(), $6) returning id`,
+      [
+        input.taskId,
+        input.stage,
+        input.runner,
+        input.role,
+        input.agentVersion,
+        input.learningId ?? null
+      ]
     );
     return { ok: true, runId: rows[0]!.id };
   } catch (error) {
