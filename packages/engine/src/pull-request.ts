@@ -165,7 +165,7 @@ const movableFromOutside = (
  * still going: its push, and the status commit after it, are not recorded yet.
  */
 export type AdoptPort = PushFactsPort &
-  Pick<GitHubClient, 'pullRequestHead' | 'failedChecks' | 'cancelAutoMerge'>;
+  Pick<GitHubClient, 'pullRequest' | 'failedChecks' | 'cancelAutoMerge'>;
 
 /**
  * What follows a head taken in: auto-merge off if the task left `merging`, since GitHub would land
@@ -201,7 +201,9 @@ export const adoptOutsidePushes = async (
     if ((await latestBuild(pool, taskId, BUILD_ROLES))?.status === 'running') continue;
     const ref = { installationId: context.installationId, repo: context.repo };
     const expected = await expectedHead(pool, taskId);
-    if ((await github.pullRequestHead({ ...ref, pullRequest: context.pullRequest })) === expected)
+    if (
+      (await github.pullRequest({ ...ref, pullRequest: context.pullRequest })).head.sha === expected
+    )
       continue;
     const config = parseProjectConfig(context.rawConfig);
     if (!config.ok) continue;

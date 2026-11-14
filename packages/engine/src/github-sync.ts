@@ -262,7 +262,7 @@ export type SyncGitHubPort = Pick<
   | 'commentOnIssue'
   | 'mergeWhenReady'
   | 'cancelAutoMerge'
-  | 'pullRequestHead'
+  | 'pullRequest'
   | 'resolveReviewThreads'
 >;
 
@@ -585,6 +585,10 @@ const finishVerifiedSpec = async (
   const config = parseProjectConfig(context.rawConfig);
   if (!config.ok) return;
   const ref: RepoRef = { installationId: context.installationId, repo: context.repo };
+  // Merged or closed already, its webhook missed or not here yet: nothing is written to its branch
+  // or threads, and the scheduler's catch-up applies what the webhook would have.
+  const opened = await github.pullRequest({ ...ref, pullRequest: context.pullRequest });
+  if (opened.state !== 'open') return;
   await syncSpecStatus(pool, github, {
     taskId,
     ref,
@@ -607,7 +611,10 @@ const finishVerifiedSpec = async (
   // the task waits to merge) holds the pull request and gets auto-merge turned off, since
   // GitHub's auto-merge would land whatever the branch holds once its checks pass.
   const expected = await expectedHead(pool, taskId);
-  const head = await github.pullRequestHead({ ...ref, pullRequest });
+  // Read again: the status commit above moved the head, and the pull request may have closed since.
+  const pr = await github.pullRequest({ ...ref, pullRequest });
+  if (pr.state !== 'open') return;
+  const head = pr.head.sha;
   if (!expected || head !== expected) {
     await holdMerge(pool, { taskId, pullRequest, head });
     return;
