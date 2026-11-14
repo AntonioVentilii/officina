@@ -10,7 +10,7 @@ import {
   type Stage
 } from '@officina/core';
 import {
-  latestBuildRun,
+  latestBuild,
   linkPullRequest,
   loadTaskContext,
   type StoredTaskContext
@@ -60,7 +60,7 @@ const awaitsPullRequest = (context: StoredTaskContext | null): context is Stored
   context.task.headSha !== null &&
   AWAITS_PULL_REQUEST.has(context.task.stage);
 
-/** The pushed result a finished build run recorded, if it left one to open the pull request from. */
+/** The pushed result a finished build recorded, if it left one to open the pull request from. */
 const recordedPush = (run: { status: string; result: unknown } | null): PushedBuild | null => {
   if (!run || run.status === 'running') return null;
   const built = run.result as Partial<PushedBuild> | null;
@@ -123,8 +123,9 @@ export const openTaskPullRequest = async (
 };
 
 /**
- * The scheduler's catch-up for a pull request a build step failed to open after its round was
- * applied (GitHub down, the process dying). It opens it from the result the round recorded. Each
+ * The scheduler's catch-up for a pull request a build failed to open after its round was applied
+ * (GitHub down, the process dying). It opens it from the latest build's own title and checks: the
+ * result an agent's round recorded, or a developer's hand-in, whichever came last. Each
  * task is tried on its own, so one failing does not hold up the others; the failures are returned
  * for the log and retried on the next pass.
  */
@@ -138,7 +139,7 @@ export const openMissingPullRequests = async (
   for (const taskId of taskIds) {
     if (!awaitsPullRequest(await loadTaskContext(pool, taskId))) continue;
     // A step still running opens its own pull request.
-    const built = recordedPush(await latestBuildRun(pool, taskId, BUILD_ROLES));
+    const built = recordedPush(await latestBuild(pool, taskId, BUILD_ROLES));
     if (!built) continue;
     await openTaskPullRequest(pool, github, { taskId, publicUrl, built }).catch((error: unknown) =>
       failures.push({ taskId, error: (error as Error).message })
