@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.7.1](https://github.com/AntonioVentilii/officina/compare/v1.7.0...v1.7.1) (2026-11-14)
+
+
+### Bug Fixes
+
+* **api,db,board:** connector errors stay on the board and connected apps can be revoked (GHSA-gxmp-8mfp-rjc8) ([432e230](https://github.com/AntonioVentilii/officina/commit/432e230d853085bd1d57ce1e6f1c12fa3c6a8d24))
+* **core,api,engine:** an ask for secrets, access or publishing made after the request holds the task for the owner (GHSA-xcr8-w6q4-285c) ([432e230](https://github.com/AntonioVentilii/officina/commit/432e230d853085bd1d57ce1e6f1c12fa3c6a8d24))
+* **core,api:** members who may not read a confidential task neither read its build reason nor write on it (GHSA-mmm4-72xr-98x4) ([432e230](https://github.com/AntonioVentilii/officina/commit/432e230d853085bd1d57ce1e6f1c12fa3c6a8d24))
+* **db,api:** record a connected app revoked on the board in the access log ([#156](https://github.com/AntonioVentilii/officina/issues/156)) ([2d95608](https://github.com/AntonioVentilii/officina/commit/2d9560839e1d16b1b8b9706d9c2933a91e76e2eb))
+* **engine,github:** a build's write token ends with its run, and another branch moved with Officina's identity stops the build (GHSA-72wc-8h2c-x2qj) ([432e230](https://github.com/AntonioVentilii/officina/commit/432e230d853085bd1d57ce1e6f1c12fa3c6a8d24))
+
+
+### Documentation
+
+* **repo:** list the published security advisories and the version that fixes each ([432e230](https://github.com/AntonioVentilii/officina/commit/432e230d853085bd1d57ce1e6f1c12fa3c6a8d24))
+
 ## [1.7.0](https://github.com/AntonioVentilii/officina/compare/v1.6.1...v1.7.0) (2026-11-14)
 
 
