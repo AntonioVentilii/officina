@@ -1,6 +1,6 @@
 import { migrate } from '@officina/db';
 import { createGitHubAsUser, createGitHubClient, createGitHubUserAuth } from '@officina/github';
-import { anthropicAuthFrom, createModelResolver } from '@officina/runner';
+import { PROMPTS_DIR, anthropicAuthFrom, createModelResolver } from '@officina/runner';
 import { join } from 'node:path';
 import { Pool } from 'pg';
 import { z } from 'zod';
@@ -144,7 +144,7 @@ scheduler =
         }),
         intervalMs: env.SCHEDULER_INTERVAL_MS,
         publicUrl: env.OFFICINA_PUBLIC_URL,
-        promptsDir: join(import.meta.dir, '..', '..', '..', 'agents'),
+        promptsDir: PROMPTS_DIR,
         onBehalf: githubAccounts
           ? { publicUrl: env.OFFICINA_PUBLIC_URL, tokenFor: githubAccounts.tokenFor, asUser }
           : undefined,

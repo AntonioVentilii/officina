@@ -1,7 +1,6 @@
-import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { createGitHubClient } from '@officina/github';
-import { anthropicAuthFrom, createModelResolver } from '@officina/runner';
+import { PROMPTS_DIR, anthropicAuthFrom, createModelResolver } from '@officina/runner';
 import { Pool } from 'pg';
 import { createAgentsPort } from './engine';
 import { accessLogText, invite, loginLink, membersText } from './people';
@@ -57,8 +56,6 @@ const required = (name: string): string => {
   if (!value) throw new SetupError(`${name} is not set`);
   return value;
 };
-
-const PROMPTS_DIR = join(import.meta.dir, '..', '..', '..', 'agents');
 
 /**
  * Arguments may arrive base64-encoded as one JSON array (`--b64 <data>`), which is how the local
