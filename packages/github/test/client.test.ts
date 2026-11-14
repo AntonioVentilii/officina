@@ -517,6 +517,37 @@ describe('merge when ready', () => {
 });
 
 describe('GitHub as a person', () => {
+  test('lists every page of reviews with the person token, leaving out deleted accounts', async () => {
+    const page = (count: number, offset: number) =>
+      Array.from({ length: count }, (_, index) => ({
+        user:
+          index === 0 && offset > 0
+            ? null
+            : { id: offset + index, login: `reviewer${offset + index}` },
+        state: 'APPROVED',
+        commit_id: 'abc'
+      }));
+    let served = 0;
+    const { fetchImpl, calls } = fakeGitHub({
+      'GET /repos/ViciApp/vici-app/pulls/42/reviews': () =>
+        json(served++ === 0 ? page(100, 0) : page(2, 100))
+    });
+    const asUser = createGitHubAsUser({ fetch: fetchImpl });
+
+    const reviews = await asUser.reviews('gho_person', 'ViciApp/vici-app', 42);
+    expect(reviews).toHaveLength(101);
+    expect(reviews.at(-1)).toEqual({
+      userId: 101,
+      login: 'reviewer101',
+      state: 'APPROVED',
+      commitId: 'abc'
+    });
+    expect(calls.map((call) => [call.query, call.authorization])).toEqual([
+      ['?per_page=100&page=1', 'Bearer gho_person'],
+      ['?per_page=100&page=2', 'Bearer gho_person']
+    ]);
+  });
+
   test('asks Copilot to review with the person token, and a pending review is not an error', async () => {
     const path = '/repos/ViciApp/vici-app/pulls';
     const { fetchImpl, calls } = fakeGitHub({
