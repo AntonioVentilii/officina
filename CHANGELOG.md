@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.7.0](https://github.com/AntonioVentilii/officina/compare/v1.6.1...v1.7.0) (2026-11-14)
+
+
+### Features
+
+* **api:** a developer hands in a build from the CLI ([#150](https://github.com/AntonioVentilii/officina/issues/150)) ([9a7aec5](https://github.com/AntonioVentilii/officina/commit/9a7aec5c5b4130725717fffcc74fb8b77b2f208c))
+* **db,api,board:** an access log of sign-ins, invites, GitHub accounts and connected apps ([#146](https://github.com/AntonioVentilii/officina/issues/146)) ([562a686](https://github.com/AntonioVentilii/officina/commit/562a68621e0261eaa5490c26e96f9f40ae9ba64e))
+* **engine,api:** a review bot's comment reaches the builder once it stops changing ([#147](https://github.com/AntonioVentilii/officina/issues/147)) ([1b726e4](https://github.com/AntonioVentilii/officina/commit/1b726e4732849d3d8caa5fbdda2dcf45bf9dc9cd))
+* **engine,db,github:** an update from main that leaves the change as it was keeps the verification ([#151](https://github.com/AntonioVentilii/officina/issues/151)) ([a3a270e](https://github.com/AntonioVentilii/officina/commit/a3a270e5fb18c9fccaef22c002abc4ecfa2d2e52))
+
+
+### Documentation
+
+* **repo:** the GitHub App reads commit statuses and receives the status event ([#149](https://github.com/AntonioVentilii/officina/issues/149)) ([1bf33fe](https://github.com/AntonioVentilii/officina/commit/1bf33fec2e20db786e48d04d3c613d08ffe9f369))
+* **repo:** the GitHub App's installations, its push events and how to reload a project's config ([#148](https://github.com/AntonioVentilii/officina/issues/148)) ([8fed854](https://github.com/AntonioVentilii/officina/commit/8fed854cff0af69da28c3e4e9a05c4f762e228c6))
+
 ## [1.6.1](https://github.com/AntonioVentilii/officina/compare/v1.6.0...v1.6.1) (2026-11-14)
 
 
