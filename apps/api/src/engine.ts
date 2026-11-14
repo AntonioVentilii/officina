@@ -11,6 +11,7 @@ import {
 } from '@officina/engine';
 import {
   failOrphanedRuns,
+  failTakenOverRuns,
   listActiveTaskIds,
   listSchedulableProjectIds,
   purgeConnectorCredentials,
@@ -29,8 +30,24 @@ import {
 import type { Pool } from 'pg';
 import { startScheduler, type Scheduler } from './scheduler';
 import { setupAgents } from './setup';
+import { catchUpPullRequests } from './catch-up';
 
 const PURGE_INTERVAL_MS = 60 * 60 * 1000;
+
+/** Interrupts the sessions of runs failed outside their step, best-effort: the run is failed already. */
+const interruptSessions = async (
+  agents: ManagedAgentsPort,
+  runs: readonly { id: string; externalId: string | null }[],
+  log: (message: string, details?: Record<string, unknown>) => void,
+  message: string
+) => {
+  for (const run of runs) {
+    log(message, run);
+    if (run.externalId) {
+      await agents.send(run.externalId, [{ type: 'user.interrupt' }]).catch(() => {});
+    }
+  }
+};
 
 export const createAgentsPort = (
   auth: AnthropicAuth,
@@ -62,12 +79,12 @@ export const startEngine = async (input: {
     promptsDir: input.promptsDir
   };
 
-  for (const run of await failOrphanedRuns(input.pool)) {
-    input.log('orphaned run failed', run);
-    if (run.externalId) {
-      await input.agents.send(run.externalId, [{ type: 'user.interrupt' }]).catch(() => {});
-    }
-  }
+  await interruptSessions(
+    input.agents,
+    await failOrphanedRuns(input.pool),
+    input.log,
+    'orphaned run failed'
+  );
 
   if (input.promptsDir) {
     // A failed sync must not keep the board down: the versions recorded last time still run.
@@ -107,6 +124,12 @@ export const startEngine = async (input: {
         });
         if (deliveries > 0) input.log('old webhook deliveries purged', { rows: deliveries });
       }
+      // A member who takes a build over stops the agent's session, which would only spend now.
+      const takenOver = await failTakenOverRuns(input.pool).catch((error: unknown) => {
+        input.log('taken over run stop failed', { error: (error as Error).message });
+        return [];
+      });
+      await interruptSessions(input.agents, takenOver, input.log, 'taken over run stopped');
       const due = [];
       for (const projectId of await listSchedulableProjectIds(input.pool)) {
         const active = await listActiveTaskIds(input.pool, projectId);
@@ -124,6 +147,16 @@ export const startEngine = async (input: {
         ).catch((error: unknown) => [{ error: (error as Error).message }]);
         for (const failure of unfinished) {
           input.log('spec status update failed', { projectId, ...failure });
+        }
+        // After the pass that may merge a pull request straight away, so that merge reaches its
+        // task in the same pass.
+        const uncaught = await catchUpPullRequests(
+          input.pool,
+          input.github,
+          await listActiveTaskIds(input.pool, projectId)
+        ).catch((error: unknown) => [{ error: (error as Error).message }]);
+        for (const failure of uncaught) {
+          input.log('pull request state catch-up failed', { projectId, ...failure });
         }
         const unopened = await openMissingPullRequests(
           input.pool,

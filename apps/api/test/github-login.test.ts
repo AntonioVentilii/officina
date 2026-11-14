@@ -209,6 +209,34 @@ describe.skipIf(!url)('GitHub sign-in', () => {
     expect(replay.headers.get('location')).toContain('/signin?error=');
   });
 
+  test('after a GitHub sign-in a member returns only to a path on this site', async () => {
+    const { app } = appFor({ id: 42, login: 'antonio' });
+    const session = await signIn(app);
+    const link = await start(app, 'link', session);
+    await callback(app, link.state, link.oauth);
+
+    const landing = async (next: string) => {
+      const { state, oauth } = await start(app, 'signin');
+      const response = await callback(
+        app,
+        state,
+        `${oauth}; officina_next=${encodeURIComponent(next)}`
+      );
+      return response.headers.get('location');
+    };
+    expect(await landing('/tasks/3?tab=log')).toBe('/tasks/3?tab=log');
+    for (const elsewhere of [
+      '//evil.example',
+      '/\\evil.example',
+      '/\t/evil.example',
+      '/\n/evil.example',
+      '/\r/evil.example',
+      'https://evil.example'
+    ]) {
+      expect(await landing(elsewhere)).toBe('/');
+    }
+  });
+
   test('a state from another browser, or an unknown GitHub account, never signs anyone in', async () => {
     const { app } = appFor({ id: 7, login: 'stranger' });
     const { state } = await start(app, 'signin');
