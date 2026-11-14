@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { randomBytes } from 'node:crypto';
-import { findMemberByEmail } from '@officina/db';
+import { findMemberByEmail, linkGitHubAccount, unlinkGitHubAccount } from '@officina/db';
 import { createGitHubAsUser, type UserTokens } from '@officina/github';
 import { Pool } from 'pg';
 import { resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
@@ -354,6 +354,138 @@ describe.skipIf(!url)('GitHub sign-in', () => {
       'select refresh_token_enc from github_accounts'
     );
     expect(createTokenBox(KEY).open(stored.rows[0]!.refresh_token_enc)).toBe('ghr_new');
+  });
+
+  describe('a refresh of an expired token', () => {
+    const RENEWED: UserTokens = {
+      accessToken: 'ghu_new',
+      accessExpiresAt: fromNow(8 * 3600_000),
+      refreshToken: 'ghr_new',
+      refreshExpiresAt: fromNow(180 * 86_400_000)
+    };
+    const expiredAccount = (refresh: () => Promise<UserTokens> = async () => RENEWED) =>
+      githubAs(
+        { id: 42, login: 'antonio' },
+        {
+          accessToken: 'ghu_old',
+          accessExpiresAt: fromNow(-60_000),
+          refreshToken: 'ghr_old',
+          refreshExpiresAt: fromNow(180 * 86_400_000)
+        },
+        refresh
+      );
+    const githubLog = async () =>
+      (await accessLogView(pool, seeded.projectId))
+        .filter((event) => event.type.startsWith('github_'))
+        .map((event) => `${event.member} ${event.text}`);
+    const accountRows = async () =>
+      (
+        await pool.query<{ access_token_enc: string }>(
+          'select access_token_enc from github_accounts'
+        )
+      ).rows;
+    const LOST =
+      'Antonio lost GitHub @antonio: its renewed token could not be kept, so it must reconnect';
+
+    /** Makes every `action` on `table` fail, as a lost connection at that step would. */
+    const failing = async (action: 'insert' | 'update', table: string) => {
+      const name = `fail_${action}_${table}`;
+      await pool.query(
+        `create function ${name}() returns trigger language plpgsql as
+           $$ begin raise exception '% of % failed', tg_op, tg_table_name; end $$`
+      );
+      await pool.query(
+        `create trigger ${name} before ${action} on ${table} for each row execute function ${name}()`
+      );
+      return async () => {
+        await pool.query(`drop trigger ${name} on ${table}`);
+        await pool.query(`drop function ${name}()`);
+      };
+    };
+
+    test('whose new tokens cannot be stored forgets the spent account and tells the member to reconnect', async () => {
+      const accounts = expiredAccount();
+      expect(await accounts.complete('c', seeded.ownerId)).toMatchObject({ ok: true });
+      const heal = await failing('update', 'github_accounts');
+      await expect(accounts.tokenFor(seeded.ownerId)).rejects.toThrow(
+        'UPDATE of github_accounts failed'
+      );
+      await heal();
+
+      expect(await accountRows()).toHaveLength(0);
+      expect(await githubLog()).toEqual([LOST, 'Antonio connected GitHub as @antonio']);
+      expect(await accounts.tokenFor(seeded.ownerId)).toBeNull();
+      // The GitHub sign-in stays, and signing in with it stores fresh tokens again.
+      expect(await accounts.complete('c', null)).toMatchObject({
+        ok: true,
+        memberId: seeded.ownerId
+      });
+      expect(await accountRows()).toHaveLength(1);
+    });
+
+    test('whose account cannot be forgotten either still fails with the error of its save', async () => {
+      const accounts = expiredAccount();
+      expect(await accounts.complete('c', seeded.ownerId)).toMatchObject({ ok: true });
+      const healUpdates = await failing('update', 'github_accounts');
+      const healLog = await failing('insert', 'access_events');
+      await expect(accounts.tokenFor(seeded.ownerId)).rejects.toThrow(
+        'UPDATE of github_accounts failed'
+      );
+      await healUpdates();
+      await healLog();
+      expect(await accountRows()).toHaveLength(1);
+    });
+
+    /** A refresh GitHub answers only once the test lets it, so the member can act meanwhile. */
+    const pausedRefresh = () => {
+      let answer = () => {};
+      let asked = () => {};
+      const reached = new Promise<void>((resolve) => (asked = resolve));
+      const released = new Promise<void>((resolve) => (answer = resolve));
+      const refresh = async () => {
+        asked();
+        await released;
+        return RENEWED;
+      };
+      return { refresh, reached, answer: () => answer() };
+    };
+
+    test('never brings back an account the member disconnected meanwhile', async () => {
+      const paused = pausedRefresh();
+      const accounts = expiredAccount(paused.refresh);
+      expect(await accounts.complete('c', seeded.ownerId)).toMatchObject({ ok: true });
+      const pending = accounts.tokenFor(seeded.ownerId);
+      await paused.reached;
+      await unlinkGitHubAccount(pool, seeded.ownerId);
+      paused.answer();
+
+      expect(await pending).toBeNull();
+      expect(await accountRows()).toHaveLength(0);
+    });
+
+    test('never overwrites the account the member reconnected meanwhile', async () => {
+      const paused = pausedRefresh();
+      const accounts = expiredAccount(paused.refresh);
+      expect(await accounts.complete('c', seeded.ownerId)).toMatchObject({ ok: true });
+      const pending = accounts.tokenFor(seeded.ownerId);
+      await paused.reached;
+      const box = createTokenBox(KEY);
+      await linkGitHubAccount(pool, {
+        memberId: seeded.ownerId,
+        githubUserId: 42,
+        login: 'antonio',
+        accessTokenEnc: box.seal('ghu_reconnected'),
+        accessExpiresAt: fromNow(8 * 3600_000),
+        refreshTokenEnc: box.seal('ghr_reconnected'),
+        refreshExpiresAt: fromNow(180 * 86_400_000)
+      });
+      paused.answer();
+
+      expect(await pending).toBeNull();
+      const rows = await accountRows();
+      expect(rows.map((row) => box.open(row.access_token_enc))).toEqual(['ghu_reconnected']);
+      expect(await accounts.tokenFor(seeded.ownerId)).toMatchObject({ token: 'ghu_reconnected' });
+    });
   });
 
   test('an expired refresh token gives no token, without asking GitHub', async () => {

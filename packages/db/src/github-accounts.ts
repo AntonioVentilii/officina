@@ -115,7 +115,34 @@ const writeGitHubAccount = async (
   return { ok: true };
 };
 
-/** Stores fresh tokens for a member's GitHub account, as a sign-in or a refresh gets them. */
+/**
+ * Stores the tokens a refresh gave, only over the account that refresh started from: the same
+ * GitHub user, still holding the refresh token it spent. A member who disconnected or reconnected
+ * while GitHub answered keeps that newer state, and `false` says the fresh tokens were not kept.
+ */
+export const saveRefreshedGitHubTokens = async (
+  db: Queryable,
+  account: GitHubAccountRow,
+  spentRefreshTokenEnc: string
+): Promise<boolean> =>
+  (
+    await db.query(
+      `update github_accounts set access_token_enc = $4, access_expires_at = $5,
+         refresh_token_enc = $6, refresh_expires_at = $7, updated_at = now()
+       where member_id = $1 and github_user_id = $2 and refresh_token_enc = $3`,
+      [
+        account.memberId,
+        account.githubUserId,
+        spentRefreshTokenEnc,
+        account.accessTokenEnc,
+        account.accessExpiresAt,
+        account.refreshTokenEnc,
+        account.refreshExpiresAt
+      ]
+    )
+  ).rowCount === 1;
+
+/** Stores fresh tokens for a member's GitHub account, as a sign-in gets them. */
 export const saveGitHubAccount = (
   pool: Pool,
   account: GitHubAccountRow
@@ -150,6 +177,28 @@ export const loadGitHubAccount = async (
       [memberId]
     )
   ).rows[0] ?? null;
+
+/**
+ * Forgets a linked account whose refresh token GitHub has already spent, when the tokens it gave in
+ * exchange could not be stored, and records in the access log that the member must reconnect. Only
+ * the row still holding that spent token goes, so an account reconnected meanwhile stays. The GitHub
+ * sign-in stays too: signing in with GitHub stores fresh tokens again.
+ */
+export const forgetSpentGitHubAccount = (pool: Pool, memberId: string, refreshTokenEnc: string) =>
+  inTransaction(pool, async (db) => {
+    const { rows } = await db.query<{ login: string }>(
+      `delete from github_accounts where member_id = $1 and refresh_token_enc = $2
+       returning login`,
+      [memberId, refreshTokenEnc]
+    );
+    if (!rows[0]) return false;
+    await recordAccessEvent(db, {
+      memberId,
+      type: 'github_unlinked',
+      detail: { login: rows[0].login, reason: 'refresh_lost' }
+    });
+    return true;
+  });
 
 export const memberForGitHubUser = async (db: Queryable, githubUserId: number) =>
   (
