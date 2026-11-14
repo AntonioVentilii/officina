@@ -1,4 +1,4 @@
-import { TERMINAL_STAGES, redactDeep } from '@officina/core';
+import { BUILD_ROLES, TERMINAL_STAGES, redactDeep } from '@officina/core';
 import type { StoredTaskContext } from './types';
 import type { Pool, PoolClient } from 'pg';
 import { RUN_IS_ACTIVE } from './run-status';
@@ -27,9 +27,32 @@ export const startRun = async (
   }
 };
 
-export const setRunExternalId = async (pool: Pool, runId: string, externalId: string) => {
-  await pool.query('update runs set external_id = $2 where id = $1', [runId, externalId]);
-};
+/**
+ * Records the run's session, and whether the run is still in progress: one failed before its
+ * session existed (a build taken over) has no session to interrupt yet, so the caller stops it.
+ */
+export const setRunExternalId = async (
+  pool: Pool,
+  runId: string,
+  externalId: string
+): Promise<boolean> =>
+  (
+    await pool.query<{ active: boolean }>(
+      `update runs set external_id = $2 where id = $1 returning status ${RUN_IS_ACTIVE} as active`,
+      [runId, externalId]
+    )
+  ).rows[0]?.active ?? false;
+
+/**
+ * Whether the run is still in progress, locked until the caller's transaction ends, so it cannot
+ * be failed (a build taken over) while a result of it is being applied.
+ */
+export const runIsActive = async (client: PoolClient, runId: string): Promise<boolean> =>
+  ((
+    await client.query(`select 1 from runs where id = $1 and status ${RUN_IS_ACTIVE} for update`, [
+      runId
+    ])
+  ).rowCount ?? 0) > 0;
 
 /** Records a run's validated result before it is applied, so it outlives a crash that follows. */
 export const recordRunResult = async (pool: Pool, runId: string, result: unknown) => {
@@ -264,5 +287,27 @@ export const failOrphanedRuns = async (
          result = coalesce(result, '{}'::jsonb)
            || '{"error": "the engine restarted while this run was in progress"}'::jsonb
        where status ${RUN_IS_ACTIVE} returning id, external_id`
+    )
+  ).rows.map((row) => ({ id: row.id, externalId: row.external_id }));
+
+/**
+ * Build runs still in progress on a task a member took over, whatever stage the member's work has
+ * reached since (a hand-in moves it on before the next pass): their result no longer applies (the
+ * engine's `sameWork`), and their session would only spend. They are failed, like an orphaned run,
+ * and the caller interrupts their sessions.
+ */
+export const failTakenOverRuns = async (
+  db: Pool | PoolClient
+): Promise<{ id: string; externalId: string | null }[]> =>
+  (
+    await db.query<{ id: string; external_id: string | null }>(
+      `update runs r set status = 'failed', finished_at = now(),
+         result = coalesce(r.result, '{}'::jsonb)
+           || '{"error": "a member took the build over while this run was in progress"}'::jsonb
+       from tasks t
+       where t.id = r.task_id and r.status ${RUN_IS_ACTIVE} and r.agent_role = any($1::text[])
+         and t.assignee->>'kind' = 'member'
+       returning r.id, r.external_id`,
+      [BUILD_ROLES]
     )
   ).rows.map((row) => ({ id: row.id, externalId: row.external_id }));
