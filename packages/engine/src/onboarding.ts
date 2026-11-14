@@ -1,4 +1,4 @@
-import { requiredDocs, type Actor, type ProjectConfig } from '@officina/core';
+import { ENGINE, requiredDocs, type ProjectConfig } from '@officina/core';
 import {
   applyCommand,
   createOnboardingTask,
@@ -45,8 +45,6 @@ export const onboardingSpec = (
       "- The project's verify commands pass."
     ].join('\n')
   ].join('\n\n');
-
-const ENGINE: Actor = { kind: 'engine' };
 
 export interface OnboardingInput {
   readonly projectId: string;

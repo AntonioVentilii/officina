@@ -1,15 +1,16 @@
 import { randomBytes } from 'node:crypto';
+import { allowedActions } from '@officina/core';
+import type { HandInPort } from '@officina/engine';
 import {
-  addComment,
   consumeOAuthState,
   createOAuthState,
   createSession,
   githubLoginOf,
   unlinkGitHubAccount,
   endSession,
-  findTaskIdByNumber,
   listMemberProjects,
   loadRun,
+  markNotificationRead,
   memberForSession,
   redeemLoginLink,
   SESSION_TTL_MS,
@@ -21,8 +22,10 @@ import { Elysia } from 'elysia';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import {
+  agentsView,
   boardView,
   learningsView,
+  roleLabels,
   runLog,
   runsView,
   seesTechnical,
@@ -32,8 +35,17 @@ import {
 import { checkAuthorization, consentRedirect } from './connector';
 import type { GitHubAccounts } from './github-accounts';
 import { decide as decideLearning, type LearningGitHub } from './learnings';
+import { notificationsView } from './notifications';
+import { inviteAgain, membersView } from './people';
 import type { BoardEvent, RealtimeHub } from './realtime';
-import { TaskCommandError, actOnTaskAs, createRequestAs, type TaskAction } from './tasks';
+import {
+  TaskCommandError,
+  actOnTaskAs,
+  commentAs,
+  createRequestAs,
+  handInAs,
+  type TaskAction
+} from './tasks';
 
 export interface BoardApiDependencies {
   readonly pool: Pool;
@@ -42,6 +54,8 @@ export interface BoardApiDependencies {
   readonly realtime?: RealtimeHub | undefined;
   /** Opens the pull requests of accepted learnings. */
   readonly github?: LearningGitHub | undefined;
+  /** Reads a developer's handed-in push and opens its pull request. */
+  readonly builds?: HandInPort | undefined;
   /** Linking members' GitHub accounts and signing in with GitHub; off when the app has no client secret. */
   readonly githubLogin?:
     | { readonly accounts: GitHubAccounts; readonly authorizeUrl: (state: string) => string }
@@ -105,12 +119,24 @@ const sessionCookie = (value: string, maxAgeMs: number, secure: boolean) =>
 const actionSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('submit') }),
   z.strictObject({ type: z.literal('accept') }),
+  z.strictObject({ type: z.literal('claim') }),
   z.strictObject({ type: z.literal('approve') }),
   z.strictObject({ type: z.literal('changes'), note: z.string().trim().min(1).max(10_000) }),
-  z.strictObject({ type: z.literal('answer'), text: z.string().trim().min(1).max(10_000) }),
+  // A free answer is its text; a picked option is its letter, with `text` as an optional note.
+  z.strictObject({
+    type: z.literal('answer'),
+    text: z.string().trim().max(10_000).default(''),
+    option: z.string().trim().min(1).max(2).optional()
+  }),
   z.strictObject({ type: z.literal('decline'), reason: z.string().trim().min(1).max(2_000) }),
   z.strictObject({ type: z.literal('cancel'), reason: z.string().trim().min(1).max(2_000) })
 ]);
+
+const handInSchema = z.strictObject({
+  prTitle: z.string().trim().min(3).max(120),
+  verified: z.array(z.string().trim().min(1).max(500)).max(20).default([]),
+  notVerified: z.array(z.string().trim().min(1).max(500)).max(20).default([])
+});
 
 const requestSchema = z.strictObject({
   title: z.string().trim().min(3).max(200),
@@ -257,7 +283,7 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
           return { error: error.message };
         }
         if (code === 'TaskCommandError') {
-          set.status = 409;
+          set.status = error.status;
           return { error: error.message };
         }
       })
@@ -332,9 +358,7 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
         if (!consumed) return expired();
         const result = await deps.githubLogin.accounts.complete(code, consumed.memberId);
         if (!result.ok) return fail(result.why);
-        if (consumed.memberId) return redirect('/?github=linked', [clear]);
-        const session = await createSession(pool, result.memberId);
-        return redirect('/', [clear, sessionCookie(session, SESSION_TTL_MS, secure)]);
+        return redirect('/?github=linked', [clear]);
       })
       .post('/auth/github/unlink', async ({ request }) => {
         mutation(request);
@@ -351,7 +375,12 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
             name: signed.member.displayName,
             email: signed.member.email
           },
-          projects: signed.projects,
+          // What the member may do in each project, from the permission matrix, so the board
+          // shows only what the API would accept.
+          projects: signed.projects.map((project) => ({
+            ...project,
+            can: allowedActions(project)
+          })),
           github: login ? { login } : null,
           githubAvailable: Boolean(deps.githubLogin)
         };
@@ -393,11 +422,11 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
       .get('/api/stream', async ({ request }) => stream(await signedIn(request), request))
       .get('/api/projects/:projectId/board', async ({ request, params }) => {
         const viewer = viewerFor(await signedIn(request), params.projectId);
-        return { tasks: await boardView(pool, viewer) };
+        return { tasks: await boardView(pool, viewer), roleLabels: roleLabels() };
       })
       .get('/api/projects/:projectId/runs', async ({ request, params }) => {
         const viewer = technicalViewer(viewerFor(await signedIn(request), params.projectId));
-        return { runs: await runsView(pool, viewer, deps.consoleWorkspace) };
+        return { runs: await runsView(pool, viewer, deps.consoleWorkspace), agents: agentsView() };
       })
       .get('/api/projects/:projectId/tasks/:number', async ({ request, params }) => {
         const viewer = viewerFor(await signedIn(request), params.projectId);
@@ -419,8 +448,6 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
       .post('/api/projects/:projectId/tasks', async ({ request, params, body }) => {
         mutation(request);
         const viewer = viewerFor(await signedIn(request), params.projectId);
-        if (viewer.role === 'watcher')
-          throw new HttpError(403, 'watchers can read but not open requests');
         const { interview, ...input } = parse(requestSchema, body);
         return createRequestAs(pool, {
           projectId: viewer.projectId,
@@ -440,6 +467,17 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
           action
         });
       })
+      .post('/api/projects/:projectId/tasks/:number/hand-in', async ({ request, params, body }) => {
+        mutation(request);
+        const viewer = viewerFor(await signedIn(request), params.projectId);
+        return handInAs(pool, deps.builds, {
+          projectId: viewer.projectId,
+          memberId: viewer.memberId,
+          number: taskNumber(params.number),
+          publicUrl: deps.publicUrl,
+          ...parse(handInSchema, body)
+        });
+      })
       .get('/api/projects/:projectId/learnings', async ({ request, params }) => {
         const viewer = technicalViewer(viewerFor(await signedIn(request), params.projectId));
         return { learnings: await learningsView(pool, viewer) };
@@ -450,7 +488,7 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
         if (!z.uuid().safeParse(params.learningId).success)
           throw new HttpError(404, 'learning not found');
         const input = parse(learningDecisionSchema, body);
-        await decideLearning(
+        const decided = await decideLearning(
           pool,
           deps.github,
           {
@@ -461,6 +499,39 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
           },
           { id: params.learningId, ...input }
         );
+        return { ok: true, rewriting: decided.rewrite === 'requested' };
+      })
+      .get('/api/projects/:projectId/members', async ({ request, params }) => {
+        const viewer = technicalViewer(viewerFor(await signedIn(request), params.projectId));
+        return { members: await membersView(pool, viewer.projectId, viewer.role) };
+      })
+      .post('/api/projects/:projectId/members/:memberId/link', async ({ request, params }) => {
+        mutation(request);
+        const viewer = viewerFor(await signedIn(request), params.projectId);
+        if (!z.uuid().safeParse(params.memberId).success)
+          throw new HttpError(404, 'member not found');
+        return {
+          url: await inviteAgain(pool, {
+            publicUrl: deps.publicUrl,
+            projectId: viewer.projectId,
+            viewerRole: viewer.role,
+            memberId: params.memberId
+          })
+        };
+      })
+      .get('/api/projects/:projectId/notifications', async ({ request, params }) => {
+        const viewer = viewerFor(await signedIn(request), params.projectId);
+        return {
+          notifications: await notificationsView(pool, viewer.memberId, viewer.projectId)
+        };
+      })
+      .post('/api/notifications/:notificationId/read', async ({ request, params }) => {
+        mutation(request);
+        const signed = await signedIn(request);
+        const found =
+          z.uuid().safeParse(params.notificationId).success &&
+          (await markNotificationRead(pool, signed.member.id, params.notificationId));
+        if (!found) throw new HttpError(404, 'notification not found');
         return { ok: true };
       })
       .post(
@@ -468,16 +539,13 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
         async ({ request, params, body }) => {
           mutation(request);
           const viewer = viewerFor(await signedIn(request), params.projectId);
-          if (viewer.role === 'watcher')
-            throw new HttpError(403, 'watchers can read but not comment');
           const { body: text } = parse(commentSchema, body);
-          const taskId = await findTaskIdByNumber(
-            pool,
-            viewer.projectId,
-            taskNumber(params.number)
-          );
-          if (!taskId) throw new HttpError(404, 'task not found');
-          await addComment(pool, taskId, { kind: 'member', memberId: viewer.memberId }, text);
+          await commentAs(pool, {
+            projectId: viewer.projectId,
+            memberId: viewer.memberId,
+            number: taskNumber(params.number),
+            text
+          });
           return { ok: true };
         }
       )

@@ -6,8 +6,9 @@
  *   bun run dev:board    # the board with hot reload on :5173, proxied to this server
  */
 import { join } from 'node:path';
-import type { Actor, Command } from '@officina/core';
+import { ENGINE, isGate, type Actor, type Command } from '@officina/core';
 import {
+  addComment,
   appendRunEvent,
   applyCommand,
   createLoginLink,
@@ -22,6 +23,7 @@ import {
   upsertProject,
   upsertWorkspace
 } from '@officina/db';
+import { RUNNER } from '@officina/runner';
 import { Pool } from 'pg';
 import { createApp } from './app';
 import { startRealtime } from './realtime';
@@ -143,7 +145,6 @@ interface Demo {
 }
 
 const agent = (role: string): Actor => ({ kind: 'agent', role, version: 3 }) as Actor;
-const engine: Actor = { kind: 'engine' };
 
 const apply = async (demo: Demo, taskId: string, command: Command, actor: Actor) => {
   const result = await applyCommand(demo.pool, { taskId, command, actor });
@@ -163,7 +164,7 @@ const run = async (
     stage,
     role,
     agentVersion: 3,
-    runner: 'managed_agents'
+    runner: RUNNER
   });
   if (!claim.ok) throw new Error('run not started');
   await demo.pool.query(
@@ -274,7 +275,7 @@ const seed = async (
     approve: async (actors: Actor[]) => {
       for (const actor of [...actors, demo.owner, demo.giulia]) {
         const before = await apply(demo, task.id, { type: 'approve' }, actor);
-        if (before.stage !== 'spec_review' && before.stage !== 'verifying') return;
+        if (!isGate(before.stage)) return;
       }
     },
     build: async (running = false) => {
@@ -286,7 +287,7 @@ const seed = async (
           assignee: { kind: 'agent', role: 'builder' },
           openInLane: 0
         },
-        engine
+        ENGINE
       );
       if (running) return run(demo, task.id, 'building', 'builder', { events: 9, running: true });
       await run(demo, task.id, 'building', 'builder', { cost: 212, result: { outcome: 'pushed' } });
@@ -431,7 +432,7 @@ const seedDemo = async (pool: Pool) => {
   await done.review();
   await done.choose();
   await done.approve([owner, giulia]);
-  await apply(demo, done.id, { type: 'merged' }, engine);
+  await apply(demo, done.id, { type: 'merged' }, ENGINE);
   const learnerRun = await run(demo, done.id, 'done', 'learner', { cost: 31, result: {} });
   await insertLearnings(pool, {
     projectId,
@@ -534,7 +535,7 @@ const seedDemo = async (pool: Pool) => {
       assignee: { kind: 'agent', role: 'builder' },
       openInLane: 0
     },
-    engine
+    ENGINE
   );
   await apply(
     demo,
@@ -591,6 +592,51 @@ const seedDemo = async (pool: Pool) => {
     by: giulia,
     paths: [UI]
   });
+
+  // A request the interviewer asked about, offering options with a preview of each.
+  const { task: interviewed } = await createTask(demo.pool, {
+    projectId: demo.projectId,
+    title: 'Tell people about the weekly prize',
+    requesterId: ownerId
+  });
+  await addComment(
+    demo.pool,
+    interviewed.id,
+    owner,
+    'Nobody knows there is a weekly prize. Tell people about it.'
+  );
+  await apply(
+    demo,
+    interviewed.id,
+    {
+      type: 'block',
+      question: 'Where should people learn about the weekly prize?',
+      askedOf: { memberId: ownerId },
+      options: [
+        {
+          label: 'A line under the title',
+          detail: 'Quiet; nothing else on the page moves.',
+          preview: { kind: 'text', before: 'Leaderboard', after: 'Leaderboard · Prize: 500 coins' }
+        },
+        {
+          label: 'A banner above the list',
+          detail: 'Hard to miss, pushes the list down.',
+          preview: {
+            kind: 'html',
+            body: '<div style="padding:12px 14px;background:#ffe14d;font-weight:700">This week’s prize: 500 coins</div><ol style="padding-left:20px"><li>Giulia, 1,240</li><li>Marco, 1,180</li><li>Antonio, 990</li></ol>'
+          }
+        },
+        {
+          label: 'Only in the rules',
+          preview: {
+            kind: 'markdown',
+            body: '### Weekly prize\n\nThe top player on Sunday at midnight wins **500 coins**.'
+          }
+        }
+      ]
+    },
+    agent('interviewer')
+  );
 
   const declined = await seed(demo, {
     title: 'Replace the confetti animation',

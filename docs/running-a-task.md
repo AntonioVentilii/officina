@@ -21,13 +21,21 @@ To bring someone in, give them a role and send them the link it prints (valid 7 
 scripts/officina invite --email gio@example.com --name "Gio" --role contributor --domains product
 ```
 
+To see who accepted and who is active, list the project's members: their role, when they first signed in, when their latest link was sent and whether it was used, is still pending or expired, when they last opened the board and whether they added Officina to Claude. Pass `--repo <owner/name>` when there are several projects.
+
+```bash
+scripts/officina members --repo ViciApp/vici-app
+```
+
+On the board, owners and maintainers have the same list under **Members**, and an owner can make a fresh invite link there for someone who has not signed in yet. When someone signs in for the first time, the project's owners get a line in their **Inbox**.
+
 ## From Claude
 
 Add Officina to Claude once and do everything below from a chat, in plain words.
 
-1. In claude.ai open **Settings > Connectors**, choose **Add custom connector**, name it Officina and paste `<public URL>/mcp`. The desktop app picks it up from the same account. In Claude Code: `claude mcp add --transport http officina <public URL>/mcp`, then `/mcp` to sign in.
-2. Claude opens the board's **Connect an app** page. Sign in if asked, check the name, and press **Allow**.
-3. Ask things like "what is waiting on me in Officina?", "open a request in vici-app: the Wager button should say Prediction", or "show task 12 and help me check it". Claude asks what it needs, then calls Officina as you, with your role.
+1. In claude.ai open **Customize > Connectors**, choose **Add > Add custom connector**, name it Officina and paste `<public URL>/mcp`. Press **Continue** and **Add**, keeping the sign-in it detects (OAuth, registered automatically), then **Connect**. The desktop app picks it up from the same account. In Claude Code: `claude mcp add --transport http officina <public URL>/mcp`, then `/mcp` to sign in.
+2. Claude opens the board's **Connect an app** page. Sign in if asked, check the name, and press **Allow**. The welcome guide waits until after this page.
+3. Ask things like "what is waiting on me in Officina?", "open a request: the Sign up button should say Join", or "show task 12 and help me check it". Claude asks what it needs, then calls Officina as you, with your role.
 
 To stop it, remove the connector in Claude.
 
@@ -45,6 +53,15 @@ To stop it, remove the connector in Claude.
 
 At any point, `task show` says where the task is and what it waits for, and ends with the exact next
 command.
+
+Two moments wait on a person instead of an agent. When an agent finds that the task needs something
+agents cannot do or decide (a domain, a secret, a new host, an account, access, publishing somewhere
+new), the task is handed to the owner or a maintainer with the list of what is needed; `task answer`
+resumes it. When the plan says a person must build it (or the lane forbids agents), it waits in
+`ready` until a maintainer, or a contributor with the `developer` domain, runs
+`task claim --number <n>`. They build it on `officina/task-<n>` by hand or with their own agents,
+push, and hand it in from the board ("Hand in the build") or from Claude (`hand_in_build`); it then
+goes to the same review as an agent's build.
 
 ## Step by step
 
@@ -108,6 +125,14 @@ To stop a task at any time: `scripts/officina task cancel --number 1 --reason "W
   comment on the code but a verdict (green, blue or yellow) goes back to the builder too, once: it checks
   each point, changes what is right or finishes without a push, and answers on the pull request
   (always for a blue one).
+- **Asking Copilot for the review.** A pull request Officina opens is opened by the GitHub App,
+  which has no Copilot seat, so a branch rule asking for Copilot's review does not start it. A
+  project that sets `pull_request.copilot_review: true` in `.github/officina.yml` has Officina ask
+  Copilot itself, as the person who requested the task, on the scheduler's next pass after the
+  pull request is open (tasks already in flight get it too once the setting is on). That
+  person needs GitHub connected in Officina and a Copilot seat (or the organization's permission to
+  use Copilot review without one). When the request fails the task goes on and its timeline says
+  why; ask for the review on GitHub by hand.
 - **Other review bots.** A bot that comments on the code (CodeRabbit's inline comments, for example)
   sends the task back like Copilot. A bot that only writes a summary, as a review or as a comment on
   the pull request, counts once the project lists it in `pull_request.review_bots`.

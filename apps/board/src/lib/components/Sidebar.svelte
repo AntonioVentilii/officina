@@ -9,7 +9,8 @@
     Monitor,
     Moon,
     SquareKanban,
-    Sun
+    Sun,
+    Users
   } from '@lucide/svelte';
   import { page } from '$app/state';
   import { board } from '$lib/state/board.svelte';
@@ -29,6 +30,8 @@
 
   const path = $derived(page.url.pathname);
   const onBoard = $derived(path === '/' || path.startsWith('/tasks'));
+
+  const inboxCount = $derived(board.waitingOnMe.length + board.notices.length);
 
   const LIVE_LABELS = { live: 'Live', connecting: 'Reconnecting', offline: 'Offline' } as const;
 </script>
@@ -61,7 +64,7 @@
     <li>
       <a href="/inbox" class:on={path === '/inbox'}>
         <Inbox size={16} />Inbox
-        {#if board.waitingOnMe.length}<span class="badge num">{board.waitingOnMe.length}</span>{/if}
+        {#if inboxCount}<span class="badge num">{inboxCount}</span>{/if}
       </a>
     </li>
     {#if session.technical}
@@ -80,6 +83,9 @@
               >{board.proposedLearnings.length}</span
             >{/if}
         </a>
+      </li>
+      <li>
+        <a href="/members" class:on={path === '/members'}><Users size={16} />Members</a>
       </li>
     {/if}
     <li>

@@ -1,7 +1,7 @@
 import { createSign } from 'node:crypto';
 import type { PushFacts } from '@officina/core';
-
-const API = 'https://api.github.com';
+import { GitHubError, githubRequest } from './http';
+import { mergeWhenReadyWith } from './merge';
 
 /** GitHub's compare endpoint lists at most this many files; a full page means the list may be cut. */
 export const COMPARE_FILE_LIMIT = 300;
@@ -9,17 +9,12 @@ export const COMPARE_FILE_LIMIT = 300;
 /** Compare statuses of a file that is new at its path on the branch. */
 const ADDED_STATUSES: ReadonlySet<string> = new Set(['added', 'copied', 'renamed']);
 
-export class GitHubError extends Error {
-  constructor(
-    readonly status: number,
-    readonly path: string,
-    message: string
-  ) {
-    super(`GitHub ${status} on ${path}: ${message}`);
-  }
-}
-
 const base64url = (input: string | Buffer): string => Buffer.from(input).toString('base64url');
+
+/** The paths a list of changed files touches, a renamed file under both names. */
+const touchedPaths = (files: readonly { filename: string; previous_filename?: string }[]) => [
+  ...new Set(files.flatMap((file) => [file.filename, file.previous_filename ?? []].flat()))
+];
 
 /** A short-lived JWT that authenticates as the GitHub App itself. */
 export const createAppJwt = (appId: string, privateKeyPem: string, nowSeconds: number): string => {
@@ -58,6 +53,23 @@ export interface RefSnapshot {
   readonly tags: Readonly<Record<string, string>>;
 }
 
+interface ReviewThread {
+  readonly id: string;
+  readonly isResolved: boolean;
+  readonly comments: { nodes: { pullRequestReview: { databaseId: number } | null }[] };
+}
+
+interface ReviewThreadsPage {
+  repository: {
+    pullRequest: {
+      reviewThreads: {
+        pageInfo: { hasNextPage: boolean; endCursor: string | null };
+        nodes: ReviewThread[];
+      };
+    };
+  };
+}
+
 interface CachedToken {
   readonly token: string;
   readonly expiresAtMs: number;
@@ -70,26 +82,8 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
   const now = options.now ?? Date.now;
   const tokens = new Map<string, CachedToken>();
 
-  const request = async <T>(
-    path: string,
-    init: { method?: string; token: string; body?: unknown }
-  ): Promise<T> => {
-    const response = await http(`${API}${path}`, {
-      method: init.method ?? 'GET',
-      headers: {
-        accept: 'application/vnd.github+json',
-        authorization: `Bearer ${init.token}`,
-        'x-github-api-version': '2022-11-28',
-        ...(init.body === undefined ? {} : { 'content-type': 'application/json' })
-      },
-      ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) })
-    });
-    if (!response.ok) {
-      const text = await response.text();
-      throw new GitHubError(response.status, path, text.slice(0, 300));
-    }
-    return (await response.json()) as T;
-  };
+  const request = <T>(path: string, init: { method?: string; token: string; body?: unknown }) =>
+    githubRequest<T>(http, init.token, path, init);
 
   /**
    * Installation tokens are scoped to the one repository being worked on, not everything the
@@ -137,9 +131,7 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     }>(`/repos/${ref.repo}/compare/${encodeURIComponent(ref.base)}...${headSha}`, { token });
 
     const files = comparison.files ?? [];
-    const changedPaths = [
-      ...new Set(files.flatMap((file) => [file.filename, file.previous_filename ?? []].flat()))
-    ];
+    const changedPaths = touchedPaths(files);
     const addedPaths = files
       .filter((file) => ADDED_STATUSES.has(file.status))
       .map((file) => file.filename);
@@ -203,6 +195,21 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     );
   };
 
+  /** A commit's parents and the paths it changes. */
+  const commitChanges = async (
+    ref: RepoRef & { readonly sha: string }
+  ): Promise<{ parents: string[]; paths: string[] }> => {
+    const token = await installationToken(ref, { contents: 'read' });
+    const commit = await request<{
+      parents: { sha: string }[];
+      files?: { filename: string; previous_filename?: string }[];
+    }>(`/repos/${ref.repo}/commits/${encodeURIComponent(ref.sha)}`, { token });
+    return {
+      parents: commit.parents.map((parent) => parent.sha),
+      paths: touchedPaths(commit.files ?? [])
+    };
+  };
+
   /** The installation of this app on a repository, authenticated as the app itself. */
   const repoInstallationId = async (repo: string): Promise<number> => {
     const jwt = createAppJwt(options.appId, options.privateKeyPem, Math.floor(now() / 1000));
@@ -222,7 +229,7 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     `/repos/${repo}/contents/${path.split('/').map(encodeURIComponent).join('/')}`;
 
   /**
-   * A file's text and blob sha at a branch, or `null` when no file exists there. A directory (or a
+   * A file's text and blob sha at a branch (or a commit), or `null` when no file exists there. A directory (or a
    * symlink or submodule) at that path is not a file, so it reads as missing instead of failing.
    */
   const readFile = async (
@@ -280,7 +287,10 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     ref: RepoRef & { readonly path: string; readonly branch: string }
   ): Promise<string | null> => (await readFile(ref))?.text ?? null;
 
-  /** Creates a branch pointing at the current head of another one. */
+  /**
+   * Creates a branch at the current head of another one. A branch an earlier attempt left is kept as
+   * it is, never moved, so a retry cannot undo what was written on it since.
+   */
   const createBranch = async (
     ref: RepoRef & { readonly branch: string; readonly from: string }
   ): Promise<void> => {
@@ -289,13 +299,45 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
       `/repos/${ref.repo}/git/ref/heads/${encodeURIComponent(ref.from)}`,
       { token }
     );
-    await request(`/repos/${ref.repo}/git/refs`, {
-      method: 'POST',
-      token,
-      body: { ref: `refs/heads/${ref.branch}`, sha: head.object.sha }
-    });
+    try {
+      await request(`/repos/${ref.repo}/git/refs`, {
+        method: 'POST',
+        token,
+        body: { ref: `refs/heads/${ref.branch}`, sha: head.object.sha }
+      });
+    } catch (error) {
+      const exists =
+        error instanceof GitHubError &&
+        error.status === 422 &&
+        error.message.includes('Reference already exists');
+      if (!exists) throw error;
+    }
   };
 
+  /**
+   * The pull requests open from one of the repository's own branches, to any base or to one. Every
+   * page is read before anything acts on them, so closing some cannot shift the pages still unread.
+   */
+  const openFromBranch = async (
+    ref: RepoRef & { readonly branch: string; readonly base?: string },
+    token: string
+  ) => {
+    const owner = ref.repo.split('/')[0]!;
+    const base = ref.base === undefined ? '' : `&base=${encodeURIComponent(ref.base)}`;
+    const head = encodeURIComponent(`${owner}:${ref.branch}`);
+    const pulls: { number: number; html_url: string }[] = [];
+    for (let page = 1; ; page++) {
+      const batch = await request<typeof pulls>(
+        `/repos/${ref.repo}/pulls?state=open&head=${head}${base}&per_page=100&page=${page}`,
+        { token }
+      );
+      pulls.push(...batch);
+      if (batch.length < 100) break;
+    }
+    return pulls;
+  };
+
+  /** Opens a pull request, or returns the one already open from the same branch to the same base. */
   const openPullRequest = async (
     ref: RepoRef & {
       readonly base: string;
@@ -305,15 +347,35 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     }
   ): Promise<{ number: number; url: string }> => {
     const token = await installationToken(ref);
-    const created = await request<{ number: number; html_url: string }>(
-      `/repos/${ref.repo}/pulls`,
-      {
-        method: 'POST',
+    try {
+      const created = await request<{ number: number; html_url: string }>(
+        `/repos/${ref.repo}/pulls`,
+        {
+          method: 'POST',
+          token,
+          body: { base: ref.base, head: ref.branch, title: ref.title, body: ref.body }
+        }
+      );
+      return { number: created.number, url: created.html_url };
+    } catch (error) {
+      if (!(error instanceof GitHubError && error.status === 422)) throw error;
+      // An earlier attempt may have opened it before failing: that one is the answer.
+      const open = await openFromBranch(ref, token);
+      if (!open[0]) throw error;
+      return { number: open[0].number, url: open[0].html_url };
+    }
+  };
+
+  /** Closes every pull request still open from a branch; none open is not an error. */
+  const closePullRequestsFrom = async (ref: RepoRef & { readonly branch: string }) => {
+    const token = await installationToken(ref);
+    for (const pull of await openFromBranch(ref, token)) {
+      await request(`/repos/${ref.repo}/pulls/${pull.number}`, {
+        method: 'PATCH',
         token,
-        body: { base: ref.base, head: ref.branch, title: ref.title, body: ref.body }
-      }
-    );
-    return { number: created.number, url: created.html_url };
+        body: { state: 'closed' }
+      });
+    }
   };
 
   const commentOnIssue = async (
@@ -378,32 +440,24 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
 
   /**
    * Turns on auto-merge as the app, for a result that needed no person's check, so the branch
-   * rules (checks, resolved threads, any required review) still decide when it lands. A pull request
-   * that already meets them cannot take auto-merge and is merged straight away. Both are pinned to
-   * `expectedHead`, so a commit pushed after the result was accepted is never merged with it.
+   * rules (checks, resolved threads, any required review) still decide when it lands.
    */
   const mergeWhenReady = async (
     ref: RepoRef & { readonly pullRequest: number; readonly expectedHead: string }
-  ): Promise<'auto_merge' | 'merged'> => {
-    const pr = await pullRequestNode(ref);
-    const response = await graphql(
-      ref,
-      'mutation($id: ID!, $head: GitObjectID!) { enablePullRequestAutoMerge(input: { pullRequestId: $id, mergeMethod: SQUASH, expectedHeadOid: $head }) { clientMutationId } }',
-      { id: pr.node_id, head: ref.expectedHead }
+  ): Promise<'auto_merge' | 'merged'> =>
+    mergeWhenReadyWith(
+      {
+        graphql: (query, variables) => graphql(ref, query, variables),
+        merge: async (body) =>
+          request(`/repos/${ref.repo}/pulls/${ref.pullRequest}/merge`, {
+            method: 'PUT',
+            token: await installationToken(ref),
+            body
+          })
+      },
+      (await pullRequestNode(ref)).node_id,
+      ref.expectedHead
     );
-    if (!response.errors?.length) return 'auto_merge';
-    const message = response.errors.map((error) => error.message).join('; ');
-    if (!/clean status|is in clean/i.test(message)) {
-      throw new GitHubError(422, '/graphql enablePullRequestAutoMerge', message);
-    }
-    const token = await installationToken(ref);
-    await request(`/repos/${ref.repo}/pulls/${ref.pullRequest}/merge`, {
-      method: 'PUT',
-      token,
-      body: { merge_method: 'squash', sha: ref.expectedHead }
-    });
-    return 'merged';
-  };
 
   /** Turns auto-merge off, so work sent back to building cannot land before it is checked again. */
   const cancelAutoMerge = async (ref: RepoRef & { readonly pullRequest: number }) => {
@@ -420,6 +474,29 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     }
   };
 
+  /** Every review thread of a pull request, page by page, with the review its first comment is from. */
+  const listReviewThreads = async (ref: RepoRef & { readonly pullRequest: number }) => {
+    const [owner, name] = ref.repo.split('/');
+    const threads: ReviewThread[] = [];
+    let after: string | null = null;
+    do {
+      const response: { data?: ReviewThreadsPage; errors?: { message: string }[] } =
+        await graphql<ReviewThreadsPage>(
+          ref,
+          'query($owner: String!, $name: String!, $number: Int!, $after: String) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { reviewThreads(first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { id isResolved comments(first: 1) { nodes { pullRequestReview { databaseId } } } } } } } }',
+          { owner, name, number: ref.pullRequest, after }
+        );
+      if (response.errors?.length) {
+        throw new GitHubError(422, '/graphql reviewThreads', response.errors[0]!.message);
+      }
+      const page: ReviewThreadsPage['repository']['pullRequest']['reviewThreads'] | undefined =
+        response.data?.repository.pullRequest.reviewThreads;
+      threads.push(...(page?.nodes ?? []));
+      after = page?.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+    } while (after);
+    return threads;
+  };
+
   /**
    * Resolves the open threads started by the given reviews. Officina calls it once the fixes for
    * those reviews were reviewed again and verified, since the repository only merges with every
@@ -428,28 +505,7 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
   const resolveReviewThreads = async (
     ref: RepoRef & { readonly pullRequest: number; readonly reviewIds: readonly number[] }
   ): Promise<number> => {
-    const [owner, name] = ref.repo.split('/');
-    const response = await graphql<{
-      repository: {
-        pullRequest: {
-          reviewThreads: {
-            nodes: {
-              id: string;
-              isResolved: boolean;
-              comments: { nodes: { pullRequestReview: { databaseId: number } | null }[] };
-            }[];
-          };
-        };
-      };
-    }>(
-      ref,
-      'query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { reviewThreads(first: 100) { nodes { id isResolved comments(first: 1) { nodes { pullRequestReview { databaseId } } } } } } } }',
-      { owner, name, number: ref.pullRequest }
-    );
-    if (response.errors?.length) {
-      throw new GitHubError(422, '/graphql reviewThreads', response.errors[0]!.message);
-    }
-    const threads = response.data?.repository.pullRequest.reviewThreads.nodes ?? [];
+    const threads = await listReviewThreads(ref);
     const open = threads.filter((thread) => {
       const reviewId = thread.comments.nodes[0]?.pullRequestReview?.databaseId;
       return !thread.isResolved && reviewId !== undefined && ref.reviewIds.includes(reviewId);
@@ -478,7 +534,9 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     pushFacts,
     refSnapshot,
     isPullRequestMerge,
+    commitChanges,
     openPullRequest,
+    closePullRequestsFrom,
     commentOnIssue,
     reviewComments,
     mergeWhenReady,

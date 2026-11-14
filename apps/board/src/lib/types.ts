@@ -15,8 +15,34 @@ export type Stage =
 
 export type Lane = 'green' | 'standard' | 'red';
 export type Role = 'watcher' | 'contributor' | 'maintainer' | 'owner';
+/** What a member may do in a project: the permission matrix's actions, as the API sends them. */
+export type Permission =
+  | 'see'
+  | 'request'
+  | 'comment'
+  | 'answer'
+  | 'approve_spec'
+  | 'verify_result'
+  | 'triage'
+  | 'build'
+  | 'steer'
+  | 'see_runs'
+  | 'decide_learnings'
+  | 'merge'
+  | 'see_confidential'
+  | 'publish'
+  | 'manage_members';
 export type BoardAction =
-  'submit' | 'accept' | 'decline' | 'approve' | 'changes' | 'answer' | 'cancel' | 'comment';
+  | 'submit'
+  | 'accept'
+  | 'decline'
+  | 'claim'
+  | 'hand_in'
+  | 'approve'
+  | 'changes'
+  | 'answer'
+  | 'cancel'
+  | 'comment';
 
 export interface Project {
   readonly id: string;
@@ -25,6 +51,7 @@ export interface Project {
   readonly role: Role;
   readonly domains: readonly string[];
   readonly look: Look;
+  readonly can: readonly Permission[];
 }
 
 export type Look = 'modernista' | 'tecnica';
@@ -52,7 +79,12 @@ export interface Card {
   readonly title: string;
   readonly stage: Stage;
   readonly lane: Lane | null;
-  readonly blocked: { readonly question: string; readonly askedOf?: string } | null;
+  readonly blocked: {
+    readonly question: string;
+    readonly askedOf?: string;
+    /** What agents need from a person to go on; empty for an ordinary question. */
+    readonly needs: readonly string[];
+  } | null;
   readonly paused: boolean;
   readonly userVisible: boolean;
   readonly requester: string;
@@ -70,6 +102,15 @@ export interface Card {
   /** GitHub's auto-merge is on: it merges once checks pass, no person needs to press merge. */
   readonly autoMergeOn: boolean;
   readonly waitingOn: WaitingOn;
+  /** What the task touches that only the owner may let through, in words. */
+  readonly guards: readonly string[];
+}
+
+/** A role on the Agents page, named and described by the API. */
+export interface AgentRoleInfo {
+  readonly role: string;
+  readonly label: string;
+  readonly does: string;
 }
 
 export interface Run {
@@ -114,7 +155,27 @@ export interface BeforeAfter {
   readonly after: string;
 }
 
+/** What choosing an option would look like; agent-written, so only ever rendered sanitized. */
+export type OptionPreview =
+  | { readonly kind: 'text'; readonly before: string; readonly after: string }
+  | { readonly kind: 'markdown' | 'html'; readonly body: string }
+  | { readonly kind: 'link'; readonly url: string; readonly label?: string };
+
+export interface QuestionOption {
+  readonly key: string;
+  readonly label: string;
+  readonly detail?: string;
+  readonly preview?: OptionPreview;
+}
+
 export interface TaskDetail extends Card {
+  readonly blocked: {
+    readonly question: string;
+    readonly askedOf?: string;
+    /** What agents need from a person to go on; empty for an ordinary question. */
+    readonly needs: readonly string[];
+    readonly options: readonly QuestionOption[];
+  } | null;
   readonly repo: string | null;
   readonly pullRequestUrl: string | null;
   readonly headSha: string | null;
@@ -139,6 +200,29 @@ export interface TaskDetail extends Card {
     readonly extra: readonly { readonly label: string; readonly reason: string }[];
     readonly verifiers: readonly { readonly name: string; readonly reason: string }[];
   } | null;
+  /** Who asked, who the approval policy expects at each gate, and who merges. */
+  readonly people: {
+    readonly requester: string;
+    readonly gates: readonly {
+      readonly gate: 'spec_review' | 'verifying';
+      readonly does: string;
+      readonly current: boolean;
+      readonly requirements: readonly {
+        readonly label: string;
+        readonly who: readonly string[];
+        readonly waived: boolean;
+        readonly approvedBy: readonly string[];
+      }[];
+      readonly asked: readonly string[];
+    }[];
+    /** Who builds it: the agent, or a developer who claims it, and why. */
+    readonly build: {
+      readonly by: 'agent' | 'person';
+      readonly reason: string | null;
+      readonly who: readonly string[];
+    };
+    readonly merge: { readonly by: 'person' | 'auto'; readonly who: readonly string[] };
+  };
   readonly approval: {
     readonly gate: 'spec_review' | 'verifying';
     readonly planned: boolean;
@@ -182,6 +266,34 @@ export interface Learning {
   readonly decisionNote: string | null;
   readonly prNumber: number | null;
   readonly prUrl: string | null;
+  /** The learner is rewriting an edit the default branch moved past, or could not. */
+  readonly rewrite: 'requested' | 'failed' | null;
+  readonly rewrittenAt: string | null;
   readonly createdAt: string;
   readonly canDecide: boolean;
+}
+
+export interface MemberActivity {
+  readonly id: string;
+  readonly name: string;
+  readonly role: Role;
+  readonly domains: readonly string[];
+  readonly firstSignedInAt: string | null;
+  readonly link: {
+    readonly state: 'pending' | 'used' | 'expired';
+    readonly createdAt: string;
+    readonly usedAt: string | null;
+    readonly expiresAt: string;
+  } | null;
+  readonly lastSeenAt: string | null;
+  readonly claudeConnected: boolean;
+  /** Whether you may send them a fresh invite link. */
+  readonly invitable: boolean;
+}
+
+export interface Notice {
+  readonly id: string;
+  readonly kind: 'invite_accepted';
+  readonly text: string;
+  readonly createdAt: string;
 }

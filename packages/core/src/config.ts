@@ -1,8 +1,12 @@
 import { z } from 'zod';
+import type { GuardPaths } from './guards';
 import { compileLaneMatcher, type Lane, type LaneMatcher } from './lanes';
 
 /** The board's two looks. A member's own pick wins over the project's default. */
 export const BOARD_LOOKS = ['modernista', 'tecnica'] as const;
+
+/** The look a project's board has when its config names none. */
+export const DEFAULT_BOARD_LOOK: (typeof BOARD_LOOKS)[number] = 'modernista';
 export type BoardLook = (typeof BOARD_LOOKS)[number];
 
 /** Where a project keeps the agent docs the code standard asks for, unless its config says otherwise. */
@@ -84,6 +88,26 @@ const projectConfigSchema = z
       })
       .optional(),
     verify: z.array(z.string().min(1)).optional(),
+    guards: z
+      .strictObject({
+        /** Files whose content is confidential: agents never quote it outside (section 13). */
+        confidential: z.array(z.string().min(1)).optional(),
+        /** Words that mark a request as about confidential content, e.g. `investor`. */
+        confidential_terms: z.array(z.string().trim().min(2)).optional(),
+        /** Files that publish, deploy or open access: changing one needs the owner. */
+        publishing: z.array(z.string().min(1)).optional()
+      })
+      .optional(),
+    approvals: z
+      .strictObject({
+        /**
+         * Whether the requester's own approval meets a role or domain requirement and the
+         * maintainer floor at their task's gates. Left out, it does; set to false, someone else
+         * must, unless nobody else can.
+         */
+        self_approval: z.boolean().optional()
+      })
+      .optional(),
     release: z
       .strictObject({
         /** What merging into the default branch deploys. Left out, it is taken to be production. */
@@ -110,6 +134,13 @@ const projectConfigSchema = z
          * rules decide when it lands. Left out, it is off and a person merges on GitHub.
          */
         auto_merge: z.boolean().optional(),
+        /**
+         * Once Officina opens a pull request, ask Copilot to review it as the member who requested
+         * the task, with their own GitHub account: the GitHub App has no Copilot seat, so a branch
+         * rule that asks for Copilot's review does not start it on the App's pull requests. Left
+         * out, it is off.
+         */
+        copilot_review: z.boolean().optional(),
         /**
          * GitHub accounts of review bots the repository runs (CodeRabbit, a Claude action and the
          * like) whose comments on the pull request and review overviews reach the builder. Bots
@@ -145,10 +176,16 @@ const projectConfigSchema = z
 
 export type Requirement = z.infer<typeof requirementSchema>;
 export type Policy = readonly Requirement[];
-export type Gate = 'spec_review' | 'verifying';
+/** The stages where people approve: the spec, then the result. */
+export const GATES = ['spec_review', 'verifying'] as const;
+export type Gate = (typeof GATES)[number];
+export const isGate = (stage: string): stage is Gate =>
+  (GATES as readonly string[]).includes(stage);
 export type ReleaseOnMerge = 'production' | 'staging' | 'nothing';
 
 export interface LaneSettings {
+  /** The globs that put a change in this lane; always empty for `standard`. */
+  readonly paths: readonly string[];
   readonly agentsBuild: boolean;
   readonly wip: number;
   readonly diffLines: number;
@@ -182,11 +219,14 @@ export interface ProjectConfig {
   readonly setup: readonly string[];
   readonly intake: { readonly interview: boolean };
   readonly verify: readonly string[];
+  readonly approvals: { readonly selfApproval: boolean };
+  readonly guards: GuardPaths & { readonly confidentialTerms: readonly string[] };
   readonly release: { readonly onMerge: ReleaseOnMerge };
   readonly runtime: { readonly allowedHosts: readonly string[] };
   readonly pullRequest: {
     readonly titlePattern: string | null;
     readonly autoMerge: boolean;
+    readonly copilotReview: boolean;
     readonly reviewBots: readonly string[];
   };
   readonly board: { readonly look: BoardLook };
@@ -196,7 +236,7 @@ export interface ProjectConfig {
 
 const DEFAULT_POLICY: Policy = [{ role: 'maintainer' }];
 
-const LANE_DEFAULTS: Record<Lane, Omit<LaneSettings, 'approvals'>> = {
+const LANE_DEFAULTS: Record<Lane, Omit<LaneSettings, 'paths' | 'approvals'>> = {
   green: {
     agentsBuild: true,
     wip: 5,
@@ -228,6 +268,7 @@ type RawLane = z.infer<typeof laneSchema>;
 const normalizeLane = (lane: Lane, raw: RawLane | undefined): LaneSettings => {
   const defaults = LANE_DEFAULTS[lane];
   return {
+    paths: lane === 'standard' ? [] : (raw?.paths ?? []),
     // Red is the lane where agents never build; config cannot switch that off.
     agentsBuild: lane === 'red' ? false : (raw?.agents_build ?? defaults.agentsBuild),
     wip: raw?.wip ?? defaults.wip,
@@ -295,8 +336,11 @@ export const parseProjectConfig = (input: unknown): ConfigResult => {
     };
   }
   const raw = parsed.data;
-  const redGlobs = raw.lanes?.red?.paths ?? [];
-  const greenGlobs = raw.lanes?.green?.paths ?? [];
+  const lanes = {
+    green: normalizeLane('green', raw.lanes?.green),
+    standard: normalizeLane('standard', raw.lanes?.standard),
+    red: normalizeLane('red', raw.lanes?.red)
+  };
   return {
     ok: true,
     config: {
@@ -310,20 +354,23 @@ export const parseProjectConfig = (input: unknown): ConfigResult => {
       setup: raw.setup ?? [],
       intake: { interview: raw.intake?.interview ?? true },
       verify: raw.verify ?? [],
+      approvals: { selfApproval: raw.approvals?.self_approval ?? true },
+      guards: {
+        confidential: raw.guards?.confidential ?? [],
+        confidentialTerms: raw.guards?.confidential_terms ?? [],
+        publishing: raw.guards?.publishing ?? []
+      },
       release: { onMerge: raw.release?.on_merge ?? 'production' },
       runtime: { allowedHosts: raw.runtime?.allowed_hosts ?? [] },
       pullRequest: {
         titlePattern: raw.pull_request?.title_pattern ?? null,
         autoMerge: raw.pull_request?.auto_merge ?? false,
+        copilotReview: raw.pull_request?.copilot_review ?? false,
         reviewBots: raw.pull_request?.review_bots ?? []
       },
-      board: { look: raw.board?.look ?? 'modernista' },
-      lanes: {
-        green: normalizeLane('green', raw.lanes?.green),
-        standard: normalizeLane('standard', raw.lanes?.standard),
-        red: normalizeLane('red', raw.lanes?.red)
-      },
-      laneMatcher: compileLaneMatcher({ red: redGlobs, green: greenGlobs })
+      board: { look: raw.board?.look ?? DEFAULT_BOARD_LOOK },
+      lanes,
+      laneMatcher: compileLaneMatcher({ red: lanes.red.paths, green: lanes.green.paths })
     }
   };
 };

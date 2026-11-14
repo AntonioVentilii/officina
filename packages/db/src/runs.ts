@@ -1,3 +1,4 @@
+import { TERMINAL_STAGES, redactDeep } from '@officina/core';
 import type { Actor, StoredTaskContext } from './types';
 import type { Pool, PoolClient } from 'pg';
 import { loadTask } from './store';
@@ -29,11 +30,34 @@ export const setRunExternalId = async (pool: Pool, runId: string, externalId: st
   await pool.query('update runs set external_id = $2 where id = $1', [runId, externalId]);
 };
 
+/** Records a run's validated result before it is applied, so it outlives a crash that follows. */
+export const recordRunResult = async (pool: Pool, runId: string, result: unknown) => {
+  await pool.query('update runs set result = $2 where id = $1', [runId, JSON.stringify(result)]);
+};
+
+/** The latest run of these roles on a task, whatever its status, with the result it recorded. */
+export const latestBuildRun = async (
+  pool: Pool,
+  taskId: string,
+  roles: readonly string[]
+): Promise<{ status: RunStatus; result: unknown } | null> =>
+  (
+    await pool.query<{ status: RunStatus; result: unknown }>(
+      `select status, result from runs where task_id = $1 and agent_role = any($2::text[])
+       order by created_at desc limit 1`,
+      [taskId, roles]
+    )
+  ).rows[0] ?? null;
+
+/**
+ * Records one event of a run. Agent messages, tool output and rejected results all pass through
+ * here before anyone can read them in the run log, so secrets are redacted on the way in.
+ */
 export const appendRunEvent = async (pool: Pool, runId: string, type: string, payload: unknown) => {
   await pool.query('insert into run_events (run_id, type, payload) values ($1, $2, $3)', [
     runId,
     type,
-    JSON.stringify(payload)
+    JSON.stringify(redactDeep(payload))
   ]);
 };
 
@@ -120,27 +144,12 @@ export const countOpenAgentWork = async (pool: Pool, projectId: string, lane: st
     ).rows[0]!.count
   );
 
-/** Whether a run of one of these roles is still going on the task, so its work may still land. */
-export const hasRunningRun = async (
-  pool: Pool,
-  taskId: string,
-  roles: readonly string[]
-): Promise<boolean> =>
-  Boolean(
-    (
-      await pool.query(
-        `select 1 from runs where task_id = $1 and status = 'running' and agent_role = any($2)`,
-        [taskId, roles]
-      )
-    ).rowCount
-  );
-
 export const listActiveTaskIds = async (pool: Pool, projectId: string): Promise<string[]> =>
   (
     await pool.query<{ id: string }>(
       `select id from tasks where project_id = $1
-         and stage not in ('done', 'declined', 'cancelled') order by priority desc, number`,
-      [projectId]
+         and stage <> all($2) order by priority desc, number`,
+      [projectId, [...TERMINAL_STAGES]]
     )
   ).rows.map((row) => row.id);
 
@@ -191,6 +200,18 @@ export const feedbackSinceLastPush = async (pool: Pool, taskId: string): Promise
       [taskId]
     )
   ).rows.map((row) => row.text);
+
+/** How many questions the interviewer has asked on a task so far. */
+export const countInterviewQuestions = async (pool: Pool, taskId: string): Promise<number> =>
+  Number(
+    (
+      await pool.query<{ count: string }>(
+        `select count(*) from task_events
+         where task_id = $1 and type = 'blocked' and actor->>'role' = 'interviewer'`,
+        [taskId]
+      )
+    ).rows[0]!.count
+  );
 
 /** The GitHub reviews the current build round answers, oldest first: who left each, and its notes. */
 export const githubReviewsSinceLastPush = async (

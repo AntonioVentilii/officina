@@ -1,19 +1,22 @@
 import {
   TERMINAL_STAGES,
   computeLane,
+  gateSubject,
+  isGate,
   decide,
+  ENGINE,
   parseProjectConfig,
   type Actor,
-  type Approval,
   type Command,
   type DecisionError,
+  type Blocked,
   type DomainEvent,
-  type Gate,
-  type Member,
+  type Guard,
   type ProjectConfig,
   type Task
 } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
+import { addComment, listApprovedSubjects, listProjectMembers } from './tasks';
 
 export type StoreError = DecisionError | 'not_found' | 'conflict' | 'invalid_config';
 
@@ -39,6 +42,7 @@ interface TaskRow {
   fix_rounds: number;
   reviews: Task['reviews'];
   approval_plans: Task['approvalPlans'];
+  guards: Task['guards'];
   version: number;
 }
 
@@ -58,11 +62,13 @@ const toStored = (row: TaskRow): StoredTask => ({
     paused: row.paused,
     fixRounds: row.fix_rounds,
     reviews: row.reviews,
-    approvalPlans: row.approval_plans
+    approvalPlans: row.approval_plans,
+    guards: row.guards
   }
 });
 
-const inTransaction = async <T>(
+/** Runs several writes as one: all of them land, or none. */
+export const inTransaction = async <T>(
   pool: Pool,
   work: (client: PoolClient) => Promise<T>
 ): Promise<T> => {
@@ -92,16 +98,33 @@ const insertEvent = (client: PoolClient, taskId: string, actor: Actor, event: Do
 
 export const createTask = (
   pool: Pool,
-  input: { projectId: string; title: string; requesterId: string }
+  input: {
+    projectId: string;
+    title: string;
+    requesterId: string;
+    /** The requester's own words, recorded as the thread's first comment with the task. */
+    request?: string;
+    /** What the request's words touch that no agent may handle alone (`guardsInRequest`). */
+    guards?: readonly Guard[];
+    /** A question the task is born held on, so nothing moves it before someone answers. */
+    hold?: Blocked;
+  }
 ): Promise<StoredTask> =>
   inTransaction(pool, async (client) => {
     // Locking the project serializes task numbering per project.
     await client.query('select id from projects where id = $1 for update', [input.projectId]);
     const { rows } = await client.query<TaskRow>(
-      `insert into tasks (project_id, number, title, requester_id, stage)
-       select $1, coalesce(max(number), 0) + 1, $2, $3, 'request' from tasks where project_id = $1
+      `insert into tasks (project_id, number, title, requester_id, stage, guards, blocked)
+       select $1, coalesce(max(number), 0) + 1, $2, $3, 'request', $4, $5
+       from tasks where project_id = $1
        returning *`,
-      [input.projectId, input.title, input.requesterId]
+      [
+        input.projectId,
+        input.title,
+        input.requesterId,
+        input.guards ?? [],
+        json(input.hold ?? null)
+      ]
     );
     const row = rows[0]!;
     await client.query(
@@ -113,6 +136,17 @@ export const createTask = (
         json({ title: input.title })
       ]
     );
+    if (input.hold) {
+      await insertEvent(client, row.id, ENGINE, { type: 'blocked', blocked: input.hold });
+    }
+    if (input.request !== undefined) {
+      await addComment(
+        client,
+        row.id,
+        { kind: 'member', memberId: input.requesterId },
+        input.request
+      );
+    }
     return toStored(row);
   });
 
@@ -162,21 +196,20 @@ export const insertOnboardingTask = async (
     [input.projectId, input.title, input.requesterId, lane]
   );
   const row = rows[0]!;
-  const engine: Actor = { kind: 'engine' };
   await client.query(
     'insert into task_events (task_id, actor, type, payload) values ($1, $2, $3, $4)',
-    [row.id, json(engine), 'created', json({ title: input.title, kind: 'onboarding' })]
+    [row.id, json(ENGINE), 'created', json({ title: input.title, kind: 'onboarding' })]
   );
   await client.query(
     'insert into spec_versions (task_id, version, body, created_by) values ($1, 1, $2, $3)',
-    [row.id, input.spec, json(engine)]
+    [row.id, input.spec, json(ENGINE)]
   );
   const events: DomainEvent[] = [
     { type: 'spec_versioned', version: 1 },
     { type: 'lane_changed', from: null, to: lane },
     { type: 'stage_changed', from: 'request', to: 'spec_review' }
   ];
-  for (const event of events) await insertEvent(client, row.id, engine, event);
+  for (const event of events) await insertEvent(client, row.id, ENGINE, event);
   return { created: true, id: row.id, number: row.number };
 };
 
@@ -187,13 +220,15 @@ export const createOnboardingTask = (
 ): Promise<{ created: boolean; id: string; number: number }> =>
   inTransaction(pool, (client) => insertOnboardingTask(client, input));
 
+/** Renames a task; the interviewer names it when the request is complete. */
+export const setTaskTitle = async (client: PoolClient, taskId: string, title: string) => {
+  await client.query('update tasks set title = $2 where id = $1', [taskId, title]);
+};
+
 export const loadTask = async (pool: Pool, taskId: string): Promise<StoredTask | null> => {
   const { rows } = await pool.query<TaskRow>('select * from tasks where id = $1', [taskId]);
   return rows[0] ? toStored(rows[0]) : null;
 };
-
-const subjectFor = (task: Task, gate: Gate): string =>
-  gate === 'spec_review' ? `spec:${task.specVersion}` : `sha:${task.headSha}`;
 
 /**
  * Applies one command atomically: the task row is locked, the decision is made on current state,
@@ -229,19 +264,8 @@ export const applyCommand = (pool: Pool, input: ApplyInput): Promise<ApplyResult
     const parsedConfig = parseProjectConfig(row.config);
     if (!parsedConfig.ok) return { ok: false, error: 'invalid_config' };
 
-    const members = (
-      await client.query<Member>(
-        'select member_id as id, role, domains from project_roles where project_id = $1',
-        [row.project_id]
-      )
-    ).rows;
-    const approvals = (
-      await client.query<Approval>(
-        `select member_id as "memberId", subject from approvals
-         where task_id = $1 and decision = 'approve'`,
-        [input.taskId]
-      )
-    ).rows;
+    const members = await listProjectMembers(client, row.project_id);
+    const approvals = await listApprovedSubjects(client, input.taskId);
 
     const before = toStored(row).task;
     if (input.guard && !input.guard(before)) return { ok: false, error: 'conflict' };
@@ -264,7 +288,7 @@ export const applyCommand = (pool: Pool, input: ApplyInput): Promise<ApplyResult
     const updated = await client.query<{ version: number }>(
       `update tasks set stage = $2, lane = $3, spec_version = $4, head_sha = $5, user_visible = $6,
          assignee = $7, blocked = $8, paused = $9, fix_rounds = $10, reviews = $11, approval_plans = $12,
-         version = version + 1, updated_at = now()
+         guards = $13, version = version + 1, updated_at = now()
        where id = $1 returning version`,
       [
         task.id,
@@ -278,7 +302,8 @@ export const applyCommand = (pool: Pool, input: ApplyInput): Promise<ApplyResult
         task.paused,
         task.fixRounds,
         json(task.reviews),
-        json(task.approvalPlans)
+        json(task.approvalPlans),
+        task.guards
       ]
     );
 
@@ -294,12 +319,12 @@ export const applyCommand = (pool: Pool, input: ApplyInput): Promise<ApplyResult
       if (
         event.type === 'changes_requested' &&
         input.actor.kind === 'member' &&
-        (event.stage === 'spec_review' || event.stage === 'verifying')
+        isGate(event.stage)
       ) {
         await client.query(
           `insert into approvals (task_id, member_id, gate, subject, decision, note)
            values ($1, $2, $3, $4, 'changes', $5)`,
-          [task.id, input.actor.memberId, event.stage, subjectFor(before, event.stage), event.note]
+          [task.id, input.actor.memberId, event.stage, gateSubject(before, event.stage), event.note]
         );
       }
     }

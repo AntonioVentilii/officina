@@ -6,39 +6,10 @@
   import { money } from '$lib/format';
   import { board } from '$lib/state/board.svelte';
 
-  const ROLES = [
-    {
-      role: 'spec',
-      label: 'Spec writer',
-      does: 'Reads the repo and writes a spec in its template'
-    },
-    { role: 'builder', label: 'Builder', does: 'Implements the approved spec on the task branch' },
-    {
-      role: 'reviewer_spec',
-      label: 'Spec reviewer',
-      does: 'Checks the diff does what the spec says, no more'
-    },
-    {
-      role: 'reviewer_correctness',
-      label: 'Code reviewer',
-      does: 'Checks correctness and project conventions'
-    },
-    {
-      role: 'chooser',
-      label: 'Approval chooser',
-      does: 'Decides who approves and how closely; can only raise the bar'
-    },
-    {
-      role: 'onboarder',
-      label: 'Onboarder',
-      does: "Writes a new project's agent docs before anything else is built"
-    }
-  ];
-
   let open = $state<Record<string, boolean>>({});
 
   const stats = $derived(
-    ROLES.map((entry) => {
+    board.agents.map((entry) => {
       const runs = board.runs.filter((run) => run.role === entry.role);
       const finished = runs.filter((run) => run.status === 'succeeded' || run.status === 'failed');
       return {

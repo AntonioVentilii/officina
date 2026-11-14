@@ -1,4 +1,4 @@
-import { claimDelivery, releaseDelivery } from '@officina/db';
+import { claimDelivery, markDeliveryHandled, releaseDelivery } from '@officina/db';
 import { parseWebhookEvent, verifyWebhookSignature } from '@officina/github';
 import { Elysia } from 'elysia';
 import type { Pool } from 'pg';
@@ -43,7 +43,11 @@ export const createApp = ({ pool, webhookSecret, github, board, boardDir }: AppD
         return { error: 'internal' };
       })
       .use(board ? createBoardApi({ pool, ...board }) : new Elysia())
-      .use(board ? createConnector({ pool, publicUrl: board.publicUrl }) : new Elysia())
+      .use(
+        board
+          ? createConnector({ pool, publicUrl: board.publicUrl, github: board.builds })
+          : new Elysia()
+      )
       .get('/health', () => ({ ok: true }))
       .post(
         '/github/webhook',
@@ -69,14 +73,16 @@ export const createApp = ({ pool, webhookSecret, github, board, boardDir }: AppD
             return { error: 'invalid_json' };
           }
 
-          if (!(await claimDelivery(pool, deliveryId, event))) return { status: 'duplicate' };
+          const claim = await claimDelivery(pool, deliveryId, event);
+          if (!claim) return { status: 'duplicate' };
           try {
             const action = parseWebhookEvent(event, payload);
             const outcomes = action ? await handleWebhookAction(pool, action, github) : [];
+            await markDeliveryHandled(pool, deliveryId, claim);
             return { status: action ? 'applied' : 'ignored', outcomes };
           } catch (error) {
             // Released so GitHub's redelivery of a delivery that failed mid-way is processed.
-            await releaseDelivery(pool, deliveryId);
+            await releaseDelivery(pool, deliveryId, claim);
             throw error;
           }
         },

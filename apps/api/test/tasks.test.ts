@@ -1,11 +1,13 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { findTaskIdByNumber } from '@officina/db';
 import { Pool } from 'pg';
+import { invite } from '../src/people';
 import { PLAN, applyOrThrow, resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
 import {
   TaskCommandError,
   actOnTask,
   createRequest,
+  createRequestAs,
   describeTask,
   listTasksText
 } from '../src/tasks';
@@ -38,6 +40,23 @@ describe.skipIf(!url)('task commands', () => {
     expect(await listTasksText(pool, {})).toContain('#1    triage');
   });
 
+  test('a watcher cannot open a request, and no task is left behind', async () => {
+    const watcher = (
+      await pool.query<{ id: string }>(
+        `with m as (insert into members (workspace_id, display_name, email)
+                    select workspace_id, 'Wanda', 'wanda@example.com' from projects where id = $1
+                    returning id)
+         insert into project_roles (project_id, member_id, role)
+         select $1, id, 'watcher' from m returning member_id as id`,
+        [seeded.projectId]
+      )
+    ).rows[0]!.id;
+    await expect(
+      createRequestAs(pool, { projectId: seeded.projectId, memberId: watcher, ...request })
+    ).rejects.toThrow('watchers can read but not open requests');
+    expect((await pool.query('select id from tasks')).rows).toEqual([]);
+  });
+
   test('accept, spec approval and change requests move the task and describe what comes next', async () => {
     await createRequest(pool, request);
     expect(await actOnTask(pool, { number: 1, action: { type: 'accept' } })).toEqual({
@@ -52,9 +71,10 @@ describe.skipIf(!url)('task commands', () => {
       { type: 'post_spec', predictedPaths: [COPY], userVisible: true },
       { kind: 'agent', role: 'spec', version: 1 }
     );
-    expect(await describeTask(pool, { number: 1 })).toContain(
-      'Waiting for the approval chooser to decide who approves.'
-    );
+    const unplanned = await describeTask(pool, { number: 1 });
+    expect(unplanned).toContain('Waiting for the approval chooser to decide who approves.');
+    // As on the board, nobody can approve before the chooser has planned the subject.
+    expect(unplanned).not.toContain('Approval needed from');
     await applyOrThrow(
       pool,
       taskId,
@@ -73,6 +93,27 @@ describe.skipIf(!url)('task commands', () => {
     ).toEqual({
       stage: 'speccing'
     });
+  });
+
+  test('task show lists agent runs and costs only for members who may see runs', async () => {
+    await createRequest(pool, request);
+    const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
+    await pool.query(
+      `insert into runs (task_id, stage, runner, agent_role, agent_version, status, list_cost_cents)
+       values ($1, 'speccing', 'managed_agents', 'spec', 1, 'succeeded', 120)`,
+      [taskId]
+    );
+    await invite(pool, {
+      publicUrl: 'https://officina.example',
+      email: 'visitor@example.com',
+      name: 'Visitor',
+      role: 'watcher',
+      domains: []
+    });
+    expect(await describeTask(pool, { number: 1 })).toContain('Agent runs:');
+    const asWatcher = await describeTask(pool, { number: 1, asEmail: 'visitor@example.com' });
+    expect(asWatcher).not.toContain('Agent runs:');
+    expect(asWatcher).not.toContain('$1.20');
   });
 
   test('approving a spec moves it to ready', async () => {

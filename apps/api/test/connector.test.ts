@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { createHash, randomBytes } from 'node:crypto';
-import { purgeConnectorCredentials } from '@officina/db';
+import { applyCommand, findTaskIdByNumber, purgeConnectorCredentials } from '@officina/db';
 import { Pool } from 'pg';
 import { resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
 import { createApp } from '../src/app';
@@ -281,9 +281,11 @@ describe.skipIf(!url)('connector for Claude', () => {
       'list_projects',
       'open_request',
       'whats_waiting_on_me',
+      'list_tasks',
       'show_task',
       'answer_question',
       'comment',
+      'hand_in_build',
       'review'
     ]);
     const open = list.result.tools.find((tool: { name: string }) => tool.name === 'open_request');
@@ -291,7 +293,7 @@ describe.skipIf(!url)('connector for Claude', () => {
     expect(open.annotations.readOnlyHint).toBe(false);
 
     expect((await tool(token, 'list_projects')).content[0]!.text).toContain(
-      'vici-app (ViciApp/vici-app): you are owner'
+      'vici-app (ViciApp/vici-app): your role is owner, so you can see every task in the project, its thread and every decision; open requests;'
     );
     const opened = await tool(token, 'open_request', {
       title: 'Rename the Wager button',
@@ -323,7 +325,120 @@ describe.skipIf(!url)('connector for Claude', () => {
     expect(invalid.isError).toBe(true);
   });
 
-  test('a watcher reads but cannot open requests', async () => {
+  test('every member sees every task in progress, with who asked and who approves', async () => {
+    const owner = (await connect()).tokens.access_token as string;
+    await tool(owner, 'open_request', {
+      title: 'Rename the Wager button',
+      request: 'It should say Prediction.',
+      skip_interview: true
+    });
+    await invite(pool, {
+      publicUrl: PUBLIC_URL,
+      email: 'tim@example.com',
+      name: 'Tim',
+      role: 'contributor',
+      domains: ['product']
+    });
+    const tim = (await connect('tim@example.com')).tokens.access_token as string;
+
+    const listed = (await tool(tim, 'list_tasks')).content[0]!.text;
+    expect(listed).toContain('1 in progress');
+    expect(listed).toContain('Task 1: Rename the Wager button, requested by Antonio.');
+    expect((await tool(tim, 'whats_waiting_on_me')).content[0]!.text).not.toContain('Task 1');
+
+    const shown = (await tool(tim, 'show_task', { number: 1 })).content[0]!.text;
+    expect(shown).toContain('Requested by Antonio.');
+    expect(shown).toContain('Approve the plan: an owner (Antonio).');
+    expect(shown).toContain('Merge: a person merges it on GitHub (Antonio).');
+
+    // Whom the chooser asked to check is part of the people too.
+    const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
+    await pool.query(`update tasks set approval_plans = $1 where id = $2`, [
+      JSON.stringify({
+        spec_review: {
+          subject: 'spec:0',
+          depth: 'glance',
+          rationale: 'Copy.',
+          extra: [],
+          verifiers: [{ memberId: seeded.ownerId, reason: 'Knows the screen.' }]
+        }
+      }),
+      taskId
+    ]);
+    expect((await tool(tim, 'show_task', { number: 1 })).content[0]!.text).toContain(
+      'Approve the plan: an owner (Antonio). Asked to check: Antonio.'
+    );
+  });
+
+  test('nothing shaped like a secret leaves through Claude, even from a person', async () => {
+    const token = (await connect()).tokens.access_token as string;
+    await tool(token, 'open_request', {
+      title: 'Rename the Wager button',
+      request: 'It should say Prediction.',
+      skip_interview: true
+    });
+    await tool(token, 'comment', {
+      number: 1,
+      text: 'Use ghp_abcdefghijklmnopqrstuvwxyz0123456789 to test.'
+    });
+    const shown = (await tool(token, 'show_task', { number: 1 })).content[0]!.text;
+    expect(shown).toContain('Use [redacted: looks like a secret] to test.');
+    expect(shown).not.toContain('ghp_');
+  });
+
+  test('Claude sees a question with its options and previews and answers by letter', async () => {
+    const token = (await connect()).tokens.access_token as string;
+    await tool(token, 'open_request', { title: 'Hypothesis copy', request: 'Say it right.' });
+    const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
+    const asked = await applyCommand(pool, {
+      taskId,
+      actor: { kind: 'agent', role: 'interviewer', version: 1 },
+      command: {
+        type: 'block',
+        question: 'What should the public room say?',
+        askedOf: { memberId: seeded.ownerId },
+        options: [
+          {
+            label: 'Call it a hypothesis',
+            detail: 'Plain and honest.',
+            preview: { kind: 'text', before: 'Our thesis', after: 'Our hypothesis' }
+          },
+          {
+            label: 'Lead with evidence',
+            preview: { kind: 'html', body: '<h2>Evidence</h2><p>Three pilots.</p>' }
+          },
+          {
+            label: 'Show the build',
+            preview: { kind: 'link', url: 'https://preview.example.com/room', label: 'Preview' }
+          }
+        ]
+      }
+    });
+    expect(asked.ok).toBe(true);
+
+    const shown = (await tool(token, 'show_task', { number: 1 })).content[0]!.text;
+    expect(shown).toContain('(a) Call it a hypothesis: Plain and honest.');
+    expect(shown).toContain('Wording now: "Our thesis"\n   Wording after: "Our hypothesis"');
+    expect(shown).toContain('(b) Lead with evidence');
+    expect(shown).toContain('```html\n<h2>Evidence</h2><p>Three pilots.</p>\n```');
+    expect(shown).toContain('See it: https://preview.example.com/room (Preview)');
+
+    expect(await tool(token, 'answer_question', { number: 1 })).toMatchObject({ isError: true });
+    const unknown = await tool(token, 'answer_question', { number: 1, option: 'z' });
+    expect(unknown).toMatchObject({ isError: true });
+    expect(unknown.content[0]!.text).toContain('no such option');
+    const answered = await tool(token, 'answer_question', {
+      number: 1,
+      option: 'b',
+      answer: 'Keep it short.'
+    });
+    expect(answered.isError).toBe(false);
+    expect((await tool(token, 'show_task', { number: 1 })).content[0]!.text).toContain(
+      'Antonio: Option (b): Lead with evidence\n\nKeep it short.'
+    );
+  });
+
+  test('a watcher reads but cannot open requests or comment', async () => {
     await invite(pool, {
       publicUrl: PUBLIC_URL,
       email: 'gio@example.com',
@@ -338,5 +453,8 @@ describe.skipIf(!url)('connector for Claude', () => {
     });
     expect(opened.isError).toBe(true);
     expect(opened.content[0]!.text).toContain('not open requests');
+    const commented = await tool(tokens.access_token, 'comment', { number: 1, text: 'Hello.' });
+    expect(commented.isError).toBe(true);
+    expect(commented.content[0]!.text).toContain('not comment');
   });
 });

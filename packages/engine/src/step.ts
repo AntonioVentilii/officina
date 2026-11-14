@@ -1,55 +1,18 @@
+import { branchForTask, ENGINE, isBuildRole, nextAgentRoles, type Actor } from '@officina/core';
+import { applyCommand, finishRun } from '@officina/db';
+import { type GitHubClient, type RefSnapshot, type RepoRef } from '@officina/github';
 import {
-  branchForTask,
-  commandForOutput,
-  isBuildRole,
-  nextAgentRoles,
-  parseProjectConfig,
-  type Actor,
-  type AgentOutput,
-  type RoleOutput,
-  type Task
-} from '@officina/core';
-import {
-  addComment,
-  appendRunEvent,
-  applyCommand,
-  feedbackSinceLastPush,
-  finishRun,
-  githubReviewsSinceLastPush,
-  latestPushedPaths,
-  linkPullRequest,
-  listProjectMemberProfiles,
-  listComments,
-  loadAgentVersions,
-  loadTaskContext,
-  saveSpecVersion,
-  setRunExternalId,
-  startRun
-} from '@officina/db';
-import {
-  copilotVerdict,
-  type GitHubClient,
-  type RefSnapshot,
-  type RepoRef
-} from '@officina/github';
-import {
-  executeRun,
   type ManagedAgentsPort,
   type RunnerRole,
-  type RunOutcome
+  type RunOutcome,
+  type RunReport
 } from '@officina/runner';
 import type { Pool } from 'pg';
-import { MAX_INTERVIEW_QUESTIONS, buildBrief, type ChooserContext } from './brief';
+import { claimStep, type ClaimedStep, type SkipReason } from './claim';
 import { runLearnerStep } from './learner';
-import {
-  postChecklist,
-  readPushedHead,
-  syncSpecStatus,
-  taskLink,
-  type SyncGitHubPort
-} from './github-sync';
-
-export { taskLink };
+import type { SyncGitHubPort } from './github-sync';
+import { applyResult, roleOutputOf, type StepOutcome } from './step-apply';
+import { gatherInputs, runSession } from './step-session';
 
 export type GitHubPort = Pick<
   GitHubClient,
@@ -67,75 +30,11 @@ export interface EngineDependencies {
   readonly promptsDir?: string | undefined;
 }
 
-/**
- * A markdown link to a task. A bare `#N` would link the repository's issue or pull request N.
- */
-
-const INTERVIEW_BUDGET_CENTS = 200;
-
-const interviewProblems = (asked: number) => (output: AgentOutput<RunnerRole>) =>
-  (output as AgentOutput<'interviewer'>).outcome === 'question' && asked >= MAX_INTERVIEW_QUESTIONS
-    ? [`you have asked ${asked} questions already: complete the request now`]
-    : [];
-
-const planProblems =
-  (gate: 'spec_review' | 'verifying', memberIds: ReadonlySet<string>) =>
-  (output: AgentOutput<RunnerRole>) => {
-    const chosen = output as AgentOutput<'chooser'>;
-    const problems = chosen.approval.verifiers
-      .filter((verifier) => !memberIds.has(verifier.memberId))
-      .map((verifier) => `verifier ${verifier.memberId} is not a member of this project`);
-    if (gate === 'verifying' && chosen.checklist.length === 0)
-      problems.push('checklist: at verification the checklist must have at least one step');
-    return problems;
-  };
-
-const titleProblems = (pattern: string | null) => (output: AgentOutput<RunnerRole>) => {
-  const built = output as AgentOutput<'builder' | 'onboarder'>;
-  if (!pattern || built.outcome !== 'pushed' || new RegExp(pattern).test(built.prTitle)) return [];
-  return [`prTitle "${built.prTitle}" does not match the required pattern ${pattern}`];
-};
-
-type GitHubReview = { readonly by: string; readonly notes: string };
-
-/**
- * A build round may end `unchanged` only when it answers a GitHub review, and a round answering a
- * Copilot review that asked for a closer look must say what it checked, even when nothing changed.
- */
-const reviewProblems =
-  (reviews: readonly GitHubReview[]) =>
-  (output: AgentOutput<RunnerRole>): string[] => {
-    const built = output as AgentOutput<'builder' | 'onboarder'>;
-    const problems: string[] = [];
-    if (built.outcome === 'unchanged' && reviews.length === 0) {
-      problems.push('`unchanged` only answers a GitHub review, and this round has none');
-    }
-    const answers = built.outcome === 'pushed' || built.outcome === 'unchanged';
-    const closerLook = reviews.some((review) => copilotVerdict(review.notes) === 'closer_look');
-    if (answers && closerLook && !('reviewReply' in built && built.reviewReply)) {
-      problems.push('a review that asked for a closer look needs `reviewReply`');
-    }
-    return problems;
-  };
-
 export type StepResult =
   | { readonly status: 'applied' }
   | { readonly status: 'blocked'; readonly reason: string }
   | { readonly status: 'discarded'; readonly reason: string }
-  | {
-      readonly status: 'skipped';
-      readonly reason:
-        | 'not_found'
-        | 'not_due'
-        | 'not_installed'
-        | 'no_environment'
-        | 'agent_not_synced'
-        | 'invalid_config'
-        | 'already_running';
-    };
-
-const RUNNER = 'managed_agents';
-const ENGINE: Actor = { kind: 'engine' };
+  | { readonly status: 'skipped'; readonly reason: SkipReason };
 
 const describeOutcome = (outcome: Exclude<RunOutcome, { kind: 'result' }>): string => {
   switch (outcome.kind) {
@@ -149,14 +48,6 @@ const describeOutcome = (outcome: Exclude<RunOutcome, { kind: 'result' }>): stri
       return outcome.reason;
   }
 };
-
-/** Only the state the agent saw may receive its result. */
-const sameWork = (seen: Task) => (current: Task) =>
-  current.stage === seen.stage &&
-  current.specVersion === seen.specVersion &&
-  current.headSha === seen.headSha &&
-  !current.blocked &&
-  !current.paused;
 
 /**
  * What changed outside the task's own branch while a builder held a token that can write any ref.
@@ -201,6 +92,86 @@ const blockTask = async (pool: Pool, taskId: string, question: string) => {
   });
 };
 
+/** One claimed run of a role on a task, and what every phase of the step reads. */
+export interface Step extends ClaimedStep {
+  readonly deps: EngineDependencies;
+  readonly taskId: string;
+  readonly role: RunnerRole;
+  readonly actor: Actor;
+  readonly taskBranch: string;
+  readonly builds: boolean;
+}
+
+/** Fails the run with what it left and asks a maintainer, so the scheduler does not retry it. */
+const failAndBlock = async (
+  step: Step,
+  run: { readonly costCents: number | null; readonly result: unknown },
+  question: string,
+  reason: string
+): Promise<StepResult> => {
+  await finishRun(step.deps.pool, step.runId, { status: 'failed', ...run });
+  await blockTask(step.deps.pool, step.taskId, question);
+  return { status: 'blocked', reason };
+};
+
+/** The refs a builder could have moved besides its own branch, checked after every build run. */
+const guardRefs = async (step: Step, before: RefSnapshot, report: RunReport) => {
+  const guarded = { ...step.repoRef, defaultBranch: step.context.defaultBranch };
+  const after = await step.deps.github.refSnapshot(guarded);
+  const changes = await refChanges(step.deps.github, guarded, before, after);
+  if (!changes.length) return null;
+  const { role, taskBranch } = step;
+  return failAndBlock(
+    step,
+    { costCents: report.costCents, result: { refsChanged: changes, outcome: report.outcome } },
+    `While the ${role} ran, ${changes.join('; ')}. The ${role} may only push ${taskBranch}. Check those refs on GitHub and restore them if the ${role} changed them; if a person made the change, answer to run the build again.`,
+    `refs outside ${taskBranch} changed during the build: ${changes.join('; ')}`
+  );
+};
+
+/** The result to apply, or why the run left none: no valid result, or a push to the wrong branch. */
+const outcomeOf = async (
+  step: Step,
+  report: RunReport
+): Promise<StepOutcome | { readonly reason: string; readonly result: unknown }> => {
+  const { outcome, costCents } = report;
+  if (outcome.kind !== 'result') return { reason: describeOutcome(outcome), result: outcome };
+  const roleOutput = await roleOutputOf(step, outcome.output);
+  if ('wrongBranch' in roleOutput) {
+    const reason = `it pushed to ${roleOutput.wrongBranch} instead of ${step.taskBranch}`;
+    return { reason, result: outcome.output };
+  }
+  return { output: outcome.output, roleOutput, costCents };
+};
+
+/** From the session to the applied result, for a run already claimed. */
+const runClaimed = async (step: Step): Promise<StepResult> => {
+  const inputs = await gatherInputs(step);
+  const { github } = step.deps;
+  // Only the build roles get a token that can push; every other role reads.
+  const token = await github.installationToken(step.repoRef, {
+    contents: step.builds ? 'write' : 'read'
+  });
+  // Taken before the session starts, so nothing the builder does can land before it.
+  const refsBefore = step.builds
+    ? await github.refSnapshot({ ...step.repoRef, defaultBranch: step.context.defaultBranch })
+    : null;
+  const report = await runSession(step, inputs, token);
+  // Checked whatever the run reported: a failed run may still have pushed somewhere.
+  const moved = refsBefore ? await guardRefs(step, refsBefore, report) : null;
+  if (moved) return moved;
+  const outcome = await outcomeOf(step, report);
+  if ('reason' in outcome) {
+    return failAndBlock(
+      step,
+      { costCents: report.costCents, result: outcome.result },
+      `The ${step.role} agent could not complete its step: ${outcome.reason}.`,
+      outcome.reason
+    );
+  }
+  return applyResult(step, outcome, inputs);
+};
+
 /** Runs one agent role for one task, from claiming the run to applying (or discarding) its result. */
 export const runAgentStep = async (
   deps: EngineDependencies,
@@ -208,320 +179,34 @@ export const runAgentStep = async (
   role: RunnerRole
 ): Promise<StepResult> => {
   if (role === 'learner') return runLearnerStep(deps, taskId);
-  const { pool } = deps;
-  const context = await loadTaskContext(pool, taskId);
-  if (!context) return { status: 'skipped', reason: 'not_found' };
-  if (!nextAgentRoles(context.task).includes(role)) return { status: 'skipped', reason: 'not_due' };
-  if (context.installationId === null) return { status: 'skipped', reason: 'not_installed' };
-  if (context.environmentId === null) return { status: 'skipped', reason: 'no_environment' };
-  const environmentId = context.environmentId;
-  const agent = (await loadAgentVersions(pool)).find((record) => record.role === role);
-  if (!agent) return { status: 'skipped', reason: 'agent_not_synced' };
-  const parsedConfig = parseProjectConfig(context.rawConfig);
-  if (!parsedConfig.ok) return { status: 'skipped', reason: 'invalid_config' };
-  const config = parsedConfig.config;
-
-  const claim = await startRun(pool, {
+  const claimed = await claimStep(deps.pool, {
     taskId,
-    stage: context.task.stage,
     role,
-    agentVersion: agent.version,
-    runner: RUNNER
+    isDue: (context) => nextAgentRoles(context.task).includes(role)
   });
-  if (!claim.ok) return { status: 'skipped', reason: 'already_running' };
-  const runId = claim.runId;
-  const actor: Actor = { kind: 'agent', role, version: agent.version };
-  const repoRef = { installationId: context.installationId, repo: context.repo };
-  const taskBranch = branchForTask(context.number);
-  const firstRound = context.task.headSha === null;
-  const members =
-    role === 'chooser' ? await listProjectMemberProfiles(pool, context.projectId) : [];
-  const questionsAsked =
-    role === 'interviewer'
-      ? Number(
-          (
-            await pool.query<{ count: string }>(
-              `select count(*) from task_events
-               where task_id = $1 and type = 'blocked' and actor->>'role' = 'interviewer'`,
-              [taskId]
-            )
-          ).rows[0]!.count
-        )
-      : 0;
-  const githubReviews = isBuildRole(role) ? await githubReviewsSinceLastPush(pool, taskId) : [];
-
+  if (!claimed.ok) return { status: 'skipped', reason: claimed.reason };
+  const step: Step = {
+    ...claimed.step,
+    deps,
+    taskId,
+    role,
+    actor: { kind: 'agent', role, version: claimed.step.agent.version },
+    taskBranch: branchForTask(claimed.step.context.number),
+    builds: isBuildRole(role)
+  };
   try {
-    const builds = isBuildRole(role);
-    // Only the build roles get a token that can push; every other role reads.
-    const token = await deps.github.installationToken(repoRef, {
-      contents: builds ? 'write' : 'read'
-    });
-    const guardedRefs = { ...repoRef, defaultBranch: context.defaultBranch };
-    // Taken before the session starts, so nothing the builder does can land before it.
-    const refsBefore = builds ? await deps.github.refSnapshot(guardedRefs) : null;
-    const lane = context.task.lane ?? 'standard';
-    const rawLanes = (context.rawConfig as { lanes?: { red?: { paths?: string[] } } }).lanes;
-    const gate = context.task.stage === 'spec_review' ? 'spec_review' : 'verifying';
-    const chooser: ChooserContext | undefined =
-      role === 'chooser'
-        ? {
-            gate,
-            lane,
-            userVisible: context.task.userVisible,
-            lanePolicy: config.lanes[lane].approvals[gate],
-            previousPlan: context.task.approvalPlans[gate] ?? null,
-            members,
-            requesterName:
-              members.find((member) => member.id === context.task.requesterId)?.name ??
-              'a former member',
-            changedPaths: gate === 'verifying' ? await latestPushedPaths(pool, taskId) : [],
-            autoMergeAllowed: config.pullRequest.autoMerge
-          }
-        : undefined;
-    const brief = buildBrief({
-      role,
-      taskNumber: context.number,
-      title: context.title,
-      repo: context.repo,
-      defaultBranch: context.defaultBranch,
-      taskBranch,
-      docsEntry: config.docs.entry,
-      specTemplate: config.docs.specTemplate,
-      specVersion: context.task.specVersion,
-      spec: context.latestSpec,
-      verify: config.verify,
-      protectedPaths: rawLanes?.red?.paths ?? [],
-      requestThread:
-        role === 'spec' || role === 'interviewer' ? await listComments(pool, taskId) : [],
-      feedback: builds ? await feedbackSinceLastPush(pool, taskId) : [],
-      firstRound,
-      prTitlePattern: config.pullRequest.titlePattern,
-      chooser,
-      questionsAsked,
-      standards: role === 'onboarder' ? config.docs.standards : undefined
-    });
-
-    const report = await executeRun(deps.agents, {
-      role,
-      brief,
-      session: {
-        agentId: agent.externalAgentId,
-        agentVersion: agent.version,
-        environmentId,
-        title: `Officina #${context.number} ${role}`,
-        metadata: { task_id: taskId, run_id: runId, role },
-        repository: {
-          url: `https://github.com/${context.repo}`,
-          token,
-          // Until the first push the task branch does not exist yet.
-          branch: role === 'spec' || firstRound ? context.defaultBranch : taskBranch
-        },
-        // A conversation is cheap; a lane's build budget would be far too generous for it.
-        budgetCents:
-          role === 'interviewer'
-            ? INTERVIEW_BUDGET_CENTS
-            : Math.round(config.lanes[lane].budgetUsd * 100)
-      },
-      validate: builds
-        ? (output) => [
-            ...titleProblems(config.pullRequest.titlePattern)(output),
-            // The onboarder's contract has no review answer, so only the builder is held to one.
-            ...(role === 'builder' ? reviewProblems(githubReviews)(output) : [])
-          ]
-        : role === 'chooser'
-          ? planProblems(gate, new Set(members.map((member) => member.id)))
-          : role === 'interviewer'
-            ? interviewProblems(questionsAsked)
-            : undefined,
-      onSessionCreated: (sessionId) => setRunExternalId(pool, runId, sessionId),
-      onEvent: (event) => appendRunEvent(pool, runId, event.type, event)
-    });
-
-    if (refsBefore) {
-      // Checked whatever the run reported: a failed run may still have pushed somewhere.
-      const changes = await refChanges(
-        deps.github,
-        guardedRefs,
-        refsBefore,
-        await deps.github.refSnapshot(guardedRefs)
-      );
-      if (changes.length) {
-        const reason = `refs outside ${taskBranch} changed during the build: ${changes.join('; ')}`;
-        await finishRun(pool, runId, {
-          status: 'failed',
-          costCents: report.costCents,
-          result: { refsChanged: changes, outcome: report.outcome }
-        });
-        await blockTask(
-          pool,
-          taskId,
-          `While the ${role} ran, ${changes.join('; ')}. The ${role} may only push ${taskBranch}. Check those refs on GitHub and restore them if the ${role} changed them; if a person made the change, answer to run the build again.`
-        );
-        return { status: 'blocked', reason };
-      }
-    }
-
-    const outcome = report.outcome;
-    if (outcome.kind !== 'result') {
-      const reason = describeOutcome(outcome);
-      await finishRun(pool, runId, {
-        status: 'failed',
-        costCents: report.costCents,
-        result: outcome
-      });
-      await blockTask(pool, taskId, `The ${role} agent could not complete its step: ${reason}.`);
-      return { status: 'blocked', reason };
-    }
-
-    const output = outcome.output;
-    let roleOutput: RoleOutput;
-    if (builds) {
-      const built = output as AgentOutput<'builder' | 'onboarder'>;
-      if (built.outcome === 'pushed' && built.branch !== taskBranch) {
-        const reason = `it pushed to ${built.branch} instead of ${taskBranch}`;
-        await finishRun(pool, runId, {
-          status: 'failed',
-          costCents: report.costCents,
-          result: output
-        });
-        await blockTask(pool, taskId, `The ${role} agent could not complete its step: ${reason}.`);
-        return { status: 'blocked', reason };
-      }
-      if (built.outcome === 'pushed') {
-        const facts = await readPushedHead(deps.github, {
-          ref: repoRef,
-          base: context.defaultBranch,
-          branch: taskBranch,
-          catalogs: config.docs.standards.catalogs
-        });
-        roleOutput = { role, output: built, facts } as RoleOutput;
-      } else {
-        roleOutput = { role, output: built } as RoleOutput;
-      }
-    } else {
-      roleOutput = { role, output } as RoleOutput;
-    }
-
-    const mapped = commandForOutput(context.task, roleOutput);
-    if (!mapped.ok) throw new Error(mapped.error);
-
-    const applied = await applyCommand(pool, {
-      taskId,
-      command: mapped.command,
-      actor,
-      guard: sameWork(context.task),
-      onApplied: async (client, task) => {
-        if (role === 'interviewer') {
-          const interview = output as AgentOutput<'interviewer'>;
-          // The thread keeps the whole conversation, so the spec writer and people read it as one.
-          const body =
-            interview.outcome === 'question'
-              ? interview.question
-              : [
-                  `**Summary.** ${interview.summary}`,
-                  `**Done when:**\n${interview.acceptance.map((item) => `- ${item}`).join('\n')}`
-                ].join('\n\n');
-          await addComment(client, taskId, actor, body);
-          if (interview.outcome === 'complete') {
-            await client.query('update tasks set title = $2 where id = $1', [
-              taskId,
-              interview.title
-            ]);
-          }
-        }
-        if (role === 'spec' && (output as AgentOutput<'spec'>).outcome === 'specced') {
-          await saveSpecVersion(client, {
-            taskId,
-            version: task.specVersion,
-            body: (output as Extract<AgentOutput<'spec'>, { outcome: 'specced' }>).spec,
-            createdBy: actor
-          });
-        }
-      }
-    });
-    if (!applied.ok) {
-      await finishRun(pool, runId, {
-        status: 'failed',
-        costCents: report.costCents,
-        result: { discarded: applied.error, output }
-      });
-      return { status: 'discarded', reason: applied.error };
-    }
-
-    if (builds && applied.task.stage === 'reviewing' && context.pullRequest === null) {
-      const built = output as Extract<AgentOutput<'builder' | 'onboarder'>, { outcome: 'pushed' }>;
-      const bullets = (items: readonly string[]) =>
-        items.map((item) => `- ${item}`).join('\n') || '- nothing reported';
-      const body = [
-        `Implements the approved spec of ${taskLink(deps.publicUrl, context.number)}.`,
-        `Verified:\n${bullets(built.verified)}`,
-        `Not verified:\n${bullets(built.notVerified)}`,
-        'followUps' in built
-          ? `Follow-ups, smells found while reading the code and left for their own changes:\n${bullets(built.followUps)}`
-          : null,
-        context.issue ? `Closes #${context.issue}` : null
-      ]
-        .filter(Boolean)
-        .join('\n\n');
-      const pr = await deps.github.openPullRequest({
-        ...repoRef,
-        base: context.defaultBranch,
-        branch: taskBranch,
-        title: built.prTitle,
-        body
-      });
-      await linkPullRequest(pool, taskId, pr.number);
-      await appendRunEvent(pool, runId, 'officina.pull_request_opened', pr);
-      await syncSpecStatus(pool, deps.github, {
-        taskId,
-        ref: repoRef,
-        branch: taskBranch,
-        base: context.defaultBranch,
-        specDir: config.docs.specDir,
-        status: `In progress (#${pr.number})`
-      });
-    }
-
-    const reply = builds && 'reviewReply' in output ? output.reviewReply : undefined;
-    if (reply && githubReviews.length > 0 && context.pullRequest !== null) {
-      const reviewers = [...new Set(githubReviews.map((review) => `\`${review.by}\``))];
-      try {
-        await deps.github.commentOnIssue({
-          ...repoRef,
-          issueNumber: context.pullRequest,
-          body: `Answer to the review by ${reviewers.join(', ')}.\n\n${reply}`
-        });
-      } catch (error) {
-        // The round is applied either way; a lost reply must not block the task.
-        await appendRunEvent(pool, runId, 'officina.review_reply_failed', {
-          error: (error as Error).message
-        });
-      }
-    }
-
-    if (role === 'chooser' && context.pullRequest !== null) {
-      await postChecklist(pool, deps.github, {
-        taskId,
-        ref: repoRef,
-        pullRequest: context.pullRequest,
-        taskLink: taskLink(deps.publicUrl, context.number),
-        result: output
-      });
-    }
-
-    await finishRun(pool, runId, {
-      status: 'succeeded',
-      costCents: report.costCents,
-      result: output
-    });
-    return { status: 'applied' };
+    return await runClaimed(step);
   } catch (error) {
     const message = (error as Error).message;
-    await finishRun(pool, runId, { status: 'failed', costCents: null, result: { error: message } });
+    await finishRun(deps.pool, step.runId, {
+      status: 'failed',
+      costCents: null,
+      result: { error: message }
+    });
     // Blocking stops the scheduler from retrying a step that fails the same way every time;
     // answering the question retries it.
     await blockTask(
-      pool,
+      deps.pool,
       taskId,
       `The ${role} step failed unexpectedly: ${message}. Answer this question to retry it.`
     ).catch(() => {});

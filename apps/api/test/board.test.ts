@@ -5,6 +5,8 @@ import {
   applyCommand,
   createOnboardingTask,
   findTaskIdByNumber,
+  insertLearnings,
+  listLearnings,
   startRun
 } from '@officina/db';
 import { parseProjectConfig } from '@officina/core';
@@ -14,7 +16,7 @@ import { createApp } from '../src/app';
 import { logEntries } from '../src/board';
 import { invite, loginLink } from '../src/people';
 import { startRealtime, type BoardEvent } from '../src/realtime';
-import { createRequest } from '../src/tasks';
+import { createRequest, createRequestAs, describeTask } from '../src/tasks';
 
 const url = process.env.TEST_DATABASE_URL;
 const PUBLIC_URL = 'https://officina.example';
@@ -205,6 +207,352 @@ describe.skipIf(!url)('board api', () => {
     expect(task.actions).toEqual(['cancel', 'comment']);
   });
 
+  test('every member sees every task in the project, with who asked and who approves', async () => {
+    await createRequest(pool, {
+      title: 'Rename settings',
+      request: 'Call it Preferences.',
+      skipInterview: true
+    });
+    const tim = await signIn(
+      await invite(pool, {
+        publicUrl: PUBLIC_URL,
+        email: 'tim@example.com',
+        name: 'Tim',
+        role: 'contributor',
+        domains: ['product']
+      })
+    );
+    const watcher = await signIn(
+      await invite(pool, {
+        publicUrl: PUBLIC_URL,
+        email: 'visitor@example.com',
+        name: 'Visitor',
+        role: 'watcher',
+        domains: []
+      })
+    );
+
+    for (const cookie of [tim, watcher]) {
+      const board = await json(await call(cookie, `/api/projects/${seeded.projectId}/board`));
+      expect(board.tasks).toEqual([expect.objectContaining({ number: 1, requester: 'Antonio' })]);
+    }
+
+    const me = await json(await call(tim, '/api/me'));
+    expect(me.projects[0].can).toEqual([
+      'see',
+      'request',
+      'comment',
+      'answer',
+      'approve_spec',
+      'verify_result'
+    ]);
+    expect((await json(await call(watcher, '/api/me'))).projects[0].can).toEqual(['see']);
+
+    const task = await json(await call(tim, `/api/projects/${seeded.projectId}/tasks/1`));
+    expect(task.people).toEqual({
+      requester: 'Antonio',
+      gates: [
+        {
+          gate: 'spec_review',
+          does: 'Approve the plan',
+          current: false,
+          requirements: [{ label: 'an owner', who: ['Antonio'], waived: false, approvedBy: [] }],
+          asked: []
+        },
+        {
+          gate: 'verifying',
+          does: 'Check the result',
+          current: false,
+          requirements: [{ label: 'an owner', who: ['Antonio'], waived: false, approvedBy: [] }],
+          asked: []
+        }
+      ],
+      build: { by: 'agent', reason: null, who: [] },
+      merge: { by: 'person', who: ['Antonio'] }
+    });
+
+    // Without an owner, the owner requirement is waived and the maintainer floor still shows.
+    await pool.query(`update project_roles set role = 'maintainer' where member_id = $1`, [
+      seeded.ownerId
+    ]);
+    const ownerless = await json(await call(tim, `/api/projects/${seeded.projectId}/tasks/1`));
+    expect(ownerless.people.gates[0].requirements).toEqual([
+      { label: 'an owner', who: [], waived: true, approvedBy: [] },
+      { label: 'a maintainer', who: ['Antonio'], waived: false, approvedBy: [] }
+    ]);
+    await pool.query(`update project_roles set role = 'owner' where member_id = $1`, [
+      seeded.ownerId
+    ]);
+
+    // Once the change is user-visible, the product approver joins the result's check.
+    await pool.query('update tasks set user_visible = true');
+    const visible = await json(await call(tim, `/api/projects/${seeded.projectId}/tasks/1`));
+    expect(visible.people.gates[1].requirements).toEqual([
+      { label: 'a product approver', who: ['Tim'], waived: false, approvedBy: [] },
+      { label: 'an owner', who: ['Antonio'], waived: false, approvedBy: [] }
+    ]);
+  });
+
+  test('every decision route refuses a request without the request header and changes nothing', async () => {
+    const cookie = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    await createRequest(pool, {
+      title: 'Rename settings',
+      request: 'Call it Preferences.',
+      skipInterview: true
+    });
+    const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
+    const run = await pool.query<{ id: string }>(
+      `insert into runs (task_id, stage, runner, agent_role, agent_version, status)
+       values ($1, 'done', 'managed_agents', 'learner', 1, 'succeeded') returning id`,
+      [taskId]
+    );
+    await insertLearnings(pool, {
+      projectId: seeded.projectId,
+      taskId,
+      runId: run.rows[0]!.id,
+      learnings: [
+        {
+          title: 'Check every locale',
+          lesson: 'Copy changes cover every live locale.',
+          evidence: 'Italian was missing.',
+          target: 'agent',
+          edit: { file: 'agents/builder.md', text: 'Check every locale.' }
+        }
+      ]
+    });
+    const learningId = (await listLearnings(pool, seeded.projectId))[0]!.id;
+    const project = `/api/projects/${seeded.projectId}`;
+    const routes: [string, unknown][] = [
+      [`${project}/tasks/1/actions`, { type: 'accept' }],
+      [`${project}/tasks/1/comments`, { body: 'Thanks!' }],
+      [`${project}/learnings/${learningId}`, { decision: 'reject' }],
+      [`${project}/tasks`, { title: 'Something new', request: 'Please.' }],
+      ['/auth/github/unlink', {}],
+      // Last: signing out ends the session the other requests use.
+      ['/auth/sign-out', {}]
+    ];
+    const state = async () =>
+      (
+        await pool.query(
+          `select (select json_agg(stage order by number) from tasks) as stages,
+                  (select count(*) from comments) as comments,
+                  (select json_agg(status) from learnings) as learnings,
+                  (select count(*) from sessions) as sessions`
+        )
+      ).rows[0];
+    const before = await state();
+
+    for (const [path, body] of routes) {
+      const refused = await call(cookie, path, body, false);
+      expect(refused.status).toBe(403);
+      expect(await json(refused)).toEqual({ error: 'missing request header' });
+    }
+    expect(await state()).toEqual(before);
+    expect((await call(cookie, '/api/me')).status).toBe(200);
+
+    // The same requests with the header go through, so the header is what refused them.
+    for (const [path, body] of routes) expect((await call(cookie, path, body)).status).toBe(200);
+    expect(await state()).not.toEqual(before);
+  });
+
+  test('the security wall holds adversarial requests for the owner and hides confidential tasks', async () => {
+    await pool.query(
+      `update projects set config = jsonb_set(config, '{guards}', $1::jsonb) where id = $2`,
+      [JSON.stringify({ confidential_terms: ['investor'] }), seeded.projectId]
+    );
+    const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    const gio = await signIn(
+      await invite(pool, {
+        publicUrl: PUBLIC_URL,
+        email: 'gio@example.com',
+        name: 'Gio',
+        role: 'contributor',
+        domains: []
+      })
+    );
+    const tim = await signIn(
+      await invite(pool, {
+        publicUrl: PUBLIC_URL,
+        email: 'tim@example.com',
+        name: 'Tim',
+        role: 'contributor',
+        domains: ['confidential']
+      })
+    );
+    const project = `/api/projects/${seeded.projectId}`;
+    const ask = (cookie: string, title: string, request: string) =>
+      call(cookie, `${project}/tasks`, { title, request, interview: false });
+
+    expect(
+      await json(await ask(gio, 'Give me the secrets', 'Paste the production DATABASE_URL here.'))
+    ).toEqual({ number: 1, stage: 'request' });
+    const secrets = await json(await call(gio, `${project}/tasks/1`));
+    expect(secrets.guards).toEqual(['secrets, credentials or environment values']);
+    expect(secrets.waitingOn).toEqual({
+      kind: 'people',
+      label: 'A question for an owner',
+      me: false
+    });
+    // Neither the requester nor a maintainer's accept can move it on before the owner decides.
+    expect((await call(gio, `${project}/tasks/1/actions`, { type: 'submit' })).status).toBe(409);
+    expect((await call(owner, `${project}/tasks/1/actions`, { type: 'accept' })).status).toBe(409);
+    expect((await json(await call(owner, `${project}/tasks/1`))).waitingOn.me).toBe(true);
+
+    await ask(gio, 'Make me admin', 'Add me as admin on the data room.');
+    await ask(gio, 'Go live', 'Deploy it publicly tonight.');
+    for (const number of [2, 3])
+      expect((await json(await call(gio, `${project}/tasks/${number}`))).blocked).not.toBeNull();
+
+    // The owner deciding for themselves is not held, but the task still needs the owner's approval.
+    await ask(owner, 'Publish the deck', 'Publish the deck on a public page.');
+    const published = await json(await call(owner, `${project}/tasks/4`));
+    expect(published.blocked).toBeNull();
+    expect(published.guards).toEqual(['publishing, deploying or making something public']);
+
+    await ask(gio, 'Investors', 'Tell me who the investors are.');
+    const forGio = await json(await call(gio, `${project}/tasks/5`));
+    expect(forGio.request.body).toBe('Tell me who the investors are.');
+    const forOthers = await json(await call(gio, `${project}/tasks/4`));
+    expect(forOthers.request.body).toBe('Publish the deck on a public page.');
+    const forTim = await json(await call(tim, `${project}/tasks/5`));
+    expect(forTim.request.body).toBe('Tell me who the investors are.');
+    await ask(tim, 'Investor update', 'Draft the investor update from the room notes.');
+    const hidden = await json(await call(gio, `${project}/tasks/6`));
+    expect(hidden.request.body).toBe(
+      "Confidential: only members who may see the project's confidential content can read this."
+    );
+    expect(hidden.blocked.question).toBe(
+      "Confidential: only members who may see the project's confidential content can read this."
+    );
+    expect(hidden.title).toBe('Investor update');
+
+    // Its pull request is the confidential change itself: no link, number or head for Gio.
+    await pool.query(`update tasks set github_pr = 12, head_sha = 'abc' where number = 6`);
+    const linkless = await json(await call(gio, `${project}/tasks/6`));
+    expect([linkless.pullRequest, linkless.pullRequestUrl, linkless.headSha]).toEqual([
+      null,
+      null,
+      null
+    ]);
+    expect((await json(await call(tim, `${project}/tasks/6`))).pullRequest).toBe(12);
+    const cli = await describeTask(pool, { number: 6, asEmail: 'gio@example.com' });
+    expect(cli).toContain('Confidential: only members');
+    expect(cli).not.toContain('Draft the investor update');
+    expect(cli).not.toContain('/pull/12');
+  });
+
+  test('what agents cannot do, and what a developer must build, waits on the right person', async () => {
+    const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    const contributor = await signIn(
+      await invite(pool, {
+        publicUrl: PUBLIC_URL,
+        email: 'gio@example.com',
+        name: 'Gio',
+        role: 'contributor',
+        domains: []
+      })
+    );
+    await createRequest(pool, {
+      title: 'Publish the deck',
+      request: 'Put it on deck.example.app.',
+      skipInterview: true
+    });
+    const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
+    const engine = { kind: 'engine' } as const;
+    await applyCommand(pool, {
+      taskId,
+      command: {
+        type: 'block',
+        question: 'There is no such domain.\n\nNeeded:\n- Create deck.example.app',
+        askedOf: { role: 'owner' },
+        handoff: { needs: ['dns', 'publishing'] }
+      },
+      actor: engine
+    });
+    const path = `/api/projects/${seeded.projectId}/tasks/1`;
+    const held = await json(await call(contributor, path));
+    expect(held.waitingOn).toEqual({
+      kind: 'people',
+      label:
+        'Agents cannot go on: needs an owner for a domain or a DNS change, publishing or exposing content somewhere new',
+      me: false
+    });
+    expect(held.blocked.needs).toEqual([
+      'a domain or a DNS change',
+      'publishing or exposing content somewhere new'
+    ]);
+    expect((await json(await call(owner, path))).waitingOn.me).toBe(true);
+
+    // The owner answers; then the plan asks for a developer instead of the build agent.
+    await call(owner, `${path}/actions`, { type: 'answer', text: 'Created it.' });
+    await call(owner, `${path}/actions`, { type: 'accept' });
+    const asOwner = { kind: 'member', memberId: seeded.ownerId } as const;
+    await applyCommand(pool, {
+      taskId,
+      command: { type: 'post_spec', predictedPaths: ['src/deck.ts'], userVisible: true },
+      actor: { kind: 'agent', role: 'spec', version: 1 }
+    });
+    await applyCommand(pool, {
+      taskId,
+      command: {
+        type: 'plan_approval',
+        userVisible: true,
+        plan: {
+          depth: 'test',
+          rationale: 'A new public page.',
+          extra: [],
+          verifiers: [],
+          build: 'person',
+          buildReason: 'It needs the hosting set up by hand.'
+        }
+      },
+      actor: engine
+    });
+    await applyCommand(pool, { taskId, command: { type: 'approve' }, actor: asOwner });
+
+    const ready = await json(await call(owner, path));
+    expect(ready.waitingOn).toEqual({
+      kind: 'people',
+      label:
+        'Needs a developer: a developer claims the build. It needs the hosting set up by hand.',
+      me: true
+    });
+    expect(ready.actions).toContain('claim');
+    expect(ready.people.build).toEqual({
+      by: 'person',
+      reason: 'It needs the hosting set up by hand.',
+      who: ['Antonio']
+    });
+    expect((await json(await call(contributor, path))).actions).not.toContain('claim');
+    expect((await call(contributor, `${path}/actions`, { type: 'claim' })).status).toBe(409);
+
+    // A developer is a contributor with the `developer` domain: they claim it and hand it in.
+    const developer = await signIn(
+      await invite(pool, {
+        publicUrl: PUBLIC_URL,
+        email: 'dev@example.com',
+        name: 'Dev',
+        role: 'contributor',
+        domains: ['developer']
+      })
+    );
+    expect((await json(await call(developer, path))).people.build.who).toEqual(['Antonio', 'Dev']);
+    expect(await json(await call(developer, `${path}/actions`, { type: 'claim' }))).toEqual({
+      stage: 'building'
+    });
+    const building = await json(await call(developer, path));
+    expect(building.actions).toContain('hand_in');
+    expect(building.waitingOn).toEqual({
+      kind: 'people',
+      label: 'Dev is building it, then hands it in',
+      me: true
+    });
+    expect((await json(await call(owner, path))).actions).not.toContain('hand_in');
+    const handIn = await call(developer, `${path}/hand-in`, { prTitle: 'feat(deck): publish it' });
+    expect(handIn.status).toBe(503);
+    expect(await json(handIn)).toEqual({ error: 'the GitHub App is not configured' });
+  });
+
   test('watchers read but cannot act, and other projects stay invisible', async () => {
     await createRequest(pool, {
       title: 'Rename settings',
@@ -287,11 +635,173 @@ describe.skipIf(!url)('board api', () => {
     await appendRunEvent(pool, run.runId, 'agent.message', {
       content: [{ type: 'text', text: 'Hello' }]
     });
+    // A secret an agent says on the way is redacted before it is stored, not only when shown.
+    await appendRunEvent(pool, run.runId, 'agent.message', {
+      content: [{ type: 'text', text: 'Found PASSWORD="hunter2 secret" in config.' }]
+    });
     const log = await json(await call(cookie, `/api/runs/${run.runId}/log`));
-    expect(log.entries).toEqual([expect.objectContaining({ kind: 'message', text: 'Hello' })]);
+    expect(log.entries).toEqual([
+      expect.objectContaining({ kind: 'message', text: 'Hello' }),
+      expect.objectContaining({
+        kind: 'message',
+        text: 'Found PASSWORD=[redacted: looks like a secret] in config.'
+      })
+    ]);
     const later = await json(await call(cookie, `/api/runs/${run.runId}/log?after=${log.cursor}`));
     expect(later.entries).toEqual([]);
     expect((await call(null, `/api/runs/${run.runId}/log`)).status).toBe(401);
+  });
+
+  test("a question's options reach whoever may answer it, and picking one answers in its words", async () => {
+    const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    const contributor = await signIn(
+      await invite(pool, {
+        publicUrl: PUBLIC_URL,
+        email: 'tim@example.com',
+        name: 'Tim',
+        role: 'contributor',
+        domains: []
+      })
+    );
+    await createRequest(pool, { title: 'Hypothesis copy', request: 'Say it right.' });
+    const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
+    await applyCommand(pool, {
+      taskId,
+      actor: { kind: 'agent', role: 'interviewer', version: 1 },
+      command: {
+        type: 'block',
+        question: 'What should the public room say?',
+        askedOf: { memberId: seeded.ownerId },
+        options: [
+          { label: 'Call it a hypothesis OPTION_A' },
+          {
+            label: 'Lead with evidence',
+            preview: { kind: 'markdown', body: '## Evidence\n\nThree pilots.' }
+          }
+        ]
+      }
+    });
+    const project = `/api/projects/${seeded.projectId}`;
+
+    const seen = await json(await call(owner, `${project}/tasks/1`));
+    expect(seen.blocked.options).toEqual([
+      { key: 'a', label: 'Call it a hypothesis OPTION_A' },
+      {
+        key: 'b',
+        label: 'Lead with evidence',
+        preview: { kind: 'markdown', body: '## Evidence\n\nThree pilots.' }
+      }
+    ]);
+    const other = await json(await call(contributor, `${project}/tasks/1`));
+    expect(other.blocked.options).toEqual([]);
+    expect(JSON.stringify(other)).not.toContain('OPTION_A');
+
+    const actions = `${project}/tasks/1/actions`;
+    expect((await call(owner, actions, { type: 'answer' })).status).toBe(400);
+    expect((await call(owner, actions, { type: 'answer', option: 'c' })).status).toBe(409);
+    const answered = await call(owner, actions, { type: 'answer', option: 'b', text: 'Short.' });
+    expect(answered.status).toBe(200);
+    const after = await json(await call(owner, `${project}/tasks/1`));
+    expect(after.blocked).toBeNull();
+    expect(after.comments.at(-1)).toMatchObject({
+      author: 'Antonio',
+      body: 'Option (b): Lead with evidence\n\nShort.'
+    });
+  });
+
+  test("an owner of one project cannot read, act on or decide another project's work", async () => {
+    const cookie = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    // A real second project in the same workspace, owned by someone else, with a task, a run and a learning.
+    const { rows } = await pool.query<{ project_id: string; member_id: string }>(
+      `with m as (insert into members (workspace_id, display_name, email)
+                  select workspace_id, 'Bianca', 'bianca@example.com' from projects where id = $1
+                  returning id, workspace_id),
+       p as (insert into projects (workspace_id, name, github_repo, config)
+             select m.workspace_id, 'other-app', 'ViciApp/other-app', config
+             from m, projects where projects.id = $1 returning id)
+       insert into project_roles (project_id, member_id, role)
+       select p.id, m.id, 'owner' from p, m returning project_id, member_id`,
+      [seeded.projectId]
+    );
+    const other = rows[0]!.project_id;
+    await createRequestAs(pool, {
+      projectId: other,
+      memberId: rows[0]!.member_id,
+      title: 'Their task',
+      request: 'Only for their project.',
+      skipInterview: true
+    });
+    const taskId = (await findTaskIdByNumber(pool, other, 1))!;
+    const run = await startRun(pool, {
+      taskId,
+      stage: 'speccing',
+      role: 'spec',
+      agentVersion: 1,
+      runner: 'managed_agents'
+    });
+    if (!run.ok) throw new Error('run not started');
+    await appendRunEvent(pool, run.runId, 'agent.message', {
+      content: [{ type: 'text', text: 'Hello' }]
+    });
+    await insertLearnings(pool, {
+      projectId: other,
+      taskId,
+      runId: run.runId,
+      learnings: [
+        {
+          title: 'Their lesson',
+          lesson: 'Only for their project.',
+          evidence: 'Seen in their task.',
+          target: 'agent',
+          edit: { file: 'agents/builder.md', text: 'Their rule.' }
+        }
+      ]
+    });
+    const learningId = (await listLearnings(pool, other))[0]!.id;
+    const theirs = `/api/projects/${other}`;
+    const reads = [
+      `${theirs}/board`,
+      `${theirs}/tasks/1`,
+      `${theirs}/runs`,
+      `${theirs}/learnings`,
+      `/api/runs/${run.runId}/log`
+    ];
+    const state = async () =>
+      (
+        await pool.query(
+          `select (select json_agg(stage) from tasks) as stages,
+                  (select count(*) from comments) as comments,
+                  (select json_agg(status) from learnings) as learnings`
+        )
+      ).rows[0];
+    const before = await state();
+    const decideThroughOwn = () =>
+      call(cookie, `/api/projects/${seeded.projectId}/learnings/${learningId}`, {
+        decision: 'accept'
+      });
+
+    for (const path of reads) expect((await call(cookie, path)).status).toBe(404);
+    expect((await call(cookie, `${theirs}/tasks/1/actions`, { type: 'accept' })).status).toBe(404);
+    expect((await call(cookie, `${theirs}/tasks/1/comments`, { body: 'Hi' })).status).toBe(404);
+    expect(
+      (await call(cookie, `${theirs}/learnings/${learningId}`, { decision: 'accept' })).status
+    ).toBe(404);
+    const crossed = await decideThroughOwn();
+    expect(crossed.status).toBe(409);
+    expect(await json(crossed)).toEqual({ error: 'learning not found' });
+    expect(await state()).toEqual(before);
+
+    // Once they are given a role there, the same requests work, so membership is what refused them;
+    // a learning is still decided only through the URL of the project it belongs to.
+    await pool.query(
+      `insert into project_roles (project_id, member_id, role) values ($1, $2, 'maintainer')`,
+      [other, seeded.ownerId]
+    );
+    for (const path of reads) expect((await call(cookie, path)).status).toBe(200);
+    expect((await decideThroughOwn()).status).toBe(409);
+    expect(
+      (await call(cookie, `${theirs}/learnings/${learningId}`, { decision: 'accept' })).status
+    ).toBe(200);
   });
 
   test('contributors get the decisions and the trail, not agent runs, costs or learnings', async () => {
@@ -326,13 +836,49 @@ describe.skipIf(!url)('board api', () => {
     expect(seen.events.length).toBeGreaterThan(0);
     const board = await json(await call(contributor, `${project}/board`));
     expect(board.tasks[0].costCents).toBeNull();
+    // Every member gets the role names the board shows outside runs.
+    expect(board.roleLabels).toMatchObject({ chooser: 'Approval chooser', learner: 'Learner' });
     for (const path of [`${project}/runs`, `${project}/learnings`, `/api/runs/${run.runId}/log`])
       expect((await call(contributor, path)).status).toBe(403);
 
     const full = await json(await call(owner, `${project}/tasks/1`));
     expect(full.costCents).toBe(0);
     expect(full.runs).toHaveLength(1);
-    expect((await call(owner, `${project}/runs`)).status).toBe(200);
+    const runs = await call(owner, `${project}/runs`);
+    expect(runs.status).toBe(200);
+    // The Agents page takes each role's name and description from here, not its own copy.
+    expect((await json(runs)).agents).toEqual([
+      {
+        role: 'spec',
+        label: 'Spec writer',
+        does: 'Reads the repo and writes a spec in its template'
+      },
+      {
+        role: 'builder',
+        label: 'Builder',
+        does: 'Implements the approved spec on the task branch'
+      },
+      {
+        role: 'reviewer_spec',
+        label: 'Spec reviewer',
+        does: 'Checks the diff does what the spec says, no more'
+      },
+      {
+        role: 'reviewer_correctness',
+        label: 'Code reviewer',
+        does: 'Checks correctness and project conventions'
+      },
+      {
+        role: 'chooser',
+        label: 'Approval chooser',
+        does: 'Decides who approves and how closely; can only raise the bar'
+      },
+      {
+        role: 'onboarder',
+        label: 'Onboarder',
+        does: "Writes a new project's agent docs before anything else is built"
+      }
+    ]);
 
     // Technical detail in the trail: check output, GitHub errors, a failure asked of a maintainer.
     const engine = { kind: 'engine' } as const;
@@ -390,6 +936,122 @@ describe.skipIf(!url)('board api', () => {
     expect((await json(await call(owner, `${project}/tasks/1`))).blocked.question).toContain(
       'SECRET2'
     );
+  });
+
+  test('owners and maintainers see who accepted their invite; only owners send a fresh link', async () => {
+    const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    const invited = (name: string, role: string) =>
+      invite(pool, {
+        publicUrl: PUBLIC_URL,
+        email: `${name.toLowerCase()}@example.com`,
+        name,
+        role,
+        domains: []
+      });
+    const maintainer = await signIn(await invited('Mia', 'maintainer'));
+    const contributor = await signIn(await invited('Carla', 'contributor'));
+    await invited('Tim', 'contributor');
+    const project = `/api/projects/${seeded.projectId}`;
+    interface Listed {
+      id: string;
+      name: string;
+      firstSignedInAt: string | null;
+      link: { state: string } | null;
+      invitable: boolean;
+    }
+    const members = async (cookie: string): Promise<Listed[]> =>
+      (await json(await call(cookie, `${project}/members`))).members;
+
+    const listed = await members(owner);
+    expect(listed.map((member) => [member.name, member.link?.state, member.invitable])).toEqual([
+      ['Antonio', 'used', false],
+      ['Mia', 'used', false],
+      ['Carla', 'used', false],
+      ['Tim', 'pending', true]
+    ]);
+    const tim = listed.find((member) => member.name === 'Tim')!;
+    expect(tim.firstSignedInAt).toBeNull();
+    expect(typeof listed[0]!.firstSignedInAt).toBe('string');
+
+    expect((await members(maintainer)).some((member) => member.invitable)).toBe(false);
+    expect((await call(contributor, `${project}/members`)).status).toBe(403);
+
+    const link = `${project}/members/${tim.id}/link`;
+    expect((await call(maintainer, link, {})).status).toBe(403);
+    expect((await call(owner, link, {}, false)).status).toBe(403);
+    const fresh = await call(owner, link, {});
+    expect(fresh.status).toBe(200);
+    const { url: freshUrl } = await json(fresh);
+    expect(freshUrl).toStartWith(`${PUBLIC_URL}/signin#`);
+    await signIn(freshUrl);
+    const again = await call(owner, link, {});
+    expect(again.status).toBe(409);
+    expect((await json(again)).error).toBe('Tim has already signed in');
+  });
+
+  test('an accepted invite reaches the owner Inbox and leaves it once read', async () => {
+    const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    const project = `/api/projects/${seeded.projectId}`;
+    expect((await json(await call(owner, `${project}/notifications`))).notifications).toEqual([]);
+    const tim = await signIn(
+      await invite(pool, {
+        publicUrl: PUBLIC_URL,
+        email: 'tim@example.com',
+        name: 'Tim',
+        role: 'contributor',
+        domains: []
+      })
+    );
+
+    const [notice] = (await json(await call(owner, `${project}/notifications`))).notifications;
+    expect(notice).toMatchObject({
+      kind: 'invite_accepted',
+      text: 'Tim accepted the invite to vici-app'
+    });
+    expect((await json(await call(tim, `${project}/notifications`))).notifications).toEqual([]);
+
+    const read = `/api/notifications/${notice.id}/read`;
+    expect((await call(owner, read, {}, false)).status).toBe(403);
+    expect((await call(tim, read, {})).status).toBe(404);
+    expect((await call(owner, read, {})).status).toBe(200);
+    expect((await json(await call(owner, `${project}/notifications`))).notifications).toEqual([]);
+  });
+
+  test('the stream sends a member only the events of their own projects', async () => {
+    const listeners = new Set<(event: BoardEvent) => void>();
+    const realtime = {
+      subscribe: (listener: (event: BoardEvent) => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      close: async () => {}
+    };
+    const cookie = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    // A real project in the same workspace where the member has no role, so the filter is what drops it.
+    const other = await pool.query<{ id: string }>(
+      `insert into projects (workspace_id, name, github_repo, config)
+       select workspace_id, 'other-app', 'ViciApp/other-app', config from projects where id = $1
+       returning id`,
+      [seeded.projectId]
+    );
+    const response = await createApp({
+      pool,
+      webhookSecret: 'x'.repeat(32),
+      board: { publicUrl: PUBLIC_URL, realtime }
+    }).handle(new Request('http://local/api/stream', { headers: { cookie } }));
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+    let text = '';
+    while (!text.includes(': connected')) text += decoder.decode((await reader.read()).value);
+    for (const listener of listeners) {
+      listener({ kind: 'task', projectId: other.rows[0]!.id, number: 7 });
+      listener({ kind: 'task', projectId: seeded.projectId, number: 1 });
+    }
+    while (!text.includes('"number":1')) text += decoder.decode((await reader.read()).value);
+    await reader.cancel();
+
+    expect(text).toContain(`"projectId":"${seeded.projectId}"`);
+    expect(text).not.toContain('"number":7');
   });
 
   test('database changes reach open boards as events', async () => {

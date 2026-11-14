@@ -4,6 +4,9 @@ import type { ManagedAgentsPort, SessionEvent, SessionRequest } from './port';
 
 export const MAX_RESULT_ATTEMPTS = 3;
 
+/** The runner every run records: Managed Agents is the only one. */
+export const RUNNER = 'managed_agents';
+
 export type RunOutcome =
   | { readonly kind: 'result'; readonly output: AgentOutput<RunnerRole> }
   | { readonly kind: 'invalid_result'; readonly errors: readonly string[] }
@@ -60,6 +63,18 @@ export const executeRun = async (
             type: 'user.custom_tool_result',
             toolUseId,
             text: `Unknown tool. Use ${RESULT_TOOL}.`,
+            isError: true
+          }
+        ]);
+        continue;
+      }
+      if (result !== null) {
+        // The accepted result stands: a later submission neither replaces it nor counts against it.
+        await port.send(sessionId, [
+          {
+            type: 'user.custom_tool_result',
+            toolUseId,
+            text: 'A result was already accepted. Stop here.',
             isError: true
           }
         ]);

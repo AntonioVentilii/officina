@@ -1,4 +1,6 @@
-import type { Policy, Requirement } from './config';
+import type { Gate, Policy, ProjectConfig, Requirement } from './config';
+import type { Guard } from './guards';
+import { GATE_ACTIONS, can } from './permissions';
 import { hasRole, type Member } from './roles';
 
 export interface Approval {
@@ -8,11 +10,22 @@ export interface Approval {
 }
 
 export interface PolicyContext {
+  readonly gate: Gate;
   readonly members: readonly Member[];
   readonly requesterId: string;
   readonly userVisible: boolean;
   readonly subject: string;
+  /** The project's `approvals.self_approval`: whether the requester may meet their own gates. */
+  readonly selfApproval: boolean;
+  /** The task touches confidential content: only members who may see it can approve it. */
+  readonly confidential: boolean;
 }
+
+/** Who an approval needs, for the members who may meet it, without the subject and its approvals. */
+export type Eligibility = Pick<
+  PolicyContext,
+  'gate' | 'members' | 'requesterId' | 'selfApproval' | 'confidential'
+>;
 
 export interface PolicyResult {
   readonly satisfied: boolean;
@@ -25,25 +38,50 @@ export interface PolicyResult {
 /** Every gate needs at least one maintainer or owner, whatever the lane policy says. */
 export const APPROVAL_FLOOR: Requirement = { role: 'maintainer' };
 
-export const isEligible = (
-  member: Member,
-  requirement: Requirement,
-  requesterId: string
-): boolean => {
-  if (!hasRole(member, 'contributor')) {
-    return false;
-  }
-  if ('role' in requirement) {
-    return hasRole(member, requirement.role);
-  }
-  if ('domain' in requirement) {
-    return member.domains.includes(requirement.domain);
-  }
-  return member.id === requesterId;
+/** The policy context of a task's gate, from the project's config and its current members. */
+export const policyContext = (
+  config: Pick<ProjectConfig, 'approvals'>,
+  task: {
+    readonly requesterId: string;
+    readonly userVisible: boolean;
+    readonly guards: readonly Guard[];
+  },
+  gate: Gate,
+  at: { readonly members: readonly Member[]; readonly subject: string }
+): PolicyContext => ({
+  gate,
+  members: at.members,
+  requesterId: task.requesterId,
+  userVisible: task.userVisible,
+  subject: at.subject,
+  selfApproval: config.approvals.selfApproval,
+  confidential: task.guards.includes('confidential')
+});
+
+const meets = (member: Member, requirement: Requirement, context: Eligibility): boolean => {
+  if (!can(member, GATE_ACTIONS[context.gate])) return false;
+  if (context.confidential && !can(member, 'see_confidential')) return false;
+  if ('role' in requirement) return hasRole(member, requirement.role);
+  if ('domain' in requirement) return member.domains.includes(requirement.domain);
+  return member.id === context.requesterId;
 };
 
-const applies = (requirement: Requirement, userVisible: boolean): boolean =>
-  !('when' in requirement && requirement.when === 'user_visible' && !userVisible);
+/**
+ * The members whose approval meets a requirement. Without self-approval the requester meets only
+ * the requester requirement, unless nobody else can meet it, so a small team is never stuck.
+ */
+export const eligibleMembers = (requirement: Requirement, context: Eligibility): Member[] => {
+  const all = context.members.filter((member) => meets(member, requirement, context));
+  if (context.selfApproval || 'requester' in requirement) return all;
+  const others = all.filter((member) => member.id !== context.requesterId);
+  return others.length ? others : all;
+};
+
+/** The requirements of a policy that apply to this change, the maintainer floor last. */
+export const applicableRequirements = (policy: Policy, userVisible: boolean): Requirement[] =>
+  [...policy, APPROVAL_FLOOR].filter(
+    (requirement) => !('when' in requirement && requirement.when === 'user_visible' && !userVisible)
+  );
 
 /**
  * One member's approval satisfies every requirement they are eligible for, which is what lets a
@@ -54,34 +92,24 @@ export const evaluatePolicy = (
   approvals: readonly Approval[],
   context: PolicyContext
 ): PolicyResult => {
-  const membersById = new Map(context.members.map((member) => [member.id, member]));
-  const approvers = approvals
-    .filter((approval) => approval.subject === context.subject)
-    .map((approval) => membersById.get(approval.memberId))
-    .filter((member): member is Member => member !== undefined);
+  const approverIds = new Set(
+    approvals
+      .filter((approval) => approval.subject === context.subject)
+      .map((approval) => approval.memberId)
+  );
 
   const pending: Requirement[] = [];
   const waived: Requirement[] = [];
 
-  for (const requirement of [...policy, APPROVAL_FLOOR]) {
-    if (!applies(requirement, context.userVisible)) {
-      continue;
-    }
-    const eligibleExists = context.members.some((member) =>
-      isEligible(member, requirement, context.requesterId)
-    );
+  for (const requirement of applicableRequirements(policy, context.userVisible)) {
+    const eligible = eligibleMembers(requirement, context);
     // The floor is never waived: without a maintainer the gate must stay closed, not open.
-    if (!eligibleExists && requirement !== APPROVAL_FLOOR) {
+    if (!eligible.length && requirement !== APPROVAL_FLOOR) {
       waived.push(requirement);
       continue;
     }
-    const met = approvers.some((member) => isEligible(member, requirement, context.requesterId));
-    if (!met) {
-      pending.push(requirement);
-    }
+    if (!eligible.some((member) => approverIds.has(member.id))) pending.push(requirement);
   }
 
   return { satisfied: pending.length === 0, pending, waived };
 };
-
-export const canApprove = (member: Member): boolean => hasRole(member, 'contributor');

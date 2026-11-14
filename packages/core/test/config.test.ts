@@ -118,6 +118,28 @@ describe('project config', () => {
     expect(on.ok && on.config.pullRequest.autoMerge).toBe(true);
   });
 
+  test('a requester may meet their own gates unless the project turns it off', () => {
+    const on = parseProjectConfig({ version: 1, docs: { entry: 'AGENTS.md' } });
+    expect(on.ok && on.config.approvals.selfApproval).toBe(true);
+    const off = parseProjectConfig({
+      version: 1,
+      docs: { entry: 'AGENTS.md' },
+      approvals: { self_approval: false }
+    });
+    expect(off.ok && off.config.approvals.selfApproval).toBe(false);
+  });
+
+  test('asking Copilot to review is off unless the project turns it on', () => {
+    const off = parseProjectConfig({ version: 1, docs: { entry: 'AGENTS.md' } });
+    expect(off.ok && off.config.pullRequest.copilotReview).toBe(false);
+    const on = parseProjectConfig({
+      version: 1,
+      docs: { entry: 'AGENTS.md' },
+      pull_request: { copilot_review: true }
+    });
+    expect(on.ok && on.config.pullRequest.copilotReview).toBe(true);
+  });
+
   test('no review bot is listed unless the project names its own', () => {
     const none = parseProjectConfig({ version: 1, docs: { entry: 'AGENTS.md' } });
     expect(none.ok && none.config.pullRequest.reviewBots).toEqual([]);
@@ -166,6 +188,27 @@ describe('project config', () => {
       lanes: { red: { paths: ['infra/**'], agents_build: true } }
     });
     expect(result.ok && result.config.lanes.red.agentsBuild).toBe(false);
+  });
+
+  test('keeps the red and green globs on their lanes, none on standard', () => {
+    const result = parseProjectConfig({
+      version: 1,
+      docs: { entry: 'AGENTS.md' },
+      lanes: {
+        red: { paths: ['infra/**'] },
+        standard: { paths: ['ignored/**'] },
+        green: { paths: ['copy/**'] }
+      }
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.config.lanes.red.paths).toEqual(['infra/**']);
+    expect(result.config.lanes.green.paths).toEqual(['copy/**']);
+    expect(result.config.lanes.standard.paths).toEqual([]);
+    expect(parseProjectConfig({ version: 1, docs: { entry: 'AGENTS.md' } })).toMatchObject({
+      ok: true,
+      config: { lanes: { red: { paths: [] }, green: { paths: [] } } }
+    });
   });
 
   test('reports unknown keys and bad requirements with their path', () => {

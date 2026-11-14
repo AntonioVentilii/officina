@@ -1,6 +1,12 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import type { LearningTarget } from '@officina/core';
-import { insertLearnings, listLearnings } from '@officina/db';
+import {
+  failLearningRewrite,
+  insertLearnings,
+  listLearnings,
+  requestLearningRewrite,
+  rewriteLearningEdit
+} from '@officina/db';
 import { Pool } from 'pg';
 import { createTaskInMerging, resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
 import { applyEdit, decide, type LearningGitHub } from '../src/learnings';
@@ -36,6 +42,24 @@ describe('learning edits', () => {
       why: 'the file no longer exists'
     });
   });
+
+  test('a replaced line keeps its line break when the stored text was trimmed', () => {
+    expect(applyEdit('a\n## Copy\nb\n', { find: '## Copy\n', text: '## Copy\n\nrule' })).toEqual({
+      ok: true,
+      text: 'a\n## Copy\n\nrule\nb\n'
+    });
+    expect(applyEdit('a X b\n', { find: 'X', text: 'Y' })).toEqual({ ok: true, text: 'a Y b\n' });
+    expect(
+      applyEdit('a\r\n## Copy\r\nb\r\n', { find: '## Copy\r\n', text: '## Copy\r\n\r\nrule' })
+    ).toEqual({ ok: true, text: 'a\r\n## Copy\r\n\r\nrule\r\nb\r\n' });
+  });
+
+  test('replacement text with dollar signs lands exactly as written', () => {
+    expect(applyEdit('cost: X\n', { find: 'X', text: "$$5, $& and $' stay" })).toEqual({
+      ok: true,
+      text: "cost: $$5, $& and $' stay\n"
+    });
+  });
 });
 
 describe.skipIf(!url)('learning decisions', () => {
@@ -53,21 +77,40 @@ describe.skipIf(!url)('learning decisions', () => {
     await pool.end();
   });
 
-  const fakeGitHub = () => {
+  /**
+   * Remembers what each branch holds and which pull requests are open, so a second decision sees
+   * what the first one left. A failed opening has opened it, as when GitHub's answer is lost.
+   */
+  const fakeGitHub = (options: { failOpening?: number; base?: string } = {}) => {
     const calls: { method: string; args: Record<string, unknown> }[] = [];
+    const written = new Map<string, string>();
+    const open = new Set<string>();
+    let failOpening = options.failOpening ?? 0;
     const record = (method: string) => async (args: Record<string, unknown>) => {
       calls.push({ method, args });
-      if (method === 'readFile') return { text: '# Agents\n\n## Copy\n', sha: 'blob1' };
-      if (method === 'openPullRequest') return { number: 77, url: 'https://github.com/x/pull/77' };
+      if (method === 'readFile') {
+        const text = written.get(String(args.branch));
+        return text === undefined
+          ? { text: options.base ?? '# Agents\n\n## Copy\n', sha: 'blob1' }
+          : { text, sha: 'blob2' };
+      }
+      if (method === 'updateFile') written.set(String(args.branch), String(args.text));
+      if (method === 'closePullRequestsFrom') open.delete(String(args.branch));
+      if (method === 'openPullRequest') {
+        open.add(String(args.branch));
+        if (failOpening-- > 0) throw new Error('GitHub 502 on /pulls');
+        return { number: 77, url: 'https://github.com/x/pull/77' };
+      }
       return undefined;
     };
     const port = {
       readFile: record('readFile'),
       updateFile: record('updateFile'),
       createBranch: record('createBranch'),
-      openPullRequest: record('openPullRequest')
+      openPullRequest: record('openPullRequest'),
+      closePullRequestsFrom: record('closePullRequestsFrom')
     } as unknown as LearningGitHub;
-    return { port, calls };
+    return { port, calls, open };
   };
 
   const propose = async (target: LearningTarget) => {
@@ -108,6 +151,28 @@ describe.skipIf(!url)('learning decisions', () => {
     publicUrl: 'https://o.example'
   });
 
+  test('a reject made while an accept is opening its pull request waits and finds it decided', async () => {
+    const learning = await propose('docs');
+    const github = fakeGitHub();
+    let release = () => {};
+    const opening = new Promise<void>((resolve) => (release = resolve));
+    const slow = {
+      ...github.port,
+      openPullRequest: async (input: Parameters<LearningGitHub['openPullRequest']>[0]) => {
+        await opening;
+        return github.port.openPullRequest(input);
+      }
+    };
+    const accepting = decide(pool, slow, owner(), { id: learning.id, decision: 'accept' });
+    while (!github.calls.some((call) => call.method === 'updateFile')) await Bun.sleep(5);
+    const rejecting = decide(pool, github.port, owner(), { id: learning.id, decision: 'reject' });
+    await Bun.sleep(50);
+    release();
+
+    expect(await accepting).toMatchObject({ status: 'accepted', prNumber: 77 });
+    await expect(rejecting).rejects.toThrow('already decided');
+  });
+
   test('accepting an agent docs learning opens a pull request with exactly the proposed edit', async () => {
     const learning = await propose('docs');
     const github = fakeGitHub();
@@ -121,18 +186,22 @@ describe.skipIf(!url)('learning decisions', () => {
     expect(github.calls.map((call) => call.method)).toEqual([
       'readFile',
       'createBranch',
+      'readFile',
       'updateFile',
       'openPullRequest'
     ]);
-    expect(github.calls[2]!.args).toMatchObject({
+    expect(github.calls[2]!.args).toMatchObject({ path: 'AGENTS.md', branch });
+    expect(github.calls[3]!.args).toMatchObject({
       path: 'AGENTS.md',
       branch,
       sha: 'blob1',
       text: '# Agents\n\n## Copy\n\nUpdate every live locale.\n',
       message: 'docs(ai): update every live locale'
     });
-    const body = String(github.calls[3]!.args.body);
-    expect(body).toContain('[Officina task 1](https://o.example/tasks/1)');
+    const body = String(github.calls[4]!.args.body);
+    expect(body).toContain(
+      `[Officina task 1](https://o.example/tasks/1?project=${seeded.projectId})`
+    );
     expect(body).not.toMatch(/(^|\s)#1\b/);
 
     await expect(
@@ -147,14 +216,120 @@ describe.skipIf(!url)('learning decisions', () => {
     expect((await listLearnings(pool, seeded.projectId))[0]!.status).toBe('applied');
   });
 
+  test('a merged learning pull request is applied whatever the case of the repository name', async () => {
+    const learning = await propose('docs');
+    await decide(pool, fakeGitHub().port, owner(), { id: learning.id, decision: 'accept' });
+    await handleWebhookAction(pool, {
+      kind: 'pull_request_merged',
+      repo: 'viciapp/VICI-APP',
+      prNumber: 77
+    });
+    expect((await listLearnings(pool, seeded.projectId))[0]!.status).toBe('applied');
+  });
+
   test('a learning for another project doc lands as a learning pull request', async () => {
     const learning = await propose('project');
     const github = fakeGitHub();
     await decide(pool, github.port, owner(), { id: learning.id, decision: 'accept' });
-    expect(github.calls[2]!.args).toMatchObject({
+    expect(github.calls[3]!.args).toMatchObject({
       path: 'docs/copy.md',
       message: 'docs(learning): update every live locale'
     });
+  });
+
+  test('an accept that failed halfway can be accepted again, writing the edit once', async () => {
+    const learning = await propose('docs');
+    const github = fakeGitHub({ failOpening: 1 });
+    await expect(
+      decide(pool, github.port, owner(), { id: learning.id, decision: 'accept' })
+    ).rejects.toThrow('GitHub 502');
+    expect((await listLearnings(pool, seeded.projectId))[0]!.status).toBe('proposed');
+
+    const decided = await decide(pool, github.port, owner(), {
+      id: learning.id,
+      decision: 'accept'
+    });
+    expect(decided).toMatchObject({ status: 'accepted', prNumber: 77 });
+    expect(github.calls.filter((call) => call.method === 'updateFile')).toHaveLength(1);
+  });
+
+  test('rejecting a learning closes the pull request an accept that failed halfway left open', async () => {
+    const learning = await propose('docs');
+    const github = fakeGitHub({ failOpening: 1 });
+    await expect(
+      decide(pool, github.port, owner(), { id: learning.id, decision: 'accept' })
+    ).rejects.toThrow('GitHub 502');
+    const branch = `officina/learning-${learning.id.slice(0, 8)}`;
+    expect([...github.open]).toEqual([branch]);
+
+    const decided = await decide(pool, github.port, owner(), {
+      id: learning.id,
+      decision: 'reject'
+    });
+    expect(decided).toMatchObject({ status: 'rejected', prNumber: null });
+    expect(github.open.size).toBe(0);
+    expect(github.calls.at(-1)).toEqual({
+      method: 'closePullRequestsFrom',
+      args: { installationId: 99, repo: 'ViciApp/vici-app', branch }
+    });
+  });
+
+  test('an edit the default branch moved past goes back to the learner instead of failing', async () => {
+    const learning = await propose('docs');
+    const github = fakeGitHub({ base: '# Agents\n\n## Copy and tone\n' });
+    const decided = await decide(pool, github.port, owner(), {
+      id: learning.id,
+      decision: 'accept'
+    });
+    expect(decided).toMatchObject({ status: 'proposed', rewrite: 'requested', prNumber: null });
+    expect(github.calls.map((call) => call.method)).toEqual(['readFile']);
+
+    await expect(
+      decide(pool, github.port, owner(), { id: learning.id, decision: 'accept' })
+    ).rejects.toThrow('the learner is rewriting this edit');
+
+    await failLearningRewrite(pool, learning.id);
+    await expect(
+      decide(pool, github.port, owner(), { id: learning.id, decision: 'accept' })
+    ).rejects.toThrow('could not rewrite it; reject it instead');
+    expect(
+      await decide(pool, github.port, owner(), { id: learning.id, decision: 'reject' })
+    ).toMatchObject({ status: 'rejected' });
+  });
+
+  test('a rewritten edit opens its pull request from a branch of its own', async () => {
+    const learning = await propose('docs');
+    await requestLearningRewrite(pool, learning.id);
+    await rewriteLearningEdit(pool, learning.id, {
+      file: 'AGENTS.md',
+      find: '## Copy\n',
+      text: '## Copy\n\nEvery live locale.\n'
+    });
+    const github = fakeGitHub();
+    await decide(pool, github.port, owner(), { id: learning.id, decision: 'accept' });
+    const created = github.calls.find((call) => call.method === 'createBranch')!;
+    expect(String(created.args.branch)).toMatch(
+      new RegExp(`^officina/learning-${learning.id.slice(0, 8)}-[0-9a-z]+$`)
+    );
+  });
+
+  test('rejecting a rewritten learning closes what an accept left on its first branch too', async () => {
+    const learning = await propose('docs');
+    await requestLearningRewrite(pool, learning.id);
+    await rewriteLearningEdit(pool, learning.id, {
+      file: 'AGENTS.md',
+      find: '## Copy\n',
+      text: '## Copy\n\nEvery live locale.\n'
+    });
+    const github = fakeGitHub();
+    await decide(pool, github.port, owner(), { id: learning.id, decision: 'reject' });
+    const closed = github.calls
+      .filter((call) => call.method === 'closePullRequestsFrom')
+      .map((call) => String(call.args.branch));
+    const first = `officina/learning-${learning.id.slice(0, 8)}`;
+    expect(closed).toHaveLength(2);
+    expect(closed).toContain(first);
+    expect(closed.find((branch) => branch !== first)).toMatch(new RegExp(`^${first}-[0-9a-z]+$`));
   });
 
   test('agent learnings are recorded without touching the repository; contributors cannot decide', async () => {

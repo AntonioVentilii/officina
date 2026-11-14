@@ -1,6 +1,14 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { createHmac } from 'node:crypto';
-import { applyCommand, linkPullRequest, loadTask } from '@officina/db';
+import {
+  applyCommand,
+  claimDelivery,
+  linkPullRequest,
+  loadTask,
+  markDeliveryHandled,
+  purgeOldDeliveries,
+  releaseDelivery
+} from '@officina/db';
 import { Pool } from 'pg';
 import { createTaskInMerging, resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
 import { createApp } from '../src';
@@ -108,6 +116,78 @@ describe.skipIf(!url)('api', () => {
     });
     expect(await again.json()).toEqual({ status: 'duplicate' });
     expect(await eventCount(taskId)).toBe(events);
+
+    // Handled stays handled, however late the redelivery comes.
+    await pool.query("update webhook_deliveries set received_at = now() - interval '1 day'");
+    const late = await deliver(app, {
+      event: 'pull_request',
+      payload: mergedPayload,
+      delivery: 'd-1'
+    });
+    expect(await late.json()).toEqual({ status: 'duplicate' });
+  });
+
+  test('a delivery whose handler died is processed when it comes again, once the claim is stale', async () => {
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    await pool.query(
+      "insert into webhook_deliveries (id, event) values ('d-lost', 'pull_request')"
+    );
+
+    const fresh = await deliver(app, {
+      event: 'pull_request',
+      payload: mergedPayload,
+      delivery: 'd-lost'
+    });
+    expect(await fresh.json()).toEqual({ status: 'duplicate' });
+    expect((await loadTask(pool, taskId))?.task.stage).toBe('merging');
+
+    await pool.query(
+      "update webhook_deliveries set received_at = now() - interval '11 minutes' where id = 'd-lost'"
+    );
+    const redelivered = await deliver(app, {
+      event: 'pull_request',
+      payload: mergedPayload,
+      delivery: 'd-lost'
+    });
+    expect(await redelivered.json()).toEqual({
+      status: 'applied',
+      outcomes: [{ taskId, ok: true }]
+    });
+    expect((await loadTask(pool, taskId))?.task.stage).toBe('done');
+  });
+
+  test('deliveries too old to be redelivered are purged, the recent ones kept', async () => {
+    await pool.query(
+      `insert into webhook_deliveries (id, event, received_at, handled_at) values
+         ('d-old', 'push', now() - interval '8 days', now() - interval '8 days'),
+         ('d-new', 'push', now() - interval '2 days', now() - interval '2 days')`
+    );
+    expect(await purgeOldDeliveries(pool)).toBe(1);
+    expect(await purgeOldDeliveries(pool)).toBe(0);
+    const left = await pool.query<{ id: string }>('select id from webhook_deliveries');
+    expect(left.rows.map((row) => row.id)).toEqual(['d-new']);
+  });
+
+  test('a handler that outlived its claim can neither mark nor give back the claim that replaced it', async () => {
+    const stale = await claimDelivery(pool, 'd-slow', 'pull_request');
+    await pool.query(
+      "update webhook_deliveries set received_at = now() - interval '11 minutes' where id = 'd-slow'"
+    );
+    const replacing = await claimDelivery(pool, 'd-slow', 'pull_request');
+    expect(stale).not.toBeNull();
+    expect(replacing).not.toBeNull();
+    expect(replacing).not.toBe(stale);
+
+    await markDeliveryHandled(pool, 'd-slow', stale!);
+    await releaseDelivery(pool, 'd-slow', stale!);
+    const row = await pool.query<{ handled: boolean }>(
+      "select handled_at is not null as handled from webhook_deliveries where id = 'd-slow'"
+    );
+    expect(row.rows).toEqual([{ handled: false }]);
+
+    await markDeliveryHandled(pool, 'd-slow', replacing!);
+    expect(await claimDelivery(pool, 'd-slow', 'pull_request')).toBeNull();
   });
 
   test('failed checks send a merging task back to building and stop auto-merge', async () => {

@@ -1,10 +1,11 @@
 import {
+  ENGINE,
   parseProjectConfig,
   parseProjectConfigYaml,
-  type Actor,
   type GitHubFeedbackSource
 } from '@officina/core';
 import {
+  answeredOverviewLast,
   appendTaskEvent,
   applyCommand,
   findProjectsByRepo,
@@ -12,7 +13,7 @@ import {
   findTasksByPullRequest,
   loadTaskContext,
   markLearningsApplied,
-  taskHeadFor,
+  reviewedHead,
   unlinkPullRequest,
   updateProjectConfig
 } from '@officina/db';
@@ -37,8 +38,6 @@ export type WebhookOutcome =
 /** What webhooks need from GitHub: configs on push, and review comments and auto-merge on reviews. */
 export type ConfigReader = Pick<GitHubClient, 'fileContent'> &
   Partial<Pick<GitHubClient, 'reviewComments' | 'cancelAutoMerge'>>;
-
-const ENGINE: Actor = { kind: 'engine' };
 
 /**
  * A push to a project's default branch that touches its config refreshes the stored config. An
@@ -129,26 +128,6 @@ const reviewNotes = async (
     .join('\n\n');
   return { notes, overviewOnly: false };
 };
-
-/**
- * Whether the task's last request for changes was an overview-only review or comment by the same
- * bot. A bot may review every push, and its overview of the builder's answer would otherwise send
- * the task back again and again; a review asking for changes on the code, or any other reviewer's,
- * still counts.
- */
-const answeredOverviewLast = async (pool: Pool, taskId: string, by: string): Promise<boolean> =>
-  Boolean(
-    (
-      await pool.query<{ last: boolean }>(
-        `select (payload->>'reviewer' = 'github' and payload->>'by' = $2
-                 and (payload->>'overviewOnly')::boolean is true) as last
-         from task_events
-         where task_id = $1 and type = 'review_recorded' and payload->>'verdict' = 'changes'
-         order by id desc limit 1`,
-        [taskId, by]
-      )
-    ).rows[0]?.last
-  );
 
 /**
  * Turns auto-merge off when a task just left `merging`, whatever moved it (a review, failing
@@ -248,7 +227,7 @@ const handleReview = async (
         repo: action.repo,
         prNumber: action.prNumber,
         by: action.by,
-        headSha: await taskHeadFor(pool, taskId, action.commitId),
+        headSha: await reviewedHead(pool, taskId, action.commitId),
         source: { reviewId: action.reviewId },
         review
       })
@@ -307,7 +286,7 @@ const handleChecksFailed = async (
       taskId,
       command: {
         type: 'ci_failed',
-        headSha: await taskHeadFor(pool, taskId, action.headSha),
+        headSha: await reviewedHead(pool, taskId, action.headSha),
         details: action.details
       },
       actor: ENGINE

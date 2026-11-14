@@ -6,7 +6,9 @@
   import { toasts } from '$lib/state/toasts.svelte';
   import type { TaskDetail } from '$lib/types';
   import AgentAvatar from './AgentAvatar.svelte';
+  import HandIn from './HandIn.svelte';
   import Markdown from './Markdown.svelte';
+  import QuestionOptions from './QuestionOptions.svelte';
 
   interface Props {
     task: TaskDetail;
@@ -86,6 +88,10 @@
     if (value) void act({ type: 'answer', text: value }, 'Answer sent; the step runs again');
   };
 
+  // What is written in the answer box goes along as a note on the chosen option.
+  const choose = (option: string) =>
+    void act({ type: 'answer', option, text: text.trim() }, 'Answer sent; the step runs again');
+
   const PLACEHOLDERS: Record<Exclude<Mode, null>, string> = {
     changes: 'What should change? The agent works from exactly this.',
     decline: 'Why is this declined? The requester sees it.',
@@ -99,13 +105,33 @@
       {#if task.waitingOn.me && look.current === 'tecnica'}<strong class="you-word">Question</strong
         >{:else}<CircleHelp size={18} />{/if}
       <div>
-        <div class="kicker caps">A question for {task.blocked.askedOf}</div>
+        <div class="kicker caps">
+          {task.blocked.needs.length
+            ? `Agents cannot go on: for ${task.blocked.askedOf}`
+            : `A question for ${task.blocked.askedOf}`}
+        </div>
+        {#if task.blocked.needs.length}
+          <p class="needs">Needs {task.blocked.needs.join(', ')}.</p>
+        {/if}
         <div class="question"><Markdown source={task.blocked.question} /></div>
       </div>
     </div>
+    {#if task.blocked.options.length}
+      <QuestionOptions
+        options={task.blocked.options}
+        onchoose={can('answer') ? choose : undefined}
+        {busy}
+      />
+    {/if}
     {#if can('answer')}
       <form onsubmit={answer}>
-        <textarea class="field" bind:value={text} rows="3" placeholder="Your answer"></textarea>
+        <textarea
+          class="field"
+          bind:value={text}
+          rows="3"
+          placeholder={task.blocked.options.length
+            ? 'Your own answer, or a note to send with the option you choose'
+            : 'Your answer'}></textarea>
         <div class="buttons">
           {#if can('submit')}
             <button type="button" class="btn ghost" disabled={busy} onclick={submitAsIs}
@@ -253,6 +279,18 @@
             onclick={() => act({ type: 'accept' }, 'Accepted; an agent writes the plan next')}
           >
             Accept
+          </button>
+        {/if}
+        {#if can('hand_in')}
+          <HandIn number={task.number} {onchanged} />
+        {/if}
+        {#if can('claim')}
+          <button
+            class="btn primary"
+            disabled={busy}
+            onclick={() => act({ type: 'claim' }, 'Claimed; you build it')}
+          >
+            Claim the build
           </button>
         {/if}
         {#if can('approve') && gate}
@@ -460,6 +498,12 @@
 
   .question :global(.md) {
     font-size: 14px;
+  }
+
+  .needs {
+    margin: 4px 0 6px;
+    font-size: 13.5px;
+    font-weight: 700;
   }
 
   .agents {

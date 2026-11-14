@@ -1,4 +1,5 @@
-import { GitHubError } from './client';
+import { GitHubError, githubRequest } from './http';
+import { mergeWhenReadyWith } from './merge';
 
 /**
  * Acting as a person on GitHub, through the GitHub App's user authorization. Reviews and merges done
@@ -6,7 +7,6 @@ import { GitHubError } from './client';
  * them exactly as to a click in the GitHub UI.
  */
 
-const API = 'https://api.github.com';
 const WEB = 'https://github.com';
 
 export interface OAuthAppOptions {
@@ -83,25 +83,11 @@ export type GitHubUserAuth = ReturnType<typeof createGitHubUserAuth>;
 export const createGitHubAsUser = (options: { fetch?: typeof fetch } = {}) => {
   const http = options.fetch ?? fetch;
 
-  const request = async <T>(
+  const request = <T>(
     token: string,
     path: string,
     init: { method?: string; body?: unknown } = {}
-  ): Promise<T> => {
-    const response = await http(`${API}${path}`, {
-      method: init.method ?? 'GET',
-      headers: {
-        accept: 'application/vnd.github+json',
-        authorization: `Bearer ${token}`,
-        'x-github-api-version': '2022-11-28',
-        ...(init.body === undefined ? {} : { 'content-type': 'application/json' })
-      },
-      ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) })
-    });
-    const text = await response.text();
-    if (!response.ok) throw new GitHubError(response.status, path, text.slice(0, 300));
-    return (text ? JSON.parse(text) : {}) as T;
-  };
+  ) => githubRequest<T>(http, token, path, init);
 
   const user = (token: string) => request<GitHubUser>(token, '/user');
 
@@ -118,39 +104,49 @@ export const createGitHubAsUser = (options: { fetch?: typeof fetch } = {}) => {
       body: { event: 'APPROVE', commit_id: commitId, body }
     });
 
-  /**
-   * Turns on auto-merge, so GitHub merges once every branch rule is met. A pull request that
-   * already meets them cannot take auto-merge; it is merged straight away, still as the person.
-   * Both are pinned to `expectedHead`, the commit the person verified, so a later push never lands.
-   */
+  /** Turns on auto-merge as the person they verified it as (see `mergeWhenReadyWith`). */
   const mergeWhenReady = async (
     token: string,
     repo: string,
     number: number,
     expectedHead: string
-  ): Promise<'auto_merge' | 'merged'> => {
-    const pr = await pullRequest(token, repo, number);
-    const response = await request<{ errors?: { message: string }[] }>(token, '/graphql', {
-      method: 'POST',
-      body: {
-        query:
-          'mutation($id: ID!, $head: GitObjectID!) { enablePullRequestAutoMerge(input: { pullRequestId: $id, mergeMethod: SQUASH, expectedHeadOid: $head }) { clientMutationId } }',
-        variables: { id: pr.node_id, head: expectedHead }
-      }
-    });
-    if (!response.errors?.length) return 'auto_merge';
-    const message = response.errors.map((error) => error.message).join('; ');
-    if (!/clean status|is in clean/i.test(message)) {
-      throw new GitHubError(422, '/graphql enablePullRequestAutoMerge', message);
+  ): Promise<'auto_merge' | 'merged'> =>
+    mergeWhenReadyWith(
+      {
+        graphql: (query, variables) =>
+          request<{ errors?: { message: string }[] }>(token, '/graphql', {
+            method: 'POST',
+            body: { query, variables }
+          }),
+        merge: (body) =>
+          request(token, `/repos/${repo}/pulls/${number}/merge`, { method: 'PUT', body })
+      },
+      (await pullRequest(token, repo, number)).node_id,
+      expectedHead
+    );
+
+  /**
+   * Asks Copilot to review the pull request as the person, so it is billed to their Copilot seat.
+   * GitHub refuses (422, with a `failure_reason`) when the person has no seat or quota left, and
+   * answers 409 when a Copilot review is already pending, which is the outcome asked for.
+   */
+  const requestCopilotReview = async (
+    token: string,
+    repo: string,
+    number: number
+  ): Promise<'requested' | 'already_pending'> => {
+    try {
+      await request(token, `/repos/${repo}/pulls/${number}/copilot-code-review`, {
+        method: 'POST'
+      });
+      return 'requested';
+    } catch (error) {
+      if (error instanceof GitHubError && error.status === 409) return 'already_pending';
+      throw error;
     }
-    await request(token, `/repos/${repo}/pulls/${number}/merge`, {
-      method: 'PUT',
-      body: { merge_method: 'squash', sha: expectedHead }
-    });
-    return 'merged';
   };
 
-  return { user, pullRequest, approve, mergeWhenReady };
+  return { user, pullRequest, approve, mergeWhenReady, requestCopilotReview };
 };
 
 export type GitHubAsUser = ReturnType<typeof createGitHubAsUser>;

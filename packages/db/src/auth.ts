@@ -1,6 +1,8 @@
 import { createHash, randomBytes } from 'node:crypto';
-import type { BoardLook, Role } from '@officina/core';
+import { DEFAULT_BOARD_LOOK, type BoardLook, type Role } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
+import { recordFirstSignIn } from './members';
+import { inTransaction } from './store';
 
 type Queryable = Pool | PoolClient;
 
@@ -24,21 +26,53 @@ export const createLoginLink = async (
   return token;
 };
 
-/** Spends a sign-in link and opens a session. A link works once, and only before it expires. */
-export const redeemLoginLink = async (
-  db: Queryable,
+export type InviteLinkResult =
+  | { readonly ok: true; readonly token: string }
+  | { readonly ok: false; readonly error: 'not_member' }
+  | { readonly ok: false; readonly error: 'signed_in'; readonly name: string };
+
+/**
+ * A new sign-in link for a project member who has never signed in. The member's row is locked while
+ * the link is written, so a sign-in racing it either lands first, and no link is made, or after.
+ */
+export const createInviteLink = (
+  pool: Pool,
+  input: { projectId: string; memberId: string; ttlMs: number }
+): Promise<InviteLinkResult> =>
+  inTransaction(pool, async (client) => {
+    const { rows } = await client.query<{ name: string; signed_in: boolean }>(
+      `select m.display_name as name, m.first_signed_in_at is not null as signed_in
+       from members m join project_roles r on r.member_id = m.id and r.project_id = $2
+       where m.id = $1 for update of m`,
+      [input.memberId, input.projectId]
+    );
+    const member = rows[0];
+    if (!member) return { ok: false, error: 'not_member' };
+    if (member.signed_in) return { ok: false, error: 'signed_in', name: member.name };
+    return { ok: true, token: await createLoginLink(client, input.memberId, input.ttlMs) };
+  });
+
+/**
+ * Spends a sign-in link and opens a session, both or neither: a failure after spending it would
+ * otherwise burn the link without signing anyone in. A link works once, and only before it expires.
+ * A member's first link also records their first sign-in, which tells the project owners.
+ */
+export const redeemLoginLink = (
+  pool: Pool,
   token: string
-): Promise<{ sessionToken: string; memberId: string } | null> => {
-  const { rows } = await db.query<{ member_id: string }>(
-    `update login_links set used_at = now()
-     where token_hash = $1 and used_at is null and expires_at > now()
-     returning member_id`,
-    [hashToken(token)]
-  );
-  const memberId = rows[0]?.member_id;
-  if (!memberId) return null;
-  return { sessionToken: await createSession(db, memberId), memberId };
-};
+): Promise<{ sessionToken: string; memberId: string } | null> =>
+  inTransaction(pool, async (client) => {
+    const { rows } = await client.query<{ member_id: string }>(
+      `update login_links set used_at = now()
+       where token_hash = $1 and used_at is null and expires_at > now()
+       returning member_id`,
+      [hashToken(token)]
+    );
+    const memberId = rows[0]?.member_id;
+    if (!memberId) return null;
+    await recordFirstSignIn(client, memberId);
+    return { sessionToken: await createSession(client, memberId), memberId };
+  });
 
 /** Opens a session for a member whose identity was just proven; returns its token. */
 export const createSession = async (db: Queryable, memberId: string): Promise<string> => {
@@ -91,13 +125,18 @@ export const endSession = async (db: Queryable, sessionToken: string) => {
 
 /**
  * Deletes sign-in links, sessions and GitHub authorization states that can no longer be used, so
- * the tables hold only live credentials.
+ * the tables hold only live credentials. Each member's latest link stays, spent or not: it is what
+ * shows owners whether an invite was used or ran out, and its hash can no longer sign anyone in.
  */
 export const purgeExpiredCredentials = async (
   db: Queryable
 ): Promise<{ loginLinks: number; sessions: number; oauthStates: number }> => {
   const links = await db.query(
-    'delete from login_links where expires_at <= now() or used_at is not null'
+    `delete from login_links l
+     where (l.expires_at <= now() or l.used_at is not null)
+       and exists (select 1 from login_links newer
+                   where newer.member_id = l.member_id
+                     and (newer.created_at, newer.token_hash) > (l.created_at, l.token_hash))`
   );
   const sessions = await db.query('delete from sessions where expires_at <= now()');
   const states = await db.query('delete from oauth_states where expires_at <= now()');
@@ -125,10 +164,10 @@ export const listMemberProjects = async (
   (
     await db.query<MemberProject>(
       `select p.id, p.name, p.github_repo as repo, r.role, r.domains,
-              coalesce(p.config #>> '{board,look}', 'modernista') as look
+              coalesce(p.config #>> '{board,look}', $2) as look
        from project_roles r join projects p on p.id = r.project_id
        where r.member_id = $1 order by p.name`,
-      [memberId]
+      [memberId, DEFAULT_BOARD_LOOK]
     )
   ).rows;
 

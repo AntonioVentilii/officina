@@ -1,4 +1,4 @@
-import type { Actor, Task } from '@officina/core';
+import type { Actor, Member, Task } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
 import { findProjectsByRepo } from './projects';
 
@@ -122,13 +122,19 @@ export const listApprovedSubjects = async (
     )
   ).rows;
 
+/** One member's role in a project, or null when they hold none there. */
+export const loadProjectMember = async (db: Queryable, projectId: string, memberId: string) =>
+  (
+    await db.query<Member>(
+      'select member_id as id, role, domains from project_roles where project_id = $1 and member_id = $2',
+      [projectId, memberId]
+    )
+  ).rows[0] ?? null;
+
 export const listProjectMembers = async (db: Queryable, projectId: string) =>
   (
-    await db.query<{
-      id: string;
-      role: 'watcher' | 'contributor' | 'maintainer' | 'owner';
-      domains: string[];
-    }>('select member_id as id, role, domains from project_roles where project_id = $1', [
-      projectId
-    ])
+    await db.query<Member>(
+      'select member_id as id, role, domains from project_roles where project_id = $1',
+      [projectId]
+    )
   ).rows;

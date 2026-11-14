@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Bot, Check, ExternalLink, FileText, GitPullRequest, X } from '@lucide/svelte';
   import { post } from '$lib/api';
+  import { editLines } from '$lib/diff';
   import { ago } from '$lib/format';
   import { board } from '$lib/state/board.svelte';
   import { clock } from '$lib/state/clock.svelte';
@@ -30,49 +31,25 @@
   let busy = $state(false);
 
   // The diff people approve is exactly what lands; lines the edit keeps show as context.
-  const lines = $derived.by(() => {
-    const split = (text: string) => {
-      const parts = text.split('\n');
-      if (parts.at(-1) === '') parts.pop();
-      return parts;
-    };
-    const removed = learning.find === null ? [] : split(learning.find);
-    const added = split(learning.text);
-    let head = 0;
-    while (head < removed.length && head < added.length && removed[head] === added[head]) head++;
-    let tail = 0;
-    while (
-      tail < removed.length - head &&
-      tail < added.length - head &&
-      removed[removed.length - 1 - tail] === added[added.length - 1 - tail]
-    )
-      tail++;
-    const context = (text: string) => ({ kind: 'context' as const, text });
-    return [
-      ...removed.slice(0, head).map(context),
-      ...removed
-        .slice(head, removed.length - tail)
-        .map((text) => ({ kind: 'removed' as const, text })),
-      ...added.slice(head, added.length - tail).map((text) => ({ kind: 'added' as const, text })),
-      ...removed.slice(removed.length - tail).map(context)
-    ];
-  });
+  const lines = $derived(editLines(learning.find, learning.text));
 
   const decide = async (decision: 'accept' | 'reject') => {
     if (!session.projectId) return;
     busy = true;
     try {
-      await post(`/api/projects/${session.projectId}/learnings/${learning.id}`, {
-        decision,
-        ...(note.trim() ? { note: note.trim() } : {})
-      });
+      const { rewriting } = await post<{ rewriting: boolean }>(
+        `/api/projects/${session.projectId}/learnings/${learning.id}`,
+        { decision, ...(note.trim() ? { note: note.trim() } : {}) }
+      );
       toasts.show(
         'ok',
         decision === 'reject'
           ? 'Learning rejected'
-          : opensPullRequest
-            ? 'Accepted: pull request opened'
-            : 'Accepted for the Officina prompts'
+          : rewriting
+            ? 'The file changed since: the learner is rewriting the edit, check it again when it is back'
+            : opensPullRequest
+              ? 'Accepted: pull request opened'
+              : 'Accepted for the Officina prompts'
       );
       rejecting = false;
       await board.refresh();
@@ -93,7 +70,7 @@
 
 <article class="learning {learning.status}">
   <header>
-    <AgentAvatar role="learner" label="Learner" size={26} />
+    <AgentAvatar role="learner" label={board.roleLabel('learner')} size={26} />
     <div class="grow">
       <h3>{learning.title}</h3>
       <div class="meta">
@@ -101,6 +78,9 @@
           from <a href="/tasks/{learning.taskNumber}">task {learning.taskNumber}</a> ·
         {/if}
         {ago(learning.createdAt, clock.now)}
+        {#if learning.rewrittenAt}
+          · edit rewritten {ago(learning.rewrittenAt, clock.now)}
+        {/if}
       </div>
     </div>
     <span class="pill {STATUS[learning.status].tone}">{STATUS[learning.status].label}</span>
@@ -127,6 +107,14 @@
 </span>{/each}</pre>
   </div>
 
+  {#if learning.status === 'proposed' && learning.rewrite}
+    <p class="rewrite faint">
+      {learning.rewrite === 'requested'
+        ? 'The file changed since this was proposed: the learner is rewriting the edit against it.'
+        : 'The file changed since this was proposed and the learner could not rewrite the edit: reject it.'}
+    </p>
+  {/if}
+
   {#if learning.status === 'proposed' && learning.canDecide}
     {#if rejecting}
       <div class="reject">
@@ -143,7 +131,11 @@
     {:else}
       <div class="actions">
         <button class="btn ghost" disabled={busy} onclick={() => (rejecting = true)}>Reject</button>
-        <button class="btn primary" disabled={busy} onclick={() => decide('accept')}>
+        <button
+          class="btn primary"
+          disabled={busy || learning.rewrite !== null}
+          onclick={() => decide('accept')}
+        >
           <Check size={14} />{opensPullRequest ? 'Accept and open pull request' : 'Accept'}
         </button>
       </div>
@@ -313,6 +305,11 @@
     flex: 1;
     height: 34px;
     padding: 0 10px;
+  }
+
+  .rewrite {
+    margin: 0;
+    font-size: 12.5px;
   }
 
   .decided {

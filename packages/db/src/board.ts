@@ -1,5 +1,7 @@
 import type { Actor, Task } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
+import { autoMergeIsOn, wasAutoVerified } from './github';
+import { RUN_IS_ACTIVE } from './run-status';
 
 type Queryable = Pool | PoolClient;
 
@@ -20,6 +22,7 @@ export interface BoardTaskRow {
   readonly headSha: string | null;
   readonly fixRounds: number;
   readonly approvalPlans: Task['approvalPlans'];
+  readonly guards: Task['guards'];
   readonly pullRequest: number | null;
   readonly costCents: number;
   readonly runningRoles: readonly string[];
@@ -28,7 +31,7 @@ export interface BoardTaskRow {
   readonly stageSince: Date;
   /** The latest way into merging skipped people's verification. */
   readonly autoVerified: boolean;
-  /** GitHub's auto-merge was turned on since the task last reached merging. */
+  /** GitHub may merge the pull request on its own, as the engine reads it (`handedToGitHub`). */
   readonly autoMergeOn: boolean;
 }
 
@@ -36,11 +39,12 @@ const BOARD_COLUMNS = `
   t.id, t.kind, t.number, t.title, t.stage, t.lane, t.blocked, t.paused,
   t.user_visible as "userVisible", t.assignee, t.requester_id as "requesterId",
   m.display_name as "requesterName", t.spec_version as "specVersion", t.head_sha as "headSha",
-  t.fix_rounds as "fixRounds", t.approval_plans as "approvalPlans", t.github_pr as "pullRequest",
+  t.fix_rounds as "fixRounds", t.approval_plans as "approvalPlans", t.guards,
+  t.github_pr as "pullRequest",
   coalesce((select sum(r.list_cost_cents) from runs r where r.task_id = t.id), 0)::int as "costCents",
   coalesce(
     (select array_agg(distinct r.agent_role) from runs r
-     where r.task_id = t.id and r.status in ('queued', 'running')),
+     where r.task_id = t.id and r.status ${RUN_IS_ACTIVE}),
     '{}'
   ) as "runningRoles",
   t.created_at as "createdAt", t.updated_at as "updatedAt",
@@ -48,20 +52,8 @@ const BOARD_COLUMNS = `
     (select max(e.created_at) from task_events e where e.task_id = t.id and e.type = 'stage_changed'),
     t.created_at
   ) as "stageSince",
-  exists (
-    select 1 from task_events e where e.task_id = t.id and e.type = 'auto_verified'
-      and e.id > coalesce((select max(c.id) from task_events c where c.task_id = t.id
-        and c.type = 'stage_changed' and c.payload->>'to' = 'choosing'), 0)
-  ) as "autoVerified",
-  exists (
-    select 1 from task_events e where e.task_id = t.id
-      and (e.type = 'github_auto_merge'
-        or (e.type = 'github_approved' and e.payload->>'merge' = 'auto_merge'))
-      and e.id > coalesce((select max(m.id) from task_events m where m.task_id = t.id
-        and m.type = 'stage_changed' and m.payload->>'to' = 'merging'), 0)
-      and not exists (select 1 from task_events c where c.task_id = t.id
-        and c.type = 'github_auto_merge_cancelled' and c.id > e.id)
-  ) as "autoMergeOn"`;
+  ${wasAutoVerified('t.id')} as "autoVerified",
+  ${autoMergeIsOn('t.id')} as "autoMergeOn"`;
 
 export const listBoardTasks = async (db: Queryable, projectId: string): Promise<BoardTaskRow[]> =>
   (
@@ -181,7 +173,7 @@ export const listProjectRuns = async (
     await db.query<RunRow>(
       `select ${RUN_COLUMNS} from runs r join tasks t on t.id = r.task_id
        where t.project_id = $1
-       order by (r.status in ('queued', 'running')) desc, r.created_at desc
+       order by (r.status ${RUN_IS_ACTIVE}) desc, r.created_at desc
        limit $2`,
       [projectId, limit]
     )
