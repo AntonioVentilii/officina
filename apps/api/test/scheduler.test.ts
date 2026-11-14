@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { startScheduler, type DueWork } from '../src';
+import { collectEachProject, startScheduler, type DueWork } from '../src';
 
 const waitFor = async (condition: () => boolean, timeoutMs = 2000) => {
   const deadline = Date.now() + timeoutMs;
@@ -69,5 +69,23 @@ describe('scheduler', () => {
     await waitFor(() => scheduler.inFlight() === 1);
     await scheduler.stop({ waitForSteps: true });
     expect(settled).toBe(true);
+  });
+});
+
+describe('a pass over several projects', () => {
+  test('a project that throws is logged and the projects after it still run', async () => {
+    const logged: { message: string; details: Record<string, unknown> | undefined }[] = [];
+    const due = await collectEachProject(
+      ['p1', 'p2'],
+      async (projectId) => {
+        if (projectId === 'p1') throw new Error('config unreadable');
+        return [{ taskId: 't2', role: 'builder' }];
+      },
+      (message, details) => logged.push({ message, details })
+    );
+    expect(due).toEqual([{ taskId: 't2', role: 'builder' }]);
+    expect(logged).toEqual([
+      { message: 'project pass failed', details: { projectId: 'p1', error: 'config unreadable' } }
+    ]);
   });
 });
