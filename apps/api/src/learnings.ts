@@ -26,6 +26,14 @@ interface Target {
   readonly publicUrl: string;
 }
 
+/**
+ * The output contract trims the text, so a replaced line would lose the line break that ended it
+ * and the next line would join the addition. The break comes back as the replaced line had it, so a
+ * file with CRLF line endings keeps them.
+ */
+const withLineBreakOf = (find: string, text: string) =>
+  text.endsWith('\n') ? text : `${text}${/\r?\n$/.exec(find)?.[0] ?? ''}`;
+
 /** The file with the learning's edit applied, or why it no longer applies. */
 export const applyEdit = (
   current: string | null,
@@ -40,8 +48,9 @@ export const applyEdit = (
   if (current === null) return { ok: false, why: 'the file no longer exists' };
   const count = current.split(learning.find).length - 1;
   if (count !== 1) return { ok: false, why: `the text to replace now appears ${count} times` };
+  const text = withLineBreakOf(learning.find, learning.text);
   // A function replacer, so `$&` or `$$` in the text land as written rather than as patterns.
-  return { ok: true, text: current.replace(learning.find, () => learning.text) };
+  return { ok: true, text: current.replace(learning.find, () => text) };
 };
 
 /** Agent docs learnings say so in their scope, so they read as changes to `docs/ai` in the history. */

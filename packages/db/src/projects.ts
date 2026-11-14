@@ -4,15 +4,16 @@ import { RUN_IS_ACTIVE } from './run-status';
 
 type Queryable = Pool | PoolClient;
 
-export const upsertWorkspace = async (db: Queryable, name: string): Promise<string> => {
-  const existing = await db.query<{ id: string }>('select id from workspaces where name = $1', [
-    name
-  ]);
-  if (existing.rows[0]) return existing.rows[0].id;
-  return (
-    await db.query<{ id: string }>('insert into workspaces (name) values ($1) returning id', [name])
+/** One statement, so two registrations of a new name at once land on the same workspace. */
+export const upsertWorkspace = async (db: Queryable, name: string): Promise<string> =>
+  (
+    await db.query<{ id: string }>(
+      `insert into workspaces (name) values ($1)
+       on conflict (name) do update set name = excluded.name
+       returning id`,
+      [name]
+    )
   ).rows[0]!.id;
-};
 
 export const upsertMember = async (
   db: Queryable,
@@ -137,6 +138,18 @@ export const loadProject = async (
 export const loadProjectConfig = async (db: Queryable, projectId: string): Promise<unknown> =>
   (await db.query<{ config: unknown }>('select config from projects where id = $1', [projectId]))
     .rows[0]?.config;
+
+/**
+ * The project's config, read under the project's row lock inside the caller's transaction, so
+ * everything decided from it holds until the transaction ends.
+ */
+export const lockProjectConfig = async (client: PoolClient, projectId: string): Promise<unknown> =>
+  (
+    await client.query<{ config: unknown }>(
+      'select config from projects where id = $1 for update',
+      [projectId]
+    )
+  ).rows[0]?.config;
 
 export const updateProjectConfig = async (db: Queryable, projectId: string, config: unknown) => {
   await db.query('update projects set config = $2 where id = $1', [

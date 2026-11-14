@@ -1365,6 +1365,100 @@ describe.skipIf(!url)('engine', () => {
     expect((await pool.query('select 1 from spec_versions')).rowCount).toBe(0);
   });
 
+  test("a reviewer's approval of a head replaced during its run does not count for the new head", async () => {
+    const github = fakeGitHub();
+    const deps = {
+      pool,
+      github: github.port,
+      agents: createFakePort(succeed),
+      publicUrl: PUBLIC_URL
+    };
+    const taskId = await taskInReady(github, deps.agents);
+    await tick(deps, seeded.projectId);
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({
+      stage: 'reviewing',
+      headSha: 'sha1'
+    });
+
+    // While the spec reviewer reads sha1, the other reviewer sends it back and the builder pushes sha2.
+    const agents = createFakePort(() => [
+      async () => {
+        await applyOrThrow(
+          pool,
+          taskId,
+          { type: 'review', verdict: 'changes', notes: 'Wrong key.' },
+          { kind: 'agent', role: 'reviewer_correctness', version: 1 }
+        );
+        await applyOrThrow(
+          pool,
+          taskId,
+          {
+            type: 'push',
+            headSha: 'sha2',
+            changedPaths: [COPY],
+            addedPaths: [],
+            catalogPages: {},
+            diffLines: 3
+          },
+          { kind: 'agent', role: 'builder', version: 1 }
+        );
+      },
+      toolUse(RESULTS.reviewer_spec),
+      idle('end_turn')
+    ]);
+    expect(await runAgentStep({ ...deps, agents }, taskId, 'reviewer_spec')).toEqual({
+      status: 'discarded',
+      reason: 'conflict'
+    });
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({
+      stage: 'reviewing',
+      headSha: 'sha2',
+      reviews: {}
+    });
+  });
+
+  test("a chooser's plan for a spec revised during its run is not attached to the new version", async () => {
+    const taskId = await taskInSpeccing();
+    const deps = {
+      pool,
+      github: fakeGitHub().port,
+      agents: createFakePort(succeed),
+      publicUrl: PUBLIC_URL
+    };
+    await runAgentStep(deps, taskId, 'spec');
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({
+      stage: 'spec_review',
+      specVersion: 1
+    });
+
+    // While the chooser plans version 1, the owner sends it back and the spec writer posts version 2.
+    const agents = createFakePort(() => [
+      async () => {
+        await applyOrThrow(
+          pool,
+          taskId,
+          { type: 'request_changes', note: 'Cover Italian too.' },
+          seeded.owner
+        );
+        await applyOrThrow(
+          pool,
+          taskId,
+          { type: 'post_spec', predictedPaths: [COPY], userVisible: true },
+          { kind: 'agent', role: 'spec', version: 1 }
+        );
+      },
+      toolUse(RESULTS.chooser),
+      idle('end_turn')
+    ]);
+    expect(await runAgentStep({ ...deps, agents }, taskId, 'chooser')).toEqual({
+      status: 'discarded',
+      reason: 'conflict'
+    });
+    const { task } = (await loadTask(pool, taskId))!;
+    expect(task).toMatchObject({ stage: 'spec_review', specVersion: 2 });
+    expect(task.approvalPlans.spec_review).toBeUndefined();
+  });
+
   test('a step that is not due starts nothing', async () => {
     const { task } = await createTask(pool, {
       projectId: seeded.projectId,
