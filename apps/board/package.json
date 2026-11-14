@@ -19,6 +19,7 @@
     "@sveltejs/kit": "^2.70.3",
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
     "dompurify": "^3.4.16",
+    "happy-dom": "21.0.4",
     "marked": "^18.0.14",
     "svelte": "^5.57.1",
     "svelte-check": "^4.7.6",
