@@ -7,6 +7,7 @@ import {
   startRun,
   upsertMember
 } from '@officina/db';
+import { GitHubError } from '@officina/github';
 import { Pool } from 'pg';
 import { PLAN, applyOrThrow, resetAndSeed, type Seeded } from '../../db/test/seed';
 import { handInBuild, openMissingPullRequests, type HandInPort } from '../src';
@@ -210,5 +211,60 @@ describe.skipIf(!url)('a developer hands in a build', () => {
       [taskId]
     );
     expect(rows[0]?.github_pr).toBe(7);
+  });
+
+  test('a hand-in whose spec status write lost the race to the catch-up still completes', async () => {
+    await pool.query(
+      `update projects set config = jsonb_set(config, '{docs,spec_dir}', '"docs/specs"')
+       where id = $1`,
+      [seeded.projectId]
+    );
+    const spec = 'docs/specs/room.md';
+    const files = new Map([['dev1', '# Room\n\nStatus: Approved\n']]);
+    let head = 'dev1';
+    const port = {
+      pushFacts: async () => ({
+        headSha: head,
+        changedPaths: ['src/app.ts', spec],
+        addedPaths: [],
+        diffLines: 12
+      }),
+      readFile: async (input: { branch: string }) => {
+        const text = files.get(input.branch === 'officina/task-1' ? head : input.branch);
+        return text === undefined ? null : { text, sha: `blob-${input.branch}` };
+      },
+      openPullRequest: async () => ({ number: 7, url: 'https://github.com/x/pull/7' }),
+      // The catch-up opening the same pull request writes the same status first.
+      updateFile: async (input: { text: string }) => {
+        files.set('status1', input.text);
+        head = 'status1';
+        throw new GitHubError(409, `/contents/${spec}`, 'is at status1');
+      },
+      commitChanges: async () => ({ parents: ['dev1'], paths: [spec] }),
+      commentOnIssue: async () => undefined
+    } as unknown as HandInPort;
+    const taskId = await waitingForDeveloper();
+    const dev = await developer('dev@example.com', 'Dev');
+    await applyOrThrow(pool, taskId, { type: 'claim' }, dev);
+
+    expect(
+      await handInBuild(
+        { pool, github: port, publicUrl: PUBLIC_URL },
+        {
+          taskId,
+          memberId: dev.memberId,
+          prTitle: 'feat(room): port the design',
+          verified: [],
+          notVerified: []
+        }
+      )
+    ).toEqual({ ok: true, stage: 'reviewing', pullRequest: 7 });
+    const { rows } = await pool.query<{ payload: unknown }>(
+      "select payload from task_events where task_id = $1 and type = 'spec_status_set'",
+      [taskId]
+    );
+    expect(rows.map((row) => row.payload)).toEqual([
+      { status: 'In progress (#7)', path: spec, commitSha: 'status1' }
+    ]);
   });
 });
