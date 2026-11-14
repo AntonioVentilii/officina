@@ -1751,6 +1751,60 @@ describe.skipIf(!url)('engine', () => {
     expect(await types(off)).toEqual(['github_approved', 'awaiting_merge']);
   });
 
+  test('a task sent back while it is approved is neither auto-merged nor left to a person', async () => {
+    const config = Bun.YAML.parse(CONFIG_YAML) as Record<string, unknown>;
+    await pool.query('update projects set config = $2 where id = $1', [
+      seeded.projectId,
+      JSON.stringify({ ...config, pull_request: { auto_merge: true } })
+    ]);
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    await pool.query(
+      `update tasks set approval_plans = jsonb_set(approval_plans, '{verifying,merge}', '"auto"')
+       where id = $1`,
+      [taskId]
+    );
+    const userCalls: string[] = [];
+    const onBehalf = {
+      publicUrl: PUBLIC_URL,
+      tokenFor: async () => ({ token: 't', login: 'antonio', userId: 1 }),
+      asUser: {
+        pullRequest: async () => ({
+          node_id: 'PR',
+          state: 'open',
+          merged: false,
+          head: { sha: 'abc' }
+        }),
+        reviews: async () => [],
+        approve: async () => {
+          userCalls.push('approve');
+          // A review's webhook lands while GitHub takes the approval.
+          await pool.query(`update tasks set stage = 'building' where id = $1`, [taskId]);
+          return {};
+        },
+        mergeWhenReady: async () => {
+          userCalls.push('mergeWhenReady');
+          return 'auto_merge' as const;
+        },
+        requestCopilotReview: async () => 'requested' as const
+      }
+    };
+    const github = fakeGitHub({
+      branchHead: 'abc',
+      written: { commitSha: 'abc2', parentSha: 'abc' }
+    });
+
+    await finishVerifiedSpecs(pool, github.port, [taskId], onBehalf);
+
+    expect(userCalls).toEqual(['approve']);
+    const { rows } = await pool.query<{ type: string }>(
+      `select type from task_events where task_id = $1
+         and type in ('github_approved', 'github_auto_merge', 'awaiting_merge') order by id`,
+      [taskId]
+    );
+    expect(rows.map((row) => row.type)).toEqual(['github_approved']);
+  });
+
   test('a pull request already merged or closed on GitHub is neither approved nor left to a person to merge', async () => {
     const approvals: string[] = [];
     const onBehalf = {

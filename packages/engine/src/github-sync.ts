@@ -11,7 +11,8 @@ import {
   latestVerifier,
   listStaleAutoMerges,
   loadTask,
-  loadTaskContext
+  loadTaskContext,
+  whileTaskAt
 } from '@officina/db';
 import type { GitHubAsUser, GitHubClient, RepoRef } from '@officina/github';
 import type { Pool } from 'pg';
@@ -331,34 +332,48 @@ const awaitMerge = async (pool: Pool, input: { taskId: string; pullRequest: numb
  * skipped people's verification. Tried once per time the task reaches merging. A failure may
  * still have turned it on (the request reached GitHub but the answer did not), so it is recorded
  * as unsettled and `cancelStaleAutoMerges` turns it off before a person is asked to merge.
+ *
+ * Only while the task is still in merging at the head it was checked at, under its row lock: a
+ * review that sends the work back meanwhile waits for the attempt to be recorded, and then turns
+ * auto-merge off. `false` says the task had moved and nothing was asked of GitHub.
  */
 const autoMergeOnGitHub = async (
   pool: Pool,
-  input: { taskId: string; actor: Actor; merge: () => Promise<'auto_merge' | 'merged'> }
-) => {
+  input: {
+    taskId: string;
+    taskHead: string | null;
+    actor: Actor;
+    merge: () => Promise<'auto_merge' | 'merged'>;
+  }
+): Promise<boolean> => {
   if (
     await hasEventSinceMerging(pool, input.taskId, [
       'github_auto_merge',
       'github_auto_merge_failed'
     ])
   )
-    return;
-  try {
-    const merge = await input.merge();
-    await appendTaskEvent(pool, {
-      taskId: input.taskId,
-      actor: input.actor,
-      type: 'github_auto_merge',
-      payload: { merge }
-    });
-  } catch (error) {
-    await appendTaskEvent(pool, {
-      taskId: input.taskId,
-      actor: input.actor,
-      type: 'github_auto_merge_failed',
-      payload: { error: (error as Error).message.slice(0, 500) }
-    });
-  }
+    return true;
+  const at = { taskId: input.taskId, stage: 'merging', headSha: input.taskHead };
+  const tried = await whileTaskAt(pool, at, async (client) => {
+    try {
+      const merge = await input.merge();
+      await appendTaskEvent(client, {
+        taskId: input.taskId,
+        actor: input.actor,
+        type: 'github_auto_merge',
+        payload: { merge }
+      });
+    } catch (error) {
+      await appendTaskEvent(client, {
+        taskId: input.taskId,
+        actor: input.actor,
+        type: 'github_auto_merge_failed',
+        payload: { error: (error as Error).message.slice(0, 500) }
+      });
+    }
+    return true;
+  });
+  return tried !== null;
 };
 
 /**
@@ -619,13 +634,17 @@ const finishVerifiedSpec = async (
     config.config.pullRequest.autoMerge && current.task.approvalPlans.verifying?.merge === 'auto';
   // After the status commit, so the approval covers the final head. A result that skipped
   // people's verification has no verifier to approve as.
+  const taskHead = current.task.headSha;
   if (await autoVerified(pool, taskId)) {
-    if (autoMerge)
-      await autoMergeOnGitHub(pool, {
+    const tried =
+      !autoMerge ||
+      (await autoMergeOnGitHub(pool, {
         taskId,
+        taskHead,
         actor: ENGINE,
         merge: () => github.mergeWhenReady({ ...ref, pullRequest, expectedHead: expected })
-      });
+      }));
+    if (!tried) return;
   } else if (onBehalf) {
     await approveOnGitHub(pool, onBehalf, {
       taskId,
@@ -637,13 +656,17 @@ const finishVerifiedSpec = async (
     // Only on top of the verifier's own approval, so it never stands in for a missing review.
     const approved = await hasTaskEvent(pool, taskId, 'github_approved', { headSha: expected });
     const account = autoMerge && approved ? await verifierAccount(pool, onBehalf, taskId) : null;
-    if (account)
-      await autoMergeOnGitHub(pool, {
+    const tried =
+      !account ||
+      (await autoMergeOnGitHub(pool, {
         taskId,
+        taskHead,
         actor: account.actor,
         merge: () =>
           onBehalf.asUser.mergeWhenReady(account.token, context.repo, pullRequest, expected)
-      });
+      }));
+    // Sent back while it was approved: neither handed to GitHub nor to a person.
+    if (!tried) return;
   }
   if (!(await handedToGitHub(pool, taskId))) await awaitMerge(pool, { taskId, pullRequest });
 };
