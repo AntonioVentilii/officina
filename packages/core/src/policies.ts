@@ -38,6 +38,17 @@ export interface PolicyResult {
 /** Every gate needs at least one maintainer or owner, whatever the lane policy says. */
 export const APPROVAL_FLOOR: Requirement = { role: 'maintainer' };
 
+/**
+ * Whether an approval that meets `requirement` always meets `other` too, so `other` adds nothing
+ * to ask for: a role includes every role below it, so an owner's approval meets the maintainer
+ * floor.
+ */
+export const outranks = (requirement: Requirement, other: Requirement): boolean =>
+  'role' in requirement &&
+  'role' in other &&
+  requirement.role !== other.role &&
+  hasRole(requirement, other.role);
+
 /** The policy context of a task's gate, from the project's config and its current members. */
 export const policyContext = (
   config: Pick<ProjectConfig, 'approvals'>,

@@ -28,7 +28,7 @@ import {
   type Approval
 } from './policies';
 import type { QuestionOption } from './questions';
-import type { Member, Role } from './roles';
+import type { ApproverRole, Member, Role } from './roles';
 
 export const STAGES = [
   'request',
@@ -143,8 +143,7 @@ export const BUILD_MODES = ['agent', 'person'] as const;
 export type BuildMode = (typeof BUILD_MODES)[number];
 
 /** An approval the chooser adds to a gate on top of the lane policy. It can only add, never remove. */
-export type ExtraRequirement =
-  { readonly domain: string } | { readonly role: 'maintainer' | 'owner' };
+export type ExtraRequirement = { readonly domain: string } | { readonly role: ApproverRole };
 
 export interface ApprovalPlan {
   /** What the plan was made for: `spec:<version>` or `sha:<head commit>`. */
