@@ -1,5 +1,14 @@
 import { describe, expect, test } from 'bun:test';
-import { ACTIONS, ACTION_LABELS, ROLES, allowedActions, can } from '../src';
+import {
+  ACTIONS,
+  ACTION_LABELS,
+  ROLES,
+  allowedActions,
+  can,
+  canAnswer,
+  readsTask,
+  seesQuestion
+} from '../src';
 
 describe('permission matrix', () => {
   test('each role may do exactly what the matrix says', () => {
@@ -64,6 +73,28 @@ describe('permission matrix', () => {
       'verify_result',
       'build'
     ]);
+  });
+
+  test('a question is answered by whoever it is asked of, or by an owner', () => {
+    const gio = { id: 'gio', role: 'contributor', domains: [] } as const;
+    const watcher = { id: 'wes', role: 'watcher', domains: [] } as const;
+    const owner = { id: 'ana', role: 'owner', domains: [] } as const;
+    expect(canAnswer(gio, { memberId: 'gio' })).toBe(true);
+    expect(canAnswer(gio, { memberId: 'ana' })).toBe(false);
+    expect(canAnswer(gio, { role: 'maintainer' })).toBe(false);
+    expect(canAnswer(watcher, { memberId: 'wes' })).toBe(false);
+    expect(canAnswer(owner, { memberId: 'gio' })).toBe(true);
+    expect(seesQuestion(gio, { role: 'maintainer' })).toBe(false);
+    expect(seesQuestion(watcher, { memberId: 'wes' })).toBe(true);
+    expect(seesQuestion({ id: 'mia', role: 'maintainer' }, { memberId: 'gio' })).toBe(true);
+  });
+
+  test('a confidential task is read only by members who may see confidential content', () => {
+    const confidential = { guards: ['confidential'] } as const;
+    expect(readsTask({ role: 'contributor' }, { guards: ['secrets'] })).toBe(true);
+    expect(readsTask({ role: 'contributor' }, confidential)).toBe(false);
+    expect(readsTask({ role: 'contributor', domains: ['confidential'] }, confidential)).toBe(true);
+    expect(readsTask({ role: 'maintainer' }, confidential)).toBe(true);
   });
 
   test('every action has words people read', () => {

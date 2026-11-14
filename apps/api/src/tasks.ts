@@ -3,6 +3,7 @@ import {
   PERMISSIONS,
   can,
   guardsInRequest,
+  readsTask,
   type Blocked,
   type Guard,
   type Member,
@@ -35,9 +36,11 @@ import { checklistMarkdown, handInBuild, type HandInPort } from '@officina/engin
 import { GitHubError } from '@officina/github';
 import {
   approvalState,
+  askedOfLabel,
   CONFIDENTIAL,
   consoleUrl,
   describeRequirement,
+  questionFor,
   type ApprovalState
 } from './board';
 import type { Pool } from 'pg';
@@ -396,25 +399,27 @@ export const describeTask = async (
   if (!taskId) throw new TaskCommandError(`task #${input.number} not found`);
   const context = (await loadTaskContext(pool, taskId))!;
   const viewer = await loadProjectMember(pool, projectId, memberId);
+  if (!viewer) throw new TaskCommandError('you are not a member of this project');
   const { task } = context;
   // As on the board: a confidential task's words only for members who may see them.
-  const reads =
-    !task.guards.includes('confidential') || (viewer !== null && can(viewer, 'see_confidential'));
+  const reads = readsTask(viewer, task);
   const shown = (text: string) => (reads ? text : CONFIDENTIAL);
   const lines = [
     `Task #${context.number}: ${context.title}`,
     `Stage: ${task.stage}   Lane: ${task.lane ?? 'not set yet'}   User-visible: ${task.userVisible ? 'yes' : 'no'}${task.paused ? '   PAUSED' : ''}`
   ];
 
-  if (task.blocked) {
-    const who =
-      'memberId' in task.blocked.askedOf ? 'a specific member' : `a ${task.blocked.askedOf.role}`;
-    lines.push('', `BLOCKED, question for ${who}:`, `  ${shown(task.blocked.question)}`);
-  }
-
   const names = new Map(
     (await listProjectMemberProfiles(pool, projectId)).map((member) => [member.id, member.name])
   );
+  if (task.blocked) {
+    lines.push(
+      '',
+      `BLOCKED, question for ${askedOfLabel(task.blocked.askedOf, names)}:`,
+      `  ${shown(questionFor(viewer, task.blocked))}`
+    );
+  }
+
   const approval = await approvalState(pool, task, {
     members: await listProjectMembers(pool, projectId),
     names,
