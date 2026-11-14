@@ -1,5 +1,11 @@
 import { branchForTask, parseProjectConfig, type Task } from '@officina/core';
-import { applyCommand, loadTaskContext, type StoreError } from '@officina/db';
+import {
+  appendTaskEvent,
+  applyCommand,
+  HAND_IN_EVENT,
+  loadTaskContext,
+  type StoreError
+} from '@officina/db';
 import type { Pool } from 'pg';
 import {
   openTaskPullRequest,
@@ -88,10 +94,15 @@ export const handInBuild = async (
     { installationId, repo: context.repo },
     { base: context.defaultBranch, branch, catalogs: config.docs.standards.catalogs }
   );
+  const actor = { kind: 'member' as const, memberId: input.memberId };
   const applied = await applyCommand(deps.pool, {
     taskId: input.taskId,
     command: { type: 'push', ...facts },
-    actor: { kind: 'member', memberId: input.memberId }
+    actor,
+    // With the push, so a pull request that fails to open is opened later from this title and
+    // these checks, not from an earlier agent round's.
+    onApplied: (client) =>
+      appendTaskEvent(client, { taskId: input.taskId, actor, type: HAND_IN_EVENT, payload: built })
   });
   if (!applied.ok) return applied;
   const pr = await open();
