@@ -1133,6 +1133,12 @@ describe.skipIf(!url)('engine', () => {
       );
       expect(rows).toEqual([]);
       expect((await loadTask(pool, taskId))?.task.stage).toBe('merging');
+      // Its branch and threads are left as they are: no status commit, no thread resolved.
+      expect(
+        github.calls.filter(
+          (call) => call.method === 'updateFile' || call.method === 'resolveReviewThreads'
+        )
+      ).toEqual([]);
     }
     expect(approvals).toEqual([]);
   });
