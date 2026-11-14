@@ -1,4 +1,4 @@
-import type { Role } from '@officina/core';
+import { BUILD_ROLES, type Role } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
 import { RUN_IS_ACTIVE } from './run-status';
 
@@ -181,5 +181,26 @@ export const failOrphanedRuns = async (
          result = coalesce(result, '{}'::jsonb)
            || '{"error": "the engine restarted while this run was in progress"}'::jsonb
        where status ${RUN_IS_ACTIVE} returning id, external_id`
+    )
+  ).rows.map((row) => ({ id: row.id, externalId: row.external_id }));
+
+/**
+ * Build runs still in progress on a task a member took over: their result no longer applies (the
+ * engine's `sameWork`), and their session would only spend. They are failed, like an orphaned run,
+ * and the caller interrupts their sessions.
+ */
+export const failTakenOverRuns = async (
+  db: Queryable
+): Promise<{ id: string; externalId: string | null }[]> =>
+  (
+    await db.query<{ id: string; external_id: string | null }>(
+      `update runs r set status = 'failed', finished_at = now(),
+         result = coalesce(r.result, '{}'::jsonb)
+           || '{"error": "a member took the build over while this run was in progress"}'::jsonb
+       from tasks t
+       where t.id = r.task_id and r.status ${RUN_IS_ACTIVE} and r.agent_role = any($1::text[])
+         and t.stage = 'building' and t.assignee->>'kind' = 'member'
+       returning r.id, r.external_id`,
+      [BUILD_ROLES]
     )
   ).rows.map((row) => ({ id: row.id, externalId: row.external_id }));

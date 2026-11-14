@@ -1,4 +1,11 @@
-import { branchForTask, ENGINE, isBuildRole, nextAgentRoles, type Actor } from '@officina/core';
+import {
+  branchForTask,
+  ENGINE,
+  isBuildRole,
+  nextAgentRoles,
+  type Actor,
+  type Task
+} from '@officina/core';
 import { applyCommand, finishRun } from '@officina/db';
 import { type GitHubClient, type RefSnapshot, type RepoRef } from '@officina/github';
 import {
@@ -11,7 +18,7 @@ import type { Pool } from 'pg';
 import { claimStep, type ClaimedStep, type SkipReason } from './claim';
 import { runLearnerStep } from './learner';
 import type { SyncGitHubPort } from './github-sync';
-import { applyResult, roleOutputOf, type StepOutcome } from './step-apply';
+import { applyResult, roleOutputOf, sameWork, type StepOutcome } from './step-apply';
 import { gatherInputs, runSession } from './step-session';
 
 export type GitHubPort = Pick<
@@ -84,13 +91,14 @@ const refChanges = async (
   return changes;
 };
 
-const blockTask = async (pool: Pool, taskId: string, question: string) => {
-  await applyCommand(pool, {
+/** Asks a maintainer; with a `guard`, only while the task is still in the state it allows. */
+const blockTask = (pool: Pool, taskId: string, question: string, guard?: (task: Task) => boolean) =>
+  applyCommand(pool, {
     taskId,
     command: { type: 'block', question, askedOf: { role: 'maintainer' } },
-    actor: ENGINE
+    actor: ENGINE,
+    ...(guard ? { guard } : {})
   });
-};
 
 /** One claimed run of a role on a task, and what every phase of the step reads. */
 export interface Step extends ClaimedStep {
@@ -102,7 +110,11 @@ export interface Step extends ClaimedStep {
   readonly builds: boolean;
 }
 
-/** Fails the run with what it left and asks a maintainer, so the scheduler does not retry it. */
+/**
+ * Fails the run with what it left and asks a maintainer, so the scheduler does not retry it. Only
+ * on the work the run saw, as for a result: a build a member took over is not blocked by the run
+ * it replaced.
+ */
 const failAndBlock = async (
   step: Step,
   run: { readonly costCents: number | null; readonly result: unknown },
@@ -110,23 +122,41 @@ const failAndBlock = async (
   reason: string
 ): Promise<StepResult> => {
   await finishRun(step.deps.pool, step.runId, { status: 'failed', ...run });
-  await blockTask(step.deps.pool, step.taskId, question);
-  return { status: 'blocked', reason };
+  const blocked = await blockTask(
+    step.deps.pool,
+    step.taskId,
+    question,
+    sameWork(step.context.task)
+  );
+  return blocked.ok ? { status: 'blocked', reason } : { status: 'discarded', reason };
 };
 
 /** The refs a builder could have moved besides its own branch, checked after every build run. */
-const guardRefs = async (step: Step, before: RefSnapshot, report: RunReport) => {
+const guardRefs = async (
+  step: Step,
+  before: RefSnapshot,
+  report: RunReport
+): Promise<StepResult | null> => {
   const guarded = { ...step.repoRef, defaultBranch: step.context.defaultBranch };
   const after = await step.deps.github.refSnapshot(guarded);
   const changes = await refChanges(step.deps.github, guarded, before, after);
   if (!changes.length) return null;
   const { role, taskBranch } = step;
-  return failAndBlock(
-    step,
-    { costCents: report.costCents, result: { refsChanged: changes, outcome: report.outcome } },
-    `While the ${role} ran, ${changes.join('; ')}. The ${role} may only push ${taskBranch}. Check those refs on GitHub and restore them if the ${role} changed them; if a person made the change, answer to run the build again.`,
-    `refs outside ${taskBranch} changed during the build: ${changes.join('; ')}`
+  await finishRun(step.deps.pool, step.runId, {
+    status: 'failed',
+    costCents: report.costCents,
+    result: { refsChanged: changes, outcome: report.outcome }
+  });
+  // Whoever builds the task now: refs outside its branch moved, and a maintainer checks them first.
+  await blockTask(
+    step.deps.pool,
+    step.taskId,
+    `While the ${role} ran, ${changes.join('; ')}. The ${role} may only push ${taskBranch}. Check those refs on GitHub and restore them if the ${role} changed them; if a person made the change, answer to run the build again.`
   );
+  return {
+    status: 'blocked',
+    reason: `refs outside ${taskBranch} changed during the build: ${changes.join('; ')}`
+  };
 };
 
 /** The result to apply, or why the run left none: no valid result, or a push to the wrong branch. */
@@ -208,7 +238,8 @@ export const runAgentStep = async (
     await blockTask(
       deps.pool,
       taskId,
-      `The ${role} step failed unexpectedly: ${message}. Answer this question to retry it.`
+      `The ${role} step failed unexpectedly: ${message}. Answer this question to retry it.`,
+      sameWork(step.context.task)
     ).catch(() => {});
     throw error;
   }

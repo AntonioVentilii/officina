@@ -22,11 +22,21 @@ import type { StepInputs } from './step-session';
 import type { Step, StepResult } from './step';
 import type { GitHubReview } from './validators';
 
-/** Only the state the agent saw may receive its result. */
-const sameWork = (seen: Task) => (current: Task) =>
+const sameAssignee = (a: Task['assignee'], b: Task['assignee']): boolean => {
+  if (a === null || b === null) return a === b;
+  if (a.kind === 'member') return b.kind === 'member' && a.memberId === b.memberId;
+  return b.kind === 'agent' && a.role === b.role;
+};
+
+/**
+ * Only the state the agent saw may receive its result, or its failure: a build a member took over
+ * meanwhile is theirs, and nothing the agent's run ends with applies to it.
+ */
+export const sameWork = (seen: Task) => (current: Task) =>
   current.stage === seen.stage &&
   current.specVersion === seen.specVersion &&
   current.headSha === seen.headSha &&
+  sameAssignee(current.assignee, seen.assignee) &&
   !current.blocked &&
   !current.paused;
 

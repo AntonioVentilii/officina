@@ -1,11 +1,12 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
-import { branchForTask, type AgentRole } from '@officina/core';
+import { branchForTask, HANDOFF_NEED_KEYS, type AgentRole } from '@officina/core';
 import {
   appendTaskEvent,
   applyCommand,
   createTask,
   expectedHead,
   failOrphanedRuns,
+  failTakenOverRuns,
   feedbackSinceLastPush,
   linkPullRequest,
   loadTask,
@@ -823,6 +824,83 @@ describe.skipIf(!url)('engine', () => {
         }
       ]
     });
+  });
+
+  // What a builder's run can end with after a member took the build over while it ran.
+  const lateEndings: [string, ScriptItem[]][] = [
+    ['a block', [toolUse({ outcome: 'blocked', question: 'Which title?' }), idle('end_turn')]],
+    ['a failure', [toolUse({ outcome: 'failed', why: 'tests fail' }), idle('end_turn')]],
+    [
+      'a handoff',
+      [
+        toolUse({
+          outcome: 'needs_person',
+          needs: [HANDOFF_NEED_KEYS[0]],
+          why: 'A person must decide.',
+          asks: ['Decide.']
+        }),
+        idle('end_turn')
+      ]
+    ],
+    ['no result', [idle('end_turn')]]
+  ];
+  for (const [ending, items] of lateEndings) {
+    test(`a build a member took over while the agent ran stays theirs, whatever the run ends with: ${ending}`, async () => {
+      let taskId = '';
+      const github = fakeGitHub();
+      const agents = createFakePort((request) =>
+        request.metadata.role === 'builder'
+          ? [
+              async () => void (await applyOrThrow(pool, taskId, { type: 'claim' }, seeded.owner)),
+              ...items
+            ]
+          : succeed(request)
+      );
+      taskId = await taskInReady(github, agents);
+      await tick({ pool, github: github.port, agents, publicUrl: PUBLIC_URL }, seeded.projectId);
+
+      expect((await loadTask(pool, taskId))?.task).toMatchObject({
+        stage: 'building',
+        assignee: { kind: 'member', memberId: seeded.ownerId },
+        blocked: null
+      });
+      expect((await runStatuses(taskId)).at(-1)).toEqual({
+        agent_role: 'builder',
+        status: 'failed'
+      });
+    });
+  }
+
+  test('a member who takes a build over stops the agent run, once, and only on their task', async () => {
+    const taken = await taskInReady();
+    const kept = await taskInReady();
+    for (const taskId of [taken, kept]) {
+      await applyOrThrow(
+        pool,
+        taskId,
+        { type: 'dispatch', assignee: { kind: 'agent', role: 'builder' }, openInLane: 0 },
+        { kind: 'engine' }
+      );
+    }
+    const runs: Record<string, string> = {};
+    for (const taskId of [taken, kept]) {
+      const run = await startRun(pool, {
+        taskId,
+        stage: 'building',
+        role: 'builder',
+        agentVersion: 1,
+        runner: 'managed-agents'
+      });
+      if (!run.ok) throw new Error(run.error);
+      runs[taskId] = run.runId;
+    }
+    await pool.query("update runs set external_id = 'sesn_taken' where id = $1", [runs[taken]]);
+    await applyOrThrow(pool, taken, { type: 'claim' }, seeded.owner);
+
+    expect(await failTakenOverRuns(pool)).toEqual([{ id: runs[taken]!, externalId: 'sesn_taken' }]);
+    expect(await failTakenOverRuns(pool)).toEqual([]);
+    expect(await runStatuses(taken)).toContainEqual({ agent_role: 'builder', status: 'failed' });
+    expect(await runStatuses(kept)).toContainEqual({ agent_role: 'builder', status: 'running' });
   });
 
   test('a push to any other branch blocks the task and opens no pull request', async () => {
