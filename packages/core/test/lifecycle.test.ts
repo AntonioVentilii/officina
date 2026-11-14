@@ -811,7 +811,7 @@ describe('reviews on GitHub', () => {
       type: 'github_review',
       headSha,
       by: 'copilot-pull-request-reviewer[bot]',
-      reviewId: 7,
+      source: { reviewId: 7 },
       notes: 'Rename the key.',
       overviewOnly: false
     }) as const;
@@ -879,6 +879,162 @@ describe('reviews on GitHub', () => {
     expect(
       driver.attempt(task, { type: 'unchanged', note: 'Nothing to do.' }, asAgent('builder'))
     ).toEqual({ ok: false, error: 'wrong_stage' });
+  });
+
+  test("a bot's comment on the pull request is recorded as a comment, not a review", () => {
+    const driver = createDriver([owner]);
+    const task = buildAndReview(
+      driver,
+      dispatchAgent(driver, toReady(driver, PAGE_PATHS)),
+      'abc',
+      PAGE_PATHS
+    );
+    driver.step(task, { ...review('abc'), source: { commentId: 31 }, overviewOnly: true }, engine);
+    expect(driver.events()[0]).toMatchObject({ githubCommentId: 31, overviewOnly: true });
+    expect(driver.events()[0]).not.toHaveProperty('githubReviewId');
+  });
+});
+
+describe('failing checks on GitHub', () => {
+  const failed = (headSha: string) =>
+    ({ type: 'ci_failed', headSha, details: 'GitHub Actions: failure' }) as const;
+
+  test('send the work back from review, planning and verification, not only from merging', () => {
+    const driver = createDriver([owner]);
+    const reviewing = driver.step(
+      dispatchAgent(driver, toReady(driver, PAGE_PATHS)),
+      {
+        type: 'push',
+        headSha: 'abc',
+        changedPaths: PAGE_PATHS,
+        addedPaths: [],
+        catalogPages: {},
+        diffLines: 40
+      },
+      asAgent('builder')
+    );
+    const choosing = buildAndReview(
+      driver,
+      dispatchAgent(driver, toReady(driver, PAGE_PATHS)),
+      'abc',
+      PAGE_PATHS
+    );
+    const verifying = driver.step(
+      choosing,
+      { type: 'choose', userVisible: true, plan: PLAN },
+      asAgent('chooser')
+    );
+    for (const task of [reviewing, choosing, verifying]) {
+      expect(driver.step(task, failed('abc'), engine)).toMatchObject({
+        stage: 'building',
+        fixRounds: 1
+      });
+      expect(driver.events()[0]).toEqual(failed('abc'));
+    }
+  });
+
+  test('on an earlier head, while building, or from anyone but the engine, change nothing', () => {
+    const driver = createDriver([owner]);
+    const building = dispatchAgent(driver, toReady(driver, PAGE_PATHS));
+    expect(driver.attempt(building, failed('abc'), engine)).toEqual({
+      ok: false,
+      error: 'wrong_stage'
+    });
+    const choosing = buildAndReview(driver, building, 'abc', PAGE_PATHS);
+    expect(driver.attempt(choosing, failed('old'), engine)).toEqual({
+      ok: false,
+      error: 'stale_head'
+    });
+    expect(driver.attempt(choosing, failed('abc'), asMember(owner))).toEqual({
+      ok: false,
+      error: 'not_allowed'
+    });
+  });
+});
+
+describe('pushes from outside Officina', () => {
+  const outside = (headSha: string, changedPaths: readonly string[] = PAGE_PATHS) =>
+    ({
+      type: 'outside_push',
+      headSha,
+      changedPaths,
+      addedPaths: [],
+      catalogPages: {},
+      diffLines: 50
+    }) as const;
+
+  test('a new head is reviewed, planned and verified again, without a fix round', () => {
+    const driver = createDriver([owner]);
+    let task = buildAndReview(
+      driver,
+      dispatchAgent(driver, toReady(driver, PAGE_PATHS)),
+      'abc',
+      PAGE_PATHS
+    );
+    task = driver.step(task, { type: 'choose', userVisible: true, plan: PLAN }, asAgent('chooser'));
+    task = driver.step(task, outside('fix1'), engine);
+    expect(task).toMatchObject({ stage: 'reviewing', headSha: 'fix1', reviews: {}, fixRounds: 0 });
+    expect(driver.events()).toEqual([
+      { type: 'stage_changed', from: 'verifying', to: 'building' },
+      {
+        type: 'pushed',
+        headSha: 'fix1',
+        changedPaths: PAGE_PATHS,
+        diffLines: 50,
+        outside: true
+      },
+      { type: 'stage_changed', from: 'building', to: 'reviewing' }
+    ]);
+    // Approving needs a plan for the new head, so nothing verified for the old one carries over.
+    task = driver.step(
+      task,
+      { type: 'review', verdict: 'approve', notes: '' },
+      asAgent('reviewer_spec')
+    );
+    task = driver.step(
+      task,
+      { type: 'review', verdict: 'approve', notes: '' },
+      asAgent('reviewer_correctness')
+    );
+    expect(task.approvalPlans.verifying?.subject).toBe('sha:abc');
+    expect(
+      driver.attempt({ ...task, stage: 'verifying' }, { type: 'approve' }, asMember(owner))
+    ).toEqual({ ok: false, error: 'not_planned' });
+  });
+
+  test('a head that reaches paths agents may not change holds the task for the owner', () => {
+    const driver = createDriver([owner]);
+    const task = buildAndReview(
+      driver,
+      dispatchAgent(driver, toReady(driver, PAGE_PATHS)),
+      'abc',
+      PAGE_PATHS
+    );
+    const held = driver.step(
+      task,
+      outside('bot1', [...PAGE_PATHS, '.github/workflows/ci.yml']),
+      engine
+    );
+    expect(held).toMatchObject({ stage: 'ready', lane: 'red', assignee: null });
+    expect(held.blocked?.question).toContain('.github/workflows/ci.yml');
+  });
+
+  test('the head Officina already holds, a build in progress, or anyone but the engine, change nothing', () => {
+    const driver = createDriver([owner]);
+    const building = dispatchAgent(driver, toReady(driver, PAGE_PATHS));
+    expect(driver.attempt(building, outside('abc'), engine)).toEqual({
+      ok: false,
+      error: 'wrong_stage'
+    });
+    const choosing = buildAndReview(driver, building, 'abc', PAGE_PATHS);
+    expect(driver.attempt(choosing, outside('abc'), engine)).toEqual({
+      ok: false,
+      error: 'stale_head'
+    });
+    expect(driver.attempt(choosing, outside('fix1'), asAgent('builder'))).toEqual({
+      ok: false,
+      error: 'not_allowed'
+    });
   });
 });
 

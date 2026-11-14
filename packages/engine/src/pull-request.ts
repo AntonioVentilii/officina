@@ -1,22 +1,27 @@
 import {
   BUILD_ROLES,
+  ENGINE,
+  GITHUB_REVIEWABLE,
   branchForTask,
   catalogPagesToRead,
   parseProjectConfig,
   type AgentOutput,
   type Catalog,
   type CatalogPages,
-  type PushFacts,
-  type Stage
+  type PushFacts
 } from '@officina/core';
 import {
+  applyCommand,
+  expectedHead,
+  type ApplyResult,
   latestBuild,
   linkPullRequest,
   loadTaskContext,
   type StoredTaskContext
 } from '@officina/db';
-import type { GitHubClient } from '@officina/github';
+import type { GitHubClient, RepoRef } from '@officina/github';
 import type { Pool } from 'pg';
+import { stopAutoMergeOnLeaving } from './auto-merge';
 import { syncSpecStatus, taskLink, type SyncGitHubPort } from './github-sync';
 
 export type PullRequestPort = Pick<GitHubClient, 'openPullRequest'> & SyncGitHubPort;
@@ -45,20 +50,13 @@ export const readPush = async (
 /** What a build round that pushed tells the pull request. */
 export type PushedBuild = Extract<AgentOutput<'builder' | 'onboarder'>, { outcome: 'pushed' }>;
 
-/** Every stage after a push expects the task's pull request to be open. */
-const AWAITS_PULL_REQUEST: ReadonlySet<Stage> = new Set([
-  'reviewing',
-  'choosing',
-  'verifying',
-  'merging'
-]);
-
 /** A task whose build pushed but whose pull request is not linked yet. */
 const awaitsPullRequest = (context: StoredTaskContext | null): context is StoredTaskContext =>
   context !== null &&
   context.pullRequest === null &&
   context.task.headSha !== null &&
-  AWAITS_PULL_REQUEST.has(context.task.stage);
+  // Every stage after a push expects the task's pull request to be open.
+  GITHUB_REVIEWABLE.has(context.task.stage);
 
 /** The pushed result a finished build recorded, if it left one to open the pull request from. */
 const recordedPush = (run: { status: string; result: unknown } | null): PushedBuild | null => {
@@ -146,4 +144,84 @@ export const openMissingPullRequests = async (
     );
   }
   return failures;
+};
+
+/** A task whose open pull request holds a head Officina took in, which someone else may move. */
+const movableFromOutside = (
+  context: StoredTaskContext | null
+): context is StoredTaskContext & { pullRequest: number; installationId: number } =>
+  context !== null &&
+  context.pullRequest !== null &&
+  context.installationId !== null &&
+  GITHUB_REVIEWABLE.has(context.task.stage) &&
+  !context.task.blocked &&
+  !context.task.paused;
+
+/**
+ * Takes in a head on a task's pull request that Officina did not push: a review bot's fix, a
+ * person's commit, an update from the default branch. Read from the pull request on every pass, so
+ * a missed webhook cannot hide one, and run before `finishVerifiedSpecs` in the same pass, so
+ * Officina's own status commit is recorded before it is looked for. Skipped while a build run is
+ * still going: its push, and the status commit after it, are not recorded yet.
+ */
+export type AdoptPort = PushFactsPort &
+  Pick<GitHubClient, 'pullRequestHead' | 'failedChecks' | 'cancelAutoMerge'>;
+
+/**
+ * What follows a head taken in: auto-merge off if the task left `merging`, since GitHub would land
+ * the new head once its checks pass, and the checks already red on it sent to the builder, since
+ * GitHub reported them before any task held that commit and nothing will report them again.
+ */
+const afterAdoption = async (
+  pool: Pool,
+  github: AdoptPort,
+  input: { taskId: string; ref: RepoRef; pullRequest: number; headSha: string },
+  adopted: ApplyResult
+) => {
+  await stopAutoMergeOnLeaving(pool, github, input, adopted);
+  if (!adopted.ok || adopted.task.stage !== 'reviewing') return;
+  const failures = await github.failedChecks({ ...input.ref, sha: input.headSha });
+  if (failures.length === 0) return;
+  await applyCommand(pool, {
+    taskId: input.taskId,
+    command: { type: 'ci_failed', headSha: input.headSha, details: failures.join('; ') },
+    actor: ENGINE
+  });
+};
+
+export const adoptOutsidePushes = async (
+  pool: Pool,
+  github: AdoptPort,
+  taskIds: readonly string[]
+) => {
+  for (const taskId of taskIds) {
+    const context = await loadTaskContext(pool, taskId);
+    if (!movableFromOutside(context)) continue;
+    const { task } = context;
+    if ((await latestBuildRun(pool, taskId, BUILD_ROLES))?.status === 'running') continue;
+    const ref = { installationId: context.installationId, repo: context.repo };
+    const expected = await expectedHead(pool, taskId);
+    if ((await github.pullRequestHead({ ...ref, pullRequest: context.pullRequest })) === expected)
+      continue;
+    const config = parseProjectConfig(context.rawConfig);
+    if (!config.ok) continue;
+    const head = await readPush(github, ref, {
+      base: context.defaultBranch,
+      branch: branchForTask(context.number),
+      catalogs: config.config.docs.standards.catalogs
+    });
+    if (head.headSha === expected) continue;
+    const adopted = await applyCommand(pool, {
+      taskId,
+      command: { type: 'outside_push', ...head },
+      actor: ENGINE,
+      guard: (current) => current.stage === task.stage && current.headSha === task.headSha
+    });
+    await afterAdoption(
+      pool,
+      github,
+      { taskId, ref, pullRequest: context.pullRequest, headSha: head.headSha },
+      adopted
+    );
+  }
 };

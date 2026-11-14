@@ -1,6 +1,7 @@
 import { TERMINAL_STAGES, redactDeep } from '@officina/core';
-import type { Actor, StoredTaskContext } from './types';
+import type { StoredTaskContext } from './types';
 import type { Pool, PoolClient } from 'pg';
+import { RUN_IS_ACTIVE } from './run-status';
 import { loadTask } from './store';
 
 export type RunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
@@ -132,16 +133,6 @@ export const loadTaskContext = async (
   };
 };
 
-export const saveSpecVersion = async (
-  pool: Pool | PoolClient,
-  input: { taskId: string; version: number; body: string; createdBy: Actor }
-) => {
-  await pool.query(
-    'insert into spec_versions (task_id, version, body, created_by) values ($1, $2, $3, $4)',
-    [input.taskId, input.version, input.body, JSON.stringify(input.createdBy)]
-  );
-};
-
 /** Tasks in a lane whose work an agent currently holds, for the lane's WIP limit. */
 export const countOpenAgentWork = async (pool: Pool, projectId: string, lane: string) =>
   Number(
@@ -241,25 +232,6 @@ export const githubReviewsSinceLastPush = async (
     )
   ).rows;
 
-export const listComments = async (pool: Pool, taskId: string): Promise<string[]> =>
-  (
-    await pool.query<{ body: string }>(
-      'select body from comments where task_id = $1 order by created_at',
-      [taskId]
-    )
-  ).rows.map((row) => row.body);
-
-/** Records an engine action in the task's audit log. */
-export const appendTaskEvent = async (
-  pool: Pool | PoolClient,
-  input: { taskId: string; actor: Actor; type: string; payload: unknown }
-) => {
-  await pool.query(
-    'insert into task_events (task_id, actor, type, payload) values ($1, $2, $3, $4)',
-    [input.taskId, JSON.stringify(input.actor), input.type, JSON.stringify(input.payload)]
-  );
-};
-
 export const hasTaskEvent = async (pool: Pool, taskId: string, type: string, payload: unknown) =>
   ((
     await pool.query(
@@ -277,3 +249,20 @@ export const latestChooserResult = async (pool: Pool, taskId: string): Promise<u
       [taskId]
     )
   ).rows[0]?.result ?? null;
+
+/**
+ * Runs left `running` by a previous engine process can never finish: their stream is gone. They are
+ * failed so the step can run again; a result the run already recorded is kept beside the error.
+ * Assumes a single scheduler instance.
+ */
+export const failOrphanedRuns = async (
+  db: Pool | PoolClient
+): Promise<{ id: string; externalId: string | null }[]> =>
+  (
+    await db.query<{ id: string; external_id: string | null }>(
+      `update runs set status = 'failed', finished_at = now(),
+         result = coalesce(result, '{}'::jsonb)
+           || '{"error": "the engine restarted while this run was in progress"}'::jsonb
+       where status ${RUN_IS_ACTIVE} returning id, external_id`
+    )
+  ).rows.map((row) => ({ id: row.id, externalId: row.external_id }));

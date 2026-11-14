@@ -215,8 +215,16 @@ export type TaskAction =
   | { readonly type: 'claim' }
   | { readonly type: 'approve' }
   | { readonly type: 'changes'; readonly note: string }
-  /** With `option`, the letter of an option the question offers, and `text` an optional note. */
-  | { readonly type: 'answer'; readonly text: string; readonly option?: string | undefined }
+  /**
+   * With `option`, the letter of an option the question offers, `version` the task version the
+   * question was read at, and `text` an optional note.
+   */
+  | {
+      readonly type: 'answer';
+      readonly text: string;
+      readonly option?: string | undefined;
+      readonly version?: number | undefined;
+    }
   | { readonly type: 'cancel'; readonly reason: string }
   | { readonly type: 'decline'; readonly reason: string };
 
@@ -238,10 +246,32 @@ const toCommand = (action: TaskAction): Command => {
   }
 };
 
+const QUESTION_CHANGED =
+  'the task changed since you read this question; look at it again and choose again';
+
+/** The option picked from the question as the person read it, refused once the task moved on. */
+const pickedOption = async (
+  pool: Pool,
+  taskId: string,
+  key: string,
+  version: number | undefined
+) => {
+  if (version === undefined)
+    throw new TaskCommandError(
+      'a picked option needs the version of the question it was read at',
+      400
+    );
+  const stored = await loadTask(pool, taskId);
+  if (stored && stored.version !== version) throw new TaskCommandError(QUESTION_CHANGED);
+  const option = findOption(stored?.task.blocked?.options, key);
+  if (!option) throw new TaskCommandError('the open question offers no such option');
+  return { option, version };
+};
+
 /**
  * The answer as the thread keeps it. A picked option is written out by its letter and label, and
- * holds only for the task version it was read from, so a question asked meanwhile, even with the
- * same words, is never answered by it.
+ * holds only for the task version the person read the question at, so a question asked meanwhile,
+ * even with the same words, is never answered by it.
  */
 const resolveAnswer = async (
   pool: Pool,
@@ -253,12 +283,10 @@ const resolveAnswer = async (
     if (!action.text.trim()) throw new TaskCommandError('write an answer or pick an option', 400);
     return { action };
   }
-  const stored = await loadTask(pool, taskId);
-  const option = findOption(stored?.task.blocked?.options, action.option);
-  if (!stored || !option) throw new TaskCommandError('the open question offers no such option');
+  const { option, version } = await pickedOption(pool, taskId, action.option, action.version);
   return {
     action: { type: 'answer', text: optionAnswer(action.option, option, action.text) },
-    expectedVersion: stored.version
+    expectedVersion: version
   };
 };
 
