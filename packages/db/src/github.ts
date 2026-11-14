@@ -1,4 +1,7 @@
+import { ENGINE } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
+import { inTransaction } from './store';
+import { appendTaskEvent } from './task-history';
 
 /**
  * Claims a webhook delivery before it is processed. Only one of two concurrent deliveries with the
@@ -90,15 +93,21 @@ export const findTasksByPullRequest = async (
 // (a column such as `t.id`, or a parameter such as `$1`), so the board and the engine read the
 // trail the same way. Their aliases are their own, so they nest in any query.
 
+/** The id of the event that last moved the task into `merging`. */
+const sinceMerging = (task: string): string =>
+  `coalesce((select max(sm.id) from task_events sm where sm.task_id = ${task}
+    and sm.type = 'stage_changed' and sm.payload->>'to' = 'merging'), 0)`;
+
 /**
  * The id of the event that last moved the task into `merging`, or later carried its head to a new
  * commit with the same change (`head_carried`): what the engine does on GitHub at merging (approve,
- * auto-merge, hand to a person) is done again for the new commit.
+ * auto-merge, hand to a person) is done again for the new commit. Whether auto-merge is on still
+ * counts from `merging` (`sinceMerging`), so an attempt from before the carry is never hidden.
  */
-const sinceMerging = (task: string): string =>
-  `coalesce((select max(sm.id) from task_events sm where sm.task_id = ${task}
-    and ((sm.type = 'stage_changed' and sm.payload->>'to' = 'merging')
-      or sm.type = 'head_carried')), 0)`;
+const sinceHandoff = (task: string): string =>
+  `coalesce((select max(sh.id) from task_events sh where sh.task_id = ${task}
+    and ((sh.type = 'stage_changed' and sh.payload->>'to' = 'merging')
+      or sh.type = 'head_carried')), 0)`;
 
 /**
  * The commit an event `e` names as standing for the task's head: Officina's own commit that only
@@ -142,8 +151,8 @@ export const wasAutoVerified = (task: string): string =>
       and sc.type = 'stage_changed' and sc.payload->>'to' = 'choosing'), 0))`;
 
 /**
- * Whether one of these events was recorded since the task last reached merging: what the engine
- * does on GitHub at merging is done once per time the task gets there.
+ * Whether one of these events was recorded since the task last reached merging or had its head
+ * carried (`sinceHandoff`): what the engine does on GitHub at merging is done once per head.
  */
 export const hasEventSinceMerging = async (
   pool: Pool,
@@ -154,7 +163,7 @@ export const hasEventSinceMerging = async (
     (
       await pool.query(
         `select 1 from task_events where task_id = $1 and type = any($2::text[])
-           and id > ${sinceMerging('$1')}`,
+           and id > ${sinceHandoff('$1')}`,
         [taskId, types]
       )
     ).rowCount
@@ -177,9 +186,9 @@ export const latestVerifier = async (pool: Pool, taskId: string): Promise<string
  * commit standing for it (Officina's own status commit on top of it, or a head carried from an
  * update with the same change). Anything else was pushed after the result was accepted.
  */
-export const expectedHead = async (pool: Pool, taskId: string): Promise<string | null> =>
+export const expectedHead = async (db: Pool | PoolClient, taskId: string): Promise<string | null> =>
   (
-    await pool.query<{ sha: string | null }>(
+    await db.query<{ sha: string | null }>(
       `select coalesce(
          (select ${standingSha('e')} from task_events e
           where ${STANDING_EVENTS} and ${standingSha('e')} is not null
@@ -305,3 +314,37 @@ export const findTasksByCommit = async (
       [repo, commitId]
     )
   ).rows.map((row) => row.id);
+
+/**
+ * Records that a new head carries the change people verified (`head_carried`), only while the task
+ * is still at the stage and head it was compared at and its expected head is still the one
+ * compared, checked under the task's row lock that every command takes: a push or a carry that
+ * landed meanwhile wins, and `false` says nothing was recorded.
+ */
+export const recordHeadCarried = (
+  pool: Pool,
+  input: {
+    readonly taskId: string;
+    readonly stage: string;
+    readonly taskHead: string;
+    readonly from: string;
+    readonly headSha: string;
+  }
+): Promise<boolean> =>
+  inTransaction(pool, async (client) => {
+    const row = (
+      await client.query<{ stage: string; head_sha: string | null }>(
+        'select stage, head_sha from tasks where id = $1 for update',
+        [input.taskId]
+      )
+    ).rows[0];
+    if (row?.stage !== input.stage || row.head_sha !== input.taskHead) return false;
+    if ((await expectedHead(client, input.taskId)) !== input.from) return false;
+    await appendTaskEvent(client, {
+      taskId: input.taskId,
+      actor: ENGINE,
+      type: 'head_carried',
+      payload: { headSha: input.headSha, from: input.from }
+    });
+    return true;
+  });

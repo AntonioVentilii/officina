@@ -17,10 +17,17 @@ export interface ComparedFile {
  */
 export const changeFingerprint = (files: readonly ComparedFile[] | undefined): string | null => {
   if (!files || files.length >= COMPARE_FILE_LIMIT) return null;
-  return files
-    .map((file) =>
-      [file.status, file.previous_filename ?? '', file.filename, file.sha ?? ''].join(' ')
-    )
-    .sort()
-    .join('\n');
+  // Each file as a JSON array, so no path, however it is spelled, can run into the next field.
+  return JSON.stringify(
+    files
+      .map((file) =>
+        JSON.stringify([
+          file.status,
+          file.previous_filename ?? null,
+          file.filename,
+          file.sha ?? null
+        ])
+      )
+      .sort()
+  );
 };

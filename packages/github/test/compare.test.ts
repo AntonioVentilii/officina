@@ -22,6 +22,18 @@ describe('what a head changes against the base', () => {
     ).not.toBe(fingerprint);
   });
 
+  test('paths with spaces never run into each other', () => {
+    expect(
+      changeFingerprint([
+        { filename: 'b c', previous_filename: 'a', status: 'renamed', sha: 'blob' }
+      ])
+    ).not.toBe(
+      changeFingerprint([
+        { filename: 'c', previous_filename: 'a b', status: 'renamed', sha: 'blob' }
+      ])
+    );
+  });
+
   test('a list GitHub may have cut says nothing', () => {
     expect(changeFingerprint(undefined)).toBeNull();
     const full = Array.from({ length: COMPARE_FILE_LIMIT }, (_, index) => ({

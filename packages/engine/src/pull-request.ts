@@ -11,9 +11,9 @@ import {
   type PushFacts
 } from '@officina/core';
 import {
-  appendTaskEvent,
   applyCommand,
   expectedHead,
+  recordHeadCarried,
   type ApplyResult,
   latestBuild,
   linkPullRequest,
@@ -22,7 +22,7 @@ import {
 } from '@officina/db';
 import type { GitHubClient, RepoRef } from '@officina/github';
 import type { Pool } from 'pg';
-import { holdAutoMerge, stopAutoMergeOnLeaving } from './auto-merge';
+import { cancelTaskAutoMerge, stopAutoMergeOnLeaving } from './auto-merge';
 import { syncSpecStatus, taskLink, type SyncGitHubPort } from './github-sync';
 
 export type PullRequestPort = Pick<GitHubClient, 'openPullRequest'> & SyncGitHubPort;
@@ -208,8 +208,10 @@ const sameChange = async (
 /**
  * Keeps the review and the verification for a new head with the same change, recorded as
  * `head_carried` so it stands for the task's head: feedback on it counts for the task, and at
- * merging the approval and the merge are done again for it, auto-merge first turned off since it
- * was pinned to the old commit. Checks already red on it still send the work back.
+ * merging the approval and the merge are done again for it. At merging, auto-merge pinned to the
+ * old commit is turned off first and the carry waits for the next pass when GitHub refuses, so an
+ * auto-merge nobody confirmed off never lands the new head. Checks already red on it still send
+ * the work back.
  */
 const carryHead = async (
   pool: Pool,
@@ -217,26 +219,38 @@ const carryHead = async (
   input: { context: MovableContext; ref: RepoRef; headSha: string; from: string }
 ) => {
   const { context, ref } = input;
-  const taskId = context.task.id;
-  await appendTaskEvent(pool, {
-    taskId,
-    actor: ENGINE,
-    type: 'head_carried',
-    payload: { headSha: input.headSha, from: input.from }
+  const { task } = context;
+  if (!task.headSha) return;
+  if (task.stage === 'merging') {
+    const off = await cancelTaskAutoMerge(pool, github, {
+      id: task.id,
+      ...ref,
+      pullRequest: context.pullRequest
+    }).then(
+      () => true,
+      () => false
+    );
+    if (!off) return;
+  }
+  const carried = await recordHeadCarried(pool, {
+    taskId: task.id,
+    stage: task.stage,
+    taskHead: task.headSha,
+    from: input.from,
+    headSha: input.headSha
   });
-  if (context.task.stage === 'merging')
-    await holdAutoMerge(pool, github, { taskId, ref, pullRequest: context.pullRequest });
+  if (!carried) return;
   const failures = await github.failedChecks({ ...ref, sha: input.headSha });
-  if (failures.length === 0 || !context.task.headSha) return;
+  if (failures.length === 0) return;
   const result = await applyCommand(pool, {
-    taskId,
-    command: { type: 'ci_failed', headSha: context.task.headSha, details: failures.join('; ') },
+    taskId: task.id,
+    command: { type: 'ci_failed', headSha: task.headSha, details: failures.join('; ') },
     actor: ENGINE
   });
   await stopAutoMergeOnLeaving(
     pool,
     github,
-    { taskId, ref, pullRequest: context.pullRequest },
+    { taskId: task.id, ref, pullRequest: context.pullRequest },
     result
   );
 };

@@ -3,6 +3,7 @@ import { createVerify, generateKeyPairSync } from 'node:crypto';
 import {
   COMPARE_FILE_LIMIT,
   GitHubError,
+  changeFingerprint,
   createAppJwt,
   createGitHubAsUser,
   createGitHubClient,
@@ -135,6 +136,35 @@ describe('GitHub client', () => {
     const reads = calls.filter((call) => call.method === 'GET');
     expect(reads).toHaveLength(2);
     expect(reads.every((call) => call.authorization?.startsWith('Bearer ghs_'))).toBe(true);
+  });
+
+  test('what a head changes is read from the compare against the base, and a cut list says nothing', async () => {
+    const files = [
+      { filename: 'src/a.ts', status: 'modified', sha: 'blob-a' },
+      { filename: 'src/b.ts', status: 'added', sha: 'blob-b' }
+    ];
+    const { fetchImpl, calls } = fakeGitHub({
+      'POST /app/installations/99/access_tokens': tokenRoute('2099-01-01T00:00:00Z'),
+      'GET /repos/ViciApp/vici-app/compare/release%2F1...head1': () => json({ files }),
+      'GET /repos/ViciApp/vici-app/compare/release%2F1...head2': () =>
+        json({ files: [...files].reverse() }),
+      'GET /repos/ViciApp/vici-app/compare/release%2F1...big': () =>
+        json({
+          files: Array.from({ length: COMPARE_FILE_LIMIT }, (_, index) => ({
+            filename: `f${index}.ts`,
+            status: 'added',
+            sha: `b${index}`
+          }))
+        }),
+      'GET /repos/ViciApp/vici-app/compare/release%2F1...none': () => json({})
+    });
+    const client = createGitHubClient({ appId: '1', privateKeyPem, fetch: fetchImpl });
+    const of = (head: string) => client.changeOf({ ...ref, base: 'release/1', head });
+    expect(await of('head1')).toBe(changeFingerprint(files));
+    expect(await of('head2')).toBe(await of('head1'));
+    expect(await of('big')).toBeNull();
+    expect(await of('none')).toBeNull();
+    expect(calls.some((call) => call.url.endsWith('/compare/release%2F1...head1'))).toBe(true);
   });
 
   test('a ref snapshot reads every page of tags', async () => {

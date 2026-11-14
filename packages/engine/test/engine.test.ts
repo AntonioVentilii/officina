@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { branchForTask, HANDOFF_NEED_KEYS, type AgentRole } from '@officina/core';
 import {
   appendTaskEvent,
+  recordHeadCarried,
   reviewedHead,
   applyCommand,
   createTask,
@@ -94,6 +95,7 @@ const fakeGitHub = (
     failed?: string[];
     /** Heads whose change is the same as the verified one's; any other head's change differs. */
     sameChangeAs?: string[];
+    cancelFails?: boolean;
     /** How many times opening the pull request fails before it works. */
     openFails?: number;
     /** How many times writing a file (the spec status) fails before it works. */
@@ -169,6 +171,7 @@ const fakeGitHub = (
     },
     cancelAutoMerge: async (...args: unknown[]) => {
       calls.push({ method: 'cancelAutoMerge', args });
+      if (options.cancelFails) throw new Error('GitHub 502 on /graphql');
     },
     failedChecks: async (...args: unknown[]) => {
       calls.push({ method: 'failedChecks', args });
@@ -1598,6 +1601,37 @@ describe.skipIf(!url)('engine', () => {
       [taskId]
     );
     expect(handoff.rows.map((row) => row.type)).toEqual(['awaiting_merge']);
+  });
+
+  test('a carry at merging waits until GitHub confirms auto-merge off, and a push meanwhile wins', async () => {
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    await adoptOutsidePushes(
+      pool,
+      fakeGitHub({ branchHead: 'upd4', sameChangeAs: ['upd4'], cancelFails: true }).port,
+      [taskId]
+    );
+    expect(await expectedHead(pool, taskId)).toBe('abc');
+    // Compared at merging with head abc; the task moved on before the carry was written.
+    expect(
+      await recordHeadCarried(pool, {
+        taskId,
+        stage: 'reviewing',
+        taskHead: 'abc',
+        from: 'abc',
+        headSha: 'upd4'
+      })
+    ).toBe(false);
+    expect(
+      await recordHeadCarried(pool, {
+        taskId,
+        stage: 'merging',
+        taskHead: 'abc',
+        from: 'old',
+        headSha: 'upd4'
+      })
+    ).toBe(false);
+    expect(await expectedHead(pool, taskId)).toBe('abc');
   });
 
   test('an update that changes a file of the change is reviewed and verified again', async () => {
