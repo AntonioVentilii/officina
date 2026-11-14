@@ -291,7 +291,7 @@ lanes:
 
 | Table                                                      | Holds                                                                                                                                         |
 | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `workspaces`, `members`, `identities`                      | teams, people (with their first sign-in), linked email / Google / GitHub identities                                                           |
+| `workspaces`, `members`, `identities`                      | teams (one per name), people (with their first sign-in), linked email / Google / GitHub identities                                            |
 | `projects`, `project_roles`                                | repositories, config snapshot, agent environment, per-project roles and approval domains                                                      |
 | `tasks`                                                    | kind (request or onboarding), stage, flags, lane, guards, priority, assignee, approval plans, linked issue and PR                             |
 | `task_events`                                              | append-only audit: actor (member or agent role + version), type, payload, timestamp                                                           |
