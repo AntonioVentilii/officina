@@ -170,7 +170,11 @@ const projectConfigSchema = z
 
 export type Requirement = z.infer<typeof requirementSchema>;
 export type Policy = readonly Requirement[];
-export type Gate = 'spec_review' | 'verifying';
+/** The stages where people approve: the spec, then the result. */
+export const GATES = ['spec_review', 'verifying'] as const;
+export type Gate = (typeof GATES)[number];
+export const isGate = (stage: string): stage is Gate =>
+  (GATES as readonly string[]).includes(stage);
 export type ReleaseOnMerge = 'production' | 'staging' | 'nothing';
 
 export interface LaneSettings {
