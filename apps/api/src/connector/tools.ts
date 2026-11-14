@@ -135,7 +135,7 @@ const questionLines = (blocked: NonNullable<TaskView['blocked']>): string[] => {
   if (!blocked.options.length) return lines;
   lines.push(
     '',
-    'Options (show each preview to the person before they choose; they may also answer in their own words):'
+    `Options (show each preview to the person before they choose; they may also answer in their own words). To choose one, pass its letter as option and ${blocked.version} as version:`
   );
   for (const option of blocked.options) {
     lines.push(`(${option.key}) ${option.label}${option.detail ? `: ${option.detail}` : ''}`);
@@ -356,6 +356,14 @@ After it is opened, tell the person the task link and that an agent may ask them
         .max(2)
         .optional()
         .describe('The letter of the option the person chose, as show_task lists it ("a", "b").'),
+      version: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe(
+          'With option: the version show_task gives with the options, so the choice answers the question the person saw.'
+        ),
       answer: z
         .string()
         .trim()
@@ -373,7 +381,12 @@ After it is opened, tell the person the task link and that an agent may ask them
         projectId: project.id,
         memberId: context.memberId,
         number: input.number,
-        action: { type: 'answer', text: input.answer ?? '', option: input.option }
+        action: {
+          type: 'answer',
+          text: input.answer ?? '',
+          option: input.option,
+          version: input.version
+        }
       });
       return `Answered; the work on task ${input.number} continues: ${taskUrl(context.publicUrl, project.id, input.number)}`;
     }
