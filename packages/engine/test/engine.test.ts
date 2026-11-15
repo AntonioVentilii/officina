@@ -515,7 +515,7 @@ describe.skipIf(!url)('engine', () => {
       tokenFor: async (memberId) => ({ token: `token-${memberId}`, login: 'antonio', userId: 1 }),
       asUser: {
         pullRequest: notExpected,
-        reviews: notExpected,
+        reviews: async () => [],
         approve: notExpected,
         mergeWhenReady: notExpected,
         requestCopilotReview: async (...args) => {
