@@ -1,6 +1,13 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { Pool } from 'pg';
-import { appendTaskEvent, handedToGitHub, linkPullRequest, loadBoardTask } from '../src';
+import {
+  appendTaskEvent,
+  handedToGitHub,
+  linkPullRequest,
+  loadBoardTask,
+  recordBotComment,
+  unhandledBotComments
+} from '../src';
 import { createTaskInMerging, resetAndSeed, type Seeded } from './seed';
 
 const url = process.env.TEST_DATABASE_URL;
@@ -44,5 +51,30 @@ describe.skipIf(!url)('auto-merge trail', () => {
         engine: expected,
         board: expected
       });
+  });
+});
+
+describe.skipIf(!url)('bot comments', () => {
+  const pool = new Pool({ connectionString: url });
+  let seeded: Seeded;
+
+  beforeEach(async () => {
+    seeded = await resetAndSeed(pool);
+  });
+
+  afterAll(async () => {
+    await pool.end();
+  });
+
+  test('an edit delivered after a newer one never replaces the text GitHub has now', async () => {
+    const taskId = await createTaskInMerging(pool, seeded);
+    const edit = (body: string, updatedAt: string) =>
+      recordBotComment(pool, taskId, { commentId: 31, by: 'claude[bot]', body, updatedAt });
+    await edit('Final: one finding.', '2026-11-14T10:05:00Z');
+    await edit('Claude is working...', '2026-11-14T10:00:00Z');
+
+    expect(await unhandledBotComments(pool, taskId, 0)).toEqual([
+      { commentId: 31, by: 'claude[bot]', body: 'Final: one finding.' }
+    ]);
   });
 });
