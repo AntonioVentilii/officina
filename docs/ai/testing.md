@@ -22,5 +22,5 @@ What the board shows is decided and tested in the API views (`apps/api/test/boar
 ## How tests are written
 
 - A test name says the behaviour in a sentence: "an agent that touches red paths is stopped and the owner is asked".
-- Fakes implement the port the code depends on (`GitHubPort`, `ManagedAgentsPort`, `LearningGitHub`) and record calls, so a test asserts what was sent.
+- Fakes implement the port the code depends on (`GitHubPort`, `ManagedAgentsPort`, `LearningGitHub`) and record calls, so a test asserts what was sent. They are typed as that port, never cast to it: an engine test gives `gitHubWith` (`packages/engine/test/fake-github.ts`) only the GitHub calls it expects.
 - Tests may spell out the values they expect; production code never copies them from a test.

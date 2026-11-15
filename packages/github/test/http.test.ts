@@ -2,7 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import { GitHubError } from '../src';
 import { githubRequest } from '../src/http';
 
-const answering = (response: () => Response) => (async () => response()) as unknown as typeof fetch;
+const answering = (response: () => Response): typeof fetch =>
+  Object.assign(async () => response(), { preconnect: fetch.preconnect });
 
 describe('one GitHub request', () => {
   test('a successful answer with no body reads as an empty object', async () => {
