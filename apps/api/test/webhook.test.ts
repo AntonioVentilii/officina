@@ -1,6 +1,8 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { createHmac } from 'node:crypto';
 import {
+  DELIVERY_RETENTION,
+  STALE_CLAIM,
   applyCommand,
   claimDelivery,
   linkPullRequest,
@@ -54,6 +56,13 @@ describe.skipIf(!url)('api', () => {
   afterAll(async () => {
     await pool.end();
   });
+
+  /** Moves a delivery's claim one minute past `window`. */
+  const ageDelivery = (id: string, window: string) =>
+    pool.query(
+      "update webhook_deliveries set received_at = now() - $2::interval - interval '1 minute' where id = $1",
+      [id, window]
+    );
 
   const eventCount = async (taskId: string) =>
     (await pool.query('select 1 from task_events where task_id = $1', [taskId])).rowCount;
@@ -158,9 +167,7 @@ describe.skipIf(!url)('api', () => {
     expect(await fresh.json()).toEqual({ status: 'duplicate' });
     expect((await loadTask(pool, taskId))?.task.stage).toBe('merging');
 
-    await pool.query(
-      "update webhook_deliveries set received_at = now() - interval '11 minutes' where id = 'd-lost'"
-    );
+    await ageDelivery('d-lost', STALE_CLAIM);
     const redelivered = await deliver(app, {
       event: 'pull_request',
       payload: mergedPayload,
@@ -174,10 +181,12 @@ describe.skipIf(!url)('api', () => {
   });
 
   test('deliveries too old to be redelivered are purged, the recent ones kept', async () => {
+    // One just past the retention window, one just inside it.
     await pool.query(
       `insert into webhook_deliveries (id, event, received_at, handled_at) values
-         ('d-old', 'push', now() - interval '8 days', now() - interval '8 days'),
-         ('d-new', 'push', now() - interval '2 days', now() - interval '2 days')`
+         ('d-old', 'push', now() - $1::interval - interval '1 minute', now() - $1::interval - interval '1 minute'),
+         ('d-new', 'push', now() - $1::interval + interval '1 minute', now() - $1::interval + interval '1 minute')`,
+      [DELIVERY_RETENTION]
     );
     expect(await purgeOldDeliveries(pool)).toBe(1);
     expect(await purgeOldDeliveries(pool)).toBe(0);
@@ -187,9 +196,7 @@ describe.skipIf(!url)('api', () => {
 
   test('a handler that outlived its claim can neither mark nor give back the claim that replaced it', async () => {
     const stale = await claimDelivery(pool, 'd-slow', 'pull_request');
-    await pool.query(
-      "update webhook_deliveries set received_at = now() - interval '11 minutes' where id = 'd-slow'"
-    );
+    await ageDelivery('d-slow', STALE_CLAIM);
     const replacing = await claimDelivery(pool, 'd-slow', 'pull_request');
     expect(stale).not.toBeNull();
     expect(replacing).not.toBeNull();
@@ -474,6 +481,54 @@ describe.skipIf(!url)('api', () => {
     expect(notes.rows[0]?.notes).toContain('`src/a.ts:3`: Typo in the key.');
   });
 
+  test("a collaborator's request for changes sends merging work back with the review and stops auto-merge", async () => {
+    const calls: string[] = [];
+    const reviewing = createApp({
+      pool,
+      webhookSecret: SECRET,
+      github: {
+        fileContent: async () => null,
+        reviewComments: async () => [],
+        cancelAutoMerge: async () => {
+          calls.push('cancelAutoMerge');
+        }
+      }
+    });
+    await pool.query('update projects set github_installation_id = 99 where id = $1', [
+      seeded.projectId
+    ]);
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+
+    const response = await deliver(reviewing, {
+      event: 'pull_request_review',
+      delivery: 'r-person',
+      payload: {
+        action: 'submitted',
+        review: {
+          id: 6,
+          state: 'changes_requested',
+          body: 'Rename the flag before this lands.',
+          commit_id: 'abc',
+          author_association: 'COLLABORATOR',
+          user: { login: 'alice', type: 'User' }
+        },
+        pull_request: { number: 42 },
+        repository
+      }
+    });
+    expect(await response.json()).toEqual({ status: 'applied', outcomes: [{ taskId, ok: true }] });
+    expect((await loadTask(pool, taskId))?.task.stage).toBe('building');
+    expect(calls).toEqual(['cancelAutoMerge']);
+    const notes = await pool.query<{ notes: string }>(
+      `select payload->>'notes' as notes from task_events
+       where task_id = $1 and type = 'review_recorded' and payload->>'reviewer' = 'github'`,
+      [taskId]
+    );
+    expect(notes.rows[0]?.notes).toContain('@alice');
+    expect(notes.rows[0]?.notes).toContain('Rename the flag before this lands.');
+  });
+
   test('a Copilot review with no comment on the code is read once per answer', async () => {
     const reviewing = createApp({
       pool,
@@ -666,6 +721,37 @@ describe.skipIf(!url)('api', () => {
       status: 'applied',
       outcomes: []
     });
+  });
+
+  test('a config deleted from the default branch is reported missing and the last one stays', async () => {
+    let served: string | null = 'version: 1\ndocs: { entry: CONTRIBUTING.md }\n';
+    const withGitHub = createApp({
+      pool,
+      webhookSecret: SECRET,
+      github: { fileContent: async () => served }
+    });
+    await pool.query('update projects set github_installation_id = 99 where id = $1', [
+      seeded.projectId
+    ]);
+    const push = (delivery: string, change: 'modified' | 'removed') =>
+      deliver(withGitHub, {
+        event: 'push',
+        delivery,
+        payload: {
+          ref: 'refs/heads/main',
+          commits: [{ [change]: ['.github/officina.yml'] }],
+          repository
+        }
+      });
+    await push('d-8', 'modified');
+
+    served = null;
+    expect(await (await push('d-9', 'removed')).json()).toEqual({
+      status: 'applied',
+      outcomes: [{ projectId: seeded.projectId, config: 'missing' }]
+    });
+    const entry = await pool.query(`select config->'docs'->>'entry' as entry from projects`);
+    expect(entry.rows[0].entry).toBe('CONTRIBUTING.md');
   });
 
   test('malformed requests are rejected', async () => {
