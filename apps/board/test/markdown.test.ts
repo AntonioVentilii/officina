@@ -5,8 +5,8 @@ import { installWindow } from './dom';
 const window = installWindow();
 const { renderMarkdown } = await import('../src/lib/markdown');
 
-afterAll(async () => {
-  await window.happyDOM.close();
+afterAll(() => {
+  window.close();
 });
 
 const rendered = (source: string) => {

@@ -133,4 +133,4 @@ Search here before writing a helper, a type, a component or a fake. When you add
 | `resetAndSeed`, `applyOrThrow`, `createTaskInMerging`, `PLAN` | `packages/db/test/seed.ts`          | A fresh schema with one workspace, owner and project        |
 | `createFakePort`, `toolUse`, `idle`, `running`, `terminated`  | `packages/runner/test/fake-port.ts` | A scripted Managed Agents port                              |
 | `with-postgres.ts`                                            | `packages/db/test/with-postgres.ts` | Runs the database tests against a throwaway container       |
-| `installWindow`                                               | `apps/board/test/dom.ts`            | A happy-dom window DOMPurify works in as in a browser       |
+| `installWindow`                                               | `apps/board/test/dom.ts`            | A jsdom window for tests of code that needs the DOM         |
