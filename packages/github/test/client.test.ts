@@ -649,6 +649,41 @@ describe('merge when ready', () => {
   });
 });
 
+describe('cancel auto-merge', () => {
+  const ref = { installationId: 99, repo: 'ViciApp/vici-app', pullRequest: 42 };
+  const routes = (graphql: () => Response) => ({
+    'POST /app/installations/99/access_tokens': tokenRoute('2099-01-01T00:00:00Z'),
+    'GET /repos/ViciApp/vici-app/pulls/42': () => json({ node_id: 'PR_42', head: { sha: 'abc' } }),
+    'POST /graphql': graphql
+  });
+
+  test('turns auto-merge off on the pull request it reads, by its node id', async () => {
+    const { fetchImpl, calls } = fakeGitHub(routes(() => json({ data: {} })));
+    const client = createGitHubClient({ appId: '1', privateKeyPem, fetch: fetchImpl });
+    await client.cancelAutoMerge(ref);
+    const mutation = calls.find((call) => call.url === '/graphql')!;
+    const body = mutation.body as { query: string; variables: unknown };
+    expect(body.query).toContain('disablePullRequestAutoMerge');
+    expect(body.variables).toEqual({ id: 'PR_42' });
+  });
+
+  test('auto-merge already off is the outcome wanted, not an error', async () => {
+    const off = () => json({ errors: [{ message: 'Pull request is not in auto merge state' }] });
+    const { fetchImpl } = fakeGitHub(routes(off));
+    const client = createGitHubClient({ appId: '1', privateKeyPem, fetch: fetchImpl });
+    await expect(client.cancelAutoMerge(ref)).resolves.toBeUndefined();
+  });
+
+  test('any other refusal is an error, so the caller retries', async () => {
+    const refused = () => json({ errors: [{ message: 'Resource not accessible by integration' }] });
+    const { fetchImpl } = fakeGitHub(routes(refused));
+    const client = createGitHubClient({ appId: '1', privateKeyPem, fetch: fetchImpl });
+    const failure = client.cancelAutoMerge(ref);
+    await expect(failure).rejects.toBeInstanceOf(GitHubError);
+    await expect(failure).rejects.toThrow('Resource not accessible by integration');
+  });
+});
+
 describe('GitHub as a person', () => {
   test('lists every page of reviews with the person token, leaving out deleted accounts', async () => {
     const page = (count: number, offset: number) =>
