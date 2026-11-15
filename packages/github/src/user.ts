@@ -1,4 +1,4 @@
-import { GitHubError, githubRequest } from './http';
+import { GitHubError, REQUEST_TIMEOUT_MS, githubRequest } from './http';
 import { mergeWhenReadyWith } from './merge';
 
 /**
@@ -58,6 +58,7 @@ export const createGitHubUserAuth = (options: OAuthAppOptions) => {
   const tokenRequest = async (params: Record<string, string>): Promise<UserTokens> => {
     const response = await http(`${WEB}${TOKEN_PATH}`, {
       method: 'POST',
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       headers: { accept: 'application/json', 'content-type': 'application/json' },
       body: JSON.stringify({
         client_id: options.clientId,
