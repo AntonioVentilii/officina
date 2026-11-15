@@ -27,6 +27,19 @@ export const INPUT_LIMITS = {
   checks: 30
 } as const;
 
+/**
+ * What the approval chooser's checklist for verification may hold: its items and the rows of its
+ * before/after table. Posted together as one comment, they stay under GitHub's limit at these sizes.
+ */
+export const CHECKLIST_LIMITS = {
+  /** How many items, and how long each. */
+  items: 30,
+  item: 300,
+  /** How many before/after rows, and how long each cell. */
+  rows: 30,
+  row: { key: 120, locale: 35, before: 350, after: 350 }
+} as const;
+
 /** What a hand-in lists as checked or left unchecked, the same for a person and the builder. */
 export const checksSchema = z
   .array(z.string().trim().min(1).max(INPUT_LIMITS.check))
