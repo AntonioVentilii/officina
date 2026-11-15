@@ -1,3 +1,10 @@
+/** The longest wait between passes while they keep failing, however many failed in a row. */
+const MAX_FAILED_PASS_DELAY_MS = 5 * 60 * 1000;
+
+/** The wait before the next pass: the interval, doubled for each pass that failed in a row, up to the cap. */
+export const nextPassDelay = (intervalMs: number, failedInARow: number): number =>
+  Math.max(intervalMs, Math.min(intervalMs * 2 ** failedInARow, MAX_FAILED_PASS_DELAY_MS));
+
 export interface DueWork {
   readonly taskId: string;
   readonly role: string;
@@ -22,7 +29,8 @@ export interface Scheduler {
 /**
  * Polls for due work and starts each step without waiting for it, because an agent session can run
  * for many minutes. A step already running in this process is never started again; the database
- * claim guards against other processes. A failing pass or step is logged and never stops the loop.
+ * claim guards against other processes. A failing pass or step is logged and never stops the loop;
+ * passes that keep failing wait longer each time (`nextPassDelay`), and one that succeeds resets it.
  */
 export const startScheduler = (options: SchedulerOptions): Scheduler => {
   const log = options.log ?? (() => {});
@@ -31,6 +39,7 @@ export const startScheduler = (options: SchedulerOptions): Scheduler => {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let currentPass: Promise<void> = Promise.resolve();
   let passes = 0;
+  let failedInARow = 0;
 
   const pass = async () => {
     for (const work of await options.collect()) {
@@ -54,12 +63,18 @@ export const startScheduler = (options: SchedulerOptions): Scheduler => {
   const loop = async () => {
     if (stopped) return;
     currentPass = pass()
-      .catch((error: Error) => log('pass failed', { error: error.message }))
+      .then(() => {
+        failedInARow = 0;
+      })
+      .catch((error: Error) => {
+        failedInARow += 1;
+        log('pass failed', { error: error.message, failedInARow });
+      })
       .finally(() => {
         passes += 1;
       });
     await currentPass;
-    if (!stopped) timer = setTimeout(loop, options.intervalMs);
+    if (!stopped) timer = setTimeout(loop, nextPassDelay(options.intervalMs, failedInARow));
   };
   void loop();
 

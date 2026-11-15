@@ -3,6 +3,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  claimLearningDecision,
   failIdleLearningRewrite,
   failOrphanedRuns,
   insertLearnings,
@@ -187,7 +188,9 @@ describe.skipIf(!url)('learner', () => {
       ]
     });
     const [stale] = await listLearnings(pool, seeded.projectId);
-    await requestLearningRewrite(pool, stale!.id);
+    // As an accept that found the edit no longer applies hands it back.
+    const claim = await claimLearningDecision(pool, seeded.projectId, stale!.id);
+    await requestLearningRewrite(pool, stale!.id, claim!);
     return { taskId, id: stale!.id };
   };
 

@@ -96,7 +96,7 @@
 
   const watch = () => {
     tab = 'agents';
-    for (const run of task?.runs ?? []) if (run.status === 'running') openRuns[run.id] = true;
+    for (const run of task?.runs ?? []) if (isActive(run)) openRuns[run.id] = true;
   };
 
   const sendComment = async (event: SubmitEvent) => {
