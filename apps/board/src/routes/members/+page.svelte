@@ -12,7 +12,7 @@
   import type { AccessEvent, MemberActivity } from '$lib/types';
 
   /** Fresh links by member id, shown until the page is left: the server keeps only their hash. */
-  let links = $state<Record<string, string>>({});
+  let links = $state<Record<string, { readonly url: string; readonly validDays: number }>>({});
   let busy = $state<string | null>(null);
 
   const linkText = (link: MemberActivity['link']): string => {
@@ -26,10 +26,10 @@
     if (!session.projectId) return;
     busy = member.id;
     try {
-      const { url } = await post<{ url: string }>(
+      const link = await post<{ url: string; validDays: number }>(
         `/api/projects/${session.projectId}/members/${member.id}/link`
       );
-      links = { ...links, [member.id]: url };
+      links = { ...links, [member.id]: link };
       await board.refresh();
     } catch (error) {
       toasts.show('error', (error as Error).message);
@@ -114,12 +114,13 @@
           {/if}
         </div>
         {#if links[member.id]}
+          {@const fresh = links[member.id]!}
           <div class="fresh">
-            <input class="field" readonly value={links[member.id]} aria-label="Invite link" />
-            <button class="btn sm" onclick={() => copy(links[member.id]!)}>
+            <input class="field" readonly value={fresh.url} aria-label="Invite link" />
+            <button class="btn sm" onclick={() => copy(fresh.url)}>
               <Copy size={14} />Copy
             </button>
-            <span class="muted">Valid 7 days, works once.</span>
+            <span class="muted">Valid {fresh.validDays} days, works once.</span>
           </div>
         {/if}
       </li>
