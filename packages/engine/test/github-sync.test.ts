@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { parseAgentOutput } from '@officina/core';
+import { CHECKLIST_LIMITS, INPUT_LIMITS, parseAgentOutput } from '@officina/core';
 import { checklistMarkdown } from '../src/github-sync';
 
 /** GitHub refuses a comment longer than this. */
@@ -12,16 +12,19 @@ describe('checklist comment', () => {
     const largest = parseAgentOutput('chooser', {
       userVisible: true,
       approval: { depth: 'test', rationale: 'Copy.' },
-      checklist: Array.from({ length: 30 }, () => 'x'.repeat(300)),
-      beforeAfter: Array.from({ length: 30 }, () => ({
-        key: pipes(120),
-        locale: pipes(35),
-        before: pipes(350),
-        after: pipes(350)
+      checklist: Array.from({ length: CHECKLIST_LIMITS.items }, () =>
+        'x'.repeat(CHECKLIST_LIMITS.item)
+      ),
+      beforeAfter: Array.from({ length: CHECKLIST_LIMITS.rows }, () => ({
+        key: pipes(CHECKLIST_LIMITS.row.key),
+        locale: pipes(CHECKLIST_LIMITS.row.locale),
+        before: pipes(CHECKLIST_LIMITS.row.before),
+        after: pipes(CHECKLIST_LIMITS.row.after)
       }))
     });
     if (!largest.ok) throw new Error(largest.errors.join());
-    const body = checklistMarkdown(largest.output, `task 1 (${'x'.repeat(200)})`)!;
+    const title = 'x'.repeat(INPUT_LIMITS.title.max);
+    const body = checklistMarkdown(largest.output, `task 1 (${title})`)!;
     expect(body.length).toBeLessThan(GITHUB_COMMENT_LIMIT);
   });
 });
