@@ -31,7 +31,7 @@ import {
   type RunnerRole
 } from '@officina/runner';
 import type { Pool } from 'pg';
-import { startScheduler, type Scheduler } from './scheduler';
+import { collectEachProject, startScheduler, type Scheduler } from './scheduler';
 import { setupAgents } from './setup';
 import { catchUpPullRequests } from './catch-up';
 
@@ -132,6 +132,59 @@ export const startEngine = async (input: {
     }
   }
 
+  /** One project's share of a pass; it may throw, and `collectEachProject` keeps the others going. */
+  const passProject = async (projectId: string) => {
+    const active = await listActiveTaskIds(input.pool, projectId);
+    // Before the due steps, so they follow the head taken in, and before the merge work below,
+    // which writes Officina's own status commit on the branch.
+    await adoptOutsidePushes(input.pool, input.github, active).catch((error: unknown) =>
+      input.log('outside push check failed', { projectId, error: (error as Error).message })
+    );
+    await forwardSettledComments(input.pool, input.github, active).catch((error: unknown) =>
+      input.log('bot comment forwarding failed', { projectId, error: (error as Error).message })
+    );
+    const { due } = await collectDueSteps(deps, projectId);
+    const unfinished = await finishVerifiedSpecs(
+      input.pool,
+      input.github,
+      active,
+      input.onBehalf
+    ).catch((error: unknown) => [{ error: (error as Error).message }]);
+    for (const failure of unfinished) {
+      input.log('spec status update failed', { projectId, ...failure });
+    }
+    // After the pass that may merge a pull request straight away, so that merge reaches its
+    // task in the same pass.
+    const uncaught = await catchUpPullRequests(
+      input.pool,
+      input.github,
+      await listActiveTaskIds(input.pool, projectId)
+    ).catch((error: unknown) => [{ error: (error as Error).message }]);
+    for (const failure of uncaught) {
+      input.log('pull request state catch-up failed', { projectId, ...failure });
+    }
+    const unopened = await openMissingPullRequests(
+      input.pool,
+      input.github,
+      await listActiveTaskIds(input.pool, projectId),
+      input.publicUrl
+    ).catch((error: unknown) => [{ error: (error as Error).message }]);
+    for (const failure of unopened) {
+      input.log('pull request catch-up failed', { projectId, ...failure });
+    }
+    await requestCopilotReviews(
+      input.pool,
+      await listActiveTaskIds(input.pool, projectId),
+      input.onBehalf
+    ).catch((error: unknown) =>
+      input.log('copilot review request failed', { projectId, error: (error as Error).message })
+    );
+    await cancelStaleAutoMerges(input.pool, input.github, projectId).catch((error: unknown) =>
+      input.log('auto-merge cancel failed', { projectId, error: (error as Error).message })
+    );
+    return due;
+  };
+
   let lastPurge = 0;
   return startScheduler({
     intervalMs: input.intervalMs,
@@ -148,58 +201,11 @@ export const startEngine = async (input: {
         return [];
       });
       await interruptSessions(input.agents, takenOver, input.log, 'taken over run stopped');
-      const due = [];
-      for (const projectId of await listSchedulableProjectIds(input.pool)) {
-        const active = await listActiveTaskIds(input.pool, projectId);
-        // Before the due steps, so they follow the head taken in, and before the merge work below,
-        // which writes Officina's own status commit on the branch.
-        await adoptOutsidePushes(input.pool, input.github, active).catch((error: unknown) =>
-          input.log('outside push check failed', { projectId, error: (error as Error).message })
-        );
-        await forwardSettledComments(input.pool, input.github, active).catch((error: unknown) =>
-          input.log('bot comment forwarding failed', { projectId, error: (error as Error).message })
-        );
-        due.push(...(await collectDueSteps(deps, projectId)).due);
-        const unfinished = await finishVerifiedSpecs(
-          input.pool,
-          input.github,
-          active,
-          input.onBehalf
-        ).catch((error: unknown) => [{ error: (error as Error).message }]);
-        for (const failure of unfinished) {
-          input.log('spec status update failed', { projectId, ...failure });
-        }
-        // After the pass that may merge a pull request straight away, so that merge reaches its
-        // task in the same pass.
-        const uncaught = await catchUpPullRequests(
-          input.pool,
-          input.github,
-          await listActiveTaskIds(input.pool, projectId)
-        ).catch((error: unknown) => [{ error: (error as Error).message }]);
-        for (const failure of uncaught) {
-          input.log('pull request state catch-up failed', { projectId, ...failure });
-        }
-        const unopened = await openMissingPullRequests(
-          input.pool,
-          input.github,
-          await listActiveTaskIds(input.pool, projectId),
-          input.publicUrl
-        ).catch((error: unknown) => [{ error: (error as Error).message }]);
-        for (const failure of unopened) {
-          input.log('pull request catch-up failed', { projectId, ...failure });
-        }
-        await requestCopilotReviews(
-          input.pool,
-          await listActiveTaskIds(input.pool, projectId),
-          input.onBehalf
-        ).catch((error: unknown) =>
-          input.log('copilot review request failed', { projectId, error: (error as Error).message })
-        );
-        await cancelStaleAutoMerges(input.pool, input.github, projectId).catch((error: unknown) =>
-          input.log('auto-merge cancel failed', { projectId, error: (error as Error).message })
-        );
-      }
-      return due;
+      return collectEachProject(
+        await listSchedulableProjectIds(input.pool),
+        passProject,
+        input.log
+      );
     },
     runStep: (work) => runAgentStep(deps, work.taskId, work.role as RunnerRole)
   });
