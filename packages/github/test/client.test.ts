@@ -795,4 +795,20 @@ describe('GitHub user authorization', () => {
     const list = authWith(() => json([])).auth.exchangeCode('x');
     await expect(list).rejects.toThrow(`GitHub 200 on ${TOKEN_PATH}: not JSON`);
   });
+
+  test('a token request carries a deadline, so a GitHub that never answers cannot hold a refresh', async () => {
+    const signals: (AbortSignal | null | undefined)[] = [];
+    const auth = createGitHubUserAuth({
+      clientId: 'Iv1.app',
+      clientSecret: 'app-secret',
+      redirectUri: 'https://officina.example/auth/github/callback',
+      fetch: (async (_url: string | URL | Request, init?: RequestInit) => {
+        signals.push(init?.signal);
+        return json({ access_token: 'ghu_access' });
+      }) as typeof fetch
+    });
+    await auth.refresh('ghr_refresh');
+    expect(signals[0]).toBeInstanceOf(AbortSignal);
+    expect(signals[0]?.aborted).toBe(false);
+  });
 });
