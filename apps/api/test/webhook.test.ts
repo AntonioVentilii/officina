@@ -230,7 +230,10 @@ describe.skipIf(!url)('api', () => {
     ]);
     const taskId = await createTaskInMerging(pool, seeded);
     await linkPullRequest(pool, taskId, 42);
-    const suite = (delivery: string, headSha: string) =>
+    const { number } = (
+      await pool.query<{ number: number }>('select number from tasks where id = $1', [taskId])
+    ).rows[0]!;
+    const suite = (delivery: string, headSha: string, branch = `officina/task-${number}`) =>
       deliver(checking, {
         event: 'check_suite',
         delivery,
@@ -239,6 +242,7 @@ describe.skipIf(!url)('api', () => {
           check_suite: {
             conclusion: 'failure',
             head_sha: headSha,
+            head_branch: branch,
             app: { name: 'GitHub Actions' },
             pull_requests: []
           },
@@ -250,6 +254,13 @@ describe.skipIf(!url)('api', () => {
       status: 'applied',
       outcomes: []
     });
+    // So is a suite on the task's head that ran on another branch holding the same commit.
+    expect(await (await suite('d-0', 'abc', 'copy-of-the-head')).json()).toEqual({
+      status: 'applied',
+      outcomes: []
+    });
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({ stage: 'merging' });
+    expect(calls).toEqual([]);
     const response = await suite('d-2', 'abc');
     expect(await response.json()).toEqual({ status: 'applied', outcomes: [{ taskId, ok: true }] });
     const stored = await loadTask(pool, taskId);
@@ -481,6 +492,61 @@ describe.skipIf(!url)('api', () => {
     expect(notes.rows[0]?.notes).toContain('`src/a.ts:3`: Typo in the key.');
   });
 
+  test('a person asking for changes steers the work only with write access to the repository', async () => {
+    const asked: unknown[] = [];
+    const reviewing = createApp({
+      pool,
+      webhookSecret: SECRET,
+      github: {
+        fileContent: async () => null,
+        reviewComments: async () => [{ path: 'src/a.ts', line: 3, body: 'Rename this.' }],
+        canWrite: async (ref) => {
+          asked.push(ref);
+          return ref.login === 'writer';
+        }
+      }
+    });
+    await pool.query('update projects set github_installation_id = 99 where id = $1', [
+      seeded.projectId
+    ]);
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    const review = async (delivery: string, login: string, association: string) =>
+      (
+        await deliver(reviewing, {
+          event: 'pull_request_review',
+          delivery,
+          payload: {
+            action: 'submitted',
+            review: {
+              id: 6,
+              state: 'changes_requested',
+              body: 'Please rename.',
+              commit_id: 'abc',
+              author_association: association,
+              user: { login, type: 'User' }
+            },
+            pull_request: { number: 42 },
+            repository
+          }
+        })
+      ).json();
+
+    // An organization member without access to the repository, or a collaborator who only reads.
+    expect(await review('p-1', 'member', 'MEMBER')).toEqual({ status: 'applied', outcomes: [] });
+    expect(await review('p-2', 'reader', 'COLLABORATOR')).toEqual({
+      status: 'applied',
+      outcomes: []
+    });
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({ stage: 'merging' });
+    expect(await review('p-3', 'writer', 'COLLABORATOR')).toEqual({
+      status: 'applied',
+      outcomes: [{ taskId, ok: true }]
+    });
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({ stage: 'building' });
+    expect(asked).toContainEqual({ installationId: 99, repo: 'ViciApp/vici-app', login: 'member' });
+  });
+
   test("a collaborator's request for changes sends merging work back with the review and stops auto-merge", async () => {
     const calls: string[] = [];
     const reviewing = createApp({
@@ -491,7 +557,8 @@ describe.skipIf(!url)('api', () => {
         reviewComments: async () => [],
         cancelAutoMerge: async () => {
           calls.push('cancelAutoMerge');
-        }
+        },
+        canWrite: async () => true
       }
     });
     await pool.query('update projects set github_installation_id = 99 where id = $1', [

@@ -1,4 +1,10 @@
-import { statusFailure, suiteFailure, type CheckSuite, type CommitStatus } from './checks';
+import {
+  statusFailure,
+  suiteBranch,
+  suiteFailure,
+  type CheckSuite,
+  type CommitStatus
+} from './checks';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
 /** Checks GitHub's `X-Hub-Signature-256` header against the raw request body, in constant time. */
@@ -50,10 +56,16 @@ export type WebhookAction =
       readonly updatedAt: string | null;
     }
   | {
-      /** A check suite or a commit status failed on a commit, whichever branch holds it. */
+      /** A check suite or a commit status failed on a commit. */
       readonly kind: 'checks_failed';
       readonly repo: string;
       readonly headSha: string;
+      /**
+       * The repository's own branch a check suite ran on, which must be the task's; `null` for a
+       * commit status, which names only the commit and only someone who may write to the
+       * repository can set.
+       */
+      readonly branch: string | null;
       readonly details: string;
     };
 
@@ -126,7 +138,8 @@ export const parseWebhookEvent = (event: string | null, payload: unknown): Webho
     if (!body.pull_request?.number) return null;
     const bot = review.user.type === 'Bot';
     // Anyone on GitHub can review a pull request on a public repository, and a review becomes the
-    // builder's next brief. Only people who already hold standing on the repository may steer it; a
+    // builder's next brief. Only people who already hold standing on the repository may steer it
+    // (the association is a first filter; write access is checked before a review is forwarded); a
     // bot can only review where an admin installed it.
     if (!bot && !TRUSTED_ASSOCIATIONS.has(review.author_association ?? '')) return null;
     return {
@@ -170,8 +183,8 @@ export const parseWebhookEvent = (event: string | null, payload: unknown): Webho
     };
   }
 
-  // Found by the commit rather than by pull request: a suite started by a push to the task branch
-  // lists no pull request, and a commit status never does.
+  // Found by the commit and its branch rather than by pull request: a suite started by a push to
+  // the task branch lists no pull request, and a commit status never does.
   if (event === 'check_suite') {
     const body = payload as {
       action?: string;
@@ -179,14 +192,19 @@ export const parseWebhookEvent = (event: string | null, payload: unknown): Webho
     };
     const suite = body.check_suite;
     if (body.action !== 'completed' || !suite?.head_sha) return null;
+    const branch = suiteBranch(suite);
     const details = suiteFailure(suite);
-    return details ? { kind: 'checks_failed', repo, headSha: suite.head_sha, details } : null;
+    return details && branch
+      ? { kind: 'checks_failed', repo, headSha: suite.head_sha, branch, details }
+      : null;
   }
 
   if (event === 'status') {
     const body = payload as CommitStatus & { sha?: string };
     const details = body.sha ? statusFailure(body) : null;
-    return details && body.sha ? { kind: 'checks_failed', repo, headSha: body.sha, details } : null;
+    return details && body.sha
+      ? { kind: 'checks_failed', repo, headSha: body.sha, branch: null, details }
+      : null;
   }
 
   return null;

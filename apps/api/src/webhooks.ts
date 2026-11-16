@@ -1,4 +1,4 @@
-import { ENGINE, parseProjectConfigYaml } from '@officina/core';
+import { branchForTask, ENGINE, parseProjectConfigYaml } from '@officina/core';
 import {
   applyCommand,
   findProjectsByRepo,
@@ -40,7 +40,7 @@ export type WebhookOutcome =
 
 /** What webhooks need from GitHub: configs on push, and review comments and auto-merge on reviews. */
 export type ConfigReader = Pick<GitHubClient, 'fileContent'> &
-  Partial<Pick<GitHubClient, 'reviewComments' | 'cancelAutoMerge'>>;
+  Partial<Pick<GitHubClient, 'reviewComments' | 'cancelAutoMerge' | 'canWrite'>>;
 
 /**
  * A push to a project's default branch that touches its config refreshes the stored config. An
@@ -155,6 +155,10 @@ const handleReview = async (
   if (taskIds.length === 0) return [];
   const installationId = await installationOf(pool, action.repo);
   if (!installationId) return [];
+  // A person steers the work only with write access to the repository: GitHub also calls a member
+  // of the owning organization, or a collaborator who may only read, a member or a collaborator.
+  const person = { installationId, repo: action.repo, login: action.by };
+  if (!action.bot && !(await github.canWrite?.(person))) return [];
   const outcomes: WebhookOutcome[] = [];
   for (const taskId of taskIds) {
     const review = await reviewNotes(
@@ -214,7 +218,8 @@ const handleComment = async (
 
 /**
  * A failed check suite or commit status on a task's head sends the work back to the builder with
- * what failed, from review up to merging, so nobody checks or merges a head with red checks.
+ * what failed, from review up to merging, so nobody checks or merges a head with red checks. A
+ * suite counts only when it ran on the task's own branch: the same commit can sit on any other.
  */
 const handleChecksFailed = async (
   pool: Pool,
@@ -224,6 +229,9 @@ const handleChecksFailed = async (
   const installationId = await installationOf(pool, action.repo);
   const outcomes: WebhookOutcome[] = [];
   for (const taskId of await findTasksByCommit(pool, action.repo, action.headSha)) {
+    const context = await loadTaskContext(pool, taskId);
+    if (!context || (action.branch !== null && action.branch !== branchForTask(context.number)))
+      continue;
     const result = await applyCommand(pool, {
       taskId,
       command: {
@@ -234,7 +242,7 @@ const handleChecksFailed = async (
       actor: ENGINE
     });
     outcomes.push(result.ok ? { taskId, ok: true } : { taskId, ok: false, error: result.error });
-    const prNumber = (await loadTaskContext(pool, taskId))?.pullRequest;
+    const prNumber = context.pullRequest;
     if (installationId && prNumber)
       await stopAutoMerge(
         pool,

@@ -196,12 +196,16 @@ export type AdoptPort = PushFactsPort &
 const afterAdoption = async (
   pool: Pool,
   github: AdoptPort,
-  input: { taskId: string; ref: RepoRef; pullRequest: number; headSha: string },
+  input: { taskId: string; ref: RepoRef; pullRequest: number; headSha: string; branch: string },
   adopted: ApplyResult
 ) => {
   await stopAutoMergeOnLeaving(pool, github, input, adopted);
   if (!adopted.ok || adopted.task.stage !== 'reviewing') return;
-  const failures = await github.failedChecks({ ...input.ref, sha: input.headSha });
+  const failures = await github.failedChecks({
+    ...input.ref,
+    sha: input.headSha,
+    branch: input.branch
+  });
   if (failures.length === 0) return;
   await applyCommand(pool, {
     taskId: input.taskId,
@@ -260,7 +264,11 @@ const carryHead = async (
     headSha: input.headSha
   });
   if (!carried) return;
-  const failures = await github.failedChecks({ ...ref, sha: input.headSha });
+  const failures = await github.failedChecks({
+    ...ref,
+    sha: input.headSha,
+    branch: branchForTask(context.number)
+  });
   if (failures.length === 0) return;
   const result = await applyCommand(pool, {
     taskId: task.id,
@@ -298,9 +306,10 @@ export const adoptOutsidePushes = async (
     }
     const config = parseProjectConfig(context.rawConfig);
     if (!config.ok) continue;
+    const branch = branchForTask(context.number);
     const head = await readPush(github, ref, {
       base: context.defaultBranch,
-      branch: branchForTask(context.number),
+      branch,
       catalogs: config.config.docs.standards.catalogs
     });
     if (head.headSha === expected) continue;
@@ -313,7 +322,7 @@ export const adoptOutsidePushes = async (
     await afterAdoption(
       pool,
       github,
-      { taskId, ref, pullRequest: context.pullRequest, headSha: head.headSha },
+      { taskId, ref, pullRequest: context.pullRequest, headSha: head.headSha, branch },
       adopted
     );
   }

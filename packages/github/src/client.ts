@@ -86,6 +86,9 @@ interface CachedToken {
 
 const REFRESH_MARGIN_MS = 5 * 60 * 1000;
 
+/** The repository permissions that let a person push; GitHub reports `maintain` as `write`. */
+const WRITE_PERMISSIONS: ReadonlySet<string> = new Set(['admin', 'write']);
+
 export const createGitHubClient = (options: GitHubClientOptions) => {
   const http = options.fetch ?? fetch;
   const now = options.now ?? Date.now;
@@ -510,6 +513,25 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     }));
   };
 
+  /**
+   * Whether a person may write to the repository. A member of the owning organization or a
+   * collaborator may hold no more than read or triage there, and GitHub answers 404 for someone it
+   * does not know as a collaborator.
+   */
+  const canWrite = async (ref: RepoRef & { readonly login: string }): Promise<boolean> => {
+    const token = await installationToken(ref);
+    try {
+      const { permission } = await request<{ permission?: string }>(
+        `/repos/${ref.repo}/collaborators/${encodeURIComponent(ref.login)}/permission`,
+        { token }
+      );
+      return WRITE_PERMISSIONS.has(permission ?? '');
+    } catch (error) {
+      if (error instanceof GitHubError && error.status === 404) return false;
+      throw error;
+    }
+  };
+
   const graphql = async <T>(ref: RepoRef, query: string, variables: Record<string, unknown>) => {
     const token = await installationToken(ref);
     const response = await request<{ data?: T; errors?: { message: string }[] }>('/graphql', {
@@ -529,10 +551,10 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
       )
     );
 
-  /** What already failed on a commit (`failuresOn`). */
-  const failedChecks = async (ref: RepoRef & { readonly sha: string }) => {
+  /** What already failed on a commit of a branch (`failuresOn`). */
+  const failedChecks = async (ref: RepoRef & { readonly sha: string; readonly branch: string }) => {
     const token = await installationToken(ref);
-    return failuresOn((path) => request(path, { token }), ref.repo, ref.sha);
+    return failuresOn((path) => request(path, { token }), ref.repo, ref);
   };
 
   /**
@@ -642,6 +664,7 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     closePullRequestsFrom,
     commentOnIssue,
     reviewComments,
+    canWrite,
     mergeWhenReady,
     pullRequest,
     failedChecks,
