@@ -396,6 +396,8 @@ export const actOnTaskAs = async (
 export interface HandInInput {
   readonly number: number;
   readonly prTitle: string;
+  /** Required in the sections of the project's pull request template when it names one. */
+  readonly prBody?: string | undefined;
   readonly verified: readonly string[];
   readonly notVerified: readonly string[];
 }
@@ -419,7 +421,7 @@ export const handInAs = async (
     );
     if (result.ok) return { stage: result.stage, pullRequest: result.pullRequest };
     throw new TaskCommandError(
-      result.error === 'bad_title'
+      result.error === 'bad_pull_request'
         ? result.problems.join('; ')
         : result.error === 'not_installed'
           ? 'the GitHub App is not installed on this repository'

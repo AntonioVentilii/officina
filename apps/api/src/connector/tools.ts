@@ -485,6 +485,15 @@ After it is opened, tell the person the task link and that an agent may ask them
         .min(INPUT_LIMITS.prTitle.min)
         .max(INPUT_LIMITS.prTitle.max)
         .describe("The pull request title, in the repository's own format."),
+      pr_body: z
+        .string()
+        .trim()
+        .min(1)
+        .max(INPUT_LIMITS.prBody)
+        .optional()
+        .describe(
+          'The pull request body, in Markdown, only when the project names a pull request template (`docs.pr_template` in `.github/officina.yml`), and then required: write it in that template, keeping every heading. Officina adds the link to the task after it.'
+        ),
       verified: checksSchema
         .optional()
         .describe('What you checked, one item each, for example the commands you ran.'),
@@ -499,6 +508,7 @@ After it is opened, tell the person the task link and that an agent may ask them
         number: input.number,
         publicUrl: context.publicUrl,
         prTitle: input.pr_title,
+        prBody: input.pr_body,
         verified: input.verified ?? [],
         notVerified: input.not_verified ?? []
       });
