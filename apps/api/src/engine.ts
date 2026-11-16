@@ -204,6 +204,9 @@ export const startEngine = async (input: {
   let lastPurge = 0;
   const scheduler = startScheduler({
     intervalMs: input.intervalMs,
+    // Every sub-step of a pass catches its own errors, so a rate limit never fails the pass: the
+    // App client remembers when it resets, and no pass calls GitHub again before then.
+    resumeAt: input.github.rateLimitedUntil,
     log: input.log,
     collect: async () => {
       // Hourly is plenty: expired rows are already refused, they only take up space.

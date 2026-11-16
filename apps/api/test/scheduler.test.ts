@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { collectEachProject, nextPassDelay, startScheduler, type DueWork } from '../src';
+import {
+  collectEachProject,
+  heldPassDelay,
+  nextPassDelay,
+  startScheduler,
+  type DueWork
+} from '../src';
 
 const waitFor = async (condition: () => boolean, timeoutMs = 2000) => {
   const deadline = Date.now() + timeoutMs;
@@ -91,6 +97,34 @@ describe('scheduler', () => {
     await waitFor(() => failures.length === 5);
     await scheduler.stop();
     expect(failures).toEqual([1, 2, 3, 4, 1]);
+  });
+
+  test('a pass held until a time waits for it, then passes run at the interval again', async () => {
+    let resumeAt: number | null = Date.now() + 80;
+    const logged: string[] = [];
+    const scheduler = startScheduler({
+      intervalMs: 5,
+      collect: async () => [],
+      runStep: async () => {},
+      resumeAt: () => resumeAt,
+      log: (message) => logged.push(message)
+    });
+    // One pass, then a wait of 80 ms where a 5 ms interval alone would give a dozen.
+    await Bun.sleep(50);
+    expect(scheduler.passes()).toBe(1);
+    expect(logged).toEqual(['next pass held']);
+    resumeAt = null;
+    await waitFor(() => scheduler.passes() >= 5);
+    await scheduler.stop();
+  });
+
+  test('the wait before the next pass lasts until the time it is held to, at most an hour', () => {
+    const now = 1_000_000;
+    expect(heldPassDelay(15_000, null, now)).toBe(15_000);
+    expect(heldPassDelay(15_000, now + 5_000, now)).toBe(15_000);
+    expect(heldPassDelay(15_000, now + 120_000, now)).toBe(120_000);
+    expect(heldPassDelay(15_000, now - 1_000, now)).toBe(15_000);
+    expect(heldPassDelay(15_000, now + 24 * 60 * 60 * 1000, now)).toBe(60 * 60 * 1000);
   });
 
   test('the wait after failed passes never grows past five minutes', () => {

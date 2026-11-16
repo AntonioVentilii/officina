@@ -397,6 +397,40 @@ describe('GitHub client', () => {
     await expect(failure).rejects.toThrow('GitHub 403');
   });
 
+  test('remembers until when a rate limit refuses the App, and forgets it once that time passes', async () => {
+    let nowMs = Date.parse('2026-09-16T12:00:00Z');
+    const resetAt = Date.parse('2026-09-16T12:10:00Z');
+    const { fetchImpl } = fakeGitHub({
+      'POST /app/installations/99/access_tokens': tokenRoute('2099-01-01T00:00:00Z'),
+      'POST /repos/ViciApp/vici-app/issues/3/comments': () =>
+        new Response('API rate limit exceeded', {
+          status: 403,
+          headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(resetAt / 1000) }
+        }),
+      'POST /repos/ViciApp/vici-app/issues/4/comments': () => json({ message: 'nope' }, 403)
+    });
+    const client = createGitHubClient({
+      appId: '1',
+      privateKeyPem,
+      fetch: fetchImpl,
+      now: () => nowMs
+    });
+    expect(client.rateLimitedUntil()).toBeNull();
+
+    // A refusal for a missing right is no rate limit.
+    await expect(client.commentOnIssue({ ...ref, issueNumber: 4, body: 'hi' })).rejects.toThrow(
+      'GitHub 403'
+    );
+    expect(client.rateLimitedUntil()).toBeNull();
+
+    await expect(
+      client.commentOnIssue({ ...ref, issueNumber: 3, body: 'hi' })
+    ).rejects.toMatchObject({ resetAt });
+    expect(client.rateLimitedUntil()).toBe(resetAt);
+    nowMs = resetAt;
+    expect(client.rateLimitedUntil()).toBeNull();
+  });
+
   test('opening a pull request again returns the one the first attempt opened', async () => {
     const opened: { number: number; html_url: string }[] = [];
     const { fetchImpl, calls } = fakeGitHub({
