@@ -138,7 +138,8 @@ export const parseWebhookEvent = (event: string | null, payload: unknown): Webho
     if (!body.pull_request?.number) return null;
     const bot = review.user.type === 'Bot';
     // Anyone on GitHub can review a pull request on a public repository, and a review becomes the
-    // builder's next brief. Only people who already hold standing on the repository may steer it; a
+    // builder's next brief. Only people who already hold standing on the repository may steer it
+    // (the association is a first filter; write access is checked before a review is forwarded); a
     // bot can only review where an admin installed it.
     if (!bot && !TRUSTED_ASSOCIATIONS.has(review.author_association ?? '')) return null;
     return {
