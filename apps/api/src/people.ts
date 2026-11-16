@@ -221,7 +221,9 @@ const ACCESS_SENTENCES: Readonly<Record<AccessEventType, (d: Detail, by: string)
   github_unlinked: (d) =>
     d.reason === 'refresh_lost'
       ? `lost GitHub @${d.login}: its renewed token could not be kept, so it must reconnect`
-      : `disconnected GitHub @${d.login}`,
+      : d.reason === 'refresh_refused'
+        ? `lost GitHub @${d.login}: GitHub no longer accepts its token, so it must reconnect`
+        : `disconnected GitHub @${d.login}`,
   connector_allowed: (d) => `allowed ${d.client} to use Officina as them`,
   connector_refused: (d) => `refused ${d.client}`,
   connector_used: (d) => `used Officina from ${d.client}`,
