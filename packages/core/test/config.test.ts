@@ -211,13 +211,9 @@ describe('project config', () => {
     });
   });
 
-  test('still accepts docs.pr_template and setup, which nothing uses yet', () => {
+  test('still accepts setup, which nothing uses yet', () => {
     expect(
-      parseProjectConfig({
-        version: 1,
-        docs: { entry: 'AGENTS.md', pr_template: '.github/pull_request_template.md' },
-        setup: ['npm ci']
-      }).ok
+      parseProjectConfig({ version: 1, docs: { entry: 'AGENTS.md' }, setup: ['npm ci'] }).ok
     ).toBe(true);
   });
 
