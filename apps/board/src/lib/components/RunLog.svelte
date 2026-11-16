@@ -83,7 +83,7 @@
   });
 
   const readPage = async () => {
-    const page = await get<{ entries: LogEntry[]; cursor: string }>(
+    const page = await get<{ entries: LogEntry[]; cursor: string; more: boolean }>(
       `/api/runs/${run.id}/log?after=${cursor}`
     );
     if (page.entries.length) entries = [...entries, ...page.entries];
@@ -98,7 +98,7 @@
       });
     }
     // A page is capped server-side; keep reading until caught up.
-    return page.entries.length >= 400;
+    return page.more;
   };
 
   const load = async (): Promise<void> => {
