@@ -4,6 +4,7 @@
   import { goto } from '$app/navigation';
   import { ApiError, get, post } from '$lib/api';
   import { ago, dateTime, money } from '$lib/format';
+  import { inertAround } from '$lib/inert';
   import { STAGE_LABELS } from '$lib/stages';
   import { board } from '$lib/state/board.svelte';
   import { clock } from '$lib/state/clock.svelte';
@@ -66,7 +67,21 @@
     });
   });
 
-  const close = () => void goto('/', { noScroll: true, keepFocus: true });
+  // The board is drawn again on the way back, so focus returns to this task's card, which opened it.
+  const close = () =>
+    void goto('/', { noScroll: true, keepFocus: true }).then(() =>
+      document.querySelector<HTMLElement>(`a[href="/tasks/${number}"]`)?.focus()
+    );
+
+  let layer: HTMLDivElement | undefined = $state();
+  let dialog: HTMLDivElement | undefined = $state();
+
+  // A modal dialog: focus moves into it, and everything behind it is inert while it is open.
+  $effect(() => {
+    if (!layer) return;
+    dialog?.focus();
+    return inertAround(layer);
+  });
 
   const onKey = (event: KeyboardEvent) => {
     if (event.key === 'Escape' && !(event.target instanceof HTMLTextAreaElement)) close();
@@ -123,214 +138,230 @@
 
 <svelte:window onkeydown={onKey} />
 
-<div class="backdrop" onclick={close} aria-hidden="true"></div>
+<div class="layer" bind:this={layer}>
+  <div class="backdrop" onclick={close} aria-hidden="true"></div>
 
-<aside class="drawer" aria-label="Task {number}">
-  {#if missing}
-    <div class="missing">
-      <p>Task {number} does not exist in this project.</p>
-      <button class="btn" onclick={close}>Back to the board</button>
-    </div>
-  {:else if !task}
-    <div class="loading">
-      <div class="sk w30"></div>
-      <div class="sk w80 tall"></div>
-      <div class="sk w100"></div>
-    </div>
-  {:else}
-    <header>
-      <div class="bar">
-        <span class="number caps num">#{task.number}</span>
-        <span class="pill">{STAGE_LABELS[task.stage]}</span>
-        <LaneChip lane={task.lane} showStandard named />
-        <span class="spacer"></span>
-        {#if session.technical && task.pullRequestUrl}
-          <a class="btn sm" href={task.pullRequestUrl} target="_blank" rel="noopener noreferrer">
-            <GitPullRequest size={13} />#{task.pullRequest}<ExternalLink size={11} />
-          </a>
-        {/if}
-        <button class="btn ghost icon" onclick={close} aria-label="Close"><X size={17} /></button>
+  <div
+    class="drawer"
+    bind:this={dialog}
+    role="dialog"
+    aria-modal="true"
+    aria-label="Task {number}"
+    aria-labelledby={task ? `task-${number}-title` : undefined}
+    tabindex="-1"
+  >
+    {#if missing}
+      <div class="missing">
+        <p>Task {number} does not exist in this project.</p>
+        <button class="btn" onclick={close}>Back to the board</button>
       </div>
-      <h1>{task.title}</h1>
-      <div class="track"><StageTrack stage={task.stage} working={task.running.length > 0} /></div>
-    </header>
-
-    <div class="scroll">
-      <div class="next">
-        <ActionPanel {task} onchanged={onChanged} onwatch={watch} />
+    {:else if !task}
+      <div class="loading">
+        <div class="sk w30"></div>
+        <div class="sk w80 tall"></div>
+        <div class="sk w100"></div>
       </div>
-
-      <nav class="tabs" aria-label="Task sections">
-        {#each tabs as [id, label, badge] (id)}
-          <button
-            class:on={tab === id}
-            onclick={() => (tab = id)}
-            aria-current={tab === id ? 'page' : undefined}
-          >
-            {label}{#if badge}<span class="count num">{badge}</span>{/if}
-          </button>
-        {/each}
-      </nav>
-
-      <div class="content">
-        {#if tab === 'overview'}
-          {#if task.request}
-            <section>
-              <h3 class="caps">Request</h3>
-              <div class="request">
-                <div class="who">
-                  <MemberAvatar name={task.request.author} size={22} />
-                  <strong>{task.request.author}</strong>
-                  <time class="faint" title={dateTime(task.request.at)}
-                    >{ago(task.request.at, clock.now)}</time
-                  >
-                </div>
-                <Markdown source={task.request.body} />
-              </div>
-            </section>
+    {:else}
+      <header>
+        <div class="bar">
+          <span class="number caps num">#{task.number}</span>
+          <span class="pill">{STAGE_LABELS[task.stage]}</span>
+          <LaneChip lane={task.lane} showStandard named />
+          <span class="spacer"></span>
+          {#if session.technical && task.pullRequestUrl}
+            <a class="btn sm" href={task.pullRequestUrl} target="_blank" rel="noopener noreferrer">
+              <GitPullRequest size={13} />#{task.pullRequest}<ExternalLink size={11} />
+            </a>
           {/if}
+          <button class="btn ghost icon" onclick={close} aria-label="Close"><X size={17} /></button>
+        </div>
+        <h1 id="task-{number}-title">{task.title}</h1>
+        <div class="track"><StageTrack stage={task.stage} working={task.running.length > 0} /></div>
+      </header>
 
-          <section>
-            <h3 class="caps">People</h3>
-            <TaskPeople people={task.people} guards={task.guards} />
-          </section>
+      <div class="scroll">
+        <div class="next">
+          <ActionPanel {task} onchanged={onChanged} onwatch={watch} />
+        </div>
 
-          {#if task.checklist?.checklist?.length && (task.stage === 'verifying' || session.technical)}
-            <section>
-              <h3 class="caps">What to check</h3>
-              <Checklist
-                items={task.checklist.checklist}
-                beforeAfter={task.checklist.beforeAfter ?? []}
-                storageKey="officina.check.{session.projectId}.{task.number}.{task.headSha}"
-              />
-            </section>
-          {/if}
+        <nav class="tabs" aria-label="Task sections">
+          {#each tabs as [id, label, badge] (id)}
+            <button
+              class:on={tab === id}
+              onclick={() => (tab = id)}
+              aria-current={tab === id ? 'page' : undefined}
+            >
+              {label}{#if badge}<span class="count num">{badge}</span>{/if}
+            </button>
+          {/each}
+        </nav>
 
-          {#if task.plan}
-            <details class="more">
-              <summary class="caps">Who approves, and why</summary>
-              <ApprovalPlan plan={task.plan} />
-            </details>
-          {/if}
-
-          {#if session.technical && learned.length}
-            <section>
-              <h3 class="caps">What Officina learned from it</h3>
-              <div class="learned">
-                {#each learned as learning (learning.id)}
-                  <LearningCard {learning} compact />
-                {/each}
-              </div>
-            </section>
-          {/if}
-
-          <details class="more">
-            <summary class="caps">Details</summary>
-            <dl class="facts">
-              <dt>Opened</dt>
-              <dd title={dateTime(task.createdAt)}>{ago(task.createdAt, clock.now)}</dd>
-              <dt>In this stage</dt>
-              <dd>since {ago(task.stageSince, clock.now)}</dd>
-              <dt>Risk</dt>
-              <dd><LaneChip lane={task.lane} showStandard named /></dd>
-              <dt>Changes what people see</dt>
-              <dd>{task.userVisible ? 'Yes' : 'No'}</dd>
-              {#if task.pullRequestUrl}
-                <dt>Pull request</dt>
-                <dd>
-                  <a
-                    class="link"
-                    href={task.pullRequestUrl}
-                    target="_blank"
-                    rel="noopener noreferrer">#{task.pullRequest} on GitHub</a
-                  >
-                </dd>
-              {/if}
-              {#if session.technical}
-                <dt>Agent cost</dt>
-                <dd class="num">{money(cost) || '$0.00'}</dd>
-              {/if}
-              {#if task.fixRounds}
-                <dt>Fix rounds</dt>
-                <dd>{task.fixRounds}</dd>
-              {/if}
-              {#if task.headSha && task.repo}
-                <dt>Head commit</dt>
-                <dd>
-                  <a
-                    class="mono link"
-                    href="https://github.com/{task.repo}/commit/{task.headSha}"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    {task.headSha.slice(0, 7)}
-                  </a>
-                </dd>
-              {/if}
-            </dl>
-          </details>
-        {:else if tab === 'spec'}
-          {#if spec}
-            <div class="spec-head">
-              {#if task.specs.length > 1}
-                <div class="versions">
-                  {#each task.specs as item (item.version)}
-                    <button
-                      class:on={item.version === spec.version}
-                      onclick={() => (specVersion = item.version)}
+        <div class="content">
+          {#if tab === 'overview'}
+            {#if task.request}
+              <section>
+                <h3 class="caps">Request</h3>
+                <div class="request">
+                  <div class="who">
+                    <MemberAvatar name={task.request.author} size={22} />
+                    <strong>{task.request.author}</strong>
+                    <time class="faint" title={dateTime(task.request.at)}
+                      >{ago(task.request.at, clock.now)}</time
                     >
-                      v{item.version}
-                    </button>
+                  </div>
+                  <Markdown source={task.request.body} />
+                </div>
+              </section>
+            {/if}
+
+            <section>
+              <h3 class="caps">People</h3>
+              <TaskPeople people={task.people} guards={task.guards} />
+            </section>
+
+            {#if task.checklist?.checklist?.length && (task.stage === 'verifying' || session.technical)}
+              <section>
+                <h3 class="caps">What to check</h3>
+                <Checklist
+                  items={task.checklist.checklist}
+                  beforeAfter={task.checklist.beforeAfter ?? []}
+                  storageKey="officina.check.{session.projectId}.{task.number}.{task.headSha}"
+                />
+              </section>
+            {/if}
+
+            {#if task.plan}
+              <details class="more">
+                <summary class="caps">Who approves, and why</summary>
+                <ApprovalPlan plan={task.plan} />
+              </details>
+            {/if}
+
+            {#if session.technical && learned.length}
+              <section>
+                <h3 class="caps">What Officina learned from it</h3>
+                <div class="learned">
+                  {#each learned as learning (learning.id)}
+                    <LearningCard {learning} compact />
                   {/each}
                 </div>
-              {/if}
-              <span class="faint"
-                >Version {spec.version} by {spec.author}, {ago(spec.at, clock.now)}</span
-              >
-            </div>
-            <article class="spec"><Markdown source={spec.body} /></article>
-          {:else}
-            <p class="empty">No plan yet. An agent writes one once the request is accepted.</p>
-          {/if}
-        {:else if tab === 'agents'}
-          {#if task.runs.length}
-            <div class="runs">
-              {#each [...task.runs].reverse() as run (run.id)}
-                <RunRow
-                  {run}
-                  bind:open={() => openRuns[run.id] ?? false, (value) => (openRuns[run.id] = value)}
-                />
-              {/each}
-            </div>
-          {:else}
-            <p class="empty">No agent has worked on this task yet.</p>
-          {/if}
-        {:else}
-          <Timeline events={task.events} comments={task.comments} />
-          {#if canComment}
-            <form class="composer" onsubmit={sendComment}>
-              <textarea
-                class="field"
-                bind:value={comment}
-                rows="3"
-                placeholder="Add a comment or context."
-                onkeydown={(event) => {
-                  if (event.key === 'Enter' && (event.metaKey || event.ctrlKey))
-                    event.currentTarget.form?.requestSubmit();
-                }}></textarea>
-              <div class="composer-bar">
-                <span class="faint">⌘ Enter to send</span>
-                <button class="btn primary" disabled={sending || !comment.trim()}>Comment</button>
+              </section>
+            {/if}
+
+            <details class="more">
+              <summary class="caps">Details</summary>
+              <dl class="facts">
+                <dt>Opened</dt>
+                <dd title={dateTime(task.createdAt)}>{ago(task.createdAt, clock.now)}</dd>
+                <dt>In this stage</dt>
+                <dd>since {ago(task.stageSince, clock.now)}</dd>
+                <dt>Risk</dt>
+                <dd><LaneChip lane={task.lane} showStandard named /></dd>
+                <dt>Changes what people see</dt>
+                <dd>{task.userVisible ? 'Yes' : 'No'}</dd>
+                {#if task.pullRequestUrl}
+                  <dt>Pull request</dt>
+                  <dd>
+                    <a
+                      class="link"
+                      href={task.pullRequestUrl}
+                      target="_blank"
+                      rel="noopener noreferrer">#{task.pullRequest} on GitHub</a
+                    >
+                  </dd>
+                {/if}
+                {#if session.technical}
+                  <dt>Agent cost</dt>
+                  <dd class="num">{money(cost) || '$0.00'}</dd>
+                {/if}
+                {#if task.fixRounds}
+                  <dt>Fix rounds</dt>
+                  <dd>{task.fixRounds}</dd>
+                {/if}
+                {#if task.headSha && task.repo}
+                  <dt>Head commit</dt>
+                  <dd>
+                    <a
+                      class="mono link"
+                      href="https://github.com/{task.repo}/commit/{task.headSha}"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      {task.headSha.slice(0, 7)}
+                    </a>
+                  </dd>
+                {/if}
+              </dl>
+            </details>
+          {:else if tab === 'spec'}
+            {#if spec}
+              <div class="spec-head">
+                {#if task.specs.length > 1}
+                  <div class="versions">
+                    {#each task.specs as item (item.version)}
+                      <button
+                        class:on={item.version === spec.version}
+                        onclick={() => (specVersion = item.version)}
+                      >
+                        v{item.version}
+                      </button>
+                    {/each}
+                  </div>
+                {/if}
+                <span class="faint"
+                  >Version {spec.version} by {spec.author}, {ago(spec.at, clock.now)}</span
+                >
               </div>
-            </form>
+              <article class="spec"><Markdown source={spec.body} /></article>
+            {:else}
+              <p class="empty">No plan yet. An agent writes one once the request is accepted.</p>
+            {/if}
+          {:else if tab === 'agents'}
+            {#if task.runs.length}
+              <div class="runs">
+                {#each [...task.runs].reverse() as run (run.id)}
+                  <RunRow
+                    {run}
+                    bind:open={
+                      () => openRuns[run.id] ?? false, (value) => (openRuns[run.id] = value)
+                    }
+                  />
+                {/each}
+              </div>
+            {:else}
+              <p class="empty">No agent has worked on this task yet.</p>
+            {/if}
+          {:else}
+            <Timeline events={task.events} comments={task.comments} />
+            {#if canComment}
+              <form class="composer" onsubmit={sendComment}>
+                <textarea
+                  class="field"
+                  bind:value={comment}
+                  rows="3"
+                  placeholder="Add a comment or context."
+                  onkeydown={(event) => {
+                    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey))
+                      event.currentTarget.form?.requestSubmit();
+                  }}></textarea>
+                <div class="composer-bar">
+                  <span class="faint">⌘ Enter to send</span>
+                  <button class="btn primary" disabled={sending || !comment.trim()}>Comment</button>
+                </div>
+              </form>
+            {/if}
           {/if}
-        {/if}
+        </div>
       </div>
-    </div>
-  {/if}
-</aside>
+    {/if}
+  </div>
+</div>
 
 <style>
+  .layer {
+    display: contents;
+  }
+
   .backdrop {
     position: fixed;
     inset: 0;
@@ -351,6 +382,11 @@
     background: var(--bg);
     border-left: 1px solid var(--rule);
     animation: enter 0.28s var(--ease);
+  }
+
+  /* Focus lands on the panel itself when it opens; its controls show their own focus. */
+  .drawer:focus-visible {
+    outline: none;
   }
 
   header {
