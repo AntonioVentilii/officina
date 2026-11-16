@@ -1963,6 +1963,40 @@ describe.skipIf(!url)('engine', () => {
     expect(await types(off)).toEqual(['github_approved', 'awaiting_merge']);
   });
 
+  test('turning auto-merge on asks for no second connection while it holds the task', async () => {
+    const config = Bun.YAML.parse(CONFIG_YAML) as Record<string, unknown>;
+    await pool.query('update projects set config = $2 where id = $1', [
+      seeded.projectId,
+      JSON.stringify({ ...config, pull_request: { auto_merge: true } })
+    ]);
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    await pool.query(
+      `update tasks set approval_plans = jsonb_set(approval_plans, '{verifying,merge}', '"auto"')
+       where id = $1`,
+      [taskId]
+    );
+    await appendTaskEvent(pool, {
+      taskId,
+      actor: ENGINE,
+      type: 'auto_verified',
+      payload: { subject: 'sha:abc' }
+    });
+    // The one connection the task's row lock is held on, as when every other connection of the
+    // pool waits on that same lock.
+    const one = new Pool({ connectionString: url, max: 1, connectionTimeoutMillis: 2000 });
+    const github = fakeGitHub({
+      branchHead: 'abc',
+      written: { commitSha: 'abc2', parentSha: 'abc' }
+    });
+    try {
+      expect(await finishVerifiedSpecs(one, github.port, [taskId])).toEqual([]);
+    } finally {
+      await one.end();
+    }
+    expect(github.calls.filter((call) => call.method === 'mergeWhenReady')).toHaveLength(1);
+  });
+
   test.each([
     ['allowed', true],
     ['not allowed', false]
