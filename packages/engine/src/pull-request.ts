@@ -20,7 +20,7 @@ import {
   loadTaskContext,
   type StoredTaskContext
 } from '@officina/db';
-import type { GitHubClient, RepoRef } from '@officina/github';
+import { GitHubError, type GitHubClient, type RepoRef } from '@officina/github';
 import type { Pool } from 'pg';
 import { cancelTaskAutoMerge, stopAutoMergeOnLeaving } from './auto-merge';
 import { syncSpecStatus, taskLink, type SyncGitHubPort } from './github-sync';
@@ -109,7 +109,7 @@ export const openTaskPullRequest = async (
       context.issue
     )
   });
-  await syncSpecStatus(pool, github, {
+  await syncSpecStatusOnce(pool, github, {
     taskId: input.taskId,
     ref,
     branch,
@@ -119,6 +119,25 @@ export const openTaskPullRequest = async (
   });
   await linkPullRequest(pool, input.taskId, pr.number);
   return pr;
+};
+
+/**
+ * A hand-in and the catch-up can open the same pull request at once, and both write the spec
+ * status on top of the same file: the second write gets GitHub's 409, though the status it wanted
+ * is on the branch. Syncing again reads the branch as it is now and records that commit as the
+ * status written (or the branch as moved), so the opening that lost the race still completes.
+ */
+const syncSpecStatusOnce = async (
+  pool: Pool,
+  github: PullRequestPort,
+  input: Parameters<typeof syncSpecStatus>[2]
+): Promise<void> => {
+  try {
+    await syncSpecStatus(pool, github, input);
+  } catch (error) {
+    if (!(error instanceof GitHubError) || error.status !== 409) throw error;
+    await syncSpecStatus(pool, github, input);
+  }
 };
 
 /**
