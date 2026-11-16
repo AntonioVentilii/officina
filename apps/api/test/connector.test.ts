@@ -3,9 +3,11 @@ import { createHash, randomBytes } from 'node:crypto';
 import {
   ACCESS_EVENT_RETENTION,
   applyCommand,
+  failTakenOverRuns,
   findTaskIdByNumber,
   purgeConnectorCredentials,
-  purgeOldAccessEvents
+  purgeOldAccessEvents,
+  startRun
 } from '@officina/db';
 import { Pool } from 'pg';
 import { PLAN, applyOrThrow, resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
@@ -623,9 +625,10 @@ describe.skipIf(!url)('connector for Claude', () => {
       stage: 'building',
       assignee: { kind: 'member', memberId: devId }
     });
-    expect((await tool(dev, 'show_task', { number: 1 })).content[0]!.text).toContain(
-      'or hand it back (hand_back_build)'
-    );
+    const handBack = 'hand the build back, so it waits to be built again (hand_back_build)';
+    expect((await tool(dev, 'show_task', { number: 1 })).content[0]!.text).toContain(handBack);
+    // Whoever may steer the work reads that they may hand back another person's build too.
+    expect((await tool(owner, 'show_task', { number: 1 })).content[0]!.text).toContain(handBack);
 
     const handedBack = await tool(dev, 'hand_back_build', { number: 1 });
     expect(handedBack.isError).toBe(false);
@@ -662,6 +665,42 @@ describe.skipIf(!url)('connector for Claude', () => {
     // Letting go of someone else's build needs the right to steer the work.
     expect((await tool(dev, 'hand_back_build', { number: 1 })).isError).toBe(true);
     expect((await builderOf(taskId))!.stage).toBe('building');
+  });
+
+  test("a build taken over from the agent is handed back only once the agent's run is stopped", async () => {
+    const owner = (await connect()).tokens.access_token as string;
+    const taskId = await taskInSpecReview(owner);
+    await applyOrThrow(pool, taskId, { type: 'approve' }, seeded.owner);
+    await applyOrThrow(
+      pool,
+      taskId,
+      { type: 'dispatch', assignee: { kind: 'agent', role: 'builder' }, openInLane: 0 },
+      { kind: 'engine' }
+    );
+    const run = await startRun(pool, {
+      taskId,
+      stage: 'building',
+      role: 'builder',
+      agentVersion: 1,
+      runner: 'managed_agents'
+    });
+    if (!run.ok) throw new Error('the build run did not start');
+    expect((await tool(owner, 'claim_build', { number: 1 })).isError).toBe(false);
+
+    const early = await tool(owner, 'hand_back_build', { number: 1 });
+    expect(early.isError).toBe(true);
+    expect(early.content[0]!.text).toBe(
+      "the agent's run on this build is still being stopped; hand it back again in a minute"
+    );
+    expect(await builderOf(taskId)).toEqual({
+      stage: 'building',
+      assignee: { kind: 'member', memberId: seeded.ownerId }
+    });
+
+    // The scheduler's next pass stops the run the member took over; then the build can go back.
+    expect(await failTakenOverRuns(pool)).toEqual([{ id: run.runId, externalId: null }]);
+    expect((await tool(owner, 'hand_back_build', { number: 1 })).isError).toBe(false);
+    expect(await builderOf(taskId)).toEqual({ stage: 'ready', assignee: null });
   });
 
   test('every member sees every task in progress, with who asked and who approves', async () => {

@@ -173,8 +173,8 @@ const WHAT_TO_DO: Record<string, string> = {
   comment: 'add a comment (comment)',
   accept: 'accept or decline it on the board',
   claim: 'claim the build, to build it yourself (claim_build)',
-  hand_in:
-    'hand in the build once its branch is pushed (hand_in_build), or hand it back (hand_back_build)',
+  hand_in: 'hand in the build once its branch is pushed (hand_in_build)',
+  hand_back: 'hand the build back, so it waits to be built again (hand_back_build)',
   submit: 'send it on as it is, on the board',
   cancel: 'cancel it on the board'
 };
