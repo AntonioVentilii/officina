@@ -79,10 +79,7 @@ interface Length {
 }
 
 /** How long what a person types may be, the ceilings the API checks (`INPUT_LIMITS`). */
-export interface InputLimits {
-  readonly title: Length;
-  readonly prTitle: Length;
-}
+export type InputLimits = Readonly<Record<'title' | 'prTitle', Length>>;
 
 export interface WaitingOn {
   readonly kind: 'agent' | 'people' | 'github' | 'nobody';
@@ -127,7 +124,6 @@ export interface Card {
   readonly guards: readonly string[];
 }
 
-/** A role on the Agents page, named and described by the API. */
 /** A role on the Agents page, with its numbers over the runs the page lists. */
 export interface AgentRoleInfo {
   readonly role: string;
@@ -196,15 +192,13 @@ export interface QuestionOption {
 }
 
 export interface TaskDetail extends Card {
-  readonly blocked: {
-    readonly question: string;
-    readonly askedOf?: string;
-    /** What agents need from a person to go on; empty for an ordinary question. */
-    readonly needs: readonly string[];
-    readonly options: readonly QuestionOption[];
-    /** The task version the question was read at; a picked option sends it back. */
-    readonly version: number;
-  } | null;
+  readonly blocked:
+    | (NonNullable<Card['blocked']> & {
+        readonly options: readonly QuestionOption[];
+        /** The task version the question was read at; a picked option sends it back. */
+        readonly version: number;
+      })
+    | null;
   readonly repo: string | null;
   readonly pullRequestUrl: string | null;
   readonly headSha: string | null;
