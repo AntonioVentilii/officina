@@ -1,21 +1,24 @@
-import { branchForTask, parseProjectConfig, type Task } from '@officina/core';
+import { branchForTask, parseProjectConfig, type Stage, type Task } from '@officina/core';
 import {
   appendTaskEvent,
   applyCommand,
   HAND_IN_EVENT,
   loadTaskContext,
+  type ApplyResult,
   type StoreError
 } from '@officina/db';
+import type { GitHubClient } from '@officina/github';
 import type { Pool } from 'pg';
 import {
   openTaskPullRequest,
   readPush,
+  sendBackRedChecks,
   type PullRequestPort,
   type PushFactsPort
 } from './pull-request';
 import { titleProblems } from './validators';
 
-export type HandInPort = PullRequestPort & PushFactsPort;
+export type HandInPort = PullRequestPort & PushFactsPort & Pick<GitHubClient, 'failedChecks'>;
 
 export interface HandIn {
   readonly taskId: string;
@@ -54,12 +57,23 @@ const handInSource = async (pool: Pool, taskId: string) => {
   };
 };
 
+/** Where a push just handed in ends: back at the build when its checks were already red. */
+const stageAfterChecks = async (
+  deps: { readonly pool: Pool; readonly github: HandInPort },
+  input: Parameters<typeof sendBackRedChecks>[2],
+  applied: Extract<ApplyResult, { ok: true }>
+): Promise<Stage> => {
+  const sentBack = await sendBackRedChecks(deps.pool, deps.github, input, applied);
+  return (sentBack?.ok ? sentBack : applied).task.stage;
+};
+
 /**
  * A developer who claimed a build hands in what they pushed to the task branch, built by hand or
  * with their own agents. Officina reads the push from GitHub, applies it as theirs through the
- * same `push` command an agent's build uses (lanes, guardrails, the catalog check), and opens the
- * pull request. Safe to repeat: once the push is applied, a second call only opens the pull
- * request a failed first call left.
+ * same `push` command an agent's build uses (lanes, guardrails, the catalog check), opens the
+ * pull request, and sends it back to them when its checks were red before it was handed in. Safe
+ * to repeat: once the push is applied, a second call only opens the pull request a failed first
+ * call left.
  */
 export const handInBuild = async (
   deps: { readonly pool: Pool; readonly github: HandInPort; readonly publicUrl: string },
@@ -106,5 +120,10 @@ export const handInBuild = async (
   });
   if (!applied.ok) return applied;
   const pr = await open();
-  return { ok: true, stage: applied.task.stage, pullRequest: pr?.number ?? null };
+  const stage = await stageAfterChecks(
+    deps,
+    { taskId: input.taskId, ref: { installationId, repo: context.repo }, branch },
+    applied
+  );
+  return { ok: true, stage, pullRequest: pr?.number ?? null };
 };

@@ -19,9 +19,10 @@ const SPEC = 'docs/specs/room.md';
 
 /**
  * GitHub as a developer's push left it: one changed file on the task branch. `openFails` is how
- * many times opening the pull request fails before it works.
+ * many times opening the pull request fails before it works; `failed`, the checks already red on
+ * the pushed head.
  */
-const fakeGitHub = (openFails = 0) => {
+const fakeGitHub = (openFails = 0, failed: string[] = []) => {
   const calls: string[] = [];
   let failures = openFails;
   const port = gitHubWith({
@@ -36,7 +37,8 @@ const fakeGitHub = (openFails = 0) => {
       return { number: 7, url: 'https://github.com/ViciApp/vici-app/pull/7' };
     },
     updateFile: async () => ({ commitSha: null, parentSha: null }),
-    commentOnIssue: async () => undefined
+    commentOnIssue: async () => undefined,
+    failedChecks: async () => failed
   });
   return { port, calls };
 };
@@ -165,6 +167,35 @@ describe.skipIf(!url)('a developer hands in a build', () => {
     ]);
   });
 
+  test('a hand-in whose checks were already red goes back to the build with what failed, its pull request open', async () => {
+    const taskId = await waitingForDeveloper();
+    const dev = await developer('dev@example.com', 'Dev');
+    await applyOrThrow(pool, taskId, { type: 'claim' }, dev);
+    const github = fakeGitHub(0, ['CI: failure']);
+
+    expect(
+      await handInBuild(
+        { pool, github: github.port, publicUrl: PUBLIC_URL },
+        {
+          taskId,
+          memberId: dev.memberId,
+          prTitle: 'feat(room): port the design',
+          verified: [],
+          notVerified: []
+        }
+      )
+    ).toEqual({ ok: true, stage: 'building', pullRequest: 7 });
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({
+      stage: 'building',
+      headSha: 'dev1'
+    });
+    const failed = await pool.query<{ details: string }>(
+      `select payload->>'details' as details from task_events where task_id = $1 and type = 'ci_failed'`,
+      [taskId]
+    );
+    expect(failed.rows.map((row) => row.details)).toEqual(['CI: failure']);
+  });
+
   test('a pull request that fails to open is opened later from the hand-in, not an earlier agent round', async () => {
     const taskId = await waitingForDeveloper();
     // An agent built an earlier round of this task and recorded its own title.
@@ -254,7 +285,8 @@ describe.skipIf(!url)('a developer hands in a build', () => {
           () => openMissingPullRequests(pool, port, [taskId], PUBLIC_URL)
         ),
       commitChanges: async () => ({ parents: ['dev1'], paths: [SPEC] }),
-      commentOnIssue: async () => undefined
+      commentOnIssue: async () => undefined,
+      failedChecks: async () => []
     });
     const taskId = await waitingForDeveloper();
     const dev = await developer('dev@example.com', 'Dev');

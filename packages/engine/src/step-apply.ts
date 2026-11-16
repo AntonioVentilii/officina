@@ -13,12 +13,13 @@ import {
   recordRunResult,
   runIsActive,
   saveSpecVersion,
-  setTaskTitle
+  setTaskTitle,
+  type ApplyResult
 } from '@officina/db';
 import type { RunnerRole } from '@officina/runner';
 import type { PoolClient } from 'pg';
 import { postChecklist, taskLink } from './github-sync';
-import { openTaskPullRequest, readPush, type PushedBuild } from './pull-request';
+import { openTaskPullRequest, readPush, sendBackRedChecks, type PushedBuild } from './pull-request';
 import type { StepInputs } from './step-session';
 import type { Step, StepResult } from './step';
 import type { GitHubReview } from './validators';
@@ -114,6 +115,26 @@ const openPullRequestAfter = (step: Step, built: PushedBuild) =>
     if (pr) await appendRunEvent(pool, step.runId, 'officina.pull_request_opened', pr);
   });
 
+/**
+ * Checks that failed on the pushed head before the push was applied, which no webhook reports
+ * again since no task held that head then; a failure to read them is recorded on the run.
+ */
+const redChecksAfter = async (
+  step: Step,
+  output: AgentOutput<RunnerRole>,
+  applied: ApplyResult
+) => {
+  if (!step.builds || (output as Partial<PushedBuild>).outcome !== 'pushed') return;
+  await afterApplied(step, 'officina.checks_read_failed', async () => {
+    await sendBackRedChecks(
+      step.deps.pool,
+      step.deps.github,
+      { taskId: step.taskId, ref: step.repoRef, branch: step.taskBranch },
+      applied
+    );
+  });
+};
+
 /** The builder's answer to the GitHub reviews this round addressed, posted on the pull request. */
 const replyToReviews = async (step: Step, reply: string, reviews: readonly GitHubReview[]) => {
   const pullRequest = step.context.pullRequest;
@@ -202,6 +223,7 @@ export const applyResult = async (
     return { status: 'discarded', reason: applied.error };
   }
   await mirrorToGitHub(step, output, applied.task.stage, inputs);
+  await redChecksAfter(step, output, applied);
   await finishRun(pool, step.runId, {
     status: 'succeeded',
     costCents,

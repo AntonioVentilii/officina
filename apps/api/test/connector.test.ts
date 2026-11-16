@@ -23,7 +23,8 @@ const builds = {
   readFile: async () => null,
   openPullRequest: async () => ({ number: 9, url: 'https://github.com/ViciApp/vici-app/pull/9' }),
   updateFile: async () => undefined,
-  commentOnIssue: async () => undefined
+  commentOnIssue: async () => undefined,
+  failedChecks: async () => []
 } as unknown as HandInPort;
 
 describe.skipIf(!url)('connector for Claude', () => {
