@@ -1,4 +1,11 @@
-import { branchForTask, parseProjectConfig, type Stage, type Task } from '@officina/core';
+import {
+  branchForTask,
+  memberActor,
+  parseProjectConfig,
+  type ConnectedApp,
+  type Stage,
+  type Task
+} from '@officina/core';
 import {
   appendTaskEvent,
   applyCommand,
@@ -16,6 +23,7 @@ import {
   type PullRequestPort,
   type PushFactsPort
 } from './pull-request';
+import { bodyProblems, readPrTemplate } from './pr-template';
 import { titleProblems } from './validators';
 
 export type HandInPort = PullRequestPort & PushFactsPort & Pick<GitHubClient, 'failedChecks'>;
@@ -23,8 +31,12 @@ export type HandInPort = PullRequestPort & PushFactsPort & Pick<GitHubClient, 'f
 export interface HandIn {
   readonly taskId: string;
   readonly memberId: string;
+  /** The connected app the member handed it in through, absent from the board or the CLI. */
+  readonly via?: ConnectedApp | undefined;
   /** The pull request title, in the repository's own format. */
   readonly prTitle: string;
+  /** The pull request body, required in the sections of the project's template when it has one. */
+  readonly prBody?: string | undefined;
   readonly verified: readonly string[];
   readonly notVerified: readonly string[];
 }
@@ -32,8 +44,15 @@ export interface HandIn {
 export type HandInResult =
   | { readonly ok: true; readonly stage: string; readonly pullRequest: number | null }
   | { readonly ok: false; readonly error: StoreError | 'not_installed' }
-  /** The title breaks the project's `pull_request.title_pattern`, as an agent's would. */
-  | { readonly ok: false; readonly error: 'bad_title'; readonly problems: readonly string[] };
+  /**
+   * The title breaks the project's `pull_request.title_pattern`, or the body leaves its pull request
+   * template out, as an agent's would.
+   */
+  | {
+      readonly ok: false;
+      readonly error: 'bad_pull_request';
+      readonly problems: readonly string[];
+    };
 
 const theirs = (task: Task, memberId: string): boolean =>
   task.assignee?.kind === 'member' && task.assignee.memberId === memberId;
@@ -89,6 +108,39 @@ const sentBackRed = async (
   input.task.headSha === input.head &&
   (await github.failedChecks({ ...input.ref, sha: input.head, branch: input.branch })).length > 0;
 
+type Source = Extract<Awaited<ReturnType<typeof handInSource>>, { ok: true }>;
+
+/** What the member hands in, as the builder's pushed result. */
+const builtFrom = (input: HandIn, branch: string) => ({
+  outcome: 'pushed' as const,
+  branch,
+  prTitle: input.prTitle,
+  ...(input.prBody ? { prBody: input.prBody } : {}),
+  verified: [...input.verified],
+  notVerified: [...input.notVerified]
+});
+
+/**
+ * A person's title and body meet the same rules as an agent's (the title pattern, the pull request
+ * template), so nothing is applied until they do.
+ */
+const pullRequestProblems = async (
+  github: HandInPort,
+  source: Source,
+  built: ReturnType<typeof builtFrom>
+): Promise<string[]> => {
+  const { context, config } = source;
+  const template = await readPrTemplate(
+    github,
+    { installationId: source.installationId, repo: context.repo },
+    { path: config.docs.prTemplate, branch: context.defaultBranch }
+  );
+  return [
+    ...titleProblems(config.pullRequest.titlePattern)(built),
+    ...bodyProblems(template)(built)
+  ];
+};
+
 /**
  * A developer who claimed a build hands in what they pushed to the task branch, built by hand or
  * with their own agents. Officina reads the push from GitHub, applies it as theirs through the
@@ -106,16 +158,9 @@ export const handInBuild = async (
   if (!source.ok) return source;
   const { context, installationId, config } = source;
   const branch = branchForTask(context.number);
-  const built = {
-    outcome: 'pushed' as const,
-    branch,
-    prTitle: input.prTitle,
-    verified: [...input.verified],
-    notVerified: [...input.notVerified]
-  };
-  // A person's title meets the same rule as an agent's: nothing is applied until it does.
-  const problems = titleProblems(config.pullRequest.titlePattern)(built);
-  if (problems.length) return { ok: false, error: 'bad_title', problems };
+  const built = builtFrom(input, branch);
+  const problems = await pullRequestProblems(deps.github, source, built);
+  if (problems.length) return { ok: false, error: 'bad_pull_request', problems };
   const open = () =>
     openTaskPullRequest(deps.pool, deps.github, {
       taskId: input.taskId,
@@ -137,7 +182,7 @@ export const handInBuild = async (
   if (await sentBackRed(deps.github, { ...checks, ...held })) {
     return { ok: true, stage: context.task.stage, pullRequest: context.pullRequest };
   }
-  const actor = { kind: 'member' as const, memberId: input.memberId };
+  const actor = memberActor(input.memberId, input.via);
   const applied = await applyCommand(deps.pool, {
     taskId: input.taskId,
     command: { type: 'push', ...facts },

@@ -62,3 +62,17 @@ export const failStaleRuns = async (
       [olderThanMs]
     )
   ).rows.map((row) => ({ id: row.id, externalId: row.external_id }));
+
+/**
+ * Whether a build run is still in progress on the task. A run a member took over stays so until
+ * the scheduler's next pass fails it, and `failTakenOverRuns` finds it only while a member holds the
+ * task, so a build is handed back only once no such run is left.
+ */
+export const buildRunInProgress = async (db: Pool | PoolClient, taskId: string): Promise<boolean> =>
+  ((
+    await db.query(
+      `select 1 from runs
+       where task_id = $1 and status ${RUN_IS_ACTIVE} and agent_role = any($2::text[])`,
+      [taskId, BUILD_ROLES]
+    )
+  ).rowCount ?? 0) > 0;
