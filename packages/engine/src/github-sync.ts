@@ -14,6 +14,7 @@ import {
   loadTask,
   loadTaskContext,
   recordSpecStatus,
+  recordSpecStatusIn,
   type StoredTaskContext,
   whileTaskAt
 } from '@officina/db';
@@ -436,6 +437,12 @@ export const specPathIn = (
   return changedPaths.find((path) => pattern.test(path)) ?? null;
 };
 
+/** The spec status a task's pull request gets once its result is verified. */
+export const implementedStatus = (pullRequest: number) => `Implemented (#${pullRequest})`;
+
+/** What telling Officina's own status commit from any other head reads on GitHub. */
+type StatusCommitPort = Pick<SyncGitHubPort, 'commitChanges' | 'readFile'>;
+
 const withStatus = (text: string, status: string) =>
   text.replace(/^Status: .*$/m, `Status: ${status}`);
 
@@ -445,7 +452,7 @@ const withStatus = (text: string, status: string) =>
  * expected head and it changes only the spec file, to the expected head's text with this status.
  */
 const isOwnStatusCommit = async (
-  github: SyncGitHubPort,
+  github: StatusCommitPort,
   input: { ref: RepoRef; head: string; expected: string; path: string; status: string }
 ): Promise<boolean> => {
   const commit = await github.commitChanges({ ...input.ref, sha: input.head });
@@ -455,6 +462,38 @@ const isOwnStatusCommit = async (
   const [before, after] = await Promise.all([at(input.expected), at(input.head)]);
   if (!before || !after || after.text === before.text) return false;
   return after.text === withStatus(before.text, input.status);
+};
+
+/**
+ * Records the branch head as the status commit when it is Officina's own (`isOwnStatusCommit`),
+ * so it stands for the task's head. `false`, and nothing recorded, for any other head. With `at`,
+ * only while the task is still at that stage and head, under its row lock: a task that moved while
+ * GitHub was read keeps what moved it, and `false` says so.
+ */
+export const recordOwnStatusCommit = async (
+  pool: Pool,
+  github: StatusCommitPort,
+  input: {
+    taskId: string;
+    ref: RepoRef;
+    status: string;
+    head: string;
+    expected: string;
+    path: string;
+    at?: { readonly stage: string; readonly headSha: string | null };
+  }
+): Promise<boolean> => {
+  if (!(await isOwnStatusCommit(github, input))) return false;
+  const payload = { status: input.status, path: input.path, commitSha: input.head };
+  if (!input.at) {
+    await recordSpecStatus(pool, input.taskId, payload);
+    return true;
+  }
+  const at = { taskId: input.taskId, ...input.at };
+  return (
+    (await whileTaskAt(pool, at, (client) => recordSpecStatusIn(client, input.taskId, payload))) !==
+    null
+  );
 };
 
 /**
@@ -479,15 +518,10 @@ const recordUnexpectedHead = async (
   const own =
     expected !== null &&
     path !== null &&
-    (await isOwnStatusCommit(github, { ref: input.ref, head, expected, path, status }));
-  await recordSpecStatus(
-    pool,
-    taskId,
-    own
-      ? { status, path, commitSha: head }
-      : { status, path: null, commitSha: null, branchMoved: head }
-  );
-  return own ? 'updated' : 'moved';
+    (await recordOwnStatusCommit(pool, github, { ...input, expected, path }));
+  if (own) return 'updated';
+  await recordSpecStatus(pool, taskId, { status, path: null, commitSha: null, branchMoved: head });
+  return 'moved';
 };
 
 /**
@@ -645,7 +679,7 @@ const finishVerifiedSpec = async (
     branch: branchForTask(context.number),
     base: context.defaultBranch,
     specDir: config.config.docs.specDir,
-    status: `Implemented (#${context.pullRequest})`
+    status: implementedStatus(context.pullRequest)
   });
   await resolveForwardedThreads(pool, github, {
     taskId,

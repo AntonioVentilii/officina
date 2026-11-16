@@ -8,6 +8,7 @@ import {
   type AgentOutput,
   type Catalog,
   type CatalogPages,
+  type ProjectConfig,
   type PushFacts
 } from '@officina/core';
 import {
@@ -25,7 +26,14 @@ import type { GitHubClient, RepoRef } from '@officina/github';
 import type { Pool } from 'pg';
 import { cancelTaskAutoMerge, stopAutoMergeOnLeaving } from './auto-merge';
 import { eachTaskOnItsOwn, type TaskFailure } from './each-task';
-import { syncSpecStatus, taskLink, type SyncGitHubPort } from './github-sync';
+import {
+  implementedStatus,
+  recordOwnStatusCommit,
+  specPathIn,
+  syncSpecStatus,
+  taskLink,
+  type SyncGitHubPort
+} from './github-sync';
 
 export type PullRequestPort = Pick<GitHubClient, 'openPullRequest'> & SyncGitHubPort;
 
@@ -163,7 +171,10 @@ const movableFromOutside = (context: StoredTaskContext | null): context is Movab
  * still going: its push, and the status commit after it, are not recorded yet.
  */
 export type AdoptPort = PushFactsPort &
-  Pick<GitHubClient, 'pullRequest' | 'failedChecks' | 'cancelAutoMerge' | 'changeOf'>;
+  Pick<
+    GitHubClient,
+    'pullRequest' | 'failedChecks' | 'cancelAutoMerge' | 'changeOf' | 'commitChanges'
+  >;
 
 /**
  * What follows a head taken in: auto-merge off if the task left `merging`, since GitHub would land
@@ -260,6 +271,38 @@ const carryHead = async (
   );
 };
 
+/**
+ * The branch head to take in from outside, or `null` when there is none: the head is the expected
+ * one after all, or the Implemented status commit an earlier pass wrote at merging but never
+ * recorded (its answer lost, or the process gone right after the write), which is recorded now as
+ * the task's head instead, so the verified task is not sent back for Officina's own commit.
+ */
+const outsideHead = async (
+  pool: Pool,
+  github: AdoptPort,
+  input: { context: MovableContext; ref: RepoRef; expected: string; config: ProjectConfig }
+): Promise<(PushFacts & { readonly catalogPages: CatalogPages }) | null> => {
+  const { context, config } = input;
+  const head = await readPush(github, input.ref, {
+    base: context.defaultBranch,
+    branch: branchForTask(context.number),
+    catalogs: config.docs.standards.catalogs
+  });
+  if (head.headSha === input.expected) return null;
+  const path = specPathIn(head.changedPaths, config.docs.specDir);
+  if (context.task.stage !== 'merging' || !path) return head;
+  const own = await recordOwnStatusCommit(pool, github, {
+    taskId: context.task.id,
+    ref: input.ref,
+    status: implementedStatus(context.pullRequest),
+    head: head.headSha,
+    expected: input.expected,
+    path,
+    at: { stage: context.task.stage, headSha: context.task.headSha }
+  });
+  return own ? null : head;
+};
+
 const adoptOutsidePush = async (pool: Pool, github: AdoptPort, taskId: string) => {
   const context = await loadTaskContext(pool, taskId);
   if (!movableFromOutside(context)) return;
@@ -277,13 +320,9 @@ const adoptOutsidePush = async (pool: Pool, github: AdoptPort, taskId: string) =
   }
   const config = parseProjectConfig(context.rawConfig);
   if (!config.ok) return;
+  const head = await outsideHead(pool, github, { context, ref, expected, config: config.config });
+  if (!head) return;
   const branch = branchForTask(context.number);
-  const head = await readPush(github, ref, {
-    base: context.defaultBranch,
-    branch,
-    catalogs: config.config.docs.standards.catalogs
-  });
-  if (head.headSha === expected) return;
   const adopted = await applyCommand(pool, {
     taskId,
     command: { type: 'outside_push', ...head },
