@@ -21,6 +21,7 @@ export { fence } from './brief';
 export { learningProblems } from './learner';
 export { ensureOnboarding, openOnboardingIn } from './onboarding';
 export {
+  COMMENT_SETTLE_SECONDS,
   forwardFeedback,
   forwardSettledComments,
   overviewNotes,

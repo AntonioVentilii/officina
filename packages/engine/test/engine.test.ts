@@ -32,6 +32,7 @@ import { GitHubError, type RefSnapshot } from '@officina/github';
 import { RUNNER_ROLES, type SessionRequest } from '@officina/runner';
 import { Pool } from 'pg';
 import { CONFIG_YAML } from '../../core/test/fixtures';
+import { rowLockHolder, untilWaitingOn } from '../../db/test/locks';
 import {
   PLAN,
   applyOrThrow,
@@ -41,6 +42,7 @@ import {
 } from '../../db/test/seed';
 import { createFakePort, idle, toolUse, type ScriptItem } from '../../runner/test/fake-port';
 import {
+  COMMENT_SETTLE_SECONDS,
   adoptOutsidePushes,
   cancelStaleAutoMerges,
   createLiveRuns,
@@ -2000,18 +2002,6 @@ describe.skipIf(!url)('engine', () => {
        where id = $1`,
       [taskId]
     );
-    // Until the other pass waits for the task's row lock, past every check made before taking it.
-    const otherPassWaitsForTheLock = async () => {
-      for (let tries = 0; tries < 200; tries += 1) {
-        const { rowCount } = await pool.query(
-          `select 1 from pg_stat_activity
-           where wait_event_type = 'Lock' and query like 'select stage, head_sha from tasks%'`
-        );
-        if (rowCount) return;
-        await Bun.sleep(10);
-      }
-      throw new Error('the other pass never waited for the lock');
-    };
     let second: Promise<unknown> | undefined;
     const merges: string[] = [];
     const github = fakeGitHub({
@@ -2033,8 +2023,10 @@ describe.skipIf(!url)('engine', () => {
         mergeWhenReady: async () => {
           merges.push('mergeWhenReady');
           if (!second) {
+            // Until the other pass waits for the task's row lock, past every check made before it.
+            const holder = await rowLockHolder(pool, 'tasks');
             second = finishVerifiedSpecs(pool, github.port, [taskId], onBehalf);
-            await otherPassWaitsForTheLock();
+            await untilWaitingOn(pool, holder);
           }
           return 'auto_merge' as const;
         },
@@ -2586,27 +2578,25 @@ describe.skipIf(!url)('engine', () => {
     );
     const taskId = await createTaskInMerging(pool, seeded);
     await linkPullRequest(pool, taskId, 42);
-    const seen = (by: string, body: string, minutesAgo: number, commentId = 31) =>
+    const seen = (by: string, body: string, secondsAgo: number, commentId = 31) =>
       pool.query(
         `insert into task_events (task_id, actor, type, payload, created_at)
-         values ($1, '{"kind":"engine"}', 'github_comment_seen', $2, now() - make_interval(mins => $3))`,
-        [taskId, JSON.stringify({ commentId, by, body }), minutesAgo]
+         values ($1, '{"kind":"engine"}', 'github_comment_seen', $2, now() - make_interval(secs => $3))`,
+        [taskId, JSON.stringify({ commentId, by, body }), secondsAgo]
       );
+    // A minute past the window a comment must stay unchanged for.
+    const settled = COMMENT_SETTLE_SECONDS + 60;
     const github = fakeGitHub();
 
     // A placeholder the bot just edited again is not settled yet.
-    await seen('claude[bot]', 'Claude is working...', 10);
+    await seen('claude[bot]', 'Claude is working...', settled);
     await seen('claude[bot]', 'Two findings in the cache.', 0);
     await forwardSettledComments(pool, github.port, [taskId]);
     expect((await loadTask(pool, taskId))?.task.stage).toBe('merging');
 
     // Settled: forwarded with its last text only, and auto-merge off as it leaves merging.
-    await pool.query(
-      `insert into task_events (task_id, actor, type, payload, created_at)
-       values ($1, '{"kind":"engine"}', 'github_comment_seen', $2, now() - interval '5 minutes')`,
-      [taskId, JSON.stringify({ commentId: 31, by: 'claude[bot]', body: 'Final: one finding.' })]
-    );
-    await seen('vercel[bot]', 'Preview ready.', 10, 32);
+    await seen('claude[bot]', 'Final: one finding.', settled);
+    await seen('vercel[bot]', 'Preview ready.', settled, 32);
     await forwardSettledComments(pool, github.port, [taskId]);
     await forwardSettledComments(pool, github.port, [taskId]);
     expect((await loadTask(pool, taskId))?.task).toMatchObject({ stage: 'building', fixRounds: 1 });
@@ -2628,11 +2618,7 @@ describe.skipIf(!url)('engine', () => {
       command: { type: 'unchanged', note: 'The cache is fine.' },
       actor: { kind: 'agent', role: 'builder', version: 1 }
     });
-    await pool.query(
-      `insert into task_events (task_id, actor, type, payload, created_at)
-       values ($1, '{"kind":"engine"}', 'github_comment_seen', $2, now() - interval '5 minutes')`,
-      [taskId, JSON.stringify({ commentId: 33, by: 'claude[bot]', body: 'Still one finding.' })]
-    );
+    await seen('claude[bot]', 'Still one finding.', settled, 33);
     await forwardSettledComments(pool, github.port, [taskId]);
     expect((await loadTask(pool, taskId))?.task.stage).toBe('reviewing');
     const handled = await pool.query(

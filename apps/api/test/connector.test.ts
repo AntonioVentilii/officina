@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { createHash, randomBytes } from 'node:crypto';
 import {
+  ACCESS_EVENT_RETENTION,
   applyCommand,
   findTaskIdByNumber,
   purgeConnectorCredentials,
@@ -698,10 +699,11 @@ describe.skipIf(!url)('connector for Claude', () => {
     });
     expect(refused.status).toBe(403);
 
-    // A year on, it is purged; nothing newer is touched.
+    // Once past the retention window, it is purged; nothing newer is touched.
     await pool.query(
-      `update access_events set created_at = now() - interval '13 months'
-       where type = 'invited'`
+      `update access_events set created_at = now() - $1::interval - interval '1 minute'
+       where type = 'invited'`,
+      [ACCESS_EVENT_RETENTION]
     );
     expect(await purgeOldAccessEvents(pool)).toBe(1);
     expect(await purgeOldAccessEvents(pool)).toBe(0);

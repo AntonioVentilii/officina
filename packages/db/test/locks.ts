@@ -7,6 +7,22 @@ const DEADLINE_MS = 10_000;
 export const backendPid = async (client: ClientBase): Promise<number> =>
   (await client.query<{ pid: number }>('select pg_backend_pid() as pid')).rows[0]!.pid;
 
+/**
+ * The server process of the one transaction holding rows of `table` locked for update, for a race
+ * whose lock is taken inside the code under test rather than on a connection the test holds.
+ */
+export const rowLockHolder = async (db: Pool | ClientBase, table: string): Promise<number> => {
+  const { rows } = await db.query<{ pid: number }>(
+    `select pid from pg_locks
+     where locktype = 'relation' and mode = 'RowShareLock' and relation = $1::regclass
+       and database = (select oid from pg_database where datname = current_database())
+       and pid <> pg_backend_pid()`,
+    [table]
+  );
+  if (rows.length !== 1) throw new Error(`${rows.length} transactions hold rows of ${table}`);
+  return rows[0]!.pid;
+};
+
 /** Whether some connection waits on a lock the connection with server process `holder` holds. */
 const waitsOnALock = async (db: Pool | ClientBase, holder: number): Promise<boolean> =>
   ((
