@@ -258,7 +258,7 @@ Examples:
 - Report a bug: title "Profile photo does not save", request "I pick a new photo in Settings > Profile and press Save. The old photo is still there after reloading. Expected: the new photo stays."
 - Ask for a feature: title "Remind people of unfinished orders", request "People forget orders they started. Send a reminder the next morning if one is unfinished. Only once per order."
 
-After it is opened, tell the person the task link and that an agent may ask them questions there or here (whats_waiting_on_me).`,
+After it is opened, tell the person the task link and what happens next, as the answer says: usually that an agent may ask them questions there or here (whats_waiting_on_me), or, for a request held for an owner, that it waits for an owner's decision first.`,
     input: z.object({
       project: PROJECT,
       title: z
