@@ -376,7 +376,7 @@ const autoMergeOnGitHub = async (
   const at = { taskId, stage: 'merging', headSha: input.taskHead };
   const tried = await whileTaskAt(pool, at, async (client) => {
     if (await autoMergeSpent(client, taskId)) return true;
-    if (await hasPendingBotComments(pool, input.context)) return false;
+    if (await hasPendingBotComments(client, input.context)) return false;
     try {
       const merge = await input.merge();
       await appendTaskEvent(client, {
