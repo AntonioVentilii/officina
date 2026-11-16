@@ -136,3 +136,4 @@ Search here before writing a helper, a type, a component or a fake. When you add
 | `gitHubWith`                                                  | `packages/engine/test/fake-github.ts` | A GitHub port for the engine typed against the real client: only the calls a test gives answer, any other fails it |
 | `with-postgres.ts`                                            | `packages/db/test/with-postgres.ts`   | Runs the database tests against a throwaway container                                                              |
 | `installWindow`                                               | `apps/board/test/dom.ts`              | A jsdom window for tests of code that needs the DOM                                                                |
+| `backendPid`, `untilWaitingOn`                                | `packages/db/test/locks.ts`           | Waits until a race's other side waits on the lock held                                                             |
