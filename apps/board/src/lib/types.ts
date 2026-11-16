@@ -47,6 +47,7 @@ export type BoardAction =
   | 'decline'
   | 'claim'
   | 'hand_in'
+  | 'hand_back'
   | 'approve'
   | 'changes'
   | 'answer'
@@ -208,12 +209,9 @@ export interface TaskDetail extends Card {
   readonly headSha: string | null;
   readonly request: Pick<Comment, 'author' | 'via' | 'body' | 'at'> | null;
   readonly comments: readonly Comment[];
-  readonly specs: readonly {
+  readonly specs: readonly (Pick<Comment, 'author' | 'body' | 'at'> & {
     readonly version: number;
-    readonly body: string;
-    readonly author: string;
-    readonly at: string;
-  }[];
+  })[];
   readonly events: readonly TaskEvent[];
   readonly runs: readonly Run[];
   readonly plan: {
