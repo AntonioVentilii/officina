@@ -117,6 +117,7 @@ Search here before writing a helper, a type, a component or a fake. When you add
 | `collectDueSteps`, `tick`                                                                                                            | `packages/engine/src/tick.ts`            | Dispatch and due work                                                                                                                         |
 | `syncSpecStatus`, `postChecklist`, `approveOnGitHub`, `askCopilotToReview`, `requestCopilotReviews`, `checklistMarkdown`, `taskLink` | `packages/engine/src/github-sync.ts`     | Mirroring to GitHub, and acting there as a member (`OnBehalf`)                                                                                |
 | `finishVerifiedSpecs`                                                                                                                | `packages/engine/src/github-sync.ts`     | Finishes each verified task's GitHub side on its own: one that fails is reported and the others go ahead                                      |
+| `recordOwnStatusCommit`, `implementedStatus`                                                                                         | `packages/engine/src/github-sync.ts`     | Tells Officina's own spec status commit, written but never recorded, from any other head, and records it as the task's head                   |
 
 ## `apps/api`
 

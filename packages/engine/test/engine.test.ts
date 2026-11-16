@@ -1698,7 +1698,7 @@ describe.skipIf(!url)('engine', () => {
     let head = base;
     let written = draft;
     let writes = 0;
-    const port: GitHubPort = {
+    const port: GitHubPort & AdoptPort = {
       ...github.port,
       pushFacts: async (input) => ({ ...(await github.port.pushFacts(input)), headSha: head }),
       readFile: async ({ branch }) => ({
@@ -1745,6 +1745,30 @@ describe.skipIf(!url)('engine', () => {
       { type: 'spec_status_set', commit: 'status1' },
       { type: 'awaiting_merge', commit: null }
     ]);
+  });
+
+  test('an Implemented status commit whose answer was lost is not taken in as a push from outside', async () => {
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    const github = lostStatusWrite('abc');
+    await finishVerifiedSpecs(pool, github.port, [taskId]);
+
+    // The next pass looks for outside pushes first and finds the status commit as the head.
+    await adoptOutsidePushes(pool, github.port, [taskId]);
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({
+      stage: 'merging',
+      headSha: 'abc'
+    });
+    expect(await expectedHead(pool, taskId)).toBe('status1');
+    await finishVerifiedSpecs(pool, github.port, [taskId]);
+
+    expect(github.writes()).toBe(1);
+    const events = await pool.query<{ type: string }>(
+      `select type from task_events where task_id = $1
+         and type in ('merge_held', 'awaiting_merge') order by id`,
+      [taskId]
+    );
+    expect(events.rows.map((row) => row.type)).toEqual(['awaiting_merge']);
   });
 
   test('an in-progress status commit whose answer was lost is taken when the catch-up opens the pull request', async () => {
