@@ -94,9 +94,10 @@ export interface TaskEventRow {
  * The domain event a row records, to narrow by its type: the store writes an event's type in its own
  * column and the rest as the payload (`insertEvent` in `store.ts`). Rows the engine writes itself,
  * such as GitHub mirroring or a hand-in, have types outside the union and match none of its cases.
+ * The column wins over a `type` key in the payload, so such a row never passes for another event.
  */
 export const domainEventOf = (row: TaskEventRow): DomainEvent =>
-  ({ type: row.type, ...row.payload }) as DomainEvent;
+  ({ ...row.payload, type: row.type }) as DomainEvent;
 
 export const listTaskEvents = async (db: Queryable, taskId: string): Promise<TaskEventRow[]> =>
   (

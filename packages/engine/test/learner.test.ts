@@ -3,6 +3,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  appendTaskEvent,
   claimLearningDecision,
   failIdleLearningRewrite,
   failOrphanedRuns,
@@ -104,6 +105,13 @@ describe.skipIf(!url)('learner', () => {
     expect((await collectDueSteps({ pool }, seeded.projectId)).due).toEqual([
       { taskId, role: 'learner' }
     ]);
+    // A row the engine writes itself reads by its own type, whatever its payload holds.
+    await appendTaskEvent(pool, {
+      taskId,
+      actor: { kind: 'engine' },
+      type: 'github_copilot_review_requested',
+      payload: { type: 'stage_changed', pullRequest: 1, login: 'gio', outcome: 'requested' }
+    });
 
     const agents = createFakePort(() => [
       toolUse({
@@ -158,6 +166,8 @@ describe.skipIf(!url)('learner', () => {
     expect(brief).toContain('approved verifying (gate passed)');
     expect(brief).toContain('engine: stage merging -> done');
     expect(brief).toContain('- Rounds of changes: 0');
+    expect(brief).toContain('engine: github copilot review requested');
+    expect(brief).not.toContain('stage undefined');
     expect(brief).toContain("- `docs`: the project's agent docs");
     expect(brief).toContain('  - `docs/ai/reusability.md`');
     expect(brief).toContain('## Security rules');
