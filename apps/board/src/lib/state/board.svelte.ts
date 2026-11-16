@@ -2,7 +2,7 @@ import { ApiError, get, post } from '$lib/api';
 import { latestOnly } from '$lib/latest';
 import { isActive } from '$lib/runs';
 import type { AgentRoleInfo, Card, Learning, MemberActivity, Notice, Run } from '$lib/types';
-import { coalesce, live } from './live.svelte';
+import { coalesce, live, refreshesAll } from './live.svelte';
 import { session } from './session.svelte';
 
 class Board {
@@ -44,7 +44,7 @@ class Board {
     this.error = null;
     this.#unsubscribe?.();
     this.#unsubscribe = live.subscribe((event) => {
-      if (event.projectId === '*' || event.projectId === this.#projectId) this.#refreshSoon();
+      if (refreshesAll(event) || event.projectId === this.#projectId) this.#refreshSoon();
     });
     void this.refresh();
   }

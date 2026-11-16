@@ -1,14 +1,15 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { createHash, randomBytes } from 'node:crypto';
 import {
+  ACCESS_EVENT_RETENTION,
   applyCommand,
   findTaskIdByNumber,
   purgeConnectorCredentials,
   purgeOldAccessEvents
 } from '@officina/db';
-import type { HandInPort } from '@officina/engine';
 import { Pool } from 'pg';
 import { PLAN, applyOrThrow, resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
+import { gitHubWith } from '../../../packages/engine/test/fake-github';
 import { createApp } from '../src/app';
 import { accessLogView, invite, loginLink } from '../src/people';
 
@@ -18,13 +19,11 @@ const CALLBACK = 'https://claude.ai/api/mcp/auth_callback';
 const COPY = 'src/lib/constants/messages/en.ts';
 
 /** A GitHub that reads one pushed copy change and opens pull request 9 for it. */
-const builds = {
+const builds = gitHubWith({
   pushFacts: async () => ({ headSha: 'dev1', changedPaths: [COPY], addedPaths: [], diffLines: 2 }),
   readFile: async () => null,
-  openPullRequest: async () => ({ number: 9, url: 'https://github.com/ViciApp/vici-app/pull/9' }),
-  updateFile: async () => undefined,
-  commentOnIssue: async () => undefined
-} as unknown as HandInPort;
+  openPullRequest: async () => ({ number: 9, url: 'https://github.com/ViciApp/vici-app/pull/9' })
+});
 
 describe.skipIf(!url)('connector for Claude', () => {
   const pool = new Pool({ connectionString: url });
@@ -704,10 +703,11 @@ describe.skipIf(!url)('connector for Claude', () => {
     });
     expect(refused.status).toBe(403);
 
-    // A year on, it is purged; nothing newer is touched.
+    // Once past the retention window, it is purged; nothing newer is touched.
     await pool.query(
-      `update access_events set created_at = now() - interval '13 months'
-       where type = 'invited'`
+      `update access_events set created_at = now() - $1::interval - interval '1 minute'
+       where type = 'invited'`,
+      [ACCESS_EVENT_RETENTION]
     );
     expect(await purgeOldAccessEvents(pool)).toBe(1);
     expect(await purgeOldAccessEvents(pool)).toBe(0);
