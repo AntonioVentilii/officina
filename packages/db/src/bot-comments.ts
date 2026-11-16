@@ -1,5 +1,5 @@
 import { ENGINE } from '@officina/core';
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import { SINCE_LAST_BUILD } from './runs';
 import { appendTaskEvent } from './task-history';
 
@@ -48,12 +48,12 @@ export const markBotCommentsHandled = async (
  * A comment from before the builder's last push or answer was about work that is no longer the head.
  */
 export const unhandledBotComments = async (
-  pool: Pool,
+  db: Pool | PoolClient,
   taskId: string,
   quietSeconds: number
 ): Promise<BotComment[]> =>
   (
-    await pool.query<{ comment_id: string; by: string; body: string }>(
+    await db.query<{ comment_id: string; by: string; body: string }>(
       `select comment_id, by, body from (
          select distinct on (payload->>'commentId') id, created_at,
            payload->>'commentId' as comment_id, payload->>'by' as by, payload->>'body' as body

@@ -5,6 +5,16 @@ const MAX_FAILED_PASS_DELAY_MS = 5 * 60 * 1000;
 export const nextPassDelay = (intervalMs: number, failedInARow: number): number =>
   Math.max(intervalMs, Math.min(intervalMs * 2 ** failedInARow, MAX_FAILED_PASS_DELAY_MS));
 
+/** The longest a pass is held for `resumeAt`: GitHub's rate limits reset within the hour. */
+const MAX_HELD_PASS_DELAY_MS = 60 * 60 * 1000;
+
+/**
+ * The wait before the next pass (`nextPassDelay`), stretched until `resumeAt` (epoch ms) when
+ * nothing should run before it, such as a GitHub rate limit that every pass would only hit again.
+ */
+export const heldPassDelay = (delayMs: number, resumeAt: number | null, now: number): number =>
+  resumeAt === null ? delayMs : Math.max(delayMs, Math.min(resumeAt - now, MAX_HELD_PASS_DELAY_MS));
+
 export interface DueWork {
   readonly taskId: string;
   readonly role: string;
@@ -15,6 +25,8 @@ export interface SchedulerOptions {
   readonly collect: () => Promise<readonly DueWork[]>;
   readonly runStep: (work: DueWork) => Promise<unknown>;
   readonly intervalMs: number;
+  /** The earliest time the next pass may start (epoch ms), or `null` when nothing holds it. */
+  readonly resumeAt?: () => number | null;
   readonly log?: (message: string, details?: Record<string, unknown>) => void;
 }
 
@@ -51,6 +63,8 @@ export const collectEachProject = async (
  * for many minutes. A step already running in this process is never started again; the database
  * claim guards against other processes. A failing pass or step is logged and never stops the loop;
  * passes that keep failing wait longer each time (`nextPassDelay`), and one that succeeds resets it.
+ * The next pass also waits until `resumeAt`, when it gives a time (`heldPassDelay`), read again when
+ * the wait ends, since a step still running may have moved it.
  */
 export const startScheduler = (options: SchedulerOptions): Scheduler => {
   const log = options.log ?? (() => {});
@@ -80,6 +94,22 @@ export const startScheduler = (options: SchedulerOptions): Scheduler => {
     }
   };
 
+  /** `delayMs` stretched until `resumeAt`, logged when something holds the next pass. */
+  const heldDelay = (delayMs: number) => {
+    const resumeAt = options.resumeAt?.() ?? null;
+    if (resumeAt !== null) log('next pass held', { until: new Date(resumeAt).toISOString() });
+    return heldPassDelay(delayMs, resumeAt, Date.now());
+  };
+
+  // A step runs on after its pass, so a rate limit it meets can come after the wait was set: the
+  // wait is checked again when it ends, and the pass waits on while something still holds it.
+  const passUnlessHeld = () => {
+    if (stopped) return;
+    const wait = heldDelay(0);
+    if (wait > 0) timer = setTimeout(passUnlessHeld, wait);
+    else void loop();
+  };
+
   const loop = async () => {
     if (stopped) return;
     currentPass = pass()
@@ -94,7 +124,11 @@ export const startScheduler = (options: SchedulerOptions): Scheduler => {
         passes += 1;
       });
     await currentPass;
-    if (!stopped) timer = setTimeout(loop, nextPassDelay(options.intervalMs, failedInARow));
+    if (!stopped)
+      timer = setTimeout(
+        passUnlessHeld,
+        heldDelay(nextPassDelay(options.intervalMs, failedInARow))
+      );
   };
   void loop();
 

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Plus, Search } from '@lucide/svelte';
   import { page } from '$app/state';
+  import { BOARD_HEADING_ID } from '$lib/drawer';
   import { COLUMNS, CLOSED } from '$lib/stages';
   import { board } from '$lib/state/board.svelte';
   import { clock } from '$lib/state/clock.svelte';
@@ -55,7 +56,7 @@
 
 <section class="board">
   <header class="toolbar">
-    <h1 class="page-title">Board</h1>
+    <h1 class="page-title" id={BOARD_HEADING_ID} tabindex="-1">Board</h1>
     <div class="stats">
       <div class="stat">
         <span class="caps muted">Open</span>
@@ -151,6 +152,11 @@
 {/if}
 
 <style>
+  /* The heading takes focus only when a drawer closes on a card the board does not show. */
+  h1:focus-visible {
+    outline: none;
+  }
+
   .load-error {
     display: flex;
     align-items: center;

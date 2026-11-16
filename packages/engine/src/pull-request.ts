@@ -9,7 +9,8 @@ import {
   type Catalog,
   type CatalogPages,
   type ProjectConfig,
-  type PushFacts
+  type PushFacts,
+  type Task
 } from '@officina/core';
 import {
   applyCommand,
@@ -177,29 +178,40 @@ export type AdoptPort = PushFactsPort &
   >;
 
 /**
+ * Sends a head that just reached review back to the builder when its checks are already red:
+ * GitHub reported them before any task held that commit (a push from outside, a hand-in, or a
+ * build whose checks failed before its push was applied), and nothing will report them again.
+ * `null` when the head did not reach review or nothing failed on it.
+ */
+export const sendBackRedChecks = async (
+  pool: Pool,
+  github: Pick<GitHubClient, 'failedChecks'>,
+  input: { readonly taskId: string; readonly ref: RepoRef; readonly branch: string },
+  task: Task
+): Promise<ApplyResult | null> => {
+  if (task.stage !== 'reviewing' || !task.headSha) return null;
+  const headSha = task.headSha;
+  const failures = await github.failedChecks({ ...input.ref, sha: headSha, branch: input.branch });
+  if (failures.length === 0) return null;
+  return applyCommand(pool, {
+    taskId: input.taskId,
+    command: { type: 'ci_failed', headSha, details: failures.join('; ') },
+    actor: ENGINE
+  });
+};
+
+/**
  * What follows a head taken in: auto-merge off if the task left `merging`, since GitHub would land
- * the new head once its checks pass, and the checks already red on it sent to the builder, since
- * GitHub reported them before any task held that commit and nothing will report them again.
+ * the new head once its checks pass, and the checks already red on it sent to the builder.
  */
 const afterAdoption = async (
   pool: Pool,
   github: AdoptPort,
-  input: { taskId: string; ref: RepoRef; pullRequest: number; headSha: string; branch: string },
+  input: { taskId: string; ref: RepoRef; pullRequest: number; branch: string },
   adopted: ApplyResult
 ) => {
   await stopAutoMergeOnLeaving(pool, github, input, adopted);
-  if (!adopted.ok || adopted.task.stage !== 'reviewing') return;
-  const failures = await github.failedChecks({
-    ...input.ref,
-    sha: input.headSha,
-    branch: input.branch
-  });
-  if (failures.length === 0) return;
-  await applyCommand(pool, {
-    taskId: input.taskId,
-    command: { type: 'ci_failed', headSha: input.headSha, details: failures.join('; ') },
-    actor: ENGINE
-  });
+  if (adopted.ok) await sendBackRedChecks(pool, github, input, adopted.task);
 };
 
 /**
@@ -332,7 +344,7 @@ const adoptOutsidePush = async (pool: Pool, github: AdoptPort, taskId: string) =
   await afterAdoption(
     pool,
     github,
-    { taskId, ref, pullRequest: context.pullRequest, headSha: head.headSha, branch },
+    { taskId, ref, pullRequest: context.pullRequest, branch },
     adopted
   );
 };

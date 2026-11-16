@@ -22,7 +22,8 @@ const COPY = 'src/lib/constants/messages/en.ts';
 const builds = gitHubWith({
   pushFacts: async () => ({ headSha: 'dev1', changedPaths: [COPY], addedPaths: [], diffLines: 2 }),
   readFile: async () => null,
-  openPullRequest: async () => ({ number: 9, url: 'https://github.com/ViciApp/vici-app/pull/9' })
+  openPullRequest: async () => ({ number: 9, url: 'https://github.com/ViciApp/vici-app/pull/9' }),
+  failedChecks: async () => []
 });
 
 describe.skipIf(!url)('connector for Claude', () => {
