@@ -92,16 +92,22 @@ const cardLine = (context: ToolContext, project: MemberProject, card: CardView) 
 
 type TaskDetail = NonNullable<Awaited<ReturnType<typeof taskView>>>;
 
+type Requirement = TaskDetail['people']['gates'][number]['requirements'][number];
+
+const namesOf = (who: Requirement['who']) => who.map((person) => person.name).join(', ');
+
+/** One requirement of a gate: who holds it, and who of them approved. */
+const requirementLine = (requirement: Requirement) => {
+  if (requirement.waived) return `${requirement.label} (nobody holds it, so it is waived)`;
+  const approved = namesOf(requirement.who.filter((person) => person.approved));
+  return `${requirement.label} (${namesOf(requirement.who) || 'nobody yet'}${approved ? `; approved by ${approved}` : ''})`;
+};
+
 /** Who asked, who approves each gate and who merges, so nobody assumes the requester decides. */
 const peopleLines = ({ people }: TaskDetail) => [
   ...people.gates.map(
     (gate) =>
-      `${gate.does}: ${gate.requirements
-        .map(
-          (requirement) =>
-            `${requirement.label} (${requirement.waived ? 'nobody holds it, so it is waived' : requirement.who.join(', ') || 'nobody yet'}${requirement.approvedBy.length ? `; approved by ${requirement.approvedBy.join(', ')}` : ''})`
-        )
-        .join(', ')}.${gate.asked.length ? ` Asked to check: ${gate.asked.join(', ')}.` : ''}`
+      `${gate.does}: ${gate.requirements.map(requirementLine).join(', ')}.${gate.asked.length ? ` Asked to check: ${gate.asked.join(', ')}.` : ''}`
   ),
   people.build.by === 'person'
     ? `Build: a developer, not the agents (${people.build.reason}). Who can claim it: ${people.build.who.join(', ') || 'nobody yet'}.`
