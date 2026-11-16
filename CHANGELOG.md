@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.7.7](https://github.com/AntonioVentilii/officina/compare/v1.7.6...v1.7.7) (2026-11-16)
+
+
+### Bug Fixes
+
+* **api,board:** mark each person's approval, not every member with the approver's name ([#230](https://github.com/AntonioVentilii/officina/issues/230)) ([32a24b1](https://github.com/AntonioVentilii/officina/commit/32a24b1f2a76c4dca938719a8c032a3f5f7ceb67))
+* **board:** key people, verifiers and before/after rows by position, not by text ([#228](https://github.com/AntonioVentilii/officina/issues/228)) ([1bbced7](https://github.com/AntonioVentilii/officina/commit/1bbced74f98bd81bde6720c386d841191a353d7c))
+
 ## [1.7.6](https://github.com/AntonioVentilii/officina/compare/v1.7.5...v1.7.6) (2026-11-16)
 
 
