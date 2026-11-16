@@ -5,6 +5,7 @@ import { GitHubError } from '@officina/github';
 import { Pool } from 'pg';
 import { invite } from '../src/people';
 import { PLAN, applyOrThrow, resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
+import { gitHubWith } from '../../../packages/engine/test/fake-github';
 import {
   TaskCommandError,
   actOnTask,
@@ -269,7 +270,7 @@ describe.skipIf(!url)('task commands', () => {
     await claimedBuild();
 
     const opened: string[] = [];
-    const github = {
+    const github = gitHubWith({
       pushFacts: async () => ({
         headSha: 'dev1',
         changedPaths: [COPY],
@@ -277,13 +278,13 @@ describe.skipIf(!url)('task commands', () => {
         diffLines: 2
       }),
       readFile: async () => null,
-      openPullRequest: async (input: { title: string }) => {
+      openPullRequest: async (input) => {
         opened.push(input.title);
         return { number: 9, url: 'https://github.com/ViciApp/vici-app/pull/9' };
       },
-      updateFile: async () => undefined,
+      updateFile: async () => ({ commitSha: null, parentSha: null }),
       commentOnIssue: async () => undefined
-    } as unknown as HandInPort;
+    });
     const input = handInInput;
 
     await expect(handIn(pool, undefined, input)).rejects.toThrow(
@@ -295,11 +296,11 @@ describe.skipIf(!url)('task commands', () => {
 
   test('a hand-in GitHub cannot read, or on a repository without the App, is refused with why', async () => {
     const taskId = await claimedBuild();
-    const unreadable = {
+    const unreadable = gitHubWith({
       pushFacts: async () => {
         throw new GitHubError(404, '/repos/ViciApp/vici-app/compare', 'Not Found');
       }
-    } as unknown as HandInPort;
+    });
     const refusal = (github: HandInPort) =>
       handIn(pool, github, handInInput).then(
         () => null,

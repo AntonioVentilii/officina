@@ -1,5 +1,12 @@
 export { createApp, type App, type AppDependencies } from './app';
-export { startScheduler, type DueWork, type Scheduler, type SchedulerOptions } from './scheduler';
+export {
+  collectEachProject,
+  nextPassDelay,
+  startScheduler,
+  type DueWork,
+  type Scheduler,
+  type SchedulerOptions
+} from './scheduler';
 export {
   SetupError,
   addProject,
