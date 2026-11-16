@@ -74,6 +74,7 @@ export type BoardAction =
   | 'decline'
   | 'claim'
   | 'hand_in'
+  | 'hand_back'
   | 'approve'
   | 'changes'
   | 'answer'
@@ -464,17 +465,22 @@ const buildsIt = (
 
 /**
  * A developer claims a build when it waits or the agent has it, and hands in what they pushed once
- * it is theirs: built by hand or with their own agents, it goes to the same review.
+ * it is theirs: built by hand or with their own agents, it goes to the same review. They may hand
+ * it back instead, and so may whoever may steer the work, for another person's build.
  */
 const buildActions = (row: BoardTaskRow, viewer: BoardViewer): BoardAction[] => {
   if (!buildsIt(row, viewer)) return [];
   if (row.stage === 'ready' || (row.stage === 'building' && row.assignee?.kind === 'agent'))
     return ['claim'];
-  return row.stage === 'building' &&
-    row.assignee?.kind === 'member' &&
-    row.assignee.memberId === viewer.memberId
-    ? ['hand_in']
+  return row.stage === 'building' && row.assignee?.kind === 'member'
+    ? heldBuildActions(row.assignee.memberId, viewer)
     : [];
+};
+
+/** What may be done with a build a member holds: theirs, or another's for whoever may steer. */
+const heldBuildActions = (holderId: string, viewer: BoardViewer): BoardAction[] => {
+  if (holderId === viewer.memberId) return ['hand_in', 'hand_back'];
+  return can(viewer, 'steer') ? ['hand_back'] : [];
 };
 
 /**
