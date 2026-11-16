@@ -456,9 +456,34 @@ describe.skipIf(!url)('board api', () => {
       ).rows[0];
     const before = await state();
 
-    for (const [path, body] of routes) {
-      const refused = await call(cookie, path, body, false);
-      expect(refused.status).toBe(403);
+    // Every route that changes something, read off the app so a new one cannot miss the check;
+    // only the ones GitHub, an OAuth client and an MCP client call answer without the header.
+    const headerFree = new Set(['/github/webhook', '/oauth/register', '/oauth/token', '/mcp']);
+    const params: Record<string, string> = {
+      projectId: seeded.projectId,
+      number: '1',
+      learningId
+    };
+    const changing = app()
+      .routes.filter((route) => route.method !== 'GET' && !headerFree.has(route.path))
+      .map((route) => ({
+        method: route.method,
+        path: route.path.replace(
+          /:(\w+)/g,
+          (_, name: string) => params[name] ?? crypto.randomUUID()
+        )
+      }));
+    // The routes tried with the header below are among them, so the list is not empty.
+    for (const [path] of routes) expect(changing).toContainEqual({ method: 'POST', path });
+    for (const { method, path } of changing) {
+      const refused = await app().handle(
+        new Request(`http://local${path}`, {
+          method,
+          headers: { cookie, 'content-type': 'application/json' },
+          body: '{}'
+        })
+      );
+      expect({ method, path, status: refused.status }).toEqual({ method, path, status: 403 });
       expect(await json(refused)).toEqual({ error: 'missing request header' });
     }
     expect(await state()).toEqual(before);
