@@ -34,6 +34,16 @@ export const clip = (text: string, max: number): string =>
   text.length > max ? `${text.slice(0, max)} … (${text.length - max} more characters)` : text;
 
 /**
+ * How much of an error's message a task event, a run event or a run's result keeps: enough to read
+ * the cause, short of a whole response body a failed call can carry.
+ */
+export const ERROR_TEXT_MAX = 500;
+
+/** An error's message as an event or a run's result records it, clipped to `ERROR_TEXT_MAX`. */
+export const errorText = (error: unknown): string =>
+  clip(error instanceof Error ? error.message : String(error), ERROR_TEXT_MAX);
+
+/**
  * What the approval chooser's checklist for verification may hold: its items and the rows of its
  * before/after table. Posted together as one comment, they stay under GitHub's limit at these sizes.
  */
