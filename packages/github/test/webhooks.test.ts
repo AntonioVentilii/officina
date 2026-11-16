@@ -69,25 +69,48 @@ describe('webhook events', () => {
     });
   });
 
-  test('a failed check suite names the commit it ran on, with or without a pull request', () => {
-    for (const pull_requests of [[{ number: 7 }], []])
-      expect(
-        parseWebhookEvent('check_suite', {
-          action: 'completed',
-          check_suite: {
-            conclusion: 'failure',
-            head_sha: 'abc',
-            app: { name: 'GitHub Actions' },
-            pull_requests
-          },
-          repository
-        })
-      ).toEqual({
+  const ownPullRequest = {
+    number: 7,
+    head: { repo: { id: 1 } },
+    base: { repo: { id: 1 } }
+  };
+  const failedSuite = (extra: Record<string, unknown>) => ({
+    action: 'completed',
+    check_suite: {
+      conclusion: 'failure',
+      head_sha: 'abc',
+      head_branch: 'officina/task-3',
+      app: { name: 'GitHub Actions' },
+      pull_requests: [],
+      ...extra
+    },
+    repository
+  });
+
+  test('a failed check suite names the commit and the branch it ran on, with or without a pull request', () => {
+    for (const pull_requests of [[ownPullRequest], []])
+      expect(parseWebhookEvent('check_suite', failedSuite({ pull_requests }))).toEqual({
         kind: 'checks_failed',
         repo: 'ViciApp/vici-app',
         headSha: 'abc',
+        branch: 'officina/task-3',
         details: 'GitHub Actions: failure'
       });
+  });
+
+  test("a check suite that ran for a fork's pull request is ignored, whatever its branch is called", () => {
+    expect(parseWebhookEvent('check_suite', failedSuite({ head_branch: null }))).toBeNull();
+    const fromFork = { number: 8, head: { repo: { id: 2 } }, base: { repo: { id: 1 } } };
+    expect(parseWebhookEvent('check_suite', failedSuite({ pull_requests: [fromFork] }))).toBeNull();
+  });
+
+  test('a check suite waiting for someone to approve its run has not failed', () => {
+    expect(
+      parseWebhookEvent('check_suite', failedSuite({ conclusion: 'action_required' }))
+    ).toBeNull();
+    expect(
+      parseWebhookEvent('check_suite', failedSuite({ conclusion: 'timed_out' }))
+    ).toMatchObject({ details: 'GitHub Actions: timed_out' });
   });
 
   test('a failed or errored commit status, with what it says and where to look', () => {
@@ -107,6 +130,7 @@ describe('webhook events', () => {
       kind: 'checks_failed',
       repo: 'ViciApp/vici-app',
       headSha: 'abc',
+      branch: null,
       details: 'vercel: failure (Build failed) https://ci.example/1'
     });
     expect(parseWebhookEvent('status', status('error'))).toMatchObject({

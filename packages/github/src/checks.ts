@@ -1,20 +1,41 @@
 import { GitHubError } from './http';
 
-/** Check suite conclusions that mean the checks failed. */
+/**
+ * Check suite conclusions that mean the checks failed. `action_required` is not one: it waits for
+ * someone to approve the run, and a suite nobody ran says nothing about the work.
+ */
 const FAILED_CONCLUSIONS: ReadonlySet<string> = new Set([
   'failure',
   'timed_out',
-  'action_required',
   'startup_failure'
 ]);
 
 /** Commit status states that mean the status failed. */
 const FAILED_STATUSES: ReadonlySet<string> = new Set(['failure', 'error']);
 
+interface SuitePullRequest {
+  readonly head?: { readonly repo?: { readonly id?: number } };
+  readonly base?: { readonly repo?: { readonly id?: number } };
+}
+
 export interface CheckSuite {
   readonly conclusion?: string | null;
   readonly app?: { readonly name?: string };
+  readonly head_branch?: string | null;
+  readonly pull_requests?: readonly SuitePullRequest[];
 }
+
+/**
+ * The branch of the repository itself a check suite ran for, or `null` when it ran for a fork: a
+ * fork can carry the same commit and open a pull request whose checks fail, so a suite counts for a
+ * task only when it ran on the task's own branch. GitHub leaves a fork's head branch empty; a pull
+ * request whose head lives in another repository marks a fork too.
+ */
+export const suiteBranch = (suite: CheckSuite): string | null =>
+  suite.head_branch &&
+  (suite.pull_requests ?? []).every((pr) => pr.head?.repo?.id === pr.base?.repo?.id)
+    ? suite.head_branch
+    : null;
 
 export interface CommitStatus {
   readonly state?: string;
@@ -45,16 +66,17 @@ export const statusFailure = (status: CommitStatus): string | null => {
 };
 
 /**
- * What already failed on a commit, its check suites and latest commit statuses, as the webhooks
- * would have reported them: for a head Officina takes in after GitHub sent those webhooks. A
- * repository where the App may not read commit statuses (the permission is not granted yet) has
- * none to report, and its check suites still count.
+ * What already failed on a commit, its check suites that ran on `branch` and its latest commit
+ * statuses, as the webhooks would have reported them: for a head Officina takes in after GitHub
+ * sent those webhooks. A repository where the App may not read commit statuses (the permission is
+ * not granted yet) has none to report, and its check suites still count.
  */
 export const failuresOn = async (
   get: <T>(path: string) => Promise<T>,
   repo: string,
-  sha: string
+  ref: { readonly sha: string; readonly branch: string }
 ): Promise<string[]> => {
+  const { sha, branch } = ref;
   const suites = await get<{ check_suites?: CheckSuite[] }>(
     `/repos/${repo}/commits/${sha}/check-suites?per_page=100`
   );
@@ -66,7 +88,9 @@ export const failuresOn = async (
     throw error;
   });
   return [
-    ...(suites.check_suites ?? []).map(suiteFailure),
+    ...(suites.check_suites ?? [])
+      .filter((suite) => suiteBranch(suite) === branch)
+      .map(suiteFailure),
     ...(statuses.statuses ?? []).map(statusFailure)
   ].filter((failure): failure is string => failure !== null);
 };

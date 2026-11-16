@@ -230,7 +230,10 @@ describe.skipIf(!url)('api', () => {
     ]);
     const taskId = await createTaskInMerging(pool, seeded);
     await linkPullRequest(pool, taskId, 42);
-    const suite = (delivery: string, headSha: string) =>
+    const { number } = (
+      await pool.query<{ number: number }>('select number from tasks where id = $1', [taskId])
+    ).rows[0]!;
+    const suite = (delivery: string, headSha: string, branch = `officina/task-${number}`) =>
       deliver(checking, {
         event: 'check_suite',
         delivery,
@@ -239,6 +242,7 @@ describe.skipIf(!url)('api', () => {
           check_suite: {
             conclusion: 'failure',
             head_sha: headSha,
+            head_branch: branch,
             app: { name: 'GitHub Actions' },
             pull_requests: []
           },
@@ -250,6 +254,13 @@ describe.skipIf(!url)('api', () => {
       status: 'applied',
       outcomes: []
     });
+    // So is a suite on the task's head that ran on another branch holding the same commit.
+    expect(await (await suite('d-0', 'abc', 'copy-of-the-head')).json()).toEqual({
+      status: 'applied',
+      outcomes: []
+    });
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({ stage: 'merging' });
+    expect(calls).toEqual([]);
     const response = await suite('d-2', 'abc');
     expect(await response.json()).toEqual({ status: 'applied', outcomes: [{ taskId, ok: true }] });
     const stored = await loadTask(pool, taskId);

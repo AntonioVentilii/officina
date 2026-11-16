@@ -529,10 +529,10 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
       )
     );
 
-  /** What already failed on a commit (`failuresOn`). */
-  const failedChecks = async (ref: RepoRef & { readonly sha: string }) => {
+  /** What already failed on a commit of a branch (`failuresOn`). */
+  const failedChecks = async (ref: RepoRef & { readonly sha: string; readonly branch: string }) => {
     const token = await installationToken(ref);
-    return failuresOn((path) => request(path, { token }), ref.repo, ref.sha);
+    return failuresOn((path) => request(path, { token }), ref.repo, ref);
   };
 
   /**
