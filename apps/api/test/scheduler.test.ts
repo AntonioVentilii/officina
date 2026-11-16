@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { collectEachProject, nextPassDelay, startScheduler, type DueWork } from '../src';
+import {
+  collectEachProject,
+  heldPassDelay,
+  nextPassDelay,
+  startScheduler,
+  type DueWork
+} from '../src';
 
 const waitFor = async (condition: () => boolean, timeoutMs = 2000) => {
   const deadline = Date.now() + timeoutMs;
@@ -91,6 +97,54 @@ describe('scheduler', () => {
     await waitFor(() => failures.length === 5);
     await scheduler.stop();
     expect(failures).toEqual([1, 2, 3, 4, 1]);
+  });
+
+  test('a pass held until a time waits for it, then passes run at the interval again', async () => {
+    let resumeAt: number | null = Date.now() + 80;
+    const logged: string[] = [];
+    const scheduler = startScheduler({
+      intervalMs: 5,
+      collect: async () => [],
+      runStep: async () => {},
+      resumeAt: () => resumeAt,
+      log: (message) => logged.push(message)
+    });
+    // One pass, then a wait of 80 ms where a 5 ms interval alone would give a dozen.
+    await Bun.sleep(50);
+    expect(scheduler.passes()).toBe(1);
+    expect(logged).toEqual(['next pass held']);
+    resumeAt = null;
+    await waitFor(() => scheduler.passes() >= 5);
+    await scheduler.stop();
+  });
+
+  test('a rate limit a step meets after its pass holds the pass already waiting', async () => {
+    let resumeAt: number | null = null;
+    const scheduler = startScheduler({
+      intervalMs: 20,
+      collect: async () => [work],
+      runStep: async () => {
+        // Still running when the wait for the next pass was set, as an agent session is.
+        await Bun.sleep(5);
+        resumeAt = Date.now() + 200;
+      },
+      resumeAt: () => resumeAt
+    });
+    // The 20 ms wait set before the step met the limit would give several passes by now.
+    await Bun.sleep(120);
+    expect(scheduler.passes()).toBe(1);
+    resumeAt = null;
+    await waitFor(() => scheduler.passes() >= 2);
+    await scheduler.stop({ waitForSteps: true });
+  });
+
+  test('the wait before the next pass lasts until the time it is held to, at most an hour', () => {
+    const now = 1_000_000;
+    expect(heldPassDelay(15_000, null, now)).toBe(15_000);
+    expect(heldPassDelay(15_000, now + 5_000, now)).toBe(15_000);
+    expect(heldPassDelay(15_000, now + 120_000, now)).toBe(120_000);
+    expect(heldPassDelay(15_000, now - 1_000, now)).toBe(15_000);
+    expect(heldPassDelay(15_000, now + 24 * 60 * 60 * 1000, now)).toBe(60 * 60 * 1000);
   });
 
   test('the wait after failed passes never grows past five minutes', () => {

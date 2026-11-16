@@ -94,8 +94,27 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
   const now = options.now ?? Date.now;
   const tokens = new Map<string, CachedToken>();
 
-  const request = <T>(path: string, init: { method?: string; token: string; body?: unknown }) =>
-    githubRequest<T>(http, init.token, path, init);
+  let limitedUntil = 0;
+
+  /** Remembers when a rate limit that refused a call resets, for `rateLimitedUntil`. */
+  const request = async <T>(
+    path: string,
+    init: { method?: string; token: string; body?: unknown }
+  ): Promise<T> => {
+    try {
+      return await githubRequest<T>(http, init.token, path, { ...init, now });
+    } catch (error) {
+      if (error instanceof GitHubError && error.resetAt !== null)
+        limitedUntil = Math.max(limitedUntil, error.resetAt);
+      throw error;
+    }
+  };
+
+  /**
+   * Until when a rate limit refuses the App's calls (epoch ms), as GitHub last said; `null` once
+   * that time has passed. The scheduler waits for it instead of calling GitHub on every pass.
+   */
+  const rateLimitedUntil = (): number | null => (limitedUntil > now() ? limitedUntil : null);
 
   /** A new installation token for one repository, never cached. */
   const createToken = async (
@@ -669,7 +688,8 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     pullRequest,
     failedChecks,
     cancelAutoMerge,
-    resolveReviewThreads
+    resolveReviewThreads,
+    rateLimitedUntil
   };
 };
 
