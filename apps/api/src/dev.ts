@@ -6,7 +6,7 @@
  *   bun run dev:board    # the board with hot reload on :5173, proxied to this server
  */
 import { join } from 'node:path';
-import { ENGINE, isGate, type Actor, type Command } from '@officina/core';
+import { ENGINE, REVIEWER_ROLES, isGate, type Actor, type Command } from '@officina/core';
 import {
   addComment,
   appendRunEvent,
@@ -310,7 +310,7 @@ const seed = async (
           running: true
         });
       }
-      for (const role of ['reviewer_spec', 'reviewer_correctness'] as const) {
+      for (const role of REVIEWER_ROLES) {
         await run(demo, task.id, 'reviewing', role, { cost: 95, result: { outcome: 'approve' } });
         await apply(
           demo,
