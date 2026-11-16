@@ -11,6 +11,7 @@ import {
 } from '@officina/db';
 import { executeRun, type RunnerRole } from '@officina/runner';
 import { buildBrief, type ChooserContext } from './brief';
+import type { LiveRun } from './live-runs';
 import type { Step } from './step';
 import {
   interviewProblems,
@@ -114,13 +115,19 @@ export class RunStoppedError extends Error {}
  * that window) is stopped here, before the brief is sent: nothing else knows the session to
  * interrupt it.
  */
-const registerSession = async (step: Step, sessionId: string) => {
+const registerSession = async (step: Step, sessionId: string, live: LiveRun | undefined) => {
+  live?.session(sessionId);
   if (await setRunExternalId(step.deps.pool, step.runId, sessionId)) return;
   await step.deps.agents.send(sessionId, [{ type: 'user.interrupt' }]).catch(() => {});
   throw new RunStoppedError('the run was stopped before its session started');
 };
 
-export const runSession = async (step: Step, inputs: StepInputs, token: string) => {
+export const runSession = async (
+  step: Step,
+  inputs: StepInputs,
+  token: string,
+  live: LiveRun | undefined
+) => {
   const { context, config, role, runId, agent } = step;
   const { pool } = step.deps;
   const lane = context.task.lane ?? 'standard';
@@ -147,7 +154,7 @@ export const runSession = async (step: Step, inputs: StepInputs, token: string) 
           : Math.round(config.lanes[lane].budgetUsd * 100)
     },
     validate: validatorFor(step, inputs),
-    onSessionCreated: (sessionId) => registerSession(step, sessionId),
+    onSessionCreated: (sessionId) => registerSession(step, sessionId, live),
     // The log is for people to read; an event it cannot hold must not end the run, which still
     // has its refs to check and its result to apply.
     onEvent: (event) => appendRunEvent(pool, runId, event.type, event).catch(() => {})
