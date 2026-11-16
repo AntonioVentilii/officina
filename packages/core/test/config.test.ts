@@ -211,6 +211,16 @@ describe('project config', () => {
     });
   });
 
+  test('still accepts docs.pr_template and setup, which nothing uses yet', () => {
+    expect(
+      parseProjectConfig({
+        version: 1,
+        docs: { entry: 'AGENTS.md', pr_template: '.github/pull_request_template.md' },
+        setup: ['npm ci']
+      }).ok
+    ).toBe(true);
+  });
+
   test('reports unknown keys and bad requirements with their path', () => {
     const result = parseProjectConfig({
       version: 1,

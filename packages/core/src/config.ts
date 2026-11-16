@@ -72,6 +72,10 @@ const projectConfigSchema = z
       entry: markdownPage,
       spec_template: z.string().min(1).optional(),
       spec_dir: z.string().min(1).optional(),
+      /**
+       * Accepted, not used yet, like `setup`: nothing reads either, and the schema refuses unknown
+       * keys, so they stay for a config that already sets them to keep parsing.
+       */
       pr_template: z.string().min(1).optional(),
       /** The folder of agent docs every project must hold; `docs/ai` unless set. */
       standards: repoPath.optional(),
@@ -83,6 +87,7 @@ const projectConfigSchema = z
        */
       catalogs: z.record(z.string().min(1), markdownPage).optional()
     }),
+    /** Accepted, not used yet, like `docs.pr_template`. */
     setup: z.array(z.string().min(1)).optional(),
     intake: z
       .strictObject({
@@ -216,10 +221,8 @@ export interface ProjectConfig {
     readonly entry: string;
     readonly specTemplate: string | null;
     readonly specDir: string | null;
-    readonly prTemplate: string | null;
     readonly standards: StandardsDocs;
   };
-  readonly setup: readonly string[];
   readonly intake: { readonly interview: boolean };
   readonly verify: readonly string[];
   readonly approvals: { readonly selfApproval: boolean };
@@ -351,10 +354,8 @@ export const parseProjectConfig = (input: unknown): ConfigResult => {
         entry: raw.docs.entry,
         specTemplate: raw.docs.spec_template ?? null,
         specDir: raw.docs.spec_dir ?? null,
-        prTemplate: raw.docs.pr_template ?? null,
         standards: normalizeStandards(raw.docs)
       },
-      setup: raw.setup ?? [],
       intake: { interview: raw.intake?.interview ?? true },
       verify: raw.verify ?? [],
       approvals: { selfApproval: raw.approvals?.self_approval ?? true },
