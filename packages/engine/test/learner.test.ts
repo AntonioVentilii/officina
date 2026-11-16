@@ -17,7 +17,7 @@ import { Pool } from 'pg';
 import { backendPid, untilWaitingOn } from '../../db/test/locks';
 import { applyOrThrow, createTaskInMerging, resetAndSeed, type Seeded } from '../../db/test/seed';
 import { createFakePort, idle, toolUse } from '../../runner/test/fake-port';
-import { parseProjectConfig } from '@officina/core';
+import { parseProjectConfig, type AgentOutput } from '@officina/core';
 import { collectDueSteps, learningProblems, runAgentStep } from '../src';
 import { gitHubWith } from './fake-github';
 
@@ -31,7 +31,9 @@ const fakeGitHub = () =>
     readFile: async ({ path }) => (path === 'AGENTS.md' ? { text: DOCS, sha: 'blob1' } : null)
   });
 
-const learning = (overrides: Record<string, unknown>) => ({
+type Learning = AgentOutput<'learner'>['learnings'][number];
+
+const learning = (overrides: Partial<Learning>): Learning => ({
   title: 'Say where locale files live',
   lesson: 'Copy changes must cover every live locale.',
   evidence: 'The reviewer sent the build back because Italian was missing.',
@@ -84,7 +86,7 @@ describe.skipIf(!url)('learner', () => {
           learning({ target: 'project', edit: { file: 'CLAUDE.md', text: 'x' } }),
           learning({ edit: { file: 'docs/ai/workflows/new.md', text: 'x' } })
         ]
-      } as never)
+      })
     ).toEqual([
       'learnings.0: docs edits go to AGENTS.md or a page under docs/ai/, not CLAUDE.md, a pointer to the entry document',
       'learnings.1: CLAUDE.md is part of the agent docs; it is a pointer to the entry document and takes no rule'
@@ -185,7 +187,7 @@ describe.skipIf(!url)('learner', () => {
       learnings: [
         learning({
           edit: { file: 'AGENTS.md', find: '## Copy, short\n', text: '## Copy, short\n\nx\n' }
-        }) as never
+        })
       ]
     });
     const [stale] = await listLearnings(pool, seeded.projectId);
