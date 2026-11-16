@@ -3,6 +3,7 @@
   import { ExternalLink, GitPullRequest, X } from '@lucide/svelte';
   import { goto } from '$app/navigation';
   import { ApiError, get, post } from '$lib/api';
+  import { closesDrawer, focusAfterDrawer } from '$lib/drawer';
   import { ago, dateTime, money } from '$lib/format';
   import { inertAround } from '$lib/inert';
   import { STAGE_LABELS } from '$lib/stages';
@@ -64,10 +65,10 @@
     });
   });
 
-  // The board is drawn again on the way back, so focus returns to this task's card, which opened it.
+  // The board is drawn again on the way back, so focus is found there again, not kept from before.
   const close = () =>
     void goto('/', { noScroll: true, keepFocus: true }).then(() =>
-      document.querySelector<HTMLElement>(`a[href="/tasks/${number}"]`)?.focus()
+      focusAfterDrawer(document, number)?.focus()
     );
 
   let layer: HTMLDivElement | undefined = $state();
@@ -81,7 +82,7 @@
   });
 
   const onKey = (event: KeyboardEvent) => {
-    if (event.key === 'Escape' && !(event.target instanceof HTMLTextAreaElement)) close();
+    if (closesDrawer(event.key, event.target instanceof Element ? event.target : null)) close();
   };
 
   const spec = $derived(
