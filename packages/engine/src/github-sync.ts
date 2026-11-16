@@ -12,6 +12,7 @@ import {
   listStaleAutoMerges,
   loadTask,
   loadTaskContext,
+  recordSpecStatus,
   whileTaskAt
 } from '@officina/db';
 import {
@@ -471,14 +472,13 @@ const recordUnexpectedHead = async (
     expected !== null &&
     path !== null &&
     (await isOwnStatusCommit(github, { ref: input.ref, head, expected, path, status }));
-  await appendTaskEvent(pool, {
+  await recordSpecStatus(
+    pool,
     taskId,
-    actor: ENGINE,
-    type: 'spec_status_set',
-    payload: own
+    own
       ? { status, path, commitSha: head }
       : { status, path: null, commitSha: null, branchMoved: head }
-  });
+  );
   return own ? 'updated' : 'moved';
 };
 
@@ -528,11 +528,11 @@ export const syncSpecStatus = async (
   }
   // The commit is recorded so a review of it counts as a review of the task's head: it only
   // changes the spec's status line on top of the work that was reviewed.
-  await appendTaskEvent(pool, {
-    taskId: input.taskId,
-    actor: ENGINE,
-    type: 'spec_status_set',
-    payload: { status: input.status, path, commitSha, ...(unverified ? { unverified } : {}) }
+  await recordSpecStatus(pool, input.taskId, {
+    status: input.status,
+    path,
+    commitSha,
+    ...(unverified ? { unverified } : {})
   });
   return text === file.text ? 'unchanged' : 'updated';
 };
