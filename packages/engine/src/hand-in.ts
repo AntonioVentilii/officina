@@ -1,4 +1,11 @@
-import { branchForTask, parseProjectConfig, type Stage, type Task } from '@officina/core';
+import {
+  branchForTask,
+  memberActor,
+  parseProjectConfig,
+  type ConnectedApp,
+  type Stage,
+  type Task
+} from '@officina/core';
 import {
   appendTaskEvent,
   applyCommand,
@@ -23,6 +30,8 @@ export type HandInPort = PullRequestPort & PushFactsPort & Pick<GitHubClient, 'f
 export interface HandIn {
   readonly taskId: string;
   readonly memberId: string;
+  /** The connected app the member handed it in through, absent from the board or the CLI. */
+  readonly via?: ConnectedApp | undefined;
   /** The pull request title, in the repository's own format. */
   readonly prTitle: string;
   readonly verified: readonly string[];
@@ -137,7 +146,7 @@ export const handInBuild = async (
   if (await sentBackRed(deps.github, { ...checks, ...held })) {
     return { ok: true, stage: context.task.stage, pullRequest: context.pullRequest };
   }
-  const actor = { kind: 'member' as const, memberId: input.memberId };
+  const actor = memberActor(input.memberId, input.via);
   const applied = await applyCommand(deps.pool, {
     taskId: input.taskId,
     command: { type: 'push', ...facts },

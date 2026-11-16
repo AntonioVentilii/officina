@@ -5,6 +5,7 @@
   import AgentAvatar from './AgentAvatar.svelte';
   import Markdown from './Markdown.svelte';
   import MemberAvatar from './MemberAvatar.svelte';
+  import ViaApp from './ViaApp.svelte';
   import { clock } from '$lib/state/clock.svelte';
 
   interface Props {
@@ -155,6 +156,7 @@
         item.kind === 'event' &&
         last?.kind === 'event' &&
         last.event.actor === item.event.actor &&
+        last.event.via === item.event.via &&
         Math.abs(new Date(item.at).getTime() - new Date(last.at).getTime()) < 2000
       ) {
         last.texts.push(...item.texts);
@@ -175,6 +177,7 @@
         <div class="bubble">
           <div class="meta">
             <strong>{item.comment.author}</strong>
+            <ViaApp name={item.comment.via} />
             <time class="faint" datetime={item.at} title={dateTime(item.at)}
               >{ago(item.at, clock.now)}</time
             >
@@ -194,7 +197,11 @@
           {/if}
         </span>
         <div class="line">
-          <span><strong>{item.event.actor}</strong> {join(item.texts)}</span>
+          <span
+            ><strong>{item.event.actor}</strong>
+            <ViaApp name={item.event.via} />
+            {join(item.texts)}</span
+          >
           <time class="faint" datetime={item.at} title={dateTime(item.at)}
             >{ago(item.at, clock.now)}</time
           >
