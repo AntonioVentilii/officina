@@ -16,10 +16,12 @@ export { adoptOutsidePushes, openMissingPullRequests, type AdoptPort } from './p
 export { holdAutoMerge, stopAutoMergeOnLeaving } from './auto-merge';
 export { handInBuild, type HandInPort } from './hand-in';
 export { collectDueSteps, tick } from './tick';
+export { eachTaskOnItsOwn, type TaskFailure } from './each-task';
 export { fence } from './brief';
 export { learningProblems } from './learner';
 export { ensureOnboarding, openOnboardingIn } from './onboarding';
 export {
+  COMMENT_SETTLE_SECONDS,
   forwardFeedback,
   forwardSettledComments,
   overviewNotes,
