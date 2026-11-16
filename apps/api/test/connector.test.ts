@@ -626,6 +626,30 @@ describe.skipIf(!url)('connector for Claude', () => {
     );
   });
 
+  test('two members with the same name keep their own approval mark in what Claude reads', async () => {
+    await invite(pool, {
+      publicUrl: PUBLIC_URL,
+      email: 'antonio.too@example.com',
+      name: 'Antonio',
+      role: 'owner',
+      domains: []
+    });
+    const token = (await connect()).tokens.access_token as string;
+    const taskId = await taskInSpecReview(token);
+    await applyOrThrow(pool, taskId, { type: 'approve' }, seeded.owner);
+
+    const shown = (await tool(token, 'show_task', { number: 1 })).content[0]!.text;
+    const maintainer = shown
+      .split('\n')
+      .find((line) => line.startsWith('Approve the plan:'))
+      ?.match(/a maintainer \(.*\)\.$/)?.[0];
+    // Both members are numbered and the mark stays on the one who approved, whichever is first.
+    expect([
+      'a maintainer (Antonio #1 (approved), Antonio #2).',
+      'a maintainer (Antonio #1, Antonio #2 (approved)).'
+    ]).toContain(maintainer ?? '');
+  });
+
   test('nothing shaped like a secret leaves through Claude, even from a person', async () => {
     const token = (await connect()).tokens.access_token as string;
     await tool(token, 'open_request', {

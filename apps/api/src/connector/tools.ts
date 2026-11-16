@@ -94,14 +94,25 @@ type TaskDetail = NonNullable<Awaited<ReturnType<typeof taskView>>>;
 
 type Requirement = TaskDetail['people']['gates'][number]['requirements'][number];
 
-const namesOf = (who: Requirement['who']) => who.map((person) => person.name).join(', ');
+/**
+ * Each person who holds a requirement, marked when they approved: a name shared by two members is
+ * numbered, so the mark stays on the one who approved.
+ */
+const peopleOf = (who: Requirement['who']) =>
+  who
+    .map((person, index) => {
+      const twins = who.filter((other) => other.name === person.name);
+      const seen = who.slice(0, index + 1).filter((other) => other.name === person.name).length;
+      const name = twins.length > 1 ? `${person.name} #${seen}` : person.name;
+      return person.approved ? `${name} (approved)` : name;
+    })
+    .join(', ');
 
 /** One requirement of a gate: who holds it, and who of them approved. */
-const requirementLine = (requirement: Requirement) => {
-  if (requirement.waived) return `${requirement.label} (nobody holds it, so it is waived)`;
-  const approved = namesOf(requirement.who.filter((person) => person.approved));
-  return `${requirement.label} (${namesOf(requirement.who) || 'nobody yet'}${approved ? `; approved by ${approved}` : ''})`;
-};
+const requirementLine = (requirement: Requirement) =>
+  requirement.waived
+    ? `${requirement.label} (nobody holds it, so it is waived)`
+    : `${requirement.label} (${peopleOf(requirement.who) || 'nobody yet'})`;
 
 /** Who asked, who approves each gate and who merges, so nobody assumes the requester decides. */
 const peopleLines = ({ people }: TaskDetail) => [
