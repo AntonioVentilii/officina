@@ -23,6 +23,11 @@ export const INPUT_LIMITS = {
   option: 2,
   /** A pull request title handed in with a push, by a person or the builder. */
   prTitle: { min: 3, max: 120 },
+  /**
+   * A pull request body handed in with a push, in the sections of the project's template: under the
+   * 65,536 characters GitHub holds, with room for the lines Officina adds after it.
+   */
+  prBody: 60_000,
   /** One thing checked, or left unchecked, in a hand-in. */
   check: 500,
   /** How many checks a hand-in lists, of each kind. */
@@ -63,6 +68,15 @@ export const pushedFields = {
     .regex(new RegExp(`^${TASK_BRANCH_PREFIX}`), `branch must start with ${TASK_BRANCH_PREFIX}`),
   /** The pull request title, in the repository's required format. */
   prTitle: z.string().trim().min(1).max(INPUT_LIMITS.prTitle.max),
+  prBody: z
+    .string()
+    .trim()
+    .min(1)
+    .max(INPUT_LIMITS.prBody)
+    .optional()
+    .describe(
+      "The pull request body, in Markdown. Required when the brief names the project's pull request template: keep every heading of the template and fill each one. Officina adds the link to the task and the issue it closes after it."
+    ),
   verified: checksSchema,
   notVerified: checksSchema
 };

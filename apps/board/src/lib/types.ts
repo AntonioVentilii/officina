@@ -78,7 +78,7 @@ export interface Me {
 /** How long what a person types may be, the ceilings the API checks (`INPUT_LIMITS`). */
 export type InputLimits = Readonly<
   Record<'title' | 'prTitle', { readonly min: number; readonly max: number }>
->;
+> & { readonly prBody: number };
 
 export interface WaitingOn {
   readonly kind: 'agent' | 'people' | 'github' | 'nobody';

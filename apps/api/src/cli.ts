@@ -33,7 +33,10 @@ const USAGE = `usage (on your machine, prefix with scripts/officina; on the serv
     task accept   --number <n>
     task claim    --number <n>                 build it yourself instead of the agent
     task hand-in  --number <n> --title "<pull request title>" [--checked "<what you checked>" ...]
-                                               after pushing ${branchForTask('<n>')}: send your build to review
+                  [--body "<pull request body>"]
+                                               after pushing ${branchForTask('<n>')}: send your build to review;
+                                               --body is required, in its sections, when the project
+                                               names a pull request template
     task approve  --number <n>
     task changes  --number <n> --note "<what to change>"
     task answer   --number <n> --text "<answer to the open question>"
@@ -103,6 +106,7 @@ const main = async () => {
       'config-file': { type: 'string' },
       number: { type: 'string' },
       title: { type: 'string' },
+      body: { type: 'string' },
       request: { type: 'string' },
       note: { type: 'string' },
       text: { type: 'string' },
@@ -170,6 +174,7 @@ const main = async () => {
             ...target,
             number: number(),
             prTitle: need(values.title, 'title'),
+            prBody: values.body,
             verified: values.checked ?? [],
             notVerified: [],
             publicUrl: required('OFFICINA_PUBLIC_URL')
