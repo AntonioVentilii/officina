@@ -1,5 +1,45 @@
 # Changelog
 
+## [1.7.4](https://github.com/AntonioVentilii/officina/compare/v1.7.3...v1.7.4) (2026-11-15)
+
+
+### Bug Fixes
+
+* **api,db:** decide a learning without a transaction held across its GitHub calls ([#176](https://github.com/AntonioVentilii/officina/issues/176)) ([597a88a](https://github.com/AntonioVentilii/officina/commit/597a88a1ac6e221a29626414fe496a78c5b6213f))
+* **api:** back off while scheduler passes keep failing ([#177](https://github.com/AntonioVentilii/officina/issues/177)) ([2400061](https://github.com/AntonioVentilii/officina/commit/2400061823dca5a49a7b1e3d8e98c0ca1b5d7ab0))
+* **api:** keep the pass going when one project throws ([#174](https://github.com/AntonioVentilii/officina/issues/174)) ([dbe7fe8](https://github.com/AntonioVentilii/officina/commit/dbe7fe879b45fb13a79893c5b6f3653c50a89bac))
+* **engine:** never ask Copilot again for a review it already left ([#202](https://github.com/AntonioVentilii/officina/issues/202)) ([6bb178f](https://github.com/AntonioVentilii/officina/commit/6bb178f72335cec0240c38b2902ec682acfe3571))
+* **github,db,api:** forward a bot comment's newest edit, not the last delivered ([#192](https://github.com/AntonioVentilii/officina/issues/192)) ([aa1cbe5](https://github.com/AntonioVentilii/officina/commit/aa1cbe57f35b36828634c96ef7391ba9bdda895e))
+* **github:** give every GitHub call a deadline ([#172](https://github.com/AntonioVentilii/officina/issues/172)) ([356793f](https://github.com/AntonioVentilii/officina/commit/356793f4efe60e18e61fc36416aac31818ecbd6c))
+* **runner,db,api:** fail a run whose session runs past its deadline ([#181](https://github.com/AntonioVentilii/officina/issues/181)) ([3e826b5](https://github.com/AntonioVentilii/officina/commit/3e826b53f3407d0737dab162208e4c9d26ec1c3f))
+
+
+### Miscellaneous Chores
+
+* **repo:** tighten the repository checks ([#186](https://github.com/AntonioVentilii/officina/issues/186)) ([ef57d0c](https://github.com/AntonioVentilii/officina/commit/ef57d0ca1cd7776ff2f7dbf9933606abfb1114f5))
+
+
+### Code Refactoring
+
+* **api,board:** read each value the board shows from the one place that owns it ([#179](https://github.com/AntonioVentilii/officina/issues/179)) ([f2802c1](https://github.com/AntonioVentilii/officina/commit/f2802c10789ca2c7e06adeccc716137d4e7b28d3))
+
+
+### Tests
+
+* **api,engine,github,runner:** type the test fakes as their ports instead of casting them ([#190](https://github.com/AntonioVentilii/officina/issues/190)) ([085745c](https://github.com/AntonioVentilii/officina/commit/085745c52463831f3c6c53323cf8ee4ab839424a))
+* **api:** cover a collaborator's review and a deleted config in webhooks ([#175](https://github.com/AntonioVentilii/officina/issues/175)) ([5b7d8a6](https://github.com/AntonioVentilii/officina/commit/5b7d8a682680b86c308b6f107d631965aeb7438c))
+* **api:** cover the approval plan view and realtime reconnect, wait on events ([#188](https://github.com/AntonioVentilii/officina/issues/188)) ([a76cc91](https://github.com/AntonioVentilii/officina/commit/a76cc913c8497fbb9d1a08c6197efa55c1b356c3))
+* **api:** cover the connector's review and hand-in tools and its client checks ([#180](https://github.com/AntonioVentilii/officina/issues/180)) ([f09e4a6](https://github.com/AntonioVentilii/officina/commit/f09e4a6f2e0f7150878e8a504722e15cb164fe20))
+* **core,engine:** build the largest chooser checklist from the contract's limits ([#184](https://github.com/AntonioVentilii/officina/issues/184)) ([02263cf](https://github.com/AntonioVentilii/officina/commit/02263cf2d47ff62bcb6601556363a5d2274b2d13))
+* **core:** cover who a build is dispatched to and who may record a review ([#200](https://github.com/AntonioVentilii/officina/issues/200)) ([5155190](https://github.com/AntonioVentilii/officina/commit/51551901df2ffab8a3e271bd7d502ce689b81c76))
+* **db,api:** age webhook deliveries from the named claim and retention windows ([#178](https://github.com/AntonioVentilii/officina/issues/178)) ([ed55e1c](https://github.com/AntonioVentilii/officina/commit/ed55e1c7fc76562ea2550a094cccff76aaa431c7))
+* db` pass locally. New tests in `apps/api/test/connector.test.ts`. ([f09e4a6](https://github.com/AntonioVentilii/officina/commit/f09e4a6f2e0f7150878e8a504722e15cb164fe20))
+* db` pass locally. New tests under "the SDK port". ([59b809e](https://github.com/AntonioVentilii/officina/commit/59b809eb63acf8119bbc28b610d1d500883c2be5))
+* **db:** cover a migration that fails ([#189](https://github.com/AntonioVentilii/officina/issues/189)) ([b110872](https://github.com/AntonioVentilii/officina/commit/b110872f9bf8d2c76313c493104bd18faca6a701))
+* **engine:** cover a learner run that fails or throws ([#183](https://github.com/AntonioVentilii/officina/issues/183)) ([6e5bb3e](https://github.com/AntonioVentilii/officina/commit/6e5bb3ec5c72da492817ebce11a950adf2ed4433))
+* **github:** cover turning auto-merge off ([#173](https://github.com/AntonioVentilii/officina/issues/173)) ([b6609ec](https://github.com/AntonioVentilii/officina/commit/b6609ec7672229c655059b4566e7d57c6c4a4aad))
+* **runner:** check what the SDK port sends for sessions, costs and environments ([#196](https://github.com/AntonioVentilii/officina/issues/196)) ([59b809e](https://github.com/AntonioVentilii/officina/commit/59b809eb63acf8119bbc28b610d1d500883c2be5))
+
 ## [1.7.3](https://github.com/AntonioVentilii/officina/compare/v1.7.2...v1.7.3) (2026-11-14)
 
 
