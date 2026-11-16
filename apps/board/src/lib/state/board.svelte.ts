@@ -9,6 +9,8 @@ class Board {
   tasks = $state<Card[]>([]);
   runs = $state<Run[]>([]);
   agents = $state<AgentRoleInfo[]>([]);
+  /** What the runs listed cost in all, as the API added it up. */
+  runsCostCents = $state(0);
   roleLabels = $state<Record<string, string>>({});
   learnings = $state<Learning[]>([]);
   members = $state<MemberActivity[]>([]);
@@ -33,6 +35,7 @@ class Board {
     this.tasks = [];
     this.runs = [];
     this.agents = [];
+    this.runsCostCents = 0;
     this.roleLabels = {};
     this.learnings = [];
     this.members = [];
@@ -59,8 +62,10 @@ class Board {
           `/api/projects/${projectId}/board`
         ),
         technical
-          ? get<{ runs: Run[]; agents: AgentRoleInfo[] }>(`/api/projects/${projectId}/runs`)
-          : { runs: [], agents: [] },
+          ? get<{ runs: Run[]; agents: AgentRoleInfo[]; costCents: number }>(
+              `/api/projects/${projectId}/runs`
+            )
+          : { runs: [], agents: [], costCents: 0 },
         technical
           ? get<{ learnings: Learning[] }>(`/api/projects/${projectId}/learnings`)
           : { learnings: [] },
@@ -74,6 +79,7 @@ class Board {
       this.roleLabels = board.roleLabels;
       this.runs = runs.runs;
       this.agents = runs.agents;
+      this.runsCostCents = runs.costCents;
       this.learnings = learnings.learnings;
       this.members = members.members;
       this.notices = notices.notifications;
