@@ -114,7 +114,7 @@ describe('scheduler', () => {
       },
       log: (message) => logged.push(message)
     });
-    // The hold read again and again, where a 5 ms interval alone would have run as many passes.
+    // The hold is read again and again, where a 5 ms interval alone would have run as many passes.
     await waitFor(() => reads >= 5);
     expect(scheduler.passes()).toBe(1);
     expect(logged).toEqual(Array.from({ length: reads }, () => 'next pass held'));
