@@ -1,5 +1,39 @@
 # Changelog
 
+## [1.7.5](https://github.com/AntonioVentilii/officina/compare/v1.7.4...v1.7.5) (2026-11-16)
+
+
+### Bug Fixes
+
+* **api,db,board:** open a request sent again with the same id only once ([#191](https://github.com/AntonioVentilii/officina/issues/191)) ([6a49c04](https://github.com/AntonioVentilii/officina/commit/6a49c044c026d34010bbcba5c31145afc2aa7b80))
+* **api,github:** forget a GitHub account whose refresh token GitHub refuses ([#199](https://github.com/AntonioVentilii/officina/issues/199)) ([638d7ae](https://github.com/AntonioVentilii/officina/commit/638d7ae5525a474a4905fbd91d882b9a6d6f5cd8))
+* **api:** catch up missed pull request webhooks from building on ([#197](https://github.com/AntonioVentilii/officina/issues/197)) ([957604a](https://github.com/AntonioVentilii/officina/commit/957604a32ba0225ec4e008d8d39b775088407e58))
+* **api:** forward a person's review only when they may write to the repository (GHSA-j598-pp47-p3jp) ([2696381](https://github.com/AntonioVentilii/officina/commit/2696381f1667ac1f0235620ae2573a12bcfc586a))
+* **engine:** finish opening a pull request whose spec status write lost a race ([#195](https://github.com/AntonioVentilii/officina/issues/195)) ([adfb9d9](https://github.com/AntonioVentilii/officina/commit/adfb9d92aa9af62900ee7ce0d62a60acce4d2639))
+* **engine:** stop live builds and revoke their tokens on shutdown (GHSA-59cq-rp5p-crvw) ([2696381](https://github.com/AntonioVentilii/officina/commit/2696381f1667ac1f0235620ae2573a12bcfc586a))
+* **engine:** turn auto-merge on again after a hold for a bot comment ([#187](https://github.com/AntonioVentilii/officina/issues/187)) ([74f7601](https://github.com/AntonioVentilii/officina/commit/74f7601dc80743af3c93e3d0338dfa473990ab2f))
+* **engine:** turn auto-merge on only while the task is still merging ([#185](https://github.com/AntonioVentilii/officina/issues/185)) ([3a9e278](https://github.com/AntonioVentilii/officina/commit/3a9e278d20b3ab537357ef881ccc475f1994e40c))
+* **github:** count a check suite only when it ran on the task's own branch (GHSA-59fm-g28g-2w2w) ([2696381](https://github.com/AntonioVentilii/officina/commit/2696381f1667ac1f0235620ae2573a12bcfc586a))
+
+
+### Documentation
+
+* **ai:** list every shared piece missing from the reusability catalog ([#201](https://github.com/AntonioVentilii/officina/issues/201)) ([b371f6a](https://github.com/AntonioVentilii/officina/commit/b371f6a732fe034811e90196dca1f78b25aec5a6))
+* **repo:** describe as current only what the code does ([#194](https://github.com/AntonioVentilii/officina/issues/194)) ([09a8b8e](https://github.com/AntonioVentilii/officina/commit/09a8b8e00158ea75f270f573db623174e9d5d795))
+* **repo:** list the three advisories fixed in 1.7.5 ([2696381](https://github.com/AntonioVentilii/officina/commit/2696381f1667ac1f0235620ae2573a12bcfc586a))
+
+
+### Code Refactoring
+
+* **core,db,engine,api,board:** write each run, branch and truncation rule once ([#182](https://github.com/AntonioVentilii/officina/issues/182)) ([0f707a2](https://github.com/AntonioVentilii/officina/commit/0f707a272d7028673e244c1aa406120f8bf96dc6))
+
+
+### Tests
+
+* **api:** cover a hand-in refused for a missing App or an unreadable branch ([#198](https://github.com/AntonioVentilii/officina/issues/198)) ([d299846](https://github.com/AntonioVentilii/officina/commit/d299846b82172558047dbe6844e8813583b34f93))
+* **board:** cover the Markdown sanitizer, with jsdom for tests only ([#204](https://github.com/AntonioVentilii/officina/issues/204)) ([217b0eb](https://github.com/AntonioVentilii/officina/commit/217b0eb0dbbff399ed99165e01f28207ac4bd21f))
+* **db,engine:** wait for the lock in race tests instead of sleeping ([#193](https://github.com/AntonioVentilii/officina/issues/193)) ([92e598a](https://github.com/AntonioVentilii/officina/commit/92e598a4f576ae3b3ada9f6ffaa5c720e0a0e904))
+
 ## [1.7.4](https://github.com/AntonioVentilii/officina/compare/v1.7.3...v1.7.4) (2026-11-15)
 
 
