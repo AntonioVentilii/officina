@@ -29,12 +29,18 @@ export const revokeRunToken = async (
 export interface LiveRun {
   /** The session the run started, for a shutdown to interrupt. */
   session(sessionId: string): void;
-  /** The run ended on its own; `false` when a shutdown stopped it already, token included. */
+  /** The run ended on its own; `false` when `stopAll` or `stopEnded` stopped it, token included. */
   end(): boolean;
 }
 
 export interface LiveRuns {
-  start(token: string | null): LiveRun;
+  start(runId: string, token: string | null): LiveRun;
+  /**
+   * Stops the runs still live in this process that `ended` says ended outside their step, such as
+   * a build a member took over: their session is interrupted and their token revoked, as a shutdown
+   * does. Returns their ids.
+   */
+  stopEnded(ended: (runIds: readonly string[]) => Promise<readonly string[]>): Promise<string[]>;
   /**
    * Interrupts every session still running in this process and revokes every token minted for one,
    * for a process that is shutting down, whose steps never reach their own cleanup; a run that
@@ -45,6 +51,7 @@ export interface LiveRuns {
 }
 
 interface Run {
+  readonly runId: string;
   readonly token: string | null;
   sessionId: string | null;
 }
@@ -65,8 +72,8 @@ export const createLiveRuns = (ports: {
     ]);
 
   return {
-    start(token) {
-      const run: Run = { token, sessionId: null };
+    start(runId, token) {
+      const run: Run = { runId, token, sessionId: null };
       if (closing) void stop(run);
       else runs.add(run);
       return {
@@ -76,6 +83,14 @@ export const createLiveRuns = (ports: {
         },
         end: () => runs.delete(run)
       };
+    },
+    async stopEnded(ended) {
+      if (runs.size === 0) return [];
+      const endedIds = new Set(await ended([...runs].map((run) => run.runId)));
+      // A run that ended on its own meanwhile left the set, and its step cleans up after it.
+      const stopping = [...runs].filter((run) => endedIds.has(run.runId) && runs.delete(run));
+      await Promise.all(stopping.map(stop));
+      return stopping.map((run) => run.runId);
     },
     async stopAll(deadlineMs) {
       closing = true;
@@ -99,8 +114,9 @@ export const createLiveRuns = (ports: {
 /**
  * Runs a step's session with its GitHub token. Only the build roles get a token that can push,
  * minted for this run alone and revoked when the session ends, so nothing it pushes can land after
- * the refs are checked. The run is live meanwhile, for a shutdown to stop. A revocation GitHub
- * refuses is recorded on the run and leaves the session's result, or its error, as it was.
+ * the refs are checked. The run is live meanwhile, for a shutdown, or a write that ends it outside
+ * the step, to stop. A revocation GitHub refuses is recorded on the run and leaves the session's
+ * result, or its error, as it was.
  */
 export const withRunToken = async <T>(
   step: Step,
@@ -110,12 +126,12 @@ export const withRunToken = async <T>(
   const token = step.builds
     ? await github.runToken(step.repoRef, { contents: 'write' })
     : await github.installationToken(step.repoRef, { contents: 'read' });
-  const live = step.deps.liveRuns?.start(step.builds ? token : null);
+  const live = step.deps.liveRuns?.start(step.runId, step.builds ? token : null);
   try {
     return await use(token, live);
   } finally {
-    const stoppedByShutdown = live?.end() === false;
-    if (step.builds && !stoppedByShutdown && !(await revokeRunToken(github, token)))
+    const stoppedAlready = live?.end() === false;
+    if (step.builds && !stoppedAlready && !(await revokeRunToken(github, token)))
       await appendRunEvent(pool, step.runId, 'token_revoke_failed', {}).catch(() => {});
   }
 };

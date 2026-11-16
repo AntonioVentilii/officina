@@ -20,6 +20,7 @@ import {
   addComment,
   applyCommand,
   applyCommandIn,
+  failTakenOverRuns,
   findRequestedTask,
   findTaskIdByNumber,
   inTransaction,
@@ -362,9 +363,12 @@ export const actOnTaskAs = async (
     command: toCommand(action),
     actor,
     ...(expectedVersion === undefined ? {} : { expectedVersion }),
-    // In the same transaction as the decision: someone not allowed to answer leaves no comment.
+    // In the same transaction as the decision: someone not allowed to answer leaves no comment,
+    // and the agent's build run a member takes over can never apply what it ends with, even once
+    // the build goes back to the agent before the scheduler's next pass.
     onApplied: async (client) => {
       if (action.type === 'answer') await addComment(client, taskId, actor, action.text);
+      if (action.type === 'claim') await failTakenOverRuns(client, taskId);
     }
   });
   if (!result.ok) throw new TaskCommandError(ERROR_TEXT[result.error]);

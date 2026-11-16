@@ -301,6 +301,17 @@ describe.skipIf(!url)('engine', () => {
     return taskId;
   };
 
+  /** The owner claims the build as the API does (`actOnTaskAs`), failing the agent's run with it. */
+  const claimAsOwner = async (taskId: string) => {
+    const claimed = await applyCommand(pool, {
+      taskId,
+      command: { type: 'claim' },
+      actor: seeded.owner,
+      onApplied: (client) => failTakenOverRuns(client, taskId)
+    });
+    if (!claimed.ok) throw new Error(claimed.error);
+  };
+
   const runStatuses = async (taskId: string) =>
     (
       await pool.query<{ agent_role: string; status: string }>(
@@ -963,10 +974,7 @@ describe.skipIf(!url)('engine', () => {
       const github = fakeGitHub();
       const agents = createFakePort((request) =>
         request.metadata.role === 'builder'
-          ? [
-              async () => void (await applyOrThrow(pool, taskId, { type: 'claim' }, seeded.owner)),
-              ...items
-            ]
+          ? [async () => void (await claimAsOwner(taskId)), ...items]
           : succeed(request)
       );
       taskId = await taskInReady(github, agents);
@@ -984,16 +992,15 @@ describe.skipIf(!url)('engine', () => {
     });
   }
 
-  test('a build released after a takeover and given to the agent again ignores the old run', async () => {
+  test('a build released after a takeover and given to the agent again before the next pass ignores the old run', async () => {
     let taskId = '';
     const github = fakeGitHub();
     const agents = createFakePort((request) =>
       request.metadata.role === 'builder'
         ? [
             async () => {
-              // Taken over, stopped by the scheduler, let go, and dispatched to the builder again.
-              await applyOrThrow(pool, taskId, { type: 'claim' }, seeded.owner);
-              await failTakenOverRuns(pool);
+              // Taken over, let go, and dispatched to the builder again, all before the next pass.
+              await claimAsOwner(taskId);
               await applyOrThrow(pool, taskId, { type: 'release' }, seeded.owner);
               await applyOrThrow(
                 pool,
@@ -1032,11 +1039,8 @@ describe.skipIf(!url)('engine', () => {
     const createSession = agents.createSession.bind(agents);
     agents.createSession = async (request) => {
       if (request.metadata.role === 'builder') {
-        // The member claims, and the scheduler stops the run, while it has no session yet.
-        await applyOrThrow(pool, taskId, { type: 'claim' }, seeded.owner);
-        expect(await failTakenOverRuns(pool)).toEqual([
-          { id: request.metadata.run_id!, externalId: null }
-        ]);
+        // The member claims while the run has no session yet, which fails the run.
+        await claimAsOwner(taskId);
       }
       return createSession(request);
     };
@@ -1066,61 +1070,6 @@ describe.skipIf(!url)('engine', () => {
     expect(rows).toEqual([
       { status: 'failed', error: 'a member took the build over while this run was in progress' }
     ]);
-  });
-
-  test('a member who takes a build over stops the agent run, once, whatever stage their work reached, and only on their task', async () => {
-    const taken = await taskInReady();
-    const handedIn = await taskInReady();
-    const kept = await taskInReady();
-    for (const taskId of [taken, handedIn, kept]) {
-      await applyOrThrow(
-        pool,
-        taskId,
-        { type: 'dispatch', assignee: { kind: 'agent', role: 'builder' }, openInLane: 0 },
-        { kind: 'engine' }
-      );
-    }
-    const runs: Record<string, string> = {};
-    for (const taskId of [taken, handedIn, kept]) {
-      const run = await startRun(pool, {
-        taskId,
-        stage: 'building',
-        role: 'builder',
-        agentVersion: 1,
-        runner: 'managed-agents'
-      });
-      if (!run.ok) throw new Error(run.error);
-      runs[taskId] = run.runId;
-    }
-    await pool.query("update runs set external_id = 'sesn_taken' where id = $1", [runs[taken]]);
-    await applyOrThrow(pool, taken, { type: 'claim' }, seeded.owner);
-    await applyOrThrow(pool, handedIn, { type: 'claim' }, seeded.owner);
-    // Handed in before the scheduler's next pass: the member's build is in review already.
-    await applyOrThrow(
-      pool,
-      handedIn,
-      {
-        type: 'push',
-        headSha: 'dev1',
-        changedPaths: ['src/app.ts'],
-        addedPaths: [],
-        catalogPages: {},
-        diffLines: 3
-      },
-      seeded.owner
-    );
-    expect((await loadTask(pool, handedIn))?.task.stage).toBe('reviewing');
-
-    expect((await failTakenOverRuns(pool)).sort((a, b) => a.id.localeCompare(b.id))).toEqual(
-      [
-        { id: runs[taken]!, externalId: 'sesn_taken' },
-        { id: runs[handedIn]!, externalId: null }
-      ].sort((a, b) => a.id.localeCompare(b.id))
-    );
-    expect(await failTakenOverRuns(pool)).toEqual([]);
-    expect(await runStatuses(taken)).toContainEqual({ agent_role: 'builder', status: 'failed' });
-    expect(await runStatuses(handedIn)).toContainEqual({ agent_role: 'builder', status: 'failed' });
-    expect(await runStatuses(kept)).toContainEqual({ agent_role: 'builder', status: 'running' });
   });
 
   test('a push to any other branch blocks the task and opens no pull request', async () => {

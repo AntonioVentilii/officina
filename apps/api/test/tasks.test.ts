@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
-import { findTaskIdByNumber } from '@officina/db';
+import { endedRunIds, findTaskIdByNumber, startRun } from '@officina/db';
 import type { HandInPort } from '@officina/engine';
 import { GitHubError } from '@officina/github';
 import { Pool } from 'pg';
@@ -276,10 +276,10 @@ describe.skipIf(!url)('task commands', () => {
     ]);
   });
 
-  /** Opens task 1 on the copy path and claims its build as the owner. */
-  const claimedBuild = async () => {
-    await createRequest(pool, request);
-    const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
+  /** Opens the next task on the copy path and approves its spec, so its build waits in ready. */
+  const readyBuild = async () => {
+    const { number } = await createRequest(pool, request);
+    const taskId = (await findTaskIdByNumber(pool, seeded.projectId, number))!;
     await applyOrThrow(pool, taskId, { type: 'accept' }, seeded.owner);
     await applyOrThrow(
       pool,
@@ -294,9 +294,47 @@ describe.skipIf(!url)('task commands', () => {
       { kind: 'engine' }
     );
     await applyOrThrow(pool, taskId, { type: 'approve' }, seeded.owner);
+    return taskId;
+  };
+
+  /** Opens task 1 on the copy path and claims its build as the owner. */
+  const claimedBuild = async () => {
+    const taskId = await readyBuild();
     await applyOrThrow(pool, taskId, { type: 'claim' }, seeded.owner);
     return taskId;
   };
+
+  test('claiming a build the agent is running fails its run in the same write, and no other', async () => {
+    const runs: string[] = [];
+    for (const taskId of [await readyBuild(), await readyBuild()]) {
+      await applyOrThrow(
+        pool,
+        taskId,
+        { type: 'dispatch', assignee: { kind: 'agent', role: 'builder' }, openInLane: 0 },
+        { kind: 'engine' }
+      );
+      const run = await startRun(pool, {
+        taskId,
+        stage: 'building',
+        role: 'builder',
+        agentVersion: 1,
+        runner: 'managed-agents'
+      });
+      if (!run.ok) throw new Error(run.error);
+      runs.push(run.runId);
+    }
+
+    await actOnTask(pool, { number: 1, action: { type: 'claim' } });
+    // Before any pass of the scheduler: the run can apply nothing even if the build goes back.
+    expect(await endedRunIds(pool, runs)).toEqual([runs[0]!]);
+    const { rows } = await pool.query<{ error: string }>(
+      "select result->>'error' as error from runs where id = $1",
+      [runs[0]]
+    );
+    expect(rows).toEqual([
+      { error: 'a member took the build over while this run was in progress' }
+    ]);
+  });
 
   const handInInput = {
     number: 1,

@@ -14,9 +14,9 @@ import {
   type LiveRuns
 } from '@officina/engine';
 import {
+  endedRunIds,
   failOrphanedRuns,
   failStaleRuns,
-  failTakenOverRuns,
   listActiveTaskIds,
   listSchedulableProjectIds,
   purgeConnectorCredentials,
@@ -214,12 +214,14 @@ export const startEngine = async (input: {
         lastPurge = Date.now();
         await purgeStaleRows(input.pool, input.log);
       }
-      // A member who takes a build over stops the agent's session, which would only spend now.
-      const takenOver = await failTakenOverRuns(input.pool).catch((error: unknown) => {
-        input.log('taken over run stop failed', { error: (error as Error).message });
-        return [];
-      });
-      await interruptSessions(input.agents, takenOver, input.log, 'taken over run stopped');
+      // A build a member took over failed its run as they took it; its session would only spend.
+      const ended = await liveRuns
+        .stopEnded((runIds) => endedRunIds(input.pool, runIds))
+        .catch((error: unknown) => {
+          input.log('ended run stop failed', { error: (error as Error).message });
+          return [];
+        });
+      for (const id of ended) input.log('run ended outside its step stopped', { id });
       const stale = await failStaleRuns(input.pool, STALE_RUN_MS).catch((error: unknown) => {
         input.log('stale run check failed', { error: (error as Error).message });
         return [];

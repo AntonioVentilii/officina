@@ -73,6 +73,15 @@ export const runIsActive = async (client: PoolClient, runId: string): Promise<bo
     ])
   ).rowCount ?? 0) > 0;
 
+/** Which of these runs have ended, whatever ended them: their step, or a write outside it. */
+export const endedRunIds = async (pool: Pool, runIds: readonly string[]): Promise<string[]> =>
+  (
+    await pool.query<{ id: string }>(
+      `select id from runs where id = any($1::uuid[]) and not status ${RUN_IS_ACTIVE}`,
+      [runIds]
+    )
+  ).rows.map((row) => row.id);
+
 /** Records a run's validated result before it is applied, so it outlives a crash that follows. */
 export const recordRunResult = async (pool: Pool, runId: string, result: unknown) => {
   await pool.query('update runs set result = $2 where id = $1', [runId, runJson(result)]);

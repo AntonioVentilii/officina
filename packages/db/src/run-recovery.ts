@@ -20,26 +20,20 @@ export const failOrphanedRuns = async (
   ).rows.map((row) => ({ id: row.id, externalId: row.external_id }));
 
 /**
- * Build runs still in progress on a task a member took over, whatever stage the member's work has
- * reached since (a hand-in moves it on before the next pass): their result no longer applies (the
- * engine's `sameWork`), and their session would only spend. They are failed, like an orphaned run,
- * and the caller interrupts their sessions.
+ * Build runs still in progress on a task a member is claiming, failed in the claim's transaction:
+ * nothing they end with may apply any more (the engine's `sameWork`), even once the build goes back
+ * to the agent before the scheduler's next pass. The engine stops their sessions (`stopEnded` of
+ * its live runs).
  */
-export const failTakenOverRuns = async (
-  db: Pool | PoolClient
-): Promise<{ id: string; externalId: string | null }[]> =>
-  (
-    await db.query<{ id: string; external_id: string | null }>(
-      `update runs r set status = 'failed', finished_at = now(),
-         result = coalesce(r.result, '{}'::jsonb)
-           || '{"error": "a member took the build over while this run was in progress"}'::jsonb
-       from tasks t
-       where t.id = r.task_id and r.status ${RUN_IS_ACTIVE} and r.agent_role = any($1::text[])
-         and t.assignee->>'kind' = 'member'
-       returning r.id, r.external_id`,
-      [BUILD_ROLES]
-    )
-  ).rows.map((row) => ({ id: row.id, externalId: row.external_id }));
+export const failTakenOverRuns = async (client: PoolClient, taskId: string): Promise<void> => {
+  await client.query(
+    `update runs set status = 'failed', finished_at = now(),
+       result = coalesce(result, '{}'::jsonb)
+         || '{"error": "a member took the build over while this run was in progress"}'::jsonb
+     where task_id = $1 and status ${RUN_IS_ACTIVE} and agent_role = any($2::text[])`,
+    [taskId, BUILD_ROLES]
+  );
+};
 
 /**
  * Runs still in progress long after they started, such as one whose step ended without recording
