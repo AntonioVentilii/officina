@@ -36,7 +36,7 @@ import {
   taskView,
   type BoardViewer
 } from './board';
-import { checkAuthorization, consentRedirect } from './connector';
+import { checkAuthorization, consentRedirect, mcpResource } from './connector';
 import type { GitHubAccounts, GitHubSignInProblem } from './github-accounts';
 import type { LearningGitHub } from './learning-pull-request';
 import { decide as decideLearning } from './learnings';
@@ -446,6 +446,8 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
           })),
           github: login ? { login } : null,
           githubAvailable: Boolean(deps.githubLogin),
+          // The address members add to Claude, the same one every connector token is issued for.
+          connectorUrl: mcpResource(deps.publicUrl),
           // The board's fields hold what people type to the same ceilings the API checks.
           limits: INPUT_LIMITS
         };
