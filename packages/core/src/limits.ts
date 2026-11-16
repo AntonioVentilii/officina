@@ -27,6 +27,10 @@ export const INPUT_LIMITS = {
   checks: 30
 } as const;
 
+/** Text cut to `max` characters, saying how many were left out, for a brief or a log to show. */
+export const clip = (text: string, max: number): string =>
+  text.length > max ? `${text.slice(0, max)} … (${text.length - max} more characters)` : text;
+
 /**
  * What the approval chooser's checklist for verification may hold: its items and the rows of its
  * before/after table. Posted together as one comment, they stay under GitHub's limit at these sizes.

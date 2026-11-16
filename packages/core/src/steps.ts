@@ -33,8 +33,11 @@ export const nextAgentRoles = (task: Task): AgentRole[] => {
 /** Every branch Officina's agents push starts with this; the contracts check it. */
 export const TASK_BRANCH_PREFIX = 'officina/';
 
-/** Agents may only push to this branch; the engine rejects a push anywhere else. */
-export const branchForTask = (taskNumber: number): string =>
+/**
+ * Agents may only push to this branch; the engine rejects a push anywhere else. Help text passes a
+ * placeholder such as `<n>` for the number.
+ */
+export const branchForTask = (taskNumber: number | string): string =>
   `${TASK_BRANCH_PREFIX}task-${taskNumber}`;
 
 /**
