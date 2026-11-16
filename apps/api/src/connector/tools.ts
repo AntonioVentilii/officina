@@ -3,6 +3,7 @@ import {
   INPUT_LIMITS,
   TERMINAL_STAGES,
   allowedActions,
+  branchForTask,
   checksSchema,
   redactSecrets,
   taskUrl,
@@ -431,7 +432,7 @@ After it is opened, tell the person the task link and that an agent may ask them
   tool({
     name: 'hand_in_build',
     title: 'Hand in a build',
-    description: `For a developer who claimed a task's build and pushed it to the task branch (\`officina/task-<number>\`), by hand or with their own agents, for example in Claude Code. Officina reads what was pushed from GitHub, sends it to the same review an agent's build gets (two reviewer agents, then the people who check the result) and opens the pull request. Call show_task first to read the approved plan; build exactly that, push the branch, then call this with a pull request title in the repository's format and what you checked.`,
+    description: `For a developer who claimed a task's build and pushed it to the task branch (\`${branchForTask('<number>')}\`), by hand or with their own agents, for example in Claude Code. Officina reads what was pushed from GitHub, sends it to the same review an agent's build gets (two reviewer agents, then the people who check the result) and opens the pull request. Call show_task first to read the approved plan; build exactly that, push the branch, then call this with a pull request title in the repository's format and what you checked.`,
     input: z.object({
       project: PROJECT,
       number: NUMBER,
