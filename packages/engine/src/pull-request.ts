@@ -22,9 +22,10 @@ import {
   stillRunning,
   type StoredTaskContext
 } from '@officina/db';
-import { GitHubError, type GitHubClient, type RepoRef } from '@officina/github';
+import type { GitHubClient, RepoRef } from '@officina/github';
 import type { Pool } from 'pg';
 import { cancelTaskAutoMerge, stopAutoMergeOnLeaving } from './auto-merge';
+import { eachTaskOnItsOwn, type TaskFailure } from './each-task';
 import {
   implementedStatus,
   recordOwnStatusCommit,
@@ -118,7 +119,7 @@ export const openTaskPullRequest = async (
       context.issue
     )
   });
-  await syncSpecStatusOnce(pool, github, {
+  await syncSpecStatus(pool, github, {
     taskId: input.taskId,
     ref,
     branch,
@@ -128,25 +129,6 @@ export const openTaskPullRequest = async (
   });
   await linkPullRequest(pool, input.taskId, pr.number);
   return pr;
-};
-
-/**
- * A hand-in and the catch-up can open the same pull request at once, and both write the spec
- * status on top of the same file: the second write gets GitHub's 409, though the status it wanted
- * is on the branch. Syncing again reads the branch as it is now and records that commit as the
- * status written (or the branch as moved), so the opening that lost the race still completes.
- */
-const syncSpecStatusOnce = async (
-  pool: Pool,
-  github: PullRequestPort,
-  input: Parameters<typeof syncSpecStatus>[2]
-): Promise<void> => {
-  try {
-    await syncSpecStatus(pool, github, input);
-  } catch (error) {
-    if (!(error instanceof GitHubError) || error.status !== 409) throw error;
-    await syncSpecStatus(pool, github, input);
-  }
 };
 
 /**
@@ -161,19 +143,14 @@ export const openMissingPullRequests = async (
   github: PullRequestPort,
   taskIds: readonly string[],
   publicUrl: string
-): Promise<{ taskId: string; error: string }[]> => {
-  const failures: { taskId: string; error: string }[] = [];
-  for (const taskId of taskIds) {
-    if (!awaitsPullRequest(await loadTaskContext(pool, taskId))) continue;
+): Promise<TaskFailure[]> =>
+  eachTaskOnItsOwn(taskIds, async (taskId) => {
+    if (!awaitsPullRequest(await loadTaskContext(pool, taskId))) return;
     // A step still running opens its own pull request.
     const built = recordedPush(await latestBuild(pool, taskId, BUILD_ROLES));
-    if (!built) continue;
-    await openTaskPullRequest(pool, github, { taskId, publicUrl, built }).catch((error: unknown) =>
-      failures.push({ taskId, error: (error as Error).message })
-    );
-  }
-  return failures;
-};
+    if (!built) return;
+    await openTaskPullRequest(pool, github, { taskId, publicUrl, built });
+  });
 
 /** A task whose open pull request holds a head Officina took in, which someone else may move. */
 type MovableContext = StoredTaskContext & { pullRequest: number; installationId: number };
@@ -326,43 +303,44 @@ const outsideHead = async (
   return own ? null : head;
 };
 
+const adoptOutsidePush = async (pool: Pool, github: AdoptPort, taskId: string) => {
+  const context = await loadTaskContext(pool, taskId);
+  if (!movableFromOutside(context)) return;
+  const { task } = context;
+  const build = await latestBuild(pool, taskId, BUILD_ROLES);
+  if (build && stillRunning(build)) return;
+  const ref = { installationId: context.installationId, repo: context.repo };
+  const expected = await expectedHead(pool, taskId);
+  const prHead = (await github.pullRequest({ ...ref, pullRequest: context.pullRequest })).head.sha;
+  if (!expected || prHead === expected) return;
+  const base = context.defaultBranch;
+  if (await sameChange(github, ref, { base, verified: expected, head: prHead })) {
+    await carryHead(pool, github, { context, ref, headSha: prHead, from: expected });
+    return;
+  }
+  const config = parseProjectConfig(context.rawConfig);
+  if (!config.ok) return;
+  const head = await outsideHead(pool, github, { context, ref, expected, config: config.config });
+  if (!head) return;
+  const branch = branchForTask(context.number);
+  const adopted = await applyCommand(pool, {
+    taskId,
+    command: { type: 'outside_push', ...head },
+    actor: ENGINE,
+    guard: (current) => current.stage === task.stage && current.headSha === task.headSha
+  });
+  await afterAdoption(
+    pool,
+    github,
+    { taskId, ref, pullRequest: context.pullRequest, headSha: head.headSha, branch },
+    adopted
+  );
+};
+
+/** Each task on its own; the failures are returned for the log and tried again on the next pass. */
 export const adoptOutsidePushes = async (
   pool: Pool,
   github: AdoptPort,
   taskIds: readonly string[]
-) => {
-  for (const taskId of taskIds) {
-    const context = await loadTaskContext(pool, taskId);
-    if (!movableFromOutside(context)) continue;
-    const { task } = context;
-    const build = await latestBuild(pool, taskId, BUILD_ROLES);
-    if (build && stillRunning(build)) continue;
-    const ref = { installationId: context.installationId, repo: context.repo };
-    const expected = await expectedHead(pool, taskId);
-    const prHead = (await github.pullRequest({ ...ref, pullRequest: context.pullRequest })).head
-      .sha;
-    if (!expected || prHead === expected) continue;
-    const base = context.defaultBranch;
-    if (await sameChange(github, ref, { base, verified: expected, head: prHead })) {
-      await carryHead(pool, github, { context, ref, headSha: prHead, from: expected });
-      continue;
-    }
-    const config = parseProjectConfig(context.rawConfig);
-    if (!config.ok) continue;
-    const head = await outsideHead(pool, github, { context, ref, expected, config: config.config });
-    if (!head) continue;
-    const branch = branchForTask(context.number);
-    const adopted = await applyCommand(pool, {
-      taskId,
-      command: { type: 'outside_push', ...head },
-      actor: ENGINE,
-      guard: (current) => current.stage === task.stage && current.headSha === task.headSha
-    });
-    await afterAdoption(
-      pool,
-      github,
-      { taskId, ref, pullRequest: context.pullRequest, headSha: head.headSha, branch },
-      adopted
-    );
-  }
-};
+): Promise<TaskFailure[]> =>
+  eachTaskOnItsOwn(taskIds, (taskId) => adoptOutsidePush(pool, github, taskId));
