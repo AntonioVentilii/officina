@@ -19,12 +19,14 @@ import {
 } from '@officina/db';
 import {
   COPILOT_REVIEWERS,
+  GitHubError,
   type GitHubAsUser,
   type GitHubClient,
   type RepoRef
 } from '@officina/github';
 import type { Pool } from 'pg';
 import { cancelTaskAutoMerge } from './auto-merge';
+import { eachTaskOnItsOwn, type TaskFailure } from './each-task';
 import { hasPendingBotComments } from './github-feedback';
 
 /**
@@ -492,7 +494,7 @@ const recordUnexpectedHead = async (
  * Sets the spec's `Status:` line on the task branch, once per status. The builder cannot do it: it
  * does not know the pull request number when it pushes.
  */
-export const syncSpecStatus = async (
+const writeSpecStatus = async (
   pool: Pool,
   github: SyncGitHubPort,
   input: {
@@ -541,6 +543,26 @@ export const syncSpecStatus = async (
     ...(unverified ? { unverified } : {})
   });
   return text === file.text ? 'unchanged' : 'updated';
+};
+
+/**
+ * `writeSpecStatus`, safe when two writers set the same status at once (a hand-in and the
+ * catch-up opening the same pull request, or two passes finishing the same verified task): both
+ * write on top of the same file and the second gets GitHub's 409, though the status it wanted is
+ * on the branch. Writing again reads the branch as it is now and records that commit as the status
+ * written (or the branch as moved), so the writer that lost the race still completes.
+ */
+export const syncSpecStatus = async (
+  pool: Pool,
+  github: SyncGitHubPort,
+  input: Parameters<typeof writeSpecStatus>[2]
+): ReturnType<typeof writeSpecStatus> => {
+  try {
+    return await writeSpecStatus(pool, github, input);
+  } catch (error) {
+    if (!(error instanceof GitHubError) || error.status !== 409) throw error;
+    return writeSpecStatus(pool, github, input);
+  }
 };
 
 interface ChooserResult {
@@ -702,12 +724,5 @@ export const finishVerifiedSpecs = async (
   github: SyncGitHubPort,
   taskIds: readonly string[],
   onBehalf?: OnBehalf
-): Promise<{ taskId: string; error: string }[]> => {
-  const failures: { taskId: string; error: string }[] = [];
-  for (const taskId of taskIds) {
-    await finishVerifiedSpec(pool, github, taskId, onBehalf).catch((error: unknown) =>
-      failures.push({ taskId, error: (error as Error).message })
-    );
-  }
-  return failures;
-};
+): Promise<TaskFailure[]> =>
+  eachTaskOnItsOwn(taskIds, (taskId) => finishVerifiedSpec(pool, github, taskId, onBehalf));
