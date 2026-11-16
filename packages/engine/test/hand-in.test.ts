@@ -10,7 +10,7 @@ import {
 import { GitHubError } from '@officina/github';
 import { Pool } from 'pg';
 import { PLAN, applyOrThrow, resetAndSeed, type Seeded } from '../../db/test/seed';
-import { handInBuild, openMissingPullRequests } from '../src';
+import { handInBuild, openMissingPullRequests, type HandInPort } from '../src';
 import { gitHubWith } from './fake-github';
 
 const url = process.env.TEST_DATABASE_URL;
@@ -221,7 +221,10 @@ describe.skipIf(!url)('a developer hands in a build', () => {
    * catch-up opening the same pull request meanwhile.
    */
   const specRace = async (
-    write: (land: () => void, catchUp: () => Promise<unknown>) => Promise<unknown>
+    write: (
+      land: () => void,
+      catchUp: () => Promise<unknown>
+    ) => ReturnType<HandInPort['updateFile']>
   ) => {
     await pool.query(
       `update projects set config = jsonb_set(config, '{docs,spec_dir}', '"docs/specs"')
@@ -230,7 +233,7 @@ describe.skipIf(!url)('a developer hands in a build', () => {
     );
     const files = new Map([['dev1', '# Room\n\nStatus: Approved\n']]);
     let head = 'dev1';
-    const port = {
+    const port = gitHubWith({
       pushFacts: async () => ({
         headSha: head,
         changedPaths: ['src/app.ts', SPEC],
@@ -252,7 +255,7 @@ describe.skipIf(!url)('a developer hands in a build', () => {
         ),
       commitChanges: async () => ({ parents: ['dev1'], paths: [SPEC] }),
       commentOnIssue: async () => undefined
-    } as unknown as HandInPort;
+    });
     const taskId = await waitingForDeveloper();
     const dev = await developer('dev@example.com', 'Dev');
     await applyOrThrow(pool, taskId, { type: 'claim' }, dev);
