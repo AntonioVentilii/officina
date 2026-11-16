@@ -102,7 +102,7 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     init: { method?: string; token: string; body?: unknown }
   ): Promise<T> => {
     try {
-      return await githubRequest<T>(http, init.token, path, init, now);
+      return await githubRequest<T>(http, init.token, path, { ...init, now });
     } catch (error) {
       if (error instanceof GitHubError && error.resetAt !== null)
         limitedUntil = Math.max(limitedUntil, error.resetAt);

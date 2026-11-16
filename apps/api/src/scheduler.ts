@@ -125,7 +125,10 @@ export const startScheduler = (options: SchedulerOptions): Scheduler => {
       });
     await currentPass;
     if (!stopped)
-      timer = setTimeout(passUnlessHeld, heldDelay(nextPassDelay(options.intervalMs, failedInARow)));
+      timer = setTimeout(
+        passUnlessHeld,
+        heldDelay(nextPassDelay(options.intervalMs, failedInARow))
+      );
   };
   void loop();
 
