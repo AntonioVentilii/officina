@@ -407,6 +407,53 @@ describe.skipIf(!url)('board api', () => {
     expect((await json(await call(gio, path))).waitingOn.me).toBe(false);
   });
 
+  test('asking for changes is offered only to the people the gate names, as the lifecycle allows', async () => {
+    const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    const tim = await signIn(
+      await invite(pool, {
+        publicUrl: PUBLIC_URL,
+        email: 'tim@example.com',
+        name: 'Tim',
+        role: 'contributor',
+        domains: []
+      })
+    );
+    await createRequest(pool, {
+      title: 'Rename settings',
+      request: 'Call it Preferences.',
+      skipInterview: true
+    });
+    const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
+    const path = `/api/projects/${seeded.projectId}/tasks/1`;
+    await call(owner, `${path}/actions`, { type: 'accept' });
+    await applyCommand(pool, {
+      taskId,
+      command: { type: 'post_spec', predictedPaths: ['src/settings.ts'], userVisible: false },
+      actor: { kind: 'agent', role: 'spec', version: 1 }
+    });
+    await applyCommand(pool, {
+      taskId,
+      command: {
+        type: 'plan_approval',
+        userVisible: false,
+        plan: { depth: 'glance', rationale: 'A label.', extra: [], verifiers: [] }
+      },
+      actor: { kind: 'agent', role: 'chooser', version: 1 }
+    });
+
+    // The plan needs an owner; a contributor may approve plans but is not named, so cannot send it back.
+    expect((await json(await call(owner, path))).actions).toEqual(
+      expect.arrayContaining(['approve', 'changes'])
+    );
+    const forTim = await json(await call(tim, path));
+    expect(forTim.stage).toBe('spec_review');
+    expect(forTim.actions).toContain('approve');
+    expect(forTim.actions).not.toContain('changes');
+    const refused = await call(tim, `${path}/actions`, { type: 'changes', note: 'Too short.' });
+    expect(refused.status).toBe(409);
+    expect((await json(await call(tim, path))).stage).toBe('spec_review');
+  });
+
   test('every decision route refuses a request without the request header and changes nothing', async () => {
     const cookie = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
     await createRequest(pool, {
