@@ -61,14 +61,14 @@
       placeholder="feat(scope): what it does"
       maxlength={limits?.max}
     />
-    <label class="caps" for="hand-in-body-{number}">Pull request body</label>
+    <label class="caps" for="hand-in-body-{number}">Pull request body (with a template)</label>
     <textarea
       id="hand-in-body-{number}"
       class="field"
       bind:value={body}
       rows="6"
       maxlength={session.me?.limits.prBody}
-      placeholder="Required in the project's pull request template when it has one: keep every heading"
+      placeholder="Only when the project has a pull request template, and then required: write it in the template, keeping every heading"
     ></textarea>
     <label class="caps" for="hand-in-checked-{number}">What you checked (optional)</label>
     <textarea

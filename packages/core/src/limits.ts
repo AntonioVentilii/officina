@@ -24,10 +24,11 @@ export const INPUT_LIMITS = {
   /** A pull request title handed in with a push, by a person or the builder. */
   prTitle: { min: 3, max: 120 },
   /**
-   * A pull request body handed in with a push, in the sections of the project's template: under the
-   * 65,536 characters GitHub holds, with room for the lines Officina adds after it.
+   * A pull request body handed in with a push, in the sections of the project's template. GitHub
+   * holds 65,536 characters; this leaves room for what Officina adds after it: the task link, the
+   * issue it closes and an onboarding's follow-ups (15 of at most 500 characters).
    */
-  prBody: 60_000,
+  prBody: 50_000,
   /** One thing checked, or left unchecked, in a hand-in. */
   check: 500,
   /** How many checks a hand-in lists, of each kind. */
@@ -75,7 +76,7 @@ export const pushedFields = {
     .max(INPUT_LIMITS.prBody)
     .optional()
     .describe(
-      "The pull request body, in Markdown. Required when the brief names the project's pull request template: keep every heading of the template and fill each one. Officina adds the link to the task and the issue it closes after it."
+      "The pull request body, in Markdown, only when the brief names the project's pull request template, and then required: keep every heading of the template and fill each one. Officina adds the link to the task and the issue it closes after it."
     ),
   verified: checksSchema,
   notVerified: checksSchema

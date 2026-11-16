@@ -82,7 +82,8 @@ const bullets = (items: readonly string[]) =>
 
 /**
  * What the build wrote for the body: in the project's pull request template when it gave one (the
- * template's sections first, Officina's link after a rule), else Officina's own shape.
+ * template's sections first, Officina's link after a rule), else Officina's own shape. A body is
+ * only accepted when the template was read (`bodyProblems`), so one stored stands for it.
  */
 const builtSections = (link: string, built: PushedBuild): string[] => {
   const source = `Implements the approved spec of ${link}.`;

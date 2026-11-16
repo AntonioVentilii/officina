@@ -35,8 +35,8 @@ const USAGE = `usage (on your machine, prefix with scripts/officina; on the serv
     task hand-in  --number <n> --title "<pull request title>" [--checked "<what you checked>" ...]
                   [--body "<pull request body>"]
                                                after pushing ${branchForTask('<n>')}: send your build to review;
-                                               --body is required, in its sections, when the project
-                                               names a pull request template
+                                               --body only when the project names a pull request
+                                               template, and then required, in its sections
     task approve  --number <n>
     task changes  --number <n> --note "<what to change>"
     task answer   --number <n> --text "<answer to the open question>"

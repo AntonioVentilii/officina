@@ -474,7 +474,7 @@ After it is opened, tell the person the task link and that an agent may ask them
         .max(INPUT_LIMITS.prBody)
         .optional()
         .describe(
-          'The pull request body, in Markdown. Required when the project names a pull request template (`docs.pr_template` in `.github/officina.yml`): write it in that template, keeping every heading. Officina adds the link to the task after it.'
+          'The pull request body, in Markdown, only when the project names a pull request template (`docs.pr_template` in `.github/officina.yml`), and then required: write it in that template, keeping every heading. Officina adds the link to the task after it.'
         ),
       verified: checksSchema
         .optional()

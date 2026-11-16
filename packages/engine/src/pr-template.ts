@@ -12,27 +12,39 @@ export interface PrTemplate {
 const COMMENT = /<!--[\s\S]*?-->/g;
 const HEADING = /^ {0,3}#{1,6}[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$/;
 const FENCE = /^ {0,3}(`{3,}|~{3,})/;
+/** The line under a setext heading: `===` or `---`. */
+const UNDERLINE = /^ {0,3}(=+|-+)[ \t]*$/;
+/** A line of plain paragraph text, the only kind a setext underline turns into a heading. */
+const PARAGRAPH = /^ {0,3}(?![-*+>|#=]|\d+[.)])\S/;
 
 /** Whether a fence marker closes the open fence: the same character, at least as long. */
 const closes = (open: string, marker: string) =>
   marker[0] === open[0] && marker.length >= open.length;
 
-/** The text of each ATX heading outside comments and fenced code, in order. */
+/** The lines outside comments, with fences and fenced code blanked, so nothing in them counts. */
+const proseLines = (markdown: string): string[] => {
+  let fence: string | null = null;
+  return markdown
+    .replace(COMMENT, '')
+    .split('\n')
+    .map((line) => {
+      const marker = FENCE.exec(line)?.[1];
+      if (fence === null && marker) fence = marker;
+      else if (fence !== null && marker && closes(fence, marker)) fence = null;
+      else if (fence === null) return line;
+      return '';
+    });
+};
+
+/** The text of each heading, ATX (`# Tests`) or setext (`Tests` over `===`), in order. */
 export const headingsOf = (markdown: string): string[] => {
   const headings: string[] = [];
-  let fence: string | null = null;
-  for (const line of markdown.replace(COMMENT, '').split('\n')) {
-    const marker = FENCE.exec(line)?.[1];
-    if (fence !== null) {
-      if (marker && closes(fence, marker)) fence = null;
-      continue;
-    }
-    if (marker) {
-      fence = marker;
-      continue;
-    }
-    const heading = HEADING.exec(line)?.[1];
+  let previous: string | null = null;
+  for (const line of proseLines(markdown)) {
+    const heading: string | undefined =
+      HEADING.exec(line)?.[1] ?? (previous !== null && UNDERLINE.test(line) ? previous : undefined);
     if (heading) headings.push(heading.trim());
+    previous = heading === undefined && PARAGRAPH.test(line) ? line : null;
   }
   return headings;
 };
@@ -56,13 +68,19 @@ const key = (heading: string) => heading.toLowerCase();
 
 /**
  * A pushed build's body against the project's template: there must be one, and it keeps every
- * heading of the template. The same check for an agent's build and a developer's hand-in.
+ * heading of the template. Without a template there must be none, so a body stored with a result
+ * always stands for one and Officina's own body is kept otherwise. The same check for an agent's
+ * build and a developer's hand-in.
  */
 export const bodyProblems =
   (template: PrTemplate | null) =>
   (output: AgentOutput<RunnerRole>): string[] => {
     const built = output as AgentOutput<'builder' | 'onboarder'>;
-    if (!template || built.outcome !== 'pushed') return [];
+    if (built.outcome !== 'pushed') return [];
+    if (!template)
+      return built.prBody
+        ? ['prBody is only for a project whose pull request template can be read: leave it out']
+        : [];
     if (!built.prBody)
       return [`prBody is required: write it in the pull request template at ${template.path}`];
     const kept = new Set(headingsOf(built.prBody).map(key));
