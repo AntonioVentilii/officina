@@ -6,6 +6,7 @@ import {
   REVIEWER_ROLES,
   TERMINAL_STAGES,
   applicableRequirements,
+  branchForTask,
   can,
   canAnswer,
   clip,
@@ -766,6 +767,7 @@ export const taskView = async (
         }
       : null,
     repo: context?.repo ?? null,
+    branch: branchForTask(row.number),
     pullRequestUrl: shown.value(
       context?.repo && row.pullRequest
         ? `https://github.com/${context.repo}/pull/${row.pullRequest}`

@@ -10,6 +10,9 @@ export const BOARD_LOOKS = ['modernista', 'tecnica'] as const;
 export const DEFAULT_BOARD_LOOK: (typeof BOARD_LOOKS)[number] = 'modernista';
 export type BoardLook = (typeof BOARD_LOOKS)[number];
 
+/** What merging into a project's default branch deploys. */
+const RELEASE_ON_MERGE = ['production', 'staging', 'nothing'] as const;
+
 /** Where a project keeps the agent docs the code standard asks for, unless its config says otherwise. */
 export const DEFAULT_STANDARDS_DIR = 'docs/ai';
 
@@ -111,7 +114,7 @@ const projectConfigSchema = z
     release: z
       .strictObject({
         /** What merging into the default branch deploys. Left out, it is taken to be production. */
-        on_merge: z.enum(['production', 'staging', 'nothing']).optional()
+        on_merge: z.enum(RELEASE_ON_MERGE).optional()
       })
       .optional(),
     pull_request: z
@@ -181,7 +184,7 @@ export const GATES = ['spec_review', 'verifying'] as const;
 export type Gate = (typeof GATES)[number];
 export const isGate = (stage: string): stage is Gate =>
   (GATES as readonly string[]).includes(stage);
-export type ReleaseOnMerge = 'production' | 'staging' | 'nothing';
+export type ReleaseOnMerge = (typeof RELEASE_ON_MERGE)[number];
 
 export interface LaneSettings {
   /** The globs that put a change in this lane; always empty for `standard`. */

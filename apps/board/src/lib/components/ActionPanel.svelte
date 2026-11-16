@@ -286,7 +286,7 @@
           </button>
         {/if}
         {#if can('hand_in')}
-          <HandIn number={task.number} {onchanged} />
+          <HandIn number={task.number} branch={task.branch} {onchanged} />
         {/if}
         {#if can('claim')}
           <button

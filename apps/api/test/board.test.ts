@@ -198,6 +198,7 @@ describe.skipIf(!url)('board api', () => {
     ]);
     expect(me.limits.title).toEqual({ min: 3, max: 200 });
     expect(me.limits.prTitle).toEqual({ min: 3, max: 120 });
+    expect(me.connectorUrl).toBe(`${PUBLIC_URL}/mcp`);
 
     const again = await call(null, '/auth/redeem', { token: tokenFrom(link) });
     expect(again.status).toBe(410);
@@ -753,6 +754,7 @@ describe.skipIf(!url)('board api', () => {
     });
     const building = await json(await call(developer, path));
     expect(building.actions).toContain('hand_in');
+    expect(building.branch).toBe(`officina/task-${building.number}`);
     expect(building.waitingOn).toEqual({
       kind: 'people',
       label: 'Dev is building it, then hands it in',

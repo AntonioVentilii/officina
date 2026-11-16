@@ -5,12 +5,16 @@ import { session } from './session.svelte';
 /** Read before first paint by the script in app.html too, so keep the key in step with it. */
 export const LOOK_KEY = 'officina.look';
 
-export const LOOKS: readonly { readonly id: Look; readonly label: string }[] = [
+/**
+ * The default first: it applies on pages before a project is known, such as signing in, as core's
+ * `DEFAULT_BOARD_LOOK` does for a project whose config names none.
+ */
+export const LOOKS = [
   { id: 'modernista', label: 'Modernista' },
   { id: 'tecnica', label: 'Tecnica' }
-];
+] as const satisfies readonly { readonly id: Look; readonly label: string }[];
 
-const isLook = (value: unknown): value is Look => value === 'modernista' || value === 'tecnica';
+const isLook = (value: unknown): value is Look => LOOKS.some((option) => option.id === value);
 
 const read = (): Look | null => {
   try {
@@ -25,9 +29,8 @@ const read = (): Look | null => {
 class LookState {
   chosen = $state<Look | null>(read());
 
-  current = $derived<Look>(
-    this.chosen ?? (isLook(session.project?.look) ? session.project.look : 'modernista')
-  );
+  // The API sends each project's look with its default already applied.
+  current = $derived<Look>(this.chosen ?? session.project?.look ?? LOOKS[0].id);
 
   /** True while the page animates from one look to the other; picks wait until it is done. */
   switching = $state(false);

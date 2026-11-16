@@ -8,15 +8,18 @@ import {
   authorizationServerMetadata,
   checkAuthorization,
   exchangeToken,
+  MCP_PATH,
   mcpResource,
   OAuthError,
+  PROTECTED_RESOURCE_METADATA_PATH,
+  PROTECTED_RESOURCE_PREFIX,
   protectedResourceMetadata,
   protectedResourceMetadataUrl,
   registerClient,
   SCOPE
 } from './oauth';
 
-export { checkAuthorization, consentRedirect, LOOPBACK_HOSTS } from './oauth';
+export { checkAuthorization, consentRedirect, LOOPBACK_HOSTS, mcpResource } from './oauth';
 
 const json = (status: number, body: unknown, headers: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), {
@@ -57,8 +60,8 @@ export const createConnector = (deps: {
 
   return (
     new Elysia()
-      .get('/.well-known/oauth-protected-resource', () => protectedResourceMetadata(publicUrl))
-      .get('/.well-known/oauth-protected-resource/mcp', () => protectedResourceMetadata(publicUrl))
+      .get(PROTECTED_RESOURCE_PREFIX, () => protectedResourceMetadata(publicUrl))
+      .get(PROTECTED_RESOURCE_METADATA_PATH, () => protectedResourceMetadata(publicUrl))
       .get('/.well-known/oauth-authorization-server', () => authorizationServerMetadata(publicUrl))
       .post('/oauth/register', async ({ body }) => {
         try {
@@ -81,10 +84,10 @@ export const createConnector = (deps: {
           return oauthFailure(error);
         }
       })
-      .get('/mcp', methodNotAllowed)
-      .delete('/mcp', methodNotAllowed)
+      .get(MCP_PATH, methodNotAllowed)
+      .delete(MCP_PATH, methodNotAllowed)
       .post(
-        '/mcp',
+        MCP_PATH,
         async ({ request }) => {
           const header = request.headers.get('authorization');
           const token = header?.match(/^Bearer (\S+)$/i)?.[1];
