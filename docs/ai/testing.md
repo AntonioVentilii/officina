@@ -8,7 +8,7 @@
 | `bun run test:db`     | `packages/db`, `packages/engine` and `apps/api` against a throwaway Postgres (`packages/db/test/with-postgres.ts`)                         | Docker  |
 | `bun run check:board` | svelte-check on the board, warnings fail it                                                                                                | nothing |
 
-What the board shows is decided and tested in the API views (`apps/api/test/board.test.ts`). Its own pure logic is tested in `apps/board/test` (formatting in `format.test.ts`, overlapping loads in `latest.test.ts`, the path a sign-in returns to in `return-path.test.ts`, Markdown sanitizing in `markdown.test.ts`, what a dialog makes inert in `inert.test.ts`), importing from `src/lib` directly; run log folding is not covered yet. A test of code that needs the DOM, such as DOMPurify, calls `installWindow` from `apps/board/test/dom.ts` before importing that code: it sets up a jsdom window (a devDependency for tests only, never in the board's bundle). The Markdown table check of `scripts/check-repo.ts` is tested in `scripts/test/markdown-tables.test.ts`.
+What the board shows is decided and tested in the API views (`apps/api/test/board.test.ts`). Its own pure logic is tested in `apps/board/test` (formatting in `format.test.ts`, overlapping loads in `latest.test.ts`, the path a sign-in returns to in `return-path.test.ts`, Markdown sanitizing in `markdown.test.ts`, the Inbox's groups in `inbox.test.ts`, what a dialog makes inert in `inert.test.ts`), importing from `src/lib` directly; run log folding is not covered yet. A test of code that needs the DOM, such as DOMPurify, calls `installWindow` from `apps/board/test/dom.ts` before importing that code: it sets up a jsdom window (a devDependency for tests only, never in the board's bundle). The Markdown table check of `scripts/check-repo.ts` is tested in `scripts/test/markdown-tables.test.ts`.
 
 ## Where a test goes
 
@@ -23,5 +23,5 @@ What the board shows is decided and tested in the API views (`apps/api/test/boar
 
 - A test name says the behaviour in a sentence: "an agent that touches red paths is stopped and the owner is asked".
 - Fakes implement the port the code depends on (`GitHubPort`, `ManagedAgentsPort`, `LearningGitHub`) and record calls, so a test asserts what was sent. They are typed as that port, never cast to it: an engine test gives `gitHubWith` (`packages/engine/test/fake-github.ts`) only the GitHub calls it expects.
-- A race between two transactions waits until one waits on the other's lock (`untilWaitingOn` in `packages/db/test/locks.ts`), never for a fixed sleep.
+- A race between two transactions waits until one waits on the other's lock (`untilWaitingOn` in `packages/db/test/locks.ts`; `rowLockHolder` names the holder when the code under test takes the lock), never for a fixed sleep. A test ages a row past a window by the constant that names it (`STALE_CLAIM`, `DECISION_LEASE`), never by a copy of its length.
 - Tests may spell out the values they expect; production code never copies them from a test.

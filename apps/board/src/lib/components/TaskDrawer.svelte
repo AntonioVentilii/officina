@@ -8,7 +8,7 @@
   import { STAGE_LABELS } from '$lib/stages';
   import { board } from '$lib/state/board.svelte';
   import { clock } from '$lib/state/clock.svelte';
-  import { coalesce, live } from '$lib/state/live.svelte';
+  import { coalesce, live, refreshesAll } from '$lib/state/live.svelte';
   import { session } from '$lib/state/session.svelte';
   import { toasts } from '$lib/state/toasts.svelte';
   import type { TaskDetail } from '$lib/types';
@@ -59,10 +59,7 @@
   $effect(() => {
     void load();
     return live.subscribe((event) => {
-      if (
-        event.projectId === '*' ||
-        (event.projectId === session.projectId && event.number === number)
-      )
+      if (refreshesAll(event) || (event.projectId === session.projectId && event.number === number))
         loadSoon();
     });
   });
