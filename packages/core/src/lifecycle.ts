@@ -84,13 +84,33 @@ export const buildRoleFor = (kind: TaskKind): BuildRole =>
 export const REVIEWER_ROLES = ['reviewer_spec', 'reviewer_correctness'] as const;
 export type ReviewerRole = (typeof REVIEWER_ROLES)[number];
 
+/**
+ * The connected app a member acted through: one OAuth grant of the Claude connector. `name` is the
+ * name the app gave itself when it registered, unverified, copied onto each action so the history
+ * still reads after the grant is revoked or its app is gone. Nothing decides on it: it records the
+ * channel, not who may act.
+ */
+export interface ConnectedApp {
+  readonly grantId: string;
+  readonly name: string;
+}
+
 export type Actor =
-  | { readonly kind: 'member'; readonly memberId: string }
+  | {
+      readonly kind: 'member';
+      readonly memberId: string;
+      /** Absent when the member acted on the board or through the CLI. */
+      readonly via?: ConnectedApp;
+    }
   | { readonly kind: 'agent'; readonly role: AgentRole; readonly version: number }
   | { readonly kind: 'engine' };
 
 /** Officina itself acting: dispatching, recording GitHub events, blocking a failed step. */
 export const ENGINE: Actor = { kind: 'engine' };
+
+/** A member acting, through the connected app `via` when one acts for them. */
+export const memberActor = (memberId: string, via?: ConnectedApp): Actor =>
+  via ? { kind: 'member', memberId, via } : { kind: 'member', memberId };
 
 export type Assignee =
   | { readonly kind: 'member'; readonly memberId: string }
