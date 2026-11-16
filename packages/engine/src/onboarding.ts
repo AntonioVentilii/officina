@@ -25,7 +25,7 @@ export const onboardingSpec = (
     '## Goal',
     'Agents and people working in this repository reuse what already exists and put new code where it belongs, because the repository documents its own structure, patterns and shared code next to the universal code standard.',
     '## Context',
-    `Officina builds nothing else in this project until this change is merged. Missing on the default branch when the project was registered:\n\n${list(missing)}`,
+    `Officina builds nothing else in this project until this change is merged, or this task is cancelled. Missing on the default branch when the project was registered:\n\n${list(missing)}`,
     '## Change',
     [
       `- \`${config.docs.entry}\`: the short entry point, linking the code standard and adding only what is specific to this repository.`,

@@ -44,13 +44,16 @@ export const createConnector = (deps: {
   const resource = mcpResource(publicUrl);
   const board = publicUrl.replace(/\/$/, '');
 
-  const unauthorized = (invalid: boolean) =>
+  const challenge = `Bearer resource_metadata="${protectedResourceMetadataUrl(publicUrl)}", scope="${SCOPE}"`;
+  /** No token sent: the challenge tells the client where to start authorizing. */
+  const tokenMissing = () =>
+    json(401, { error: 'unauthorized' }, { 'www-authenticate': challenge });
+  /** A token sent that Officina does not accept for this resource. */
+  const tokenInvalid = () =>
     json(
       401,
-      { error: invalid ? 'invalid_token' : 'unauthorized' },
-      {
-        'www-authenticate': `Bearer resource_metadata="${protectedResourceMetadataUrl(publicUrl)}", scope="${SCOPE}"${invalid ? ', error="invalid_token"' : ''}`
-      }
+      { error: 'invalid_token' },
+      { 'www-authenticate': `${challenge}, error="invalid_token"` }
     );
 
   const methodNotAllowed = () => json(405, { error: 'use POST' }, { allow: 'POST' });
@@ -88,9 +91,9 @@ export const createConnector = (deps: {
         async ({ request }) => {
           const header = request.headers.get('authorization');
           const token = header?.match(/^Bearer (\S+)$/i)?.[1];
-          if (!token) return unauthorized(false);
+          if (!token) return tokenMissing();
           const memberId = await memberForConnectorToken(pool, token, resource);
-          if (!memberId) return unauthorized(true);
+          if (!memberId) return tokenInvalid();
 
           let message: unknown;
           try {
