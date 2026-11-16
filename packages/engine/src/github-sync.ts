@@ -14,7 +14,12 @@ import {
   loadTaskContext,
   recordSpecStatus
 } from '@officina/db';
-import type { GitHubAsUser, GitHubClient, RepoRef } from '@officina/github';
+import {
+  COPILOT_REVIEWERS,
+  type GitHubAsUser,
+  type GitHubClient,
+  type RepoRef
+} from '@officina/github';
 import type { Pool } from 'pg';
 import { cancelTaskAutoMerge } from './auto-merge';
 import { hasPendingBotComments } from './github-feedback';
@@ -176,7 +181,9 @@ export const approveOnGitHub = async (
 /**
  * Asks Copilot to review a pull request Officina opened, as the member who requested the task:
  * the App has no Copilot seat, so a branch rule asking for Copilot's review does not start it on the
- * App's pull requests. Tried once per pull request. Nothing here blocks the task: without the
+ * App's pull requests. Tried once per pull request: a review Copilot already left there (asked by
+ * an earlier attempt whose record was lost) is recorded instead of asking again, and one still
+ * pending answers `already_pending`. Nothing here blocks the task: without the
  * member's linked account, or when GitHub refuses (no seat, no quota), the failure is recorded and
  * the task goes on.
  */
@@ -214,12 +221,14 @@ export const askCopilotToReview = async (
     );
     return;
   }
+  const { token } = account;
   try {
-    const outcome = await onBehalf.asUser.requestCopilotReview(
-      account.token,
-      input.repo,
-      input.pullRequest
+    const reviewed = (await onBehalf.asUser.reviews(token, input.repo, input.pullRequest)).some(
+      (review) => COPILOT_REVIEWERS.has(review.login)
     );
+    const outcome = reviewed
+      ? 'already_reviewed'
+      : await onBehalf.asUser.requestCopilotReview(token, input.repo, input.pullRequest);
     await appendTaskEvent(pool, {
       taskId: input.taskId,
       actor: requester,

@@ -3,6 +3,15 @@ import type { Pool, PoolClient } from 'pg';
 import { inTransaction } from './store';
 import { appendTaskEvent } from './task-history';
 
+/** Far longer than any handler runs: a webhook is answered in seconds. */
+export const STALE_CLAIM = '10 minutes';
+
+/**
+ * How long a delivery is kept: longer than GitHub lets anyone redeliver (three days), with margin,
+ * since an id older than that can never come again.
+ */
+export const DELIVERY_RETENTION = '7 days';
+
 /**
  * Claims a webhook delivery before it is processed. Only one of two concurrent deliveries with the
  * same id gets a claim, so a redelivery racing the original is never applied twice. A claim still
@@ -25,9 +34,6 @@ export const claimDelivery = async (
     )
   ).rows[0]?.claim ?? null;
 
-/** Far longer than any handler runs: a webhook is answered in seconds. */
-const STALE_CLAIM = '10 minutes';
-
 /** Marks a delivery handled, so no redelivery processes it again; only its own claim may. */
 export const markDeliveryHandled = async (
   pool: Pool,
@@ -40,13 +46,13 @@ export const markDeliveryHandled = async (
   );
 };
 
-/**
- * Deletes deliveries older than GitHub lets anyone redeliver (three days), with margin: their ids
- * can never come again, so they only take up space.
- */
+/** Deletes deliveries older than `DELIVERY_RETENTION`: their ids only take up space. */
 export const purgeOldDeliveries = async (pool: Pool): Promise<number> =>
-  (await pool.query("delete from webhook_deliveries where received_at < now() - interval '7 days'"))
-    .rowCount ?? 0;
+  (
+    await pool.query('delete from webhook_deliveries where received_at < now() - $1::interval', [
+      DELIVERY_RETENTION
+    ])
+  ).rowCount ?? 0;
 
 /** Gives a claimed delivery back after it failed, so GitHub's redelivery is processed. */
 export const releaseDelivery = async (

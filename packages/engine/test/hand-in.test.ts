@@ -10,7 +10,8 @@ import {
 import { GitHubError } from '@officina/github';
 import { Pool } from 'pg';
 import { PLAN, applyOrThrow, resetAndSeed, type Seeded } from '../../db/test/seed';
-import { handInBuild, openMissingPullRequests, type HandInPort } from '../src';
+import { handInBuild, openMissingPullRequests } from '../src';
+import { gitHubWith } from './fake-github';
 
 const url = process.env.TEST_DATABASE_URL;
 const PUBLIC_URL = 'https://officina.example';
@@ -23,20 +24,20 @@ const SPEC = 'docs/specs/room.md';
 const fakeGitHub = (openFails = 0) => {
   const calls: string[] = [];
   let failures = openFails;
-  const port = {
+  const port = gitHubWith({
     pushFacts: async () => {
       calls.push('pushFacts');
       return { headSha: 'dev1', changedPaths: ['src/app.ts'], addedPaths: [], diffLines: 12 };
     },
     readFile: async () => null,
-    openPullRequest: async (input: { title: string }) => {
+    openPullRequest: async (input) => {
       calls.push(`openPullRequest ${input.title}`);
       if (failures-- > 0) throw new Error('GitHub 502 on /pulls');
       return { number: 7, url: 'https://github.com/ViciApp/vici-app/pull/7' };
     },
-    updateFile: async () => undefined,
+    updateFile: async () => ({ commitSha: null, parentSha: null }),
     commentOnIssue: async () => undefined
-  } as unknown as HandInPort;
+  });
   return { port, calls };
 };
 
