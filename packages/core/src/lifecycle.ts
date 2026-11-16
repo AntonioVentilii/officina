@@ -165,24 +165,6 @@ export interface ApprovalPlan {
 
 export type PlanInput = Omit<ApprovalPlan, 'subject'>;
 
-export const newTask = (id: string, requesterId: string, kind: TaskKind = 'request'): Task => ({
-  id,
-  kind,
-  requesterId,
-  stage: 'request',
-  lane: null,
-  specVersion: 0,
-  headSha: null,
-  userVisible: false,
-  assignee: null,
-  blocked: null,
-  paused: false,
-  fixRounds: 0,
-  reviews: {},
-  approvalPlans: {},
-  guards: []
-});
-
 /** What the real diff of a pushed head says, read from GitHub, never from an agent. */
 export interface PushedHead {
   readonly headSha: string;

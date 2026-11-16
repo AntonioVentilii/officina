@@ -2,12 +2,12 @@ import { describe, expect, test } from 'bun:test';
 import {
   commandForOutput,
   findOption,
-  newTask,
   optionAnswer,
   parseAgentOutput,
   questionMarkdown,
   type QuestionOption
 } from '../src';
+import { newTask } from './fixtures';
 
 const task = newTask('t1', 'gio');
 
