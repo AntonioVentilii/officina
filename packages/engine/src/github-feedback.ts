@@ -14,7 +14,7 @@ import {
   type StoredTaskContext
 } from '@officina/db';
 import type { GitHubClient, RepoRef } from '@officina/github';
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import { stopAutoMergeOnLeaving } from './auto-merge';
 import { eachTaskOnItsOwn, type TaskFailure } from './each-task';
 
@@ -97,12 +97,14 @@ const fromListedBots = (context: StoredTaskContext, comments: readonly BotCommen
 /**
  * Whether a review bot the project lists has a comment on the task's pull request that was not
  * dealt with yet, settled or not: until it is, the result must not be handed to GitHub to merge.
+ * Under the task's row lock it takes that transaction's client, so it never waits for a second
+ * connection while others wait on the lock.
  */
 export const hasPendingBotComments = async (
-  pool: Pool,
+  db: Pool | PoolClient,
   context: StoredTaskContext
 ): Promise<boolean> =>
-  fromListedBots(context, await unhandledBotComments(pool, context.task.id, 0)).length > 0;
+  fromListedBots(context, await unhandledBotComments(db, context.task.id, 0)).length > 0;
 
 /**
  * The settled comments to forward: a bot whose last overview the builder already answered is left

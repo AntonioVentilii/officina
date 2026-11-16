@@ -1,4 +1,5 @@
 import type { Pool } from 'pg';
+import { RUN_IS_ACTIVE } from './run-status';
 
 /*
  * The demo workshop's writes that no real flow makes: `bun run dev` seeds a throwaway local
@@ -55,9 +56,9 @@ export const spreadDemoHistory = async (pool: Pool): Promise<void> => {
     await client.query(`
       update runs r set
         created_at = t.created_at + interval '30 minutes',
-        started_at = case when r.status = 'running' then now() - interval '6 minutes'
+        started_at = case when r.status ${RUN_IS_ACTIVE} then now() - interval '6 minutes'
                           else t.created_at + interval '30 minutes' end,
-        finished_at = case when r.status = 'running' then null
+        finished_at = case when r.status ${RUN_IS_ACTIVE} then null
                            else t.created_at + interval '34 minutes 12 seconds' end
       from tasks t where t.id = r.task_id`);
   } finally {
@@ -68,6 +69,6 @@ export const spreadDemoHistory = async (pool: Pool): Promise<void> => {
 
 /** The demo runs still in progress, which the simulated agents keep busy. */
 export const listRunningDemoRuns = async (pool: Pool): Promise<string[]> =>
-  (await pool.query<{ id: string }>("select id from runs where status = 'running'")).rows.map(
+  (await pool.query<{ id: string }>(`select id from runs where status ${RUN_IS_ACTIVE}`)).rows.map(
     (row) => row.id
   );

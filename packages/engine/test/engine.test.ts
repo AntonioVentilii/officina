@@ -422,6 +422,40 @@ describe.skipIf(!url)('engine', () => {
     expect(await linkedPullRequest(taskId)).toBe(42);
   });
 
+  test('checks that failed before a build push was applied send it back to the builder, with its pull request open', async () => {
+    const github = fakeGitHub({ failed: ['CI: failure'] });
+    const agents = createFakePort(succeed);
+    const taskId = await taskInReady(github, agents);
+    await tick({ pool, github: github.port, agents, publicUrl: PUBLIC_URL }, seeded.projectId);
+
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({
+      stage: 'building',
+      headSha: 'sha1'
+    });
+    expect(await linkedPullRequest(taskId)).toBe(42);
+    expect(github.calls.find((call) => call.method === 'failedChecks')?.args[0]).toMatchObject({
+      sha: 'sha1',
+      branch: 'officina/task-1'
+    });
+    const failed = await pool.query<{ details: string }>(
+      `select payload->>'details' as details from task_events where task_id = $1 and type = 'ci_failed'`,
+      [taskId]
+    );
+    expect(failed.rows.map((row) => row.details)).toEqual(['CI: failure']);
+  });
+
+  test('checks already red on a build push whose pull request failed to open wait in review for the catch-up', async () => {
+    const github = fakeGitHub({ failed: ['CI: failure'], openFails: 1 });
+    const agents = createFakePort(succeed);
+    const taskId = await taskInReady(github, agents);
+    await tick({ pool, github: github.port, agents, publicUrl: PUBLIC_URL }, seeded.projectId);
+
+    expect((await loadTask(pool, taskId))?.task.stage).toBe('reviewing');
+    expect(github.calls.some((call) => call.method === 'failedChecks')).toBe(false);
+    await openMissingPullRequests(pool, github.port, [taskId], PUBLIC_URL);
+    expect(await linkedPullRequest(taskId)).toBe(42);
+  });
+
   test('ticks carry a ready task through build, parallel reviews and choosing', async () => {
     const github = fakeGitHub();
     const agents = createFakePort(succeed);
@@ -1927,6 +1961,40 @@ describe.skipIf(!url)('engine', () => {
     await finishVerifiedSpecs(pool, clean().port, [off], onBehalf);
     expect(userCalls).toEqual(['approve']);
     expect(await types(off)).toEqual(['github_approved', 'awaiting_merge']);
+  });
+
+  test('turning auto-merge on asks for no second connection while it holds the task', async () => {
+    const config = Bun.YAML.parse(CONFIG_YAML) as Record<string, unknown>;
+    await pool.query('update projects set config = $2 where id = $1', [
+      seeded.projectId,
+      JSON.stringify({ ...config, pull_request: { auto_merge: true } })
+    ]);
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    await pool.query(
+      `update tasks set approval_plans = jsonb_set(approval_plans, '{verifying,merge}', '"auto"')
+       where id = $1`,
+      [taskId]
+    );
+    await appendTaskEvent(pool, {
+      taskId,
+      actor: ENGINE,
+      type: 'auto_verified',
+      payload: { subject: 'sha:abc' }
+    });
+    // The one connection the task's row lock is held on, as when every other connection of the
+    // pool waits on that same lock.
+    const one = new Pool({ connectionString: url, max: 1, connectionTimeoutMillis: 2000 });
+    const github = fakeGitHub({
+      branchHead: 'abc',
+      written: { commitSha: 'abc2', parentSha: 'abc' }
+    });
+    try {
+      expect(await finishVerifiedSpecs(one, github.port, [taskId])).toEqual([]);
+    } finally {
+      await one.end();
+    }
+    expect(github.calls.filter((call) => call.method === 'mergeWhenReady')).toHaveLength(1);
   });
 
   test.each([

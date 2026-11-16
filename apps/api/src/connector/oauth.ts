@@ -26,11 +26,19 @@ const REFRESH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 const origin = (publicUrl: string) => publicUrl.replace(/\/$/, '');
 
+/** Where the connector answers on this site. */
+export const MCP_PATH = '/mcp';
+
+/** RFC 9728's well-known prefix, served on its own too for clients that ask without the path. */
+export const PROTECTED_RESOURCE_PREFIX = '/.well-known/oauth-protected-resource';
+
+export const PROTECTED_RESOURCE_METADATA_PATH = `${PROTECTED_RESOURCE_PREFIX}${MCP_PATH}`;
+
 /** The connector's address, which is also the `resource` every token is issued for. */
-export const mcpResource = (publicUrl: string) => `${origin(publicUrl)}/mcp`;
+export const mcpResource = (publicUrl: string) => `${origin(publicUrl)}${MCP_PATH}`;
 
 export const protectedResourceMetadataUrl = (publicUrl: string) =>
-  `${origin(publicUrl)}/.well-known/oauth-protected-resource/mcp`;
+  `${origin(publicUrl)}${PROTECTED_RESOURCE_METADATA_PATH}`;
 
 /** RFC 9728: where clients find the authorization server for `/mcp`. */
 export const protectedResourceMetadata = (publicUrl: string) => ({
