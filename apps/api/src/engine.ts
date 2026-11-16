@@ -147,12 +147,12 @@ export const startEngine = async (input: {
     const active = await listActiveTaskIds(input.pool, projectId);
     // Before the due steps, so they follow the head taken in, and before the merge work below,
     // which writes Officina's own status commit on the branch.
-    await adoptOutsidePushes(input.pool, input.github, active).catch((error: unknown) =>
-      input.log('outside push check failed', { projectId, error: (error as Error).message })
-    );
-    await forwardSettledComments(input.pool, input.github, active).catch((error: unknown) =>
-      input.log('bot comment forwarding failed', { projectId, error: (error as Error).message })
-    );
+    for (const failure of await adoptOutsidePushes(input.pool, input.github, active)) {
+      input.log('outside push check failed', { projectId, ...failure });
+    }
+    for (const failure of await forwardSettledComments(input.pool, input.github, active)) {
+      input.log('bot comment forwarding failed', { projectId, ...failure });
+    }
     const { due } = await collectDueSteps(deps, projectId);
     const unfinished = await finishVerifiedSpecs(
       input.pool,
