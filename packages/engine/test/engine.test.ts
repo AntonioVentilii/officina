@@ -2403,6 +2403,47 @@ describe.skipIf(!url)('engine', () => {
     expect(failed.rows.map((row) => row.details)).toEqual(['GitHub Actions: failure']);
   });
 
+  test('a task whose outside push check fails is reported and the tasks after it are still checked', async () => {
+    const broken = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, broken, 41);
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    const bot = fakeGitHub({ branchHead: 'bot1' });
+    const port: AdoptPort = {
+      ...bot.port,
+      pullRequest: async (input) => {
+        if (input.pullRequest === 41) throw new Error('GitHub 502 on /pulls/41');
+        return bot.port.pullRequest(input);
+      }
+    };
+    expect(await adoptOutsidePushes(pool, port, [broken, taskId])).toEqual([
+      { taskId: broken, error: 'GitHub 502 on /pulls/41' }
+    ]);
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({
+      stage: 'reviewing',
+      headSha: 'bot1'
+    });
+  });
+
+  test('a task whose bot comments fail to forward is reported and the tasks after it still get theirs', async () => {
+    await pool.query(
+      `update projects set config = jsonb_set(config, '{pull_request}', '{"review_bots": ["claude[bot]"]}')
+       where id = $1`,
+      [seeded.projectId]
+    );
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    await pool.query(
+      `insert into task_events (task_id, actor, type, payload, created_at)
+       values ($1, '{"kind":"engine"}', 'github_comment_seen', $2, now() - interval '5 minutes')`,
+      [taskId, JSON.stringify({ commentId: 31, by: 'claude[bot]', body: 'One finding.' })]
+    );
+    // An id the database refuses fails that task's share of the pass, as a lost connection would.
+    const failures = await forwardSettledComments(pool, fakeGitHub().port, ['not-a-task', taskId]);
+    expect(failures.map((failure) => failure.taskId)).toEqual(['not-a-task']);
+    expect((await loadTask(pool, taskId))?.task.stage).toBe('building');
+  });
+
   test('an update from the default branch with the same change keeps the verification, and merges as the new head', async () => {
     const taskId = await createTaskInMerging(pool, seeded);
     await linkPullRequest(pool, taskId, 42);

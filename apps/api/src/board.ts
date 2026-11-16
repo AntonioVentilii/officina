@@ -932,9 +932,20 @@ export const logEntries = (events: readonly RunEventRow[]): LogEntry[] =>
     }
   });
 
+/** How many run events one page of a run log reads. */
+export const RUN_LOG_PAGE = 500;
+
+/**
+ * One page of a run's log. `more` says whether events are left past `cursor`: a page can hold
+ * fewer entries than events read, since the log drops some, so its length tells the board nothing.
+ */
 export const runLog = async (pool: Pool, runId: string, afterId: number) => {
-  const events = await listRunEvents(pool, runId, afterId, 500);
-  return { entries: logEntries(events), cursor: events.at(-1)?.id ?? String(afterId) };
+  const events = await listRunEvents(pool, runId, afterId, RUN_LOG_PAGE);
+  return {
+    entries: logEntries(events),
+    cursor: events.at(-1)?.id ?? String(afterId),
+    more: events.length === RUN_LOG_PAGE
+  };
 };
 
 /** Learnings of the project, newest first, with who decided them. */

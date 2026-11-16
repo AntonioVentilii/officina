@@ -26,6 +26,7 @@ import {
 } from '@officina/github';
 import type { Pool } from 'pg';
 import { cancelTaskAutoMerge } from './auto-merge';
+import { eachTaskOnItsOwn, type TaskFailure } from './each-task';
 import { hasPendingBotComments } from './github-feedback';
 
 /**
@@ -723,12 +724,5 @@ export const finishVerifiedSpecs = async (
   github: SyncGitHubPort,
   taskIds: readonly string[],
   onBehalf?: OnBehalf
-): Promise<{ taskId: string; error: string }[]> => {
-  const failures: { taskId: string; error: string }[] = [];
-  for (const taskId of taskIds) {
-    await finishVerifiedSpec(pool, github, taskId, onBehalf).catch((error: unknown) =>
-      failures.push({ taskId, error: (error as Error).message })
-    );
-  }
-  return failures;
-};
+): Promise<TaskFailure[]> =>
+  eachTaskOnItsOwn(taskIds, (taskId) => finishVerifiedSpec(pool, github, taskId, onBehalf));
