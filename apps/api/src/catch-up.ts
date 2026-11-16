@@ -1,5 +1,6 @@
 import { WITH_PULL_REQUEST } from '@officina/core';
 import { listLearningPullRequests, loadTaskContext, markLearningsApplied } from '@officina/db';
+import { eachTaskOnItsOwn, type TaskFailure } from '@officina/engine';
 import type { GitHubClient } from '@officina/github';
 import type { Pool } from 'pg';
 import { handleWebhookAction, type ConfigReader } from './webhooks';
@@ -38,15 +39,8 @@ export const catchUpPullRequests = async (
   pool: Pool,
   github: PullRequestReader,
   taskIds: readonly string[]
-): Promise<{ taskId: string; error: string }[]> => {
-  const failures: { taskId: string; error: string }[] = [];
-  for (const taskId of taskIds) {
-    await catchUpPullRequest(pool, github, taskId).catch((error: unknown) =>
-      failures.push({ taskId, error: (error as Error).message })
-    );
-  }
-  return failures;
-};
+): Promise<TaskFailure[]> =>
+  eachTaskOnItsOwn(taskIds, (taskId) => catchUpPullRequest(pool, github, taskId));
 
 /**
  * Marks applied the accepted learnings of a project whose pull request merged while its webhook

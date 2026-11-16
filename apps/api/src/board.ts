@@ -9,6 +9,7 @@ import {
   branchForTask,
   can,
   canAnswer,
+  canRequestChanges,
   clip,
   effectivePolicy,
   eligibleMembers,
@@ -476,9 +477,37 @@ const buildActions = (row: BoardTaskRow, viewer: BoardViewer): BoardAction[] => 
     : [];
 };
 
-const actionsFor = (row: BoardTaskRow, viewer: BoardViewer): BoardAction[] => {
+/**
+ * Approving and sending back the work at the gate the task is at, once the approval chooser has
+ * planned it. Sending it back is for whoever the gate's policy names, as the lifecycle decides.
+ */
+const gateActions = (
+  row: BoardTaskRow,
+  viewer: BoardViewer,
+  facts: Pick<ProjectFacts, 'config' | 'members'>
+): BoardAction[] => {
+  if (!isGate(row.stage) || row.approvalPlans[row.stage]?.subject !== gateSubject(row, row.stage))
+    return [];
   const member = viewerMember(viewer);
-  // Nobody writes on a task they may not read: no comment, answer or changes.
+  const approves = can(member, GATE_ACTIONS[row.stage]);
+  // Nobody writes on a task they may not read, so they cannot send it back either.
+  const sendsBack =
+    readsTask(viewer, row) &&
+    facts.config !== null &&
+    canRequestChanges(row, { config: facts.config, members: facts.members }, member);
+  return [
+    ...(approves ? (['approve'] as const) : []),
+    ...(sendsBack ? (['changes'] as const) : [])
+  ];
+};
+
+const actionsFor = (
+  row: BoardTaskRow,
+  viewer: BoardViewer,
+  facts: Pick<ProjectFacts, 'config' | 'members'>
+): BoardAction[] => {
+  const member = viewerMember(viewer);
+  // Nobody writes on a task they may not read: no comment or answer.
   const writes = readsTask(viewer, row);
   if (TERMINAL_STAGES.has(row.stage)) return writes && can(member, 'comment') ? ['comment'] : [];
   const actions: BoardAction[] = [];
@@ -489,13 +518,7 @@ const actionsFor = (row: BoardTaskRow, viewer: BoardViewer): BoardAction[] => {
     if (writes && canAnswer(member, row.blocked.askedOf)) actions.push('answer');
   } else if (!row.paused) {
     if (row.stage === 'triage' && can(member, 'triage')) actions.push('accept', 'decline');
-    actions.push(...buildActions(row, viewer));
-    if (
-      isGate(row.stage) &&
-      can(member, GATE_ACTIONS[row.stage]) &&
-      row.approvalPlans[row.stage]?.subject === gateSubject(row, row.stage)
-    )
-      actions.push('approve', ...(writes ? (['changes'] as const) : []));
+    actions.push(...buildActions(row, viewer), ...gateActions(row, viewer, facts));
   }
   if (can(member, 'steer') || (requester && can(member, 'request'))) actions.push('cancel');
   if (writes && can(member, 'comment')) actions.push('comment');
@@ -821,7 +844,7 @@ export const taskView = async (
       } | null
     ),
     reviewers: REVIEWER_ROLES.map((role) => ({ role, label: roleLabel(role) })),
-    actions: actionsFor(row, viewer)
+    actions: actionsFor(row, viewer, facts)
   };
 };
 
@@ -934,9 +957,20 @@ export const logEntries = (events: readonly RunEventRow[]): LogEntry[] =>
     }
   });
 
+/** How many run events one page of a run log reads. */
+export const RUN_LOG_PAGE = 500;
+
+/**
+ * One page of a run's log. `more` says whether events are left past `cursor`: a page can hold
+ * fewer entries than events read, since the log drops some, so its length tells the board nothing.
+ */
 export const runLog = async (pool: Pool, runId: string, afterId: number) => {
-  const events = await listRunEvents(pool, runId, afterId, 500);
-  return { entries: logEntries(events), cursor: events.at(-1)?.id ?? String(afterId) };
+  const events = await listRunEvents(pool, runId, afterId, RUN_LOG_PAGE);
+  return {
+    entries: logEntries(events),
+    cursor: events.at(-1)?.id ?? String(afterId),
+    more: events.length === RUN_LOG_PAGE
+  };
 };
 
 /** Learnings of the project, newest first, with who decided them. */
