@@ -16,6 +16,7 @@ import {
 import type { GitHubClient, RepoRef } from '@officina/github';
 import type { Pool } from 'pg';
 import { stopAutoMergeOnLeaving } from './auto-merge';
+import { eachTaskOnItsOwn, type TaskFailure } from './each-task';
 
 /**
  * How long a review bot's comment must stay unchanged before it reaches the builder. Bots such as
@@ -124,41 +125,47 @@ const toForward = async (pool: Pool, taskId: string, comments: readonly BotComme
  * (`COMMENT_SETTLE_SECONDS`), as one round about the head the task holds, naming every bot so the
  * loop guard knows each. A bot the project no longer lists is left out.
  */
+const forwardSettledCommentsOf = async (
+  pool: Pool,
+  github: Pick<GitHubClient, 'cancelAutoMerge'>,
+  taskId: string
+) => {
+  const context = await loadTaskContext(pool, taskId);
+  const headSha = context?.task.headSha;
+  if (!takesComments(context) || !headSha) return;
+  const settled = fromListedBots(
+    context,
+    await unhandledBotComments(pool, taskId, COMMENT_SETTLE_SECONDS)
+  );
+  const comments = await toForward(pool, taskId, settled);
+  const last = comments.at(-1);
+  if (!last) return;
+  const forwarded = await forwardFeedback(pool, github, {
+    taskId,
+    ref: { installationId: context.installationId, repo: context.repo },
+    pullRequest: context.pullRequest,
+    by: [...new Set(comments.map((comment) => comment.by))].join(', '),
+    headSha,
+    source: { commentId: last.commentId },
+    review: {
+      notes: comments
+        .map((comment) => overviewNotes('Comment', comment.by, comment.body))
+        .join('\n\n'),
+      overviewOnly: true
+    }
+  });
+  if (forwarded.ok)
+    await markBotCommentsHandled(
+      pool,
+      taskId,
+      comments.map((comment) => comment.commentId)
+    );
+};
+
+/** Each task on its own; the failures are returned for the log and tried again on the next pass. */
 export const forwardSettledComments = async (
   pool: Pool,
   github: Pick<GitHubClient, 'cancelAutoMerge'>,
   taskIds: readonly string[]
-) => {
-  for (const taskId of taskIds) {
-    const context = await loadTaskContext(pool, taskId);
-    const headSha = context?.task.headSha;
-    if (!takesComments(context) || !headSha) continue;
-    const settled = fromListedBots(
-      context,
-      await unhandledBotComments(pool, taskId, COMMENT_SETTLE_SECONDS)
-    );
-    const comments = await toForward(pool, taskId, settled);
-    const last = comments.at(-1);
-    if (!last) continue;
-    const forwarded = await forwardFeedback(pool, github, {
-      taskId,
-      ref: { installationId: context.installationId, repo: context.repo },
-      pullRequest: context.pullRequest,
-      by: [...new Set(comments.map((comment) => comment.by))].join(', '),
-      headSha,
-      source: { commentId: last.commentId },
-      review: {
-        notes: comments
-          .map((comment) => overviewNotes('Comment', comment.by, comment.body))
-          .join('\n\n'),
-        overviewOnly: true
-      }
-    });
-    if (forwarded.ok)
-      await markBotCommentsHandled(
-        pool,
-        taskId,
-        comments.map((comment) => comment.commentId)
-      );
-  }
-};
+): Promise<TaskFailure[]> =>
+  eachTaskOnItsOwn(taskIds, (taskId) => forwardSettledCommentsOf(pool, github, taskId));
