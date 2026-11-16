@@ -3,7 +3,7 @@
   import { ChevronRight, CircleAlert, CircleCheck, GitPullRequest, Undo2 } from '@lucide/svelte';
   import { tick } from 'svelte';
   import { get } from '$lib/api';
-  import { coalesce, live } from '$lib/state/live.svelte';
+  import { coalesce, live, refreshesAll } from '$lib/state/live.svelte';
   import type { LogEntry, Run } from '$lib/types';
   import AgentAvatar from './AgentAvatar.svelte';
   import Markdown from './Markdown.svelte';
@@ -127,7 +127,7 @@
   $effect(() => {
     void load();
     return live.subscribe((event) => {
-      if (event.kind === 'run' && event.runId === run.id) loadSoon();
+      if (refreshesAll(event) || (event.kind === 'run' && event.runId === run.id)) loadSoon();
     });
   });
 
