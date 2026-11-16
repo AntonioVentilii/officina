@@ -65,6 +65,8 @@ export interface BoardApiDependencies {
   readonly githubLogin?:
     | { readonly accounts: GitHubAccounts; readonly authorizeUrl: (state: string) => string }
     | undefined;
+  /** How often an open stream pings and checks its session again; tests shorten it. */
+  readonly heartbeatMs?: number | undefined;
 }
 
 const COOKIE = 'officina_session';
@@ -271,12 +273,22 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
     return parsed.data;
   };
 
+  const projectIdsOf = (signed: Signed) => new Set(signed.projects.map((project) => project.id));
+
   const stream = (signed: Signed, request: Request) => {
-    const projectIds = new Set(signed.projects.map((project) => project.id));
+    let projectIds = projectIdsOf(signed);
     const encoder = new TextEncoder();
     let cleanup = () => {};
     const body = new ReadableStream<Uint8Array>({
       start(controller) {
+        const close = () => {
+          cleanup();
+          try {
+            controller.close();
+          } catch {
+            // already closed
+          }
+        };
         const send = (chunk: string) => {
           try {
             controller.enqueue(encoder.encode(chunk));
@@ -290,20 +302,20 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
             if (projectIds.has(event.projectId))
               send(`event: ${event.kind}\ndata: ${JSON.stringify(event)}\n\n`);
           }) ?? (() => {});
-        // Proxies close idle connections; a comment line every so often keeps the stream open.
-        const heartbeat = setInterval(() => send(': ping\n\n'), HEARTBEAT_MS);
+        // Proxies close idle connections; a comment line every so often keeps the stream open. Each
+        // beat reads the session and the member's projects again, so signing out or leaving a
+        // project ends what this connection hears without waiting for it to drop.
+        const heartbeat = setInterval(() => {
+          signedIn(request).then((current) => {
+            projectIds = projectIdsOf(current);
+            send(': ping\n\n');
+          }, close);
+        }, deps.heartbeatMs ?? HEARTBEAT_MS);
         cleanup = () => {
           clearInterval(heartbeat);
           unsubscribe();
         };
-        request.signal.addEventListener('abort', () => {
-          cleanup();
-          try {
-            controller.close();
-          } catch {
-            // already closed
-          }
-        });
+        request.signal.addEventListener('abort', close);
       },
       cancel() {
         cleanup();

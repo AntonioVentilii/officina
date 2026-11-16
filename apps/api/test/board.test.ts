@@ -1476,7 +1476,8 @@ describe.skipIf(!url)('board api', () => {
     expect((await json(await call(owner, `${project}/notifications`))).notifications).toEqual([]);
   });
 
-  test('the stream sends a member only the events of their own projects', async () => {
+  /** Opens the stream on a hub the test fires by hand; `read` reads until `enough` holds or it ends. */
+  const openStream = async (cookie: string, heartbeatMs?: number) => {
     const listeners = new Set<(event: BoardEvent) => void>();
     const realtime = {
       subscribe: (listener: (event: BoardEvent) => void) => {
@@ -1485,6 +1486,29 @@ describe.skipIf(!url)('board api', () => {
       },
       close: async () => {}
     };
+    const response = await createApp({
+      pool,
+      webhookSecret: 'x'.repeat(32),
+      board: { publicUrl: PUBLIC_URL, realtime, heartbeatMs }
+    }).handle(new Request('http://local/api/stream', { headers: { cookie } }));
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+    let text = '';
+    const read = async (enough: (text: string) => boolean) => {
+      while (!enough(text)) {
+        const chunk = await reader.read();
+        if (chunk.done) return { text, ended: true };
+        text += decoder.decode(chunk.value);
+      }
+      return { text, ended: false };
+    };
+    const fire = (event: BoardEvent) => {
+      for (const listener of listeners) listener(event);
+    };
+    return { read, fire, cancel: () => reader.cancel() };
+  };
+
+  test('the stream sends a member only the events of their own projects', async () => {
     const cookie = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
     // A real project in the same workspace where the member has no role, so the filter is what drops it.
     const other = await pool.query<{ id: string }>(
@@ -1493,24 +1517,35 @@ describe.skipIf(!url)('board api', () => {
        returning id`,
       [seeded.projectId]
     );
-    const response = await createApp({
-      pool,
-      webhookSecret: 'x'.repeat(32),
-      board: { publicUrl: PUBLIC_URL, realtime }
-    }).handle(new Request('http://local/api/stream', { headers: { cookie } }));
-    const reader = response.body!.getReader();
-    const decoder = new TextDecoder();
-    let text = '';
-    while (!text.includes(': connected')) text += decoder.decode((await reader.read()).value);
-    for (const listener of listeners) {
-      listener({ kind: 'task', projectId: other.rows[0]!.id, number: 7 });
-      listener({ kind: 'task', projectId: seeded.projectId, number: 1 });
-    }
-    while (!text.includes('"number":1')) text += decoder.decode((await reader.read()).value);
-    await reader.cancel();
+    const stream = await openStream(cookie);
+    await stream.read((text) => text.includes(': connected'));
+    stream.fire({ kind: 'task', projectId: other.rows[0]!.id, number: 7 });
+    stream.fire({ kind: 'task', projectId: seeded.projectId, number: 1 });
+    const { text } = await stream.read((text) => text.includes('"number":1'));
+    await stream.cancel();
 
     expect(text).toContain(`"projectId":"${seeded.projectId}"`);
     expect(text).not.toContain('"number":7');
+  });
+
+  test('an open stream stops sending a project the member left and ends when they sign out', async () => {
+    const cookie = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    const stream = await openStream(cookie, 20);
+    const pings = (text: string) => text.split(': ping').length - 1;
+    const { text: opened } = await stream.read((text) => text.includes(': connected'));
+    await pool.query('delete from project_roles where member_id = $1 and project_id = $2', [
+      seeded.ownerId,
+      seeded.projectId
+    ]);
+    // A beat that began before the delete may still ping; two more have read the projects after it.
+    const seen = pings(opened);
+    await stream.read((text) => pings(text) >= seen + 2);
+    stream.fire({ kind: 'task', projectId: seeded.projectId, number: 1 });
+
+    await call(cookie, '/auth/sign-out', {});
+    const { text, ended } = await stream.read(() => false);
+    expect(ended).toBe(true);
+    expect(text).not.toContain('"number":1');
   });
 
   /** Far longer than a notification takes, so only a lost one ever reaches it. */
