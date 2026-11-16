@@ -28,7 +28,7 @@ import {
   saveAgentVersion,
   startRun
 } from '@officina/db';
-import type { RefSnapshot } from '@officina/github';
+import { GitHubError, type RefSnapshot } from '@officina/github';
 import { RUNNER_ROLES, type SessionRequest } from '@officina/runner';
 import { Pool } from 'pg';
 import { CONFIG_YAML } from '../../core/test/fixtures';
@@ -1690,9 +1690,10 @@ describe.skipIf(!url)('engine', () => {
 
   /**
    * A GitHub where the first status write lands on the branch on top of `base` but its answer is
-   * lost, as when the process dies or the connection drops right after the write.
+   * lost, as when the process dies or the connection drops right after the write; or, with a 409
+   * as `answer`, where another writer landed the same status first and this write was refused.
    */
-  const lostStatusWrite = (base: string) => {
+  const lostStatusWrite = (base: string, answer = new Error('socket hang up')) => {
     const github = fakeGitHub({ branchHead: base });
     const draft = '# Settings title\n\nStatus: Draft\n';
     let head = base;
@@ -1709,7 +1710,7 @@ describe.skipIf(!url)('engine', () => {
         writes += 1;
         written = text;
         head = 'status1';
-        throw new Error('socket hang up');
+        throw answer;
       },
       commitChanges: async ({ sha }) =>
         sha === 'status1' ? { parents: [base], paths: [SPEC] } : { parents: [], paths: [] },
@@ -1758,6 +1759,28 @@ describe.skipIf(!url)('engine', () => {
     expect(await linkedPullRequest(taskId)).toBe(42);
     expect(github.writes()).toBe(1);
     expect(await expectedHead(pool, taskId)).toBe('status1');
+  });
+
+  test('an Implemented status another writer set first is recorded, not failed on', async () => {
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    const github = lostStatusWrite(
+      'abc',
+      new GitHubError(409, `/contents/${SPEC}`, 'is at status1')
+    );
+
+    expect(await finishVerifiedSpecs(pool, github.port, [taskId])).toEqual([]);
+
+    expect(await expectedHead(pool, taskId)).toBe('status1');
+    const events = await pool.query<{ type: string; commit: string | null }>(
+      `select type, payload->>'commitSha' as commit from task_events where task_id = $1
+         and type in ('spec_status_set', 'merge_held', 'awaiting_merge') order by id`,
+      [taskId]
+    );
+    expect(events.rows).toEqual([
+      { type: 'spec_status_set', commit: 'status1' },
+      { type: 'awaiting_merge', commit: null }
+    ]);
   });
 
   test('GitHub merges on its own only when the project allows it and the chooser chose it', async () => {
