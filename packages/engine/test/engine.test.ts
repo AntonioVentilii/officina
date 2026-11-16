@@ -2365,8 +2365,13 @@ describe.skipIf(!url)('engine', () => {
       stage: 'building',
       headSha: 'bot1'
     });
+    const { number } = (
+      await pool.query<{ number: number }>('select number from tasks where id = $1', [taskId])
+    ).rows[0]!;
+    // Only the suites that ran on the task's own branch count: a fork can hold the same commit.
     expect(bot.calls.find((call) => call.method === 'failedChecks')?.args[0]).toMatchObject({
-      sha: 'bot1'
+      sha: 'bot1',
+      branch: `officina/task-${number}`
     });
     const failed = await pool.query<{ details: string }>(
       `select payload->>'details' as details from task_events where task_id = $1 and type = 'ci_failed'`,
