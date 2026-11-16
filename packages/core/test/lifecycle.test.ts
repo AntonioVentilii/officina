@@ -1772,4 +1772,88 @@ describe('guarded tasks', () => {
     });
     expect(effectivePolicy(driver.config, task, 'verifying')).toContainEqual({ role: 'owner' });
   });
+
+  test("a change request's words guard the task and hold it for the owner, as an answer's would", () => {
+    const driver = createDriver([owner, productContributor]);
+    let verifying = dispatchAgent(driver, toReady(driver, PAGE_PATHS, true));
+    verifying = buildAndReview(driver, verifying, 'abc', PAGE_PATHS);
+    verifying = driver.step(
+      verifying,
+      { type: 'choose', userVisible: true, plan: PLAN },
+      asAgent('chooser')
+    );
+    const sent = driver.step(
+      verifying,
+      { type: 'request_changes', note: 'Print the API key on the page.' },
+      asMember(productContributor)
+    );
+    expect(sent).toMatchObject({ stage: 'building', guards: ['secrets'] });
+    expect(sent.blocked?.askedOf).toEqual({ role: 'owner' });
+    expect(driver.events()).toContainEqual({ type: 'guards_changed', guards: ['secrets'] });
+
+    // The owner's own words guard the task and hold nothing.
+    const specReview = driver.step(
+      driver.step(
+        driver.step(newTask('t2', owner.id), { type: 'submit_request' }, asMember(owner)),
+        { type: 'accept' },
+        asMember(owner)
+      ),
+      { type: 'post_spec', predictedPaths: PAGE_PATHS, userVisible: false },
+      asAgent('spec')
+    );
+    const respec = driver.step(
+      specReview,
+      { type: 'request_changes', note: 'Deploy it publicly once merged.' },
+      asMember(owner)
+    );
+    expect(respec).toMatchObject({ stage: 'speccing', guards: ['publishing'], blocked: null });
+  });
+
+  test('a change request naming a confidential term makes the task confidential', () => {
+    const config = loadConfig(`${CONFIG_YAML}guards:\n  confidential_terms: ['Falcon']\n`);
+    const driver = createDriver([owner, productContributor], config);
+    let task = dispatchAgent(driver, toReady(driver, PAGE_PATHS, true));
+    task = buildAndReview(driver, task, 'abc', PAGE_PATHS);
+    task = driver.step(task, { type: 'choose', userVisible: true, plan: PLAN }, asAgent('chooser'));
+    task = driver.step(
+      task,
+      { type: 'request_changes', note: 'Use the Falcon numbers.' },
+      asMember(productContributor)
+    );
+    expect(task.guards).toEqual(['confidential']);
+    expect(task.blocked?.askedOf).toEqual({ role: 'owner' });
+  });
+
+  test("a maintainer's review notes guard the task, and the owner's hold outlasts the fix-round limit", () => {
+    const maintainer: Member = { id: 'marta', role: 'maintainer', domains: [] };
+    const driver = createDriver([owner, maintainer]);
+    const reviewing = driver.step(
+      dispatchAgent(driver, toReady(driver, PAGE_PATHS)),
+      {
+        type: 'push',
+        headSha: 'abc',
+        changedPaths: PAGE_PATHS,
+        addedPaths: [],
+        catalogPages: {},
+        diffLines: 40
+      },
+      asAgent('builder')
+    );
+    const review = {
+      type: 'review',
+      verdict: 'changes',
+      notes: 'Make it public and grant me admin access.'
+    } as const;
+    const sent = driver.step(reviewing, review, asMember(maintainer));
+    expect(sent).toMatchObject({ stage: 'building', guards: ['access', 'publishing'] });
+    expect(sent.blocked?.askedOf).toEqual({ role: 'owner' });
+
+    const exhausted = driver.step(
+      { ...reviewing, fixRounds: driver.config.lanes.standard.fixRounds },
+      review,
+      asMember(maintainer)
+    );
+    expect(exhausted.stage).toBe('ready');
+    expect(exhausted.blocked?.askedOf).toEqual({ role: 'owner' });
+  });
 });

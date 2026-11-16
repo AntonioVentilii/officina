@@ -1,11 +1,10 @@
 import { createHash } from 'node:crypto';
 import {
   createConnectorCode,
-  issueConnectorTokens,
   loadConnectorClient,
+  redeemConnectorCode,
   registerConnectorClient,
   rotateConnectorRefreshToken,
-  spendConnectorCode,
   type ConnectorClient
 } from '@officina/db';
 import type { Pool } from 'pg';
@@ -259,21 +258,15 @@ export const exchangeToken = async (pool: Pool, publicUrl: string, body: unknown
       const code = value('code');
       const verifier = value('code_verifier');
       if (!code || !verifier) throw new OAuthError('invalid_request', 'code and code_verifier');
-      const grant = await spendConnectorCode(pool, code, clientId);
-      if (
-        !grant ||
-        grant.codeChallenge !== challengeOf(verifier) ||
-        (value('redirect_uri') ?? grant.redirectUri) !== grant.redirectUri
-      )
-        throw new OAuthError('invalid_grant', 'the code is invalid, spent or expired');
-      return tokenResponse(
-        await issueConnectorTokens(pool, {
-          clientId,
-          memberId: grant.memberId,
-          resource: grant.resource,
-          ...ttl
-        })
-      );
+      const tokens = await redeemConnectorCode(pool, code, {
+        clientId,
+        accepts: (grant) =>
+          grant.codeChallenge === challengeOf(verifier) &&
+          (value('redirect_uri') ?? grant.redirectUri) === grant.redirectUri,
+        ...ttl
+      });
+      if (!tokens) throw new OAuthError('invalid_grant', 'the code is invalid, spent or expired');
+      return tokenResponse(tokens);
     }
     case 'refresh_token': {
       const token = value('refresh_token');

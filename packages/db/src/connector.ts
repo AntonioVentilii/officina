@@ -68,25 +68,6 @@ export const createConnectorCode = async (
   return code;
 };
 
-/**
- * Spends an authorization code: it works once, before it expires, and only for the client it was
- * issued to. The caller checks the redirect, PKCE verifier and resource against what comes back.
- */
-export const spendConnectorCode = async (
-  db: Queryable,
-  code: string,
-  clientId: string
-): Promise<AuthorizationGrant | null> =>
-  (
-    await db.query<AuthorizationGrant>(
-      `update connector_codes set used_at = now()
-       where code_hash = $1 and client_id = $2 and used_at is null and expires_at > now()
-       returning client_id as "clientId", member_id as "memberId", redirect_uri as "redirectUri",
-         code_challenge as "codeChallenge", resource`,
-      [hashToken(code), clientId]
-    )
-  ).rows[0] ?? null;
-
 export interface ConnectorTokens {
   readonly accessToken: string;
   readonly refreshToken: string;
@@ -149,6 +130,86 @@ export const lockConnectorGrant = async (client: PoolClient, grantId: string) =>
 };
 
 /**
+ * Ends a grant whose spent code or refresh token was presented again: it leaked or was replayed, so
+ * every token of the grant is deleted and both parties must authorize again. The caller holds the
+ * grant's lock. Only a grant that still had tokens is recorded as lost.
+ */
+const revokeReplayedGrant = async (
+  client: PoolClient,
+  grant: { grantId: string; memberId: string; clientId: string },
+  reason: 'replayed_token' | 'replayed_code'
+) => {
+  const { rowCount } = await client.query('delete from connector_tokens where grant_id = $1', [
+    grant.grantId
+  ]);
+  if (!rowCount) return;
+  await recordAccessEvent(client, {
+    memberId: grant.memberId,
+    type: 'connector_revoked',
+    detail: { client: await clientName(client, grant.clientId), reason }
+  });
+};
+
+/**
+ * Redeems an authorization code: it works once, before it expires, only for the client it was
+ * issued to, and only when `accepts` the grant it carries (the caller checks the redirect, PKCE
+ * verifier and resource). Redeeming it opens a new grant with its first tokens, and the code
+ * remembers that grant: presented again, it revokes the grant (RFC 6749, 4.1.2). The code's row is
+ * held for the whole transaction, so a second use waits for the first and sees every token it
+ * issued.
+ */
+export const redeemConnectorCode = (
+  pool: Pool,
+  code: string,
+  input: {
+    clientId: string;
+    accepts: (grant: AuthorizationGrant) => boolean;
+    accessTtlMs: number;
+    refreshTtlMs: number;
+  }
+) =>
+  inTransaction(pool, async (client): Promise<ConnectorTokens | null> => {
+    const found = (
+      await client.query<AuthorizationGrant & { grantId: string | null; spent: boolean }>(
+        `select client_id as "clientId", member_id as "memberId", redirect_uri as "redirectUri",
+           code_challenge as "codeChallenge", resource, grant_id as "grantId",
+           used_at is not null as spent
+         from connector_codes
+         where code_hash = $1 and client_id = $2 and expires_at > now()
+         for update`,
+        [hashToken(code), input.clientId]
+      )
+    ).rows[0];
+    if (!found) return null;
+    if (found.spent) {
+      if (found.grantId) {
+        // The code's row first, then the grant: no other path takes them the other way round.
+        await lockConnectorGrant(client, found.grantId);
+        await revokeReplayedGrant(
+          client,
+          { grantId: found.grantId, memberId: found.memberId, clientId: input.clientId },
+          'replayed_code'
+        );
+      }
+      return null;
+    }
+    const grantId = input.accepts(found) ? randomUUID() : null;
+    await client.query(
+      'update connector_codes set used_at = now(), grant_id = $2 where code_hash = $1',
+      [hashToken(code), grantId]
+    );
+    if (!grantId) return null;
+    return issueConnectorTokens(client, {
+      clientId: input.clientId,
+      memberId: found.memberId,
+      resource: found.resource,
+      grantId,
+      accessTtlMs: input.accessTtlMs,
+      refreshTtlMs: input.refreshTtlMs
+    });
+  });
+
+/**
  * Rotates a refresh token of the given client: spends it and issues the grant's next access and
  * refresh tokens, in one transaction that holds the token's row. A token presented a second time
  * means it leaked or was replayed, so the whole grant is revoked and both parties must authorize
@@ -188,12 +249,7 @@ export const rotateConnectorRefreshToken = async (
     ).rows[0];
     if (!found) return null;
     if (found.spent) {
-      await client.query('delete from connector_tokens where grant_id = $1', [found.grantId]);
-      await recordAccessEvent(client, {
-        memberId: found.memberId,
-        type: 'connector_revoked',
-        detail: { client: await clientName(client, input.clientId), reason: 'replayed_token' }
-      });
+      await revokeReplayedGrant(client, { ...found, clientId: input.clientId }, 'replayed_token');
       return null;
     }
     await client.query('update connector_tokens set used_at = now() where token_hash = $1', [
@@ -274,10 +330,9 @@ export const revokeConnectorGrant = (pool: Pool, memberId: string, grantId: stri
  * completed an authorization within a day, since registering needs no account.
  */
 export const purgeConnectorCredentials = async (db: Queryable): Promise<number> => {
-  const codes = await db.query(
-    'delete from connector_codes where expires_at <= now() or used_at is not null'
-  );
-  // A spent refresh token is kept until it expires: presenting it again is how a replay is caught.
+  // A spent code or refresh token is kept until it expires: presenting it again is how a replay is
+  // caught.
+  const codes = await db.query('delete from connector_codes where expires_at <= now()');
   const tokens = await db.query('delete from connector_tokens where expires_at <= now()');
   const clients = await db.query(
     `delete from connector_clients c where c.created_at < now() - interval '1 day'

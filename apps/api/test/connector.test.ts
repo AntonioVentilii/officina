@@ -222,9 +222,8 @@ describe.skipIf(!url)('connector for Claude', () => {
     expect(await json(consent)).toEqual({ error: 'pkce_required' });
   });
 
-  test('a code works once, only with its verifier, and refresh tokens rotate', async () => {
-    const { tokens, clientId, exchange } = await connect();
-    expect((await json(await form(exchange))).error).toBe('invalid_grant');
+  test('refresh tokens rotate, and a spent one presented again revokes the grant', async () => {
+    const { tokens, clientId } = await connect();
 
     const refresh = {
       grant_type: 'refresh_token',
@@ -243,9 +242,53 @@ describe.skipIf(!url)('connector for Claude', () => {
       (await json(await form({ ...refresh, refresh_token: rotated.refresh_token }))).error
     ).toBe('invalid_grant');
 
-    // The spent code is purged; a second purge finds nothing more to do.
+    // The spent code is kept until it expires, then purged; a second purge finds nothing more.
+    expect(await purgeConnectorCredentials(pool)).toBe(0);
+    await pool.query('update connector_codes set expires_at = now()');
     expect(await purgeConnectorCredentials(pool)).toBeGreaterThan(0);
     expect(await purgeConnectorCredentials(pool)).toBe(0);
+  });
+
+  test('a code works once, and presented again it revokes the grant it opened', async () => {
+    const { tokens, clientId, exchange } = await connect();
+    const refresh = { grant_type: 'refresh_token', client_id: clientId };
+    const rotated = await json(await form({ ...refresh, refresh_token: tokens.refresh_token }));
+    expect((await rpc(rotated.access_token, 'tools/list')).status).toBe(200);
+
+    const again = await form(exchange);
+    expect(again.status).toBe(400);
+    expect((await json(again)).error).toBe('invalid_grant');
+    // Every token of the grant stops working, those refreshed since included.
+    expect((await rpc(tokens.access_token, 'tools/list')).status).toBe(401);
+    expect((await rpc(rotated.access_token, 'tools/list')).status).toBe(401);
+    expect(
+      (await json(await form({ ...refresh, refresh_token: rotated.refresh_token }))).error
+    ).toBe('invalid_grant');
+    const log = await accessLogView(pool, seeded.projectId);
+    expect(
+      log.filter((event) => event.type === 'connector_revoked').map((event) => event.text)
+    ).toEqual([
+      "lost Claude's access: a spent authorization code was presented again, so it must reconnect"
+    ]);
+
+    // Presented a third time, there is nothing left to revoke and nothing more to record.
+    expect((await json(await form(exchange))).error).toBe('invalid_grant');
+    expect(
+      (await accessLogView(pool, seeded.projectId)).filter(
+        (event) => event.type === 'connector_revoked'
+      )
+    ).toHaveLength(1);
+  });
+
+  test('two concurrent uses of one code never both get tokens', async () => {
+    const client = await json(await register());
+    const { code, verifier } = await authorizeCode(client.client_id);
+    const exchange = codeExchange(client.client_id, code, verifier);
+    const answers = await Promise.all([form(exchange), form(exchange)]);
+    expect(answers.map((answer) => answer.status).sort()).toEqual([200, 400]);
+    // The second use is a replay: the grant the first one opened is revoked.
+    const issued = await json(answers.find((answer) => answer.status === 200)!);
+    expect((await rpc(issued.access_token, 'tools/list')).status).toBe(401);
   });
 
   test('a loopback redirect may use any port, and nothing else about it may differ', async () => {

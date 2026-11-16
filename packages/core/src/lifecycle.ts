@@ -577,6 +577,21 @@ const guardedByWords = (
   return [{ ...task, guards, blocked }, [...events, { type: 'blocked', blocked }]];
 };
 
+/**
+ * A decision that also carries what the person's words on it (a change request, review notes) guard,
+ * applied once the task has moved, so a hold for the owner is never replaced by the move's question.
+ */
+const withWordsOf = (
+  decision: Decision,
+  context: DecideContext,
+  member: Member,
+  text: string
+): Decision => {
+  if (!decision.ok) return decision;
+  const [task, events] = guardedByWords(decision.task, context, member, text);
+  return ok(task, [...decision.events, ...events]);
+};
+
 /** Whether the actor is the one the task is assigned to, so it may report the build. */
 const isAssignee = (assignee: Assignee, actor: Actor): boolean =>
   (assignee.kind === 'agent' && actor.kind === 'agent' && actor.role === assignee.role) ||
@@ -617,6 +632,31 @@ const backToBuilding = (task: Task, context: DecideContext, ...why: DomainEvent[
     reviews: {}
   });
   return ok(moved, [...why, stageEvent]);
+};
+
+/** Records a review: changes send the work back, and the last approval moves it on to choosing. */
+const reviewed = (
+  task: Task,
+  context: DecideContext,
+  reviewer: ReviewerRole | 'member',
+  command: Extract<Command, { type: 'review' }>
+): Decision => {
+  const recorded: DomainEvent = {
+    type: 'review_recorded',
+    reviewer,
+    verdict: command.verdict,
+    notes: command.notes
+  };
+  if (command.verdict === 'changes') return backToBuilding(task, context, recorded);
+
+  // A maintainer's own review stands in for the agent reviewers.
+  const reviews =
+    reviewer === 'member' ? task.reviews : { ...task.reviews, [reviewer]: 'approve' as const };
+  const complete =
+    reviewer === 'member' || REVIEWER_ROLES.every((role) => reviews[role] === 'approve');
+  if (!complete) return ok({ ...task, reviews }, [recorded]);
+  const [moved, stageEvent] = moveTo(task, 'choosing', { reviews });
+  return ok(moved, [recorded, stageEvent]);
 };
 
 const pushedEvent = (head: PushedHead): Extract<DomainEvent, { type: 'pushed' }> => ({
@@ -883,9 +923,10 @@ export const decide = (
       if (member === undefined || !canRequestChanges(task, context, member))
         return fail('not_allowed');
       const why: DomainEvent = { type: 'changes_requested', stage: task.stage, note: command.note };
-      if (task.stage === 'verifying') return backToBuilding(task, context, why);
+      if (task.stage === 'verifying')
+        return withWordsOf(backToBuilding(task, context, why), context, member, command.note);
       const [moved, stageEvent] = moveTo(task, 'speccing');
-      return ok(moved, [why, stageEvent]);
+      return withWordsOf(ok(moved, [why, stageEvent]), context, member, command.note);
     }
 
     case 'dispatch': {
@@ -968,30 +1009,16 @@ export const decide = (
 
     case 'review': {
       if (task.stage !== 'reviewing') return fail('wrong_stage');
-      let reviewer: ReviewerRole | 'member';
-      if (actor.kind === 'agent' && (REVIEWER_ROLES as readonly string[]).includes(actor.role)) {
-        reviewer = actor.role as ReviewerRole;
-      } else if (memberCan(actor, context, 'steer')) {
-        reviewer = 'member';
-      } else {
-        return fail('not_allowed');
-      }
-      const recorded: DomainEvent = {
-        type: 'review_recorded',
-        reviewer,
-        verdict: command.verdict,
-        notes: command.notes
-      };
-      if (command.verdict === 'changes') return backToBuilding(task, context, recorded);
-
-      // A maintainer's own review stands in for the agent reviewers.
-      const reviews =
-        reviewer === 'member' ? task.reviews : { ...task.reviews, [reviewer]: 'approve' as const };
-      const complete =
-        reviewer === 'member' || REVIEWER_ROLES.every((role) => reviews[role] === 'approve');
-      if (!complete) return ok({ ...task, reviews }, [recorded]);
-      const [moved, stageEvent] = moveTo(task, 'choosing', { reviews });
-      return ok(moved, [recorded, stageEvent]);
+      if (actor.kind === 'agent' && (REVIEWER_ROLES as readonly string[]).includes(actor.role))
+        return reviewed(task, context, actor.role as ReviewerRole, command);
+      const member = memberFor(actor, context);
+      if (member === undefined || !can(member, 'steer')) return fail('not_allowed');
+      return withWordsOf(
+        reviewed(task, context, 'member', command),
+        context,
+        member,
+        command.notes
+      );
     }
 
     case 'choose': {
