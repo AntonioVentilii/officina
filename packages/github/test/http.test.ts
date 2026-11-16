@@ -36,10 +36,13 @@ describe('one GitHub request', () => {
 
   test('every call carries a deadline, so a GitHub that never answers cannot hold the caller', async () => {
     const signals: (AbortSignal | null | undefined)[] = [];
-    const http = (async (_url: string, init?: RequestInit) => {
-      signals.push(init?.signal);
-      return Response.json({});
-    }) as unknown as typeof fetch;
+    const http: typeof fetch = Object.assign(
+      async (_url: string | URL | Request, init?: RequestInit) => {
+        signals.push(init?.signal);
+        return Response.json({});
+      },
+      { preconnect: fetch.preconnect }
+    );
     await githubRequest<unknown>(http, 't', '/user');
     expect(signals[0]).toBeInstanceOf(AbortSignal);
     expect(signals[0]?.aborted).toBe(false);
