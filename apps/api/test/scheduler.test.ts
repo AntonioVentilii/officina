@@ -100,40 +100,54 @@ describe('scheduler', () => {
   });
 
   test('a pass held until a time waits for it, then passes run at the interval again', async () => {
-    let resumeAt: number | null = Date.now() + 80;
+    // Held to a time that stays ahead of the clock, so no pass is due however slow the runner.
+    let held = true;
+    let reads = 0;
     const logged: string[] = [];
     const scheduler = startScheduler({
       intervalMs: 5,
       collect: async () => [],
       runStep: async () => {},
-      resumeAt: () => resumeAt,
+      resumeAt: () => {
+        reads += 1;
+        return held ? Date.now() + 20 : null;
+      },
       log: (message) => logged.push(message)
     });
-    // One pass, then a wait of 80 ms where a 5 ms interval alone would give a dozen.
-    await Bun.sleep(50);
+    // The hold read again and again, where a 5 ms interval alone would have run as many passes.
+    await waitFor(() => reads >= 5);
     expect(scheduler.passes()).toBe(1);
-    expect(logged).toEqual(['next pass held']);
-    resumeAt = null;
+    expect(logged).toEqual(Array.from({ length: reads }, () => 'next pass held'));
+    held = false;
     await waitFor(() => scheduler.passes() >= 5);
     await scheduler.stop();
   });
 
   test('a rate limit a step meets after its pass holds the pass already waiting', async () => {
-    let resumeAt: number | null = null;
+    let held = false;
+    let reads = 0;
+    let waitSet = () => {};
+    const waitWasSet = new Promise<void>((resolve) => {
+      waitSet = resolve;
+    });
     const scheduler = startScheduler({
       intervalMs: 20,
       collect: async () => [work],
       runStep: async () => {
         // Still running when the wait for the next pass was set, as an agent session is.
-        await Bun.sleep(5);
-        resumeAt = Date.now() + 200;
+        await waitWasSet;
+        held = true;
       },
-      resumeAt: () => resumeAt
+      resumeAt: () => {
+        reads += 1;
+        waitSet();
+        return held ? Date.now() + 20 : null;
+      }
     });
-    // The 20 ms wait set before the step met the limit would give several passes by now.
-    await Bun.sleep(120);
+    // The 20 ms wait set before the step met the limit has ended and found the pass held.
+    await waitFor(() => reads >= 5);
     expect(scheduler.passes()).toBe(1);
-    resumeAt = null;
+    held = false;
     await waitFor(() => scheduler.passes() >= 2);
     await scheduler.stop({ waitForSteps: true });
   });
