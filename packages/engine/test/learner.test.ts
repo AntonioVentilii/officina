@@ -152,6 +152,12 @@ describe.skipIf(!url)('learner', () => {
     expect(brief).toContain('role: learner');
     expect(brief).toContain('## Timeline');
     expect(brief).toContain('review approve by reviewer_spec');
+    // Each event reads its own fields: a plan, a push, an approval, a stage change.
+    expect(brief).toContain('approval plan for spec_review: depth test. Ordinary change.');
+    expect(brief).toContain('builder agent: pushed 1 files, 4 lines');
+    expect(brief).toContain('approved verifying (gate passed)');
+    expect(brief).toContain('engine: stage merging -> done');
+    expect(brief).toContain('- Rounds of changes: 0');
     expect(brief).toContain("- `docs`: the project's agent docs");
     expect(brief).toContain('  - `docs/ai/reusability.md`');
     expect(brief).toContain('## Security rules');

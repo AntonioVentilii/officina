@@ -1,4 +1,4 @@
-import type { Actor, Task } from '@officina/core';
+import type { Actor, DomainEvent, Task } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
 import { autoMergeIsOn, wasAutoVerified } from './github';
 import { RUN_IS_ACTIVE } from './run-status';
@@ -89,6 +89,14 @@ export interface TaskEventRow {
   readonly payload: Record<string, unknown>;
   readonly createdAt: Date;
 }
+
+/**
+ * The domain event a row records, to narrow by its type: the store writes an event's type in its own
+ * column and the rest as the payload (`insertEvent` in `store.ts`). Rows the engine writes itself,
+ * such as GitHub mirroring or a hand-in, have types outside the union and match none of its cases.
+ */
+export const domainEventOf = (row: TaskEventRow): DomainEvent =>
+  ({ type: row.type, ...row.payload }) as DomainEvent;
 
 export const listTaskEvents = async (db: Queryable, taskId: string): Promise<TaskEventRow[]> =>
   (
