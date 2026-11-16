@@ -69,7 +69,8 @@
     <table>
       <thead class="caps"><tr><th>Key</th><th>Before</th><th>After</th></tr></thead>
       <tbody>
-        {#each rows as row (row.key + row.locale)}
+        <!-- The agent can list the same key twice in a locale. -->
+        {#each rows as row, index (index)}
           <tr>
             <td class="key mono">{row.key}</td>
             <td class="before">{row.before}</td>

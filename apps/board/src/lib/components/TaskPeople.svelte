@@ -25,7 +25,8 @@
           {#if requirement.waived}
             <span class="faint">nobody holds it yet, so it is waived</span>
           {:else if requirement.who.length}
-            {#each requirement.who as name (name)}
+            <!-- Two members can share a name. -->
+            {#each requirement.who as name, index (index)}
               <span class="name" class:done={requirement.approvedBy.includes(name)}>
                 <MemberAvatar {name} size={18} />{name}
                 {#if requirement.approvedBy.includes(name)}<Check size={13} />{/if}
