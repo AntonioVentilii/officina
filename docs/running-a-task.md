@@ -78,7 +78,7 @@ goes to the same review as an agent's build.
    scripts/officina task create --title "Short imperative title" --request "What you want, why, and what must stay as it is."
    ```
 
-   The interviewer reads it and the code it is about, then asks up to four questions, one at a
+   The interviewer reads it and the code it is about, then asks up to `MAX_INTERVIEW_QUESTIONS` (`packages/engine/src/brief.ts`) questions, one at a
    time, in the task thread. Answer each with `task answer --number 1 --text "..."`. When the
    request is clear it writes a summary with "done when" checks, renames the task in your words,
    and sends it to triage. `task submit --number 1` sends it to triage as it is at any point; add
