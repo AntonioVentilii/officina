@@ -163,6 +163,11 @@ export const appendRunEvent = async (pool: Pool, runId: string, type: string, pa
   ]);
 };
 
+/**
+ * Records how a run ended. A run already ended outside its step (taken over, orphaned, or long past
+ * its deadline) keeps that status, so a step that finishes after it cannot undo it: what the step
+ * ends with is added to its result, beside the reason, and its cost is recorded.
+ */
 export const finishRun = async (
   pool: Pool,
   runId: string,
@@ -173,7 +178,11 @@ export const finishRun = async (
   }
 ) => {
   await pool.query(
-    `update runs set status = $2, list_cost_cents = $3, result = $4, finished_at = now() where id = $1`,
+    `update runs set list_cost_cents = $3,
+       status = case when status ${RUN_IS_ACTIVE} then $2 else status end,
+       result = case when status ${RUN_IS_ACTIVE} then $4::jsonb else coalesce(result, '{}'::jsonb) || $4::jsonb end,
+       finished_at = case when status ${RUN_IS_ACTIVE} then now() else finished_at end
+     where id = $1`,
     [runId, input.status, input.costCents, runJson(input.result)]
   );
 };
