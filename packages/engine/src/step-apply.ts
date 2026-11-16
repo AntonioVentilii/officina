@@ -13,8 +13,7 @@ import {
   recordRunResult,
   runIsActive,
   saveSpecVersion,
-  setTaskTitle,
-  type ApplyResult
+  setTaskTitle
 } from '@officina/db';
 import type { RunnerRole } from '@officina/runner';
 import type { PoolClient } from 'pg';
@@ -91,15 +90,20 @@ const recordAlongside =
 
 /**
  * A GitHub write after the round is applied: a failure is recorded on the run and never thrown, so
- * it neither fails the run nor blocks the task.
+ * it neither fails the run nor blocks the task. `null` when it failed.
  */
-const afterApplied = async (step: Step, failedEvent: string, write: () => Promise<void>) => {
+const afterApplied = async <T>(
+  step: Step,
+  failedEvent: string,
+  write: () => Promise<T>
+): Promise<T | null> => {
   try {
-    await write();
+    return await write();
   } catch (error) {
     await appendRunEvent(step.deps.pool, step.runId, failedEvent, {
       error: (error as Error).message
     });
+    return null;
   }
 };
 
@@ -113,24 +117,21 @@ const openPullRequestAfter = (step: Step, built: PushedBuild) =>
       built
     });
     if (pr) await appendRunEvent(pool, step.runId, 'officina.pull_request_opened', pr);
+    return pr;
   });
 
 /**
  * Checks that failed on the pushed head before the push was applied, which no webhook reports
  * again since no task held that head then; a failure to read them is recorded on the run.
  */
-const redChecksAfter = async (
-  step: Step,
-  output: AgentOutput<RunnerRole>,
-  applied: ApplyResult
-) => {
+const redChecksAfter = async (step: Step, output: AgentOutput<RunnerRole>, task: Task) => {
   if (!step.builds || (output as Partial<PushedBuild>).outcome !== 'pushed') return;
   await afterApplied(step, 'officina.checks_read_failed', async () => {
     await sendBackRedChecks(
       step.deps.pool,
       step.deps.github,
       { taskId: step.taskId, ref: step.repoRef, branch: step.taskBranch },
-      applied
+      task
     );
   });
 };
@@ -149,17 +150,32 @@ const replyToReviews = async (step: Step, reply: string, reviews: readonly GitHu
   });
 };
 
-/** What an applied result leaves on GitHub: the pull request, a review answer, the checklist. */
+/**
+ * The task's pull request after the round: the one linked already, or the one a build that just
+ * reached review opens; `null` while none is linked.
+ */
+const pullRequestAfter = async (
+  step: Step,
+  output: AgentOutput<RunnerRole>,
+  stage: Task['stage']
+): Promise<number | null> => {
+  const linked = step.context.pullRequest;
+  if (linked !== null || !step.builds || stage !== 'reviewing') return linked;
+  return (await openPullRequestAfter(step, output as PushedBuild))?.number ?? null;
+};
+
+/**
+ * What an applied result leaves on GitHub: the pull request, a review answer, the checklist. The
+ * task's pull request after it, `null` while none is linked.
+ */
 const mirrorToGitHub = async (
   step: Step,
   output: AgentOutput<RunnerRole>,
   stage: Task['stage'],
   inputs: StepInputs
-) => {
+): Promise<number | null> => {
   const { context } = step;
-  if (step.builds && stage === 'reviewing' && context.pullRequest === null) {
-    await openPullRequestAfter(step, output as PushedBuild);
-  }
+  const linked = await pullRequestAfter(step, output, stage);
   const reply = step.builds && 'reviewReply' in output ? output.reviewReply : undefined;
   if (reply) await replyToReviews(step, reply, inputs.githubReviews);
   const pullRequest = context.pullRequest;
@@ -174,6 +190,7 @@ const mirrorToGitHub = async (
       })
     );
   }
+  return linked;
 };
 
 /** Turns the agent's result into its command, with push facts for a build, or why it cannot be. */
@@ -222,8 +239,10 @@ export const applyResult = async (
     });
     return { status: 'discarded', reason: applied.error };
   }
-  await mirrorToGitHub(step, output, applied.task.stage, inputs);
-  await redChecksAfter(step, output, applied);
+  const pullRequest = await mirrorToGitHub(step, output, applied.task.stage, inputs);
+  // A head whose pull request failed to open stays in review, where the catch-up opens it: sent
+  // back to the build it would wait for a pull request nothing opens.
+  if (pullRequest !== null) await redChecksAfter(step, output, applied.task);
   await finishRun(pool, step.runId, {
     status: 'succeeded',
     costCents,

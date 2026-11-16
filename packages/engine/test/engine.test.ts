@@ -444,6 +444,18 @@ describe.skipIf(!url)('engine', () => {
     expect(failed.rows.map((row) => row.details)).toEqual(['CI: failure']);
   });
 
+  test('checks already red on a build push whose pull request failed to open wait in review for the catch-up', async () => {
+    const github = fakeGitHub({ failed: ['CI: failure'], openFails: 1 });
+    const agents = createFakePort(succeed);
+    const taskId = await taskInReady(github, agents);
+    await tick({ pool, github: github.port, agents, publicUrl: PUBLIC_URL }, seeded.projectId);
+
+    expect((await loadTask(pool, taskId))?.task.stage).toBe('reviewing');
+    expect(github.calls.some((call) => call.method === 'failedChecks')).toBe(false);
+    await openMissingPullRequests(pool, github.port, [taskId], PUBLIC_URL);
+    expect(await linkedPullRequest(taskId)).toBe(42);
+  });
+
   test('ticks carry a ready task through build, parallel reviews and choosing', async () => {
     const github = fakeGitHub();
     const agents = createFakePort(succeed);

@@ -196,6 +196,89 @@ describe.skipIf(!url)('a developer hands in a build', () => {
     expect(failed.rows.map((row) => row.details)).toEqual(['CI: failure']);
   });
 
+  /** A developer's claimed build, and how they hand it in through a given GitHub. */
+  const claimedBuild = async () => {
+    const taskId = await waitingForDeveloper();
+    const dev = await developer('dev@example.com', 'Dev');
+    await applyOrThrow(pool, taskId, { type: 'claim' }, dev);
+    const handIn = (port: HandInPort) =>
+      handInBuild(
+        { pool, github: port, publicUrl: PUBLIC_URL },
+        {
+          taskId,
+          memberId: dev.memberId,
+          prTitle: 'feat(room): port the design',
+          verified: [],
+          notVerified: []
+        }
+      );
+    const events = async (type: string) =>
+      Number(
+        (
+          await pool.query<{ count: string }>(
+            'select count(*) from task_events where task_id = $1 and type = $2',
+            [taskId, type]
+          )
+        ).rows[0]!.count
+      );
+    return { taskId, handIn, events };
+  };
+
+  test('a hand-in whose task moves while its checks are read says where the task is now', async () => {
+    const build = await claimedBuild();
+    // The webhook for the red check lands while the hand-in reads it, and sends the task back first.
+    const port = gitHubWith({
+      ...fakeGitHub().port,
+      failedChecks: async () => {
+        await applyOrThrow(
+          pool,
+          build.taskId,
+          { type: 'ci_failed', headSha: 'dev1', details: 'CI: failure' },
+          { kind: 'engine' }
+        );
+        return ['CI: failure'];
+      }
+    });
+
+    expect(await build.handIn(port)).toEqual({ ok: true, stage: 'building', pullRequest: 7 });
+    expect(await build.events('ci_failed')).toBe(1);
+  });
+
+  test('a hand-in sent back for red checks and handed in again unchanged is not taken in twice', async () => {
+    const build = await claimedBuild();
+    const github = fakeGitHub(0, ['CI: failure']);
+    expect(await build.handIn(github.port)).toEqual({
+      ok: true,
+      stage: 'building',
+      pullRequest: 7
+    });
+    const fixRounds = (await loadTask(pool, build.taskId))?.task.fixRounds;
+
+    expect(await build.handIn(github.port)).toEqual({
+      ok: true,
+      stage: 'building',
+      pullRequest: 7
+    });
+    expect(await build.events('pushed')).toBe(1);
+    expect(await build.events('ci_failed')).toBe(1);
+    expect((await loadTask(pool, build.taskId))?.task.fixRounds).toBe(fixRounds);
+  });
+
+  test('a hand-in retried after its pull request failed to open still goes back for red checks', async () => {
+    const build = await claimedBuild();
+    const github = fakeGitHub(1, ['CI: failure']);
+    await expect(build.handIn(github.port)).rejects.toThrow('GitHub 502');
+    expect((await loadTask(pool, build.taskId))?.task.stage).toBe('reviewing');
+
+    expect(await build.handIn(github.port)).toEqual({
+      ok: true,
+      stage: 'building',
+      pullRequest: 7
+    });
+    expect(await build.events('pushed')).toBe(1);
+    expect(await build.events('ci_failed')).toBe(1);
+  });
+
   test('a pull request that fails to open is opened later from the hand-in, not an earlier agent round', async () => {
     const taskId = await waitingForDeveloper();
     // An agent built an earlier round of this task and recorded its own title.

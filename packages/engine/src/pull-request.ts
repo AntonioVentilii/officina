@@ -9,7 +9,8 @@ import {
   type Catalog,
   type CatalogPages,
   type ProjectConfig,
-  type PushFacts
+  type PushFacts,
+  type Task
 } from '@officina/core';
 import {
   applyCommand,
@@ -186,10 +187,10 @@ export const sendBackRedChecks = async (
   pool: Pool,
   github: Pick<GitHubClient, 'failedChecks'>,
   input: { readonly taskId: string; readonly ref: RepoRef; readonly branch: string },
-  applied: ApplyResult
+  task: Task
 ): Promise<ApplyResult | null> => {
-  if (!applied.ok || applied.task.stage !== 'reviewing' || !applied.task.headSha) return null;
-  const headSha = applied.task.headSha;
+  if (task.stage !== 'reviewing' || !task.headSha) return null;
+  const headSha = task.headSha;
   const failures = await github.failedChecks({ ...input.ref, sha: headSha, branch: input.branch });
   if (failures.length === 0) return null;
   return applyCommand(pool, {
@@ -210,7 +211,7 @@ const afterAdoption = async (
   adopted: ApplyResult
 ) => {
   await stopAutoMergeOnLeaving(pool, github, input, adopted);
-  await sendBackRedChecks(pool, github, input, adopted);
+  if (adopted.ok) await sendBackRedChecks(pool, github, input, adopted.task);
 };
 
 /**
