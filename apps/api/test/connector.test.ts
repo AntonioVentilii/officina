@@ -171,7 +171,13 @@ describe.skipIf(!url)('connector for Claude', () => {
     expect(anonymous.headers.get('www-authenticate')).toBe(
       `Bearer resource_metadata="${PUBLIC_URL}/.well-known/oauth-protected-resource/mcp", scope="officina"`
     );
-    expect((await rpc('forged', 'tools/list')).status).toBe(401);
+    expect(await json(anonymous)).toEqual({ error: 'unauthorized' });
+    const forged = await rpc('forged', 'tools/list');
+    expect(forged.status).toBe(401);
+    expect(forged.headers.get('www-authenticate')).toBe(
+      `Bearer resource_metadata="${PUBLIC_URL}/.well-known/oauth-protected-resource/mcp", scope="officina", error="invalid_token"`
+    );
+    expect(await json(forged)).toEqual({ error: 'invalid_token' });
     expect((await handle('/mcp')).status).toBe(405);
   });
 
