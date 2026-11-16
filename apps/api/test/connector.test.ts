@@ -579,6 +579,25 @@ describe.skipIf(!url)('connector for Claude', () => {
       `Handed in; task 1 is now reviewing, pull request #9: ${PUBLIC_URL}/tasks/1?project=${seeded.projectId}`
     );
     expect(await stageOf(taskId)).toBe('reviewing');
+
+    // The push and its hand-in record are the member's, through the app's grant.
+    const grantId = (
+      await pool.query<{ grant_id: string }>('select distinct grant_id from connector_tokens')
+    ).rows[0]!.grant_id;
+    const recorded = await pool.query<{ type: string; actor: unknown }>(
+      `select type, actor from task_events
+       where task_id = $1 and type in ('pushed', 'build_handed_in') order by id`,
+      [taskId]
+    );
+    const viaClaude = {
+      kind: 'member',
+      memberId: seeded.ownerId,
+      via: { grantId, name: 'Claude' }
+    };
+    expect(recorded.rows).toEqual([
+      { type: 'pushed', actor: viaClaude },
+      { type: 'build_handed_in', actor: viaClaude }
+    ]);
   });
 
   test('every member sees every task in progress, with who asked and who approves', async () => {
