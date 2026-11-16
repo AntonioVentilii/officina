@@ -326,7 +326,8 @@ describe.skipIf(!url)('task commands', () => {
         return { number: 9, url: 'https://github.com/ViciApp/vici-app/pull/9' };
       },
       updateFile: async () => ({ commitSha: null, parentSha: null }),
-      commentOnIssue: async () => undefined
+      commentOnIssue: async () => undefined,
+      failedChecks: async () => []
     });
     const input = handInInput;
 
