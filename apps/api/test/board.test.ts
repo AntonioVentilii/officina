@@ -339,6 +339,15 @@ describe.skipIf(!url)('board api', () => {
       { label: 'a product approver', who: ['Tim'], waived: false, approvedBy: [] },
       { label: 'an owner', who: ['Antonio'], waived: false, approvedBy: [] }
     ]);
+
+    // A publishing guard asks for the owner the lane already asks for: still one line per gate.
+    await pool.query(`update tasks set user_visible = false, guards = '{publishing}'`);
+    const guarded = await json(await call(tim, `/api/projects/${seeded.projectId}/tasks/1`));
+    for (const gate of guarded.people.gates) {
+      expect(gate.requirements).toEqual([
+        { label: 'an owner', who: ['Antonio'], waived: false, approvedBy: [] }
+      ]);
+    }
   });
 
   test('the approval plan shows whom the chooser asked, and waits on them while approval is pending', async () => {

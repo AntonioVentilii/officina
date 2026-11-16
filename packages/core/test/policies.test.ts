@@ -1,9 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import {
   APPROVAL_FLOOR,
+  applicableRequirements,
   eligibleMembers,
   evaluatePolicy,
   outranks,
+  sameRequirement,
   type Member,
   type Policy
 } from '../src';
@@ -109,6 +111,30 @@ describe('approval policies', () => {
     expect(outranks(APPROVAL_FLOOR, { role: 'maintainer' })).toBe(false);
     expect(outranks({ role: 'owner' }, { domain: 'product' })).toBe(false);
     expect(outranks({ role: 'owner' }, { requester: true })).toBe(false);
+  });
+
+  test('two requirements are the same only when they ask for the same approval in the same case', () => {
+    expect(sameRequirement({ role: 'owner' }, { role: 'owner' })).toBe(true);
+    expect(sameRequirement({ role: 'owner' }, { role: 'maintainer' })).toBe(false);
+    expect(sameRequirement({ domain: 'product' }, { domain: 'product' })).toBe(true);
+    expect(
+      sameRequirement({ domain: 'product' }, { domain: 'product', when: 'user_visible' })
+    ).toBe(false);
+    expect(sameRequirement({ requester: true }, { requester: true })).toBe(true);
+    expect(sameRequirement({ requester: true }, { role: 'owner' })).toBe(false);
+  });
+
+  test('a gate lists each requirement once, and a maintainer requirement gives way to the floor', () => {
+    const repeated: Policy = [
+      { role: 'owner' },
+      { role: 'maintainer' },
+      { domain: 'product' },
+      { role: 'owner' },
+      { domain: 'product' }
+    ];
+    const applicable = applicableRequirements(repeated, true);
+    expect(applicable).toEqual([{ role: 'owner' }, { domain: 'product' }, APPROVAL_FLOOR]);
+    expect(applicable.at(-1)).toBe(APPROVAL_FLOOR);
   });
 });
 
