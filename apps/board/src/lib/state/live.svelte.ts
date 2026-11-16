@@ -18,14 +18,18 @@ class Live {
   #source: EventSource | null = null;
   #listeners = new Set<Listener>();
   #retry: ReturnType<typeof setTimeout> | null = null;
+  /** Whether the stream opened since the board connected it, so any later open is a reconnect. */
+  #opened = false;
 
   connect() {
     if (this.#source) return;
     const source = new EventSource('/api/stream');
     this.#source = source;
     source.onopen = () => {
-      // After a reconnect anything may have changed, so every view refreshes once.
-      if (this.status !== 'connecting') this.#emitAll();
+      // After a reconnect, the browser's own included, anything may have changed, so every view
+      // refreshes once.
+      if (this.#opened) this.#emitAll();
+      this.#opened = true;
       this.status = 'live';
     };
     source.onerror = () => {
@@ -60,6 +64,7 @@ class Live {
     this.#retry = null;
     this.#source?.close();
     this.#source = null;
+    this.#opened = false;
     this.status = 'connecting';
   }
 
