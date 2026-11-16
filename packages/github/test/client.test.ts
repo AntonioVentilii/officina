@@ -591,6 +591,40 @@ describe('GitHub client', () => {
   });
 });
 
+describe('write access', () => {
+  const ref = { installationId: 99, repo: 'ViciApp/vici-app' };
+
+  test('only write, maintain or admin on the repository count, and someone GitHub does not know has none', async () => {
+    const answers: Record<string, string> = {
+      admin: 'admin',
+      maintainer: 'write',
+      writer: 'write',
+      triager: 'read',
+      reader: 'read',
+      member: 'none'
+    };
+    const { fetchImpl, calls } = fakeGitHub({
+      'POST /app/installations/99/access_tokens': tokenRoute('2099-01-01T00:00:00Z'),
+      ...Object.fromEntries(
+        Object.entries(answers).map(([login, permission]) => [
+          `GET /repos/ViciApp/vici-app/collaborators/${login}/permission`,
+          () => json({ permission })
+        ])
+      )
+    });
+    const client = createGitHubClient({ appId: '1', privateKeyPem, fetch: fetchImpl });
+    const can = async (login: string) => client.canWrite({ ...ref, login });
+    expect(await can('admin')).toBe(true);
+    expect(await can('maintainer')).toBe(true);
+    expect(await can('writer')).toBe(true);
+    expect(await can('triager')).toBe(false);
+    expect(await can('reader')).toBe(false);
+    expect(await can('member')).toBe(false);
+    expect(await can('stranger')).toBe(false);
+    expect(calls.at(-1)?.authorization).toStartWith('Bearer ghs_');
+  });
+});
+
 describe('merge when ready', () => {
   const ref = {
     installationId: 99,

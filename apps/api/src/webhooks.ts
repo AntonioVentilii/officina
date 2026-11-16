@@ -40,7 +40,7 @@ export type WebhookOutcome =
 
 /** What webhooks need from GitHub: configs on push, and review comments and auto-merge on reviews. */
 export type ConfigReader = Pick<GitHubClient, 'fileContent'> &
-  Partial<Pick<GitHubClient, 'reviewComments' | 'cancelAutoMerge'>>;
+  Partial<Pick<GitHubClient, 'reviewComments' | 'cancelAutoMerge' | 'canWrite'>>;
 
 /**
  * A push to a project's default branch that touches its config refreshes the stored config. An
@@ -155,6 +155,10 @@ const handleReview = async (
   if (taskIds.length === 0) return [];
   const installationId = await installationOf(pool, action.repo);
   if (!installationId) return [];
+  // A person steers the work only with write access to the repository: GitHub also calls a member
+  // of the owning organization, or a collaborator who may only read, a member or a collaborator.
+  const person = { installationId, repo: action.repo, login: action.by };
+  if (!action.bot && !(await github.canWrite?.(person))) return [];
   const outcomes: WebhookOutcome[] = [];
   for (const taskId of taskIds) {
     const review = await reviewNotes(
