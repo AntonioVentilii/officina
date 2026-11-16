@@ -3,6 +3,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  claimLearningDecision,
   failIdleLearningRewrite,
   failOrphanedRuns,
   insertLearnings,
@@ -16,18 +17,18 @@ import { Pool } from 'pg';
 import { applyOrThrow, createTaskInMerging, resetAndSeed, type Seeded } from '../../db/test/seed';
 import { createFakePort, idle, toolUse } from '../../runner/test/fake-port';
 import { parseProjectConfig } from '@officina/core';
-import { collectDueSteps, learningProblems, runAgentStep, type GitHubPort } from '../src';
+import { collectDueSteps, learningProblems, runAgentStep } from '../src';
+import { gitHubWith } from './fake-github';
 
 const url = process.env.TEST_DATABASE_URL;
 
 const DOCS = '# Agents\n\n## Copy\n\nKeep copy short.\n';
 
 const fakeGitHub = () =>
-  ({
+  gitHubWith({
     installationToken: async () => 'token-read',
-    readFile: async ({ path }: { path: string }) =>
-      path === 'AGENTS.md' ? { text: DOCS, sha: 'blob1' } : null
-  }) as unknown as GitHubPort;
+    readFile: async ({ path }) => (path === 'AGENTS.md' ? { text: DOCS, sha: 'blob1' } : null)
+  });
 
 const learning = (overrides: Record<string, unknown>) => ({
   title: 'Say where locale files live',
@@ -187,7 +188,9 @@ describe.skipIf(!url)('learner', () => {
       ]
     });
     const [stale] = await listLearnings(pool, seeded.projectId);
-    await requestLearningRewrite(pool, stale!.id);
+    // As an accept that found the edit no longer applies hands it back.
+    const claim = await claimLearningDecision(pool, seeded.projectId, stale!.id);
+    await requestLearningRewrite(pool, stale!.id, claim!);
     return { taskId, id: stale!.id };
   };
 
@@ -270,6 +273,38 @@ describe.skipIf(!url)('learner', () => {
     expect(agents.sessions).toHaveLength(0);
   });
 
+  const learnerRunStatus = async (taskId: string) =>
+    (
+      await pool.query<{ status: string }>(
+        'select status from runs where task_id = $1 and learning_id is not null',
+        [taskId]
+      )
+    ).rows.map((row) => row.status);
+
+  test('a rewrite run that ends without a result fails, and the learning stops waiting on it', async () => {
+    const { taskId } = await staleLearning();
+    const agents = createFakePort(() => [idle('end_turn')]);
+    const deps = { pool, github: fakeGitHub(), agents, publicUrl: 'x' };
+    expect(await runAgentStep(deps, taskId, 'learner')).toMatchObject({ status: 'discarded' });
+    expect(await learnerRunStatus(taskId)).toEqual(['failed']);
+    expect((await listLearnings(pool, seeded.projectId))[0]).toMatchObject({ rewrite: 'failed' });
+    expect((await collectDueSteps({ pool }, seeded.projectId)).due).toEqual([]);
+  });
+
+  test('a rewrite run that throws fails, and the learning stops waiting on it', async () => {
+    const { taskId } = await staleLearning();
+    const agents = createFakePort(() => [
+      async () => {
+        throw new Error('the stream broke');
+      }
+    ]);
+    const deps = { pool, github: fakeGitHub(), agents, publicUrl: 'x' };
+    await expect(runAgentStep(deps, taskId, 'learner')).rejects.toThrow('the stream broke');
+    expect(await learnerRunStatus(taskId)).toEqual(['failed']);
+    expect((await listLearnings(pool, seeded.projectId))[0]).toMatchObject({ rewrite: 'failed' });
+    expect((await collectDueSteps({ pool }, seeded.projectId)).due).toEqual([]);
+  });
+
   /** Waits until `ready` holds, as a step running in the background gets there. */
   const until = async (ready: () => boolean | Promise<boolean>) => {
     for (let wait = 0; !(await ready()); wait++) {
@@ -314,7 +349,7 @@ describe.skipIf(!url)('learner', () => {
   test('a rewrite run lost right after its claim still counts', async () => {
     const { taskId } = await staleLearning();
     // The engine dies before the session exists: the token it asks for never comes.
-    const github = { ...fakeGitHub(), installationToken: forever } as unknown as GitHubPort;
+    const github = { ...fakeGitHub(), installationToken: forever };
     const agents = createFakePort(() => []);
     const deps = { pool, github, agents, publicUrl: 'x' };
     for (const _ of [1, 2]) {
