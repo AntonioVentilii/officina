@@ -19,6 +19,7 @@ import { claimStep, type ClaimedStep, type SkipReason } from './claim';
 import { runLearnerStep } from './learner';
 import type { SyncGitHubPort } from './github-sync';
 import { applyResult, roleOutputOf, sameWork, type StepOutcome } from './step-apply';
+import { withRunToken, type LiveRuns } from './live-runs';
 import { guardRefs, recordStartingRefs } from './step-refs';
 import { gatherInputs, runSession, RunStoppedError } from './step-session';
 
@@ -44,6 +45,8 @@ export interface EngineDependencies {
   readonly publicUrl: string;
   /** Officina's own role prompts, so the learner's edits to them can be checked before people see them. */
   readonly promptsDir?: string | undefined;
+  /** The sessions and run tokens of this process, for a shutdown to stop (`createLiveRuns`). */
+  readonly liveRuns?: LiveRuns | undefined;
 }
 
 export type StepResult =
@@ -128,18 +131,12 @@ const outcomeOf = async (
 /** From the session to the applied result, for a run already claimed. */
 const runClaimed = async (step: Step): Promise<StepResult> => {
   const inputs = await gatherInputs(step);
-  const { github } = step.deps;
-  // Only the build roles get a token that can push, minted for this run alone and revoked when
-  // the session ends, so nothing it pushes can land after the refs are checked.
-  const token = step.builds
-    ? await github.runToken(step.repoRef, { contents: 'write' })
-    : await github.installationToken(step.repoRef, { contents: 'read' });
+  // Before the token is minted: nothing can push until then, and nothing is left to revoke if
+  // reading the refs fails.
   const refsBefore = step.builds ? await recordStartingRefs(step, Date.now()) : null;
   let report: RunReport;
   try {
-    report = await runSession(step, inputs, token).finally(async () => {
-      if (step.builds) await github.revokeToken(token);
-    });
+    report = await withRunToken(step, (token, live) => runSession(step, inputs, token, live));
   } catch (error) {
     // A session that throws may have pushed somewhere too, and its retry starts from the refs as
     // they are then: they are checked now or never.
