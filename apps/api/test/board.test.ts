@@ -304,14 +304,18 @@ describe.skipIf(!url)('board api', () => {
           gate: 'spec_review',
           does: 'Approve the plan',
           current: false,
-          requirements: [{ label: 'an owner', who: ['Antonio'], waived: false, approvedBy: [] }],
+          requirements: [
+            { label: 'an owner', who: [{ name: 'Antonio', approved: false }], waived: false }
+          ],
           asked: []
         },
         {
           gate: 'verifying',
           does: 'Check the result',
           current: false,
-          requirements: [{ label: 'an owner', who: ['Antonio'], waived: false, approvedBy: [] }],
+          requirements: [
+            { label: 'an owner', who: [{ name: 'Antonio', approved: false }], waived: false }
+          ],
           asked: []
         }
       ],
@@ -325,8 +329,8 @@ describe.skipIf(!url)('board api', () => {
     ]);
     const ownerless = await json(await call(tim, `/api/projects/${seeded.projectId}/tasks/1`));
     expect(ownerless.people.gates[0].requirements).toEqual([
-      { label: 'an owner', who: [], waived: true, approvedBy: [] },
-      { label: 'a maintainer', who: ['Antonio'], waived: false, approvedBy: [] }
+      { label: 'an owner', who: [], waived: true },
+      { label: 'a maintainer', who: [{ name: 'Antonio', approved: false }], waived: false }
     ]);
     await pool.query(`update project_roles set role = 'owner' where member_id = $1`, [
       seeded.ownerId
@@ -336,8 +340,8 @@ describe.skipIf(!url)('board api', () => {
     await pool.query('update tasks set user_visible = true');
     const visible = await json(await call(tim, `/api/projects/${seeded.projectId}/tasks/1`));
     expect(visible.people.gates[1].requirements).toEqual([
-      { label: 'a product approver', who: ['Tim'], waived: false, approvedBy: [] },
-      { label: 'an owner', who: ['Antonio'], waived: false, approvedBy: [] }
+      { label: 'a product approver', who: [{ name: 'Tim', approved: false }], waived: false },
+      { label: 'an owner', who: [{ name: 'Antonio', approved: false }], waived: false }
     ]);
 
     // A publishing guard asks for the owner the lane already asks for: still one line per gate.
@@ -345,9 +349,56 @@ describe.skipIf(!url)('board api', () => {
     const guarded = await json(await call(tim, `/api/projects/${seeded.projectId}/tasks/1`));
     for (const gate of guarded.people.gates) {
       expect(gate.requirements).toEqual([
-        { label: 'an owner', who: ['Antonio'], waived: false, approvedBy: [] }
+        { label: 'an owner', who: [{ name: 'Antonio', approved: false }], waived: false }
       ]);
     }
+  });
+
+  test('two members with the same name each show whether they approved', async () => {
+    const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    await invite(pool, {
+      publicUrl: PUBLIC_URL,
+      email: 'antonio.too@example.com',
+      name: 'Antonio',
+      role: 'owner',
+      domains: []
+    });
+    await createRequest(pool, {
+      title: 'Rename settings',
+      request: 'Call it Preferences.',
+      skipInterview: true
+    });
+    const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
+    const path = `/api/projects/${seeded.projectId}/tasks/1`;
+    await call(owner, `${path}/actions`, { type: 'accept' });
+    await applyCommand(pool, {
+      taskId,
+      command: { type: 'post_spec', predictedPaths: ['src/settings.ts'], userVisible: false },
+      actor: { kind: 'agent', role: 'spec', version: 1 }
+    });
+    await applyCommand(pool, {
+      taskId,
+      command: {
+        type: 'plan_approval',
+        userVisible: false,
+        plan: { depth: 'glance', rationale: 'A label.', extra: [], verifiers: [] }
+      },
+      actor: { kind: 'engine' }
+    });
+    await applyCommand(pool, {
+      taskId,
+      command: { type: 'approve' },
+      actor: { kind: 'member', memberId: seeded.ownerId }
+    });
+
+    const [requirement] = (await json(await call(owner, path))).people.gates[0].requirements;
+    expect(requirement.who).toHaveLength(2);
+    expect(requirement.who).toEqual(
+      expect.arrayContaining([
+        { name: 'Antonio', approved: true },
+        { name: 'Antonio', approved: false }
+      ])
+    );
   });
 
   test('the approval plan shows whom the chooser asked, and waits on them while approval is pending', async () => {

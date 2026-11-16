@@ -26,10 +26,10 @@
             <span class="faint">nobody holds it yet, so it is waived</span>
           {:else if requirement.who.length}
             <!-- Two members can share a name. -->
-            {#each requirement.who as name, index (index)}
-              <span class="name" class:done={requirement.approvedBy.includes(name)}>
-                <MemberAvatar {name} size={18} />{name}
-                {#if requirement.approvedBy.includes(name)}<Check size={13} />{/if}
+            {#each requirement.who as person, index (index)}
+              <span class="name" class:done={person.approved}>
+                <MemberAvatar name={person.name} size={18} />{person.name}
+                {#if person.approved}<Check size={13} />{/if}
               </span>
             {/each}
           {:else}

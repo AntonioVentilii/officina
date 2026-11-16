@@ -233,9 +233,8 @@ export interface TaskDetail extends Card {
       readonly current: boolean;
       readonly requirements: readonly {
         readonly label: string;
-        readonly who: readonly string[];
+        readonly who: readonly { readonly name: string; readonly approved: boolean }[];
         readonly waived: boolean;
-        readonly approvedBy: readonly string[];
       }[];
       readonly asked: readonly string[];
     }[];

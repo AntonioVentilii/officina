@@ -92,16 +92,33 @@ const cardLine = (context: ToolContext, project: MemberProject, card: CardView) 
 
 type TaskDetail = NonNullable<Awaited<ReturnType<typeof taskView>>>;
 
+type Requirement = TaskDetail['people']['gates'][number]['requirements'][number];
+
+/**
+ * Each person who holds a requirement, marked when they approved: a name shared by two members is
+ * numbered, so the mark stays on the one who approved.
+ */
+const peopleOf = (who: Requirement['who']) =>
+  who
+    .map((person, index) => {
+      const twins = who.filter((other) => other.name === person.name);
+      const seen = who.slice(0, index + 1).filter((other) => other.name === person.name).length;
+      const name = twins.length > 1 ? `${person.name} #${seen}` : person.name;
+      return person.approved ? `${name} (approved)` : name;
+    })
+    .join(', ');
+
+/** One requirement of a gate: who holds it, and who of them approved. */
+const requirementLine = (requirement: Requirement) =>
+  requirement.waived
+    ? `${requirement.label} (nobody holds it, so it is waived)`
+    : `${requirement.label} (${peopleOf(requirement.who) || 'nobody yet'})`;
+
 /** Who asked, who approves each gate and who merges, so nobody assumes the requester decides. */
 const peopleLines = ({ people }: TaskDetail) => [
   ...people.gates.map(
     (gate) =>
-      `${gate.does}: ${gate.requirements
-        .map(
-          (requirement) =>
-            `${requirement.label} (${requirement.waived ? 'nobody holds it, so it is waived' : requirement.who.join(', ') || 'nobody yet'}${requirement.approvedBy.length ? `; approved by ${requirement.approvedBy.join(', ')}` : ''})`
-        )
-        .join(', ')}.${gate.asked.length ? ` Asked to check: ${gate.asked.join(', ')}.` : ''}`
+      `${gate.does}: ${gate.requirements.map(requirementLine).join(', ')}.${gate.asked.length ? ` Asked to check: ${gate.asked.join(', ')}.` : ''}`
   ),
   people.build.by === 'person'
     ? `Build: a developer, not the agents (${people.build.reason}). Who can claim it: ${people.build.who.join(', ') || 'nobody yet'}.`

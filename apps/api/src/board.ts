@@ -672,11 +672,12 @@ const peopleView = (
             const eligible = eligibleMembers(requirement, context);
             return {
               label: describeRequirement(requirement),
-              who: eligible.map((member) => name(member.id)),
-              waived: eligible.length === 0 && requirement !== APPROVAL_FLOOR,
-              approvedBy: eligible
-                .filter((member) => approved.has(member.id))
-                .map((member) => name(member.id))
+              // Each person says whether they approved: a name alone could be two members.
+              who: eligible.map((member) => ({
+                name: name(member.id),
+                approved: approved.has(member.id)
+              })),
+              waived: eligible.length === 0 && requirement !== APPROVAL_FLOOR
             };
           }),
           asked: (row.approvalPlans[gate]?.verifiers ?? []).map((verifier) =>
