@@ -34,6 +34,7 @@ export type GitHubPort = Pick<
   | 'appBotLogin'
   | 'isPullRequestMerge'
   | 'isOnBranch'
+  | 'failedChecks'
 > &
   SyncGitHubPort;
 

@@ -422,6 +422,40 @@ describe.skipIf(!url)('engine', () => {
     expect(await linkedPullRequest(taskId)).toBe(42);
   });
 
+  test('checks that failed before a build push was applied send it back to the builder, with its pull request open', async () => {
+    const github = fakeGitHub({ failed: ['CI: failure'] });
+    const agents = createFakePort(succeed);
+    const taskId = await taskInReady(github, agents);
+    await tick({ pool, github: github.port, agents, publicUrl: PUBLIC_URL }, seeded.projectId);
+
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({
+      stage: 'building',
+      headSha: 'sha1'
+    });
+    expect(await linkedPullRequest(taskId)).toBe(42);
+    expect(github.calls.find((call) => call.method === 'failedChecks')?.args[0]).toMatchObject({
+      sha: 'sha1',
+      branch: 'officina/task-1'
+    });
+    const failed = await pool.query<{ details: string }>(
+      `select payload->>'details' as details from task_events where task_id = $1 and type = 'ci_failed'`,
+      [taskId]
+    );
+    expect(failed.rows.map((row) => row.details)).toEqual(['CI: failure']);
+  });
+
+  test('checks already red on a build push whose pull request failed to open wait in review for the catch-up', async () => {
+    const github = fakeGitHub({ failed: ['CI: failure'], openFails: 1 });
+    const agents = createFakePort(succeed);
+    const taskId = await taskInReady(github, agents);
+    await tick({ pool, github: github.port, agents, publicUrl: PUBLIC_URL }, seeded.projectId);
+
+    expect((await loadTask(pool, taskId))?.task.stage).toBe('reviewing');
+    expect(github.calls.some((call) => call.method === 'failedChecks')).toBe(false);
+    await openMissingPullRequests(pool, github.port, [taskId], PUBLIC_URL);
+    expect(await linkedPullRequest(taskId)).toBe(42);
+  });
+
   test('ticks carry a ready task through build, parallel reviews and choosing', async () => {
     const github = fakeGitHub();
     const agents = createFakePort(succeed);
