@@ -70,16 +70,15 @@ export interface Me {
   readonly projects: readonly Project[];
   readonly github: { readonly login: string } | null;
   readonly githubAvailable: boolean;
+  /** The connector's address, to add Officina to Claude. */
+  readonly connectorUrl: string;
   readonly limits: InputLimits;
 }
 
-interface Length {
-  readonly min: number;
-  readonly max: number;
-}
-
 /** How long what a person types may be, the ceilings the API checks (`INPUT_LIMITS`). */
-export type InputLimits = Readonly<Record<'title' | 'prTitle', Length>>;
+export type InputLimits = Readonly<
+  Record<'title' | 'prTitle', { readonly min: number; readonly max: number }>
+>;
 
 export interface WaitingOn {
   readonly kind: 'agent' | 'people' | 'github' | 'nobody';
@@ -200,6 +199,8 @@ export interface TaskDetail extends Card {
       })
     | null;
   readonly repo: string | null;
+  /** The task branch a person who claimed the build pushes to. */
+  readonly branch: string;
   readonly pullRequestUrl: string | null;
   readonly headSha: string | null;
   readonly request: { readonly author: string; readonly body: string; readonly at: string } | null;

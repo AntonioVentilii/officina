@@ -52,7 +52,7 @@
 
   const project = $derived(session.project);
   const canRequest = $derived(session.can('request'));
-  const connectorUrl = `${location.origin}/mcp`;
+  const connectorUrl = $derived(session.me?.connectorUrl ?? '');
 
   const copy = async () => {
     try {

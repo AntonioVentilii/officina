@@ -7,7 +7,14 @@ import {
   handoffCommand,
   needsPersonSchema
 } from './handoffs';
-import { CHECK_DEPTHS, MERGE_MODES, type Blocked, type Command, type Task } from './lifecycle';
+import {
+  CHECK_DEPTHS,
+  MERGE_MODES,
+  type Blocked,
+  type Command,
+  type ReviewerRole,
+  type Task
+} from './lifecycle';
 import { redactDeep } from './guards';
 import { CHECKLIST_LIMITS, pushedFields } from './limits';
 import { questionOptionsSchema } from './questions';
@@ -261,7 +268,7 @@ export type RoleOutput =
       readonly facts?: PushFacts & { readonly catalogPages: CatalogPages };
     }
   | {
-      readonly role: 'reviewer_spec' | 'reviewer_correctness';
+      readonly role: ReviewerRole;
       readonly output: AgentOutput<'reviewer_spec'>;
     }
   | { readonly role: 'chooser'; readonly output: AgentOutput<'chooser'> };
