@@ -196,7 +196,8 @@ const handleComment = async (
     await recordBotComment(pool, taskId, {
       commentId: action.commentId,
       by: action.by,
-      body: action.body
+      body: action.body,
+      updatedAt: action.updatedAt
     });
     // GitHub must not merge while the comment settles: it may send the work back.
     const cancel = cancelPort(github);
