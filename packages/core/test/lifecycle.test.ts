@@ -545,6 +545,62 @@ describe('permissions', () => {
     });
     expect(dispatchAgent(driver, resumed).stage).toBe('building');
   });
+
+  test('the engine dispatches a build only to a member who can build', () => {
+    const driver = createDriver([owner, productContributor]);
+    const task = toReady(driver, PAGE_PATHS);
+    const dispatchTo = (memberId: string) =>
+      ({
+        type: 'dispatch',
+        assignee: { kind: 'member', memberId },
+        openInLane: 0
+      }) as const;
+    expect(driver.attempt(task, dispatchTo(productContributor.id), engine)).toEqual({
+      ok: false,
+      error: 'not_allowed'
+    });
+    expect(driver.attempt(task, dispatchTo('nobody'), engine)).toEqual({
+      ok: false,
+      error: 'not_allowed'
+    });
+    expect(driver.step(task, dispatchTo(owner.id), engine)).toMatchObject({
+      stage: 'building',
+      assignee: { kind: 'member', memberId: owner.id }
+    });
+  });
+
+  test('a review is recorded only from a reviewer agent or a member who can steer', () => {
+    const driver = createDriver([owner, productContributor]);
+    const task = driver.step(
+      dispatchAgent(driver, toReady(driver, PAGE_PATHS)),
+      {
+        type: 'push',
+        headSha: 'abc',
+        changedPaths: PAGE_PATHS,
+        addedPaths: [],
+        catalogPages: {},
+        diffLines: 40
+      },
+      asAgent('builder')
+    );
+    expect(task.stage).toBe('reviewing');
+    const review = { type: 'review', verdict: 'changes', notes: 'Rename it.' } as const;
+    expect(driver.attempt(task, review, asAgent('builder'))).toEqual({
+      ok: false,
+      error: 'not_allowed'
+    });
+    expect(driver.attempt(task, review, asMember(productContributor))).toEqual({
+      ok: false,
+      error: 'not_allowed'
+    });
+    const byOwner = driver.attempt(task, review, asMember(owner));
+    expect(byOwner.ok && byOwner.events).toContainEqual({
+      type: 'review_recorded',
+      reviewer: 'member',
+      verdict: 'changes',
+      notes: 'Rename it.'
+    });
+  });
 });
 
 describe('approval chooser', () => {

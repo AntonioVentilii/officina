@@ -11,10 +11,15 @@ export interface BotComment {
 }
 
 /**
- * Records a review bot's comment, or its new text after an edit. Bots often post a placeholder and
- * edit it as they work, so a comment is forwarded only once it stops changing (`unhandledBotComments`).
+ * Records a review bot's comment, or its new text after an edit, with when GitHub says it was last
+ * edited. Bots often post a placeholder and edit it as they work, so a comment is forwarded only
+ * once it stops changing (`unhandledBotComments`).
  */
-export const recordBotComment = (pool: Pool, taskId: string, comment: BotComment) =>
+export const recordBotComment = (
+  pool: Pool,
+  taskId: string,
+  comment: BotComment & { readonly updatedAt: string | null }
+) =>
   appendTaskEvent(pool, { taskId, actor: ENGINE, type: 'github_comment_seen', payload: comment });
 
 /**
@@ -38,8 +43,9 @@ export const markBotCommentsHandled = async (
 /**
  * The bot comments of the current build round that have not changed for `quietSeconds` and whose
  * latest text was not dealt with yet (`markBotCommentsHandled`), oldest first, each as it last
- * read. With no quiet time, every comment still waiting. A comment from before the builder's last
- * push or answer was about work that is no longer the head.
+ * read: its latest edit by GitHub's `updated_at`, since deliveries can arrive out of order, or the
+ * last one recorded when none carries it. With no quiet time, every comment still waiting.
+ * A comment from before the builder's last push or answer was about work that is no longer the head.
  */
 export const unhandledBotComments = async (
   pool: Pool,
@@ -53,7 +59,8 @@ export const unhandledBotComments = async (
            payload->>'commentId' as comment_id, payload->>'by' as by, payload->>'body' as body
          from task_events
          where task_id = $1 and type = 'github_comment_seen' and ${SINCE_LAST_BUILD}
-         order by payload->>'commentId', id desc
+         order by payload->>'commentId',
+           (payload->>'updatedAt')::timestamptz desc nulls last, id desc
        ) latest
        where latest.created_at <= now() - make_interval(secs => $2)
          and not exists (select 1 from task_events h where h.task_id = $1

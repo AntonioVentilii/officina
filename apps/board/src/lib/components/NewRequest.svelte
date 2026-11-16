@@ -23,7 +23,10 @@
   // One per form: sending it again, after an error that hid a request already opened, opens nothing new.
   const requestId = crypto.randomUUID();
 
-  const ready = $derived(title.trim().length >= 3 && request.trim().length > 0);
+  const limits = $derived(session.me?.limits);
+  const ready = $derived(
+    limits !== undefined && title.trim().length >= limits.title.min && request.trim().length > 0
+  );
 
   const submit = async (event: SubmitEvent) => {
     event.preventDefault();
@@ -56,7 +59,7 @@
       <input
         class="field"
         bind:value={title}
-        maxlength="200"
+        maxlength={limits?.title.max}
         placeholder="Replace betting words in battle copy"
         required
       />
