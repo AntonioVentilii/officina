@@ -18,7 +18,11 @@ type Validate = Parameters<typeof executeRun>[1]['validate'];
 
 const run = (
   script: readonly ScriptItem[],
-  options: { readonly costCents?: number | null; readonly validate?: Validate } = {}
+  options: {
+    readonly costCents?: number | null;
+    readonly validate?: Validate;
+    readonly deadlineMs?: number;
+  } = {}
 ) => {
   const port = createFakePort(() => script, options.costCents);
   return {
@@ -27,13 +31,16 @@ const run = (
       role: 'reviewer_spec',
       session,
       brief: 'Review it.',
-      validate: options.validate
+      validate: options.validate,
+      ...(options.deadlineMs === undefined ? {} : { deadlineMs: options.deadlineMs })
     })
   };
 };
 
 const toolResults = (sent: { events: readonly OutboundEvent[] }[]) =>
   sent.flatMap((batch) => batch.events).filter((event) => event.type === 'user.custom_tool_result');
+
+const hang = () => new Promise<void>(() => {});
 
 describe('executeRun', () => {
   test('opens the stream before sending the brief, accepts a valid result and reports cost', async () => {
@@ -168,5 +175,20 @@ describe('executeRun', () => {
   test('a result submitted before the budget pause still counts', async () => {
     const { report } = run([toolUse(approve), idle('budget_reached')], { costCents: null });
     expect(await report).toMatchObject({ costCents: null, outcome: { kind: 'result' } });
+  });
+
+  test('a stream that stops sending events past the deadline interrupts the session and fails', async () => {
+    const { port, report } = run([running(), hang], { deadlineMs: 20 });
+    expect((await report).outcome).toEqual({
+      kind: 'failed',
+      reason: 'the session ran past its deadline and was interrupted'
+    });
+    expect(port.sent.at(-1)!.events).toEqual([{ type: 'user.interrupt' }]);
+  });
+
+  test('a result accepted before the stream hangs still stands at the deadline', async () => {
+    const { port, report } = run([toolUse(approve), hang], { deadlineMs: 20 });
+    expect((await report).outcome).toEqual({ kind: 'result', output: approve });
+    expect(port.sent.at(-1)!.events).toEqual([{ type: 'user.interrupt' }]);
   });
 });

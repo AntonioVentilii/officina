@@ -52,7 +52,8 @@ describe.skipIf(!url)('migrations', () => {
       '0021_run_learning.sql',
       '0022_run_refs.sql',
       '0023_learning_branch_commit.sql',
-      '0024_access_event_project.sql'
+      '0024_access_event_project.sql',
+      '0025_learning_decision_claim.sql'
     ]);
     expect(await migrate(client)).toEqual([]);
   });
@@ -187,6 +188,24 @@ describe.skipIf(!url)('migrations', () => {
           .sort()
       );
       expect(first.length === 0 || second.length === 0).toBe(true);
+    } finally {
+      await other.end();
+    }
+  });
+
+  test('a failing migration is named, recorded nowhere, and leaves the lock free', async () => {
+    await client.query('drop schema public cascade; create schema public;');
+    // A table the first migration creates is already there, so the first migration fails.
+    await client.query('create table workspaces (id int)');
+    await expect(migrate(client)).rejects.toThrow('migration 0001_init.sql failed');
+    const recorded = await client.query('select 1 from schema_migrations');
+    expect(recorded.rowCount).toBe(0);
+
+    // Another process gets the lock instead of waiting forever, and fails the same way.
+    const other = new Client({ connectionString: url });
+    await other.connect();
+    try {
+      await expect(migrate(other)).rejects.toThrow('migration 0001_init.sql failed');
     } finally {
       await other.end();
     }

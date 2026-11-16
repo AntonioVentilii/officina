@@ -1,9 +1,9 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { findTaskIdByNumber } from '@officina/db';
-import type { HandInPort } from '@officina/engine';
 import { Pool } from 'pg';
 import { invite } from '../src/people';
 import { PLAN, applyOrThrow, resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
+import { gitHubWith } from '../../../packages/engine/test/fake-github';
 import {
   TaskCommandError,
   actOnTask,
@@ -254,7 +254,7 @@ describe.skipIf(!url)('task commands', () => {
     await applyOrThrow(pool, taskId, { type: 'claim' }, seeded.owner);
 
     const opened: string[] = [];
-    const github = {
+    const github = gitHubWith({
       pushFacts: async () => ({
         headSha: 'dev1',
         changedPaths: [COPY],
@@ -262,13 +262,13 @@ describe.skipIf(!url)('task commands', () => {
         diffLines: 2
       }),
       readFile: async () => null,
-      openPullRequest: async (input: { title: string }) => {
+      openPullRequest: async (input) => {
         opened.push(input.title);
         return { number: 9, url: 'https://github.com/ViciApp/vici-app/pull/9' };
       },
-      updateFile: async () => undefined,
+      updateFile: async () => ({ commitSha: null, parentSha: null }),
       commentOnIssue: async () => undefined
-    } as unknown as HandInPort;
+    });
     const input = {
       number: 1,
       prTitle: 'fix(copy): prediction wording',
