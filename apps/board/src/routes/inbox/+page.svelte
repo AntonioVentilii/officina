@@ -1,53 +1,38 @@
 <script lang="ts">
-  import { Bell, CircleHelp, GitMerge, Inbox, ListChecks, Sparkles, X } from '@lucide/svelte';
+  import {
+    Bell,
+    CircleHelp,
+    GitMerge,
+    Hammer,
+    Hand,
+    Inbox,
+    ListChecks,
+    Pause,
+    Sparkles,
+    X
+  } from '@lucide/svelte';
   import LaneChip from '$lib/components/LaneChip.svelte';
   import MemberAvatar from '$lib/components/MemberAvatar.svelte';
   import { since } from '$lib/format';
   import { board } from '$lib/state/board.svelte';
   import { clock } from '$lib/state/clock.svelte';
   import { toasts } from '$lib/state/toasts.svelte';
-  import type { Card } from '$lib/types';
+  import { inboxGroups, type InboxGroupId } from '$lib/inbox';
 
-  const GROUPS = [
-    {
-      id: 'questions',
-      title: 'Questions for you',
-      icon: CircleHelp,
-      match: (card: Card) => Boolean(card.blocked)
-    },
-    {
-      id: 'triage',
-      title: 'New requests to triage',
-      icon: Sparkles,
-      match: (card: Card) => card.stage === 'triage'
-    },
-    {
-      id: 'specs',
-      title: 'Specs to approve',
-      icon: ListChecks,
-      match: (card: Card) => card.stage === 'spec_review'
-    },
-    {
-      id: 'verify',
-      title: 'Results to verify',
-      icon: ListChecks,
-      match: (card: Card) => card.stage === 'verifying'
-    },
-    {
-      id: 'merge',
-      title: 'Ready to merge on GitHub',
-      icon: GitMerge,
-      match: (card: Card) => card.stage === 'merging'
-    }
-  ] as const;
+  const ICONS: Record<InboxGroupId, typeof Inbox> = {
+    questions: CircleHelp,
+    paused: Pause,
+    triage: Sparkles,
+    specs: ListChecks,
+    claim: Hammer,
+    'hand-in': Hand,
+    verify: ListChecks,
+    merge: GitMerge,
+    other: Inbox
+  };
 
   const groups = $derived(
-    GROUPS.map((group) => ({
-      ...group,
-      cards: board.waitingOnMe.filter(
-        (card) => group.match(card) && GROUPS.find((first) => first.match(card))?.id === group.id
-      )
-    })).filter((group) => group.cards.length)
+    inboxGroups(board.waitingOnMe).map((group) => ({ ...group, icon: ICONS[group.id] }))
   );
 
   const dismiss = (id: string) =>
