@@ -18,7 +18,8 @@
   {#each people.gates as gate (gate.gate)}
     <dt class:current={gate.current}>{gate.does}</dt>
     <dd class="stack">
-      {#each gate.requirements as requirement (requirement.label)}
+      <!-- Two requirements can read alike (a product approver, and one only when user visible). -->
+      {#each gate.requirements as requirement, index (index)}
         <span class="line">
           <span class="muted">{requirement.label}:</span>
           {#if requirement.waived}

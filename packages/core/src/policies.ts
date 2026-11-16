@@ -49,6 +49,20 @@ export const outranks = (requirement: Requirement, other: Requirement): boolean 
   requirement.role !== other.role &&
   hasRole(requirement, other.role);
 
+/** Whether two requirements ask for the same approval, compared field by field. */
+export const sameRequirement = (a: Requirement, b: Requirement): boolean => {
+  if ('role' in a) return 'role' in b && a.role === b.role;
+  if ('domain' in a) return 'domain' in b && a.domain === b.domain && a.when === b.when;
+  return 'requester' in b;
+};
+
+/** A policy with each requirement once, the first kept: a lane, a plan and a guard can ask alike. */
+export const distinctRequirements = (policy: Policy): Requirement[] =>
+  policy.filter(
+    (requirement, index) =>
+      policy.findIndex((other) => sameRequirement(other, requirement)) === index
+  );
+
 /** The policy context of a task's gate, from the project's config and its current members. */
 export const policyContext = (
   config: Pick<ProjectConfig, 'approvals'>,
@@ -88,9 +102,17 @@ export const eligibleMembers = (requirement: Requirement, context: Eligibility):
   return others.length ? others : all;
 };
 
-/** The requirements of a policy that apply to this change, the maintainer floor last. */
+/**
+ * The requirements of a policy that apply to this change, each once, the maintainer floor last. A
+ * policy's own maintainer requirement gives way to the floor, which is never waived.
+ */
 export const applicableRequirements = (policy: Policy, userVisible: boolean): Requirement[] =>
-  [...policy, APPROVAL_FLOOR].filter(
+  [
+    ...distinctRequirements(policy).filter(
+      (requirement) => !sameRequirement(requirement, APPROVAL_FLOOR)
+    ),
+    APPROVAL_FLOOR
+  ].filter(
     (requirement) => !('when' in requirement && requirement.when === 'user_visible' && !userVisible)
   );
 

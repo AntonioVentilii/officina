@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   canAutoVerify,
   effectivePolicy,
+  evaluatePolicy,
   humanBuildReason,
   newTask,
   nextAgentRoles,
@@ -1527,6 +1528,34 @@ describe('guarded tasks', () => {
     expect(driver.events()).toContainEqual({ type: 'guards_changed', guards: ['publishing'] });
     expect(effectivePolicy(driver.config, task, 'spec_review')).toContainEqual({ role: 'owner' });
     expect(canAutoVerify(driver.config, { ...task, lane: 'green' })).toBe(false);
+  });
+
+  test('a lane that already asks for the owner gets one owner requirement from a publishing guard', () => {
+    const maintainer: Member = { id: 'marco', role: 'maintainer', domains: [] };
+    const driver = createDriver([owner, maintainer], loadConfig(GUARDED));
+    let task = newTask('t1', owner.id);
+    task = driver.step(task, { type: 'submit_request' }, asMember(owner));
+    task = driver.step(task, { type: 'accept' }, asMember(owner));
+    task = driver.step(
+      task,
+      { type: 'post_spec', predictedPaths: ['CNAME', ...PAGE_PATHS], userVisible: false },
+      asAgent('spec')
+    );
+    expect(task).toMatchObject({ lane: 'standard', guards: ['publishing'] });
+    for (const gate of ['spec_review', 'verifying'] as const) {
+      const policy = effectivePolicy(driver.config, task, gate);
+      expect(policy.filter((requirement) => 'role' in requirement)).toEqual([{ role: 'owner' }]);
+      const byMaintainer = evaluatePolicy(policy, [{ memberId: maintainer.id, subject: 's' }], {
+        gate,
+        members: [owner, maintainer],
+        requesterId: owner.id,
+        userVisible: false,
+        subject: 's',
+        selfApproval: true,
+        guards: task.guards
+      });
+      expect(byMaintainer).toMatchObject({ satisfied: false, pending: [{ role: 'owner' }] });
+    }
   });
 
   test('confidential content is approved only by members who may see it', () => {

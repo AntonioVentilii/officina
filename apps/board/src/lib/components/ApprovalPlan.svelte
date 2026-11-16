@@ -44,7 +44,8 @@
           >
         </li>
       {/if}
-      {#each plan.extra as item (item.label)}
+      <!-- A label is not unique: two requirements can read alike. -->
+      {#each plan.extra as item, index (index)}
         <li>
           <span class="icon added"><ShieldPlus size={14} /></span>
           <span

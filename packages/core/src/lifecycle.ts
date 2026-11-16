@@ -22,9 +22,11 @@ import { computeLane, redPaths, stricterLane, type Lane } from './lanes';
 import { GATE_ACTIONS, PERMISSIONS, can, canAnswer, readsTask, type Action } from './permissions';
 import {
   applicableRequirements,
+  distinctRequirements,
   eligibleMembers,
   evaluatePolicy,
   policyContext,
+  sameRequirement,
   type Approval
 } from './policies';
 import type { QuestionOption } from './questions';
@@ -391,17 +393,21 @@ export const gateSubject = (
 ): string | null =>
   gate === 'spec_review' ? `spec:${task.specVersion}` : task.headSha && `sha:${task.headSha}`;
 
-/** The lane's policy for a gate plus whatever the approval chooser added to it. */
+/**
+ * The lane's policy for a gate plus whatever the approval chooser added to it, each requirement
+ * once: a lane that already asks for the owner gets no second owner from a guard.
+ */
 export const effectivePolicy = (
   config: ProjectConfig,
   task: Pick<Task, 'lane' | 'approvalPlans' | 'guards'>,
   gate: Gate
-): Policy => [
-  ...config.lanes[task.lane ?? 'standard'].approvals[gate],
-  ...(task.approvalPlans[gate]?.extra.map((item) => item.requirement) ?? []),
-  // Secrets, access and publishing always need whoever may `publish`, whatever the lane says.
-  ...(needsOwner(task) ? [{ role: PERMISSIONS.publish }] : [])
-];
+): Policy =>
+  distinctRequirements([
+    ...config.lanes[task.lane ?? 'standard'].approvals[gate],
+    ...(task.approvalPlans[gate]?.extra.map((item) => item.requirement) ?? []),
+    // Secrets, access and publishing always need whoever may `publish`, whatever the lane says.
+    ...(needsOwner(task) ? [{ role: PERMISSIONS.publish }] : [])
+  ]);
 
 /** Whether the task's guards call for the owner at both gates. */
 export const needsOwner = (task: Pick<Task, 'guards'>): boolean =>
@@ -447,9 +453,6 @@ export const canAutoVerify = (
     plan.depth === 'glance'
   );
 };
-
-const sameRequirement = (a: ExtraRequirement, b: ExtraRequirement) =>
-  JSON.stringify(a) === JSON.stringify(b);
 
 /** Who builds only gets stricter too: once a spec plan asked for a person, agents never build it. */
 const plannedBuild = (
