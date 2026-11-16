@@ -13,6 +13,7 @@ import {
   redeemLoginLink,
   registerConnectorClient
 } from '../src';
+import { backendPid, untilWaitingOn } from './locks';
 import { resetAndSeed, type Seeded } from './seed';
 
 const url = process.env.TEST_DATABASE_URL;
@@ -191,7 +192,7 @@ describe.skipIf(!url)('member activity', () => {
       await signing.query('begin');
       await recordFirstSignIn(signing, tim);
       const minting = mint(tim);
-      await Bun.sleep(50);
+      await untilWaitingOn(pool, await backendPid(signing));
       await signing.query('commit');
       expect(await minting).toEqual({ ok: false, error: 'signed_in', name: 'Tim' });
     } finally {
