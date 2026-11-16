@@ -46,6 +46,8 @@ export interface BriefInput {
   readonly feedback: readonly string[];
   readonly firstRound: boolean;
   readonly prTitlePattern: string | null;
+  /** The project's pull request template, read from the default branch; `null` when there is none. */
+  readonly prTemplate: string | null;
   readonly chooser?: ChooserContext | undefined;
   /** Follow-up questions the interviewer has already asked on this request. */
   readonly questionsAsked?: number | undefined;
@@ -198,6 +200,11 @@ export const buildBrief = (input: BriefInput): string => {
       `## Protected paths (never change these)\n\n${list(input.protectedPaths)}`,
       `## Pull request title\n\nReturn \`prTitle\` in the repository's own format${input.prTitlePattern ? `; it must match the regular expression \`${input.prTitlePattern}\`` : ''}. Leave the spec's \`Status:\` line as it is: Officina updates it.`
     );
+    if (input.prTemplate) {
+      sections.push(
+        `## Pull request body\n\nReturn \`prBody\` written in the project's pull request template, \`${input.prTemplate}\` on the default branch: keep every heading and fill each one, following the template's own notes.`
+      );
+    }
     if (input.feedback.length) {
       sections.push(`## Notes to address\n\n${input.feedback.map(fence).join('\n\n')}`);
     }

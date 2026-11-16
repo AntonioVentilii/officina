@@ -95,8 +95,9 @@ export const createConnector = (deps: {
           const header = request.headers.get('authorization');
           const token = header?.match(/^Bearer (\S+)$/i)?.[1];
           if (!token) return tokenMissing();
-          const memberId = await memberForConnectorToken(pool, token, resource);
-          if (!memberId) return tokenInvalid();
+          const holder = await memberForConnectorToken(pool, token, resource);
+          if (!holder) return tokenInvalid();
+          const { memberId, via } = holder;
 
           let message: unknown;
           try {
@@ -134,6 +135,7 @@ export const createConnector = (deps: {
                 publicUrl,
                 github: deps.github,
                 memberId,
+                via,
                 workspaceId: member.workspaceId,
                 projects: await listMemberProjects(pool, memberId)
               };
