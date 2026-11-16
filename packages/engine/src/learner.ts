@@ -28,7 +28,7 @@ import {
   type StoredTaskContext,
   type TaskEventRow
 } from '@officina/db';
-import { RUNNER_ROLES, loadPrompt, type RunnerRole } from '@officina/runner';
+import { RUNNER_ROLES, isRunnerRole, loadPrompt, type RunnerRole } from '@officina/runner';
 import { DATA_NOTICE, closingSections, fence } from './brief';
 import { PROJECT_SKIP_REASONS, claimStep, type SkipReason } from './claim';
 import { learnerRun } from './learner-run';
@@ -213,7 +213,7 @@ export const learningProblems =
         }
       } else {
         const role = /^agents\/([a-z_]+)\.md$/.exec(file)?.[1];
-        if (!role || !(RUNNER_ROLES as readonly string[]).includes(role)) {
+        if (!role || !isRunnerRole(role)) {
           problems.push(`${at}: agent edits go to agents/<role>.md for a known role, not ${file}`);
           continue;
         }
