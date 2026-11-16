@@ -1,4 +1,5 @@
 import {
+  clip,
   computeLane,
   editsProject,
   isAgentDocsPath,
@@ -32,9 +33,6 @@ import { DATA_NOTICE, closingSections, fence } from './brief';
 import { PROJECT_SKIP_REASONS, claimStep, type SkipReason } from './claim';
 import { learnerRun } from './learner-run';
 import type { EngineDependencies, StepResult } from './step';
-
-const clip = (text: string, max: number) =>
-  text.length > max ? `${text.slice(0, max)} … (${text.length - max} more characters)` : text;
 
 const minutes = (from: Date, to: Date) => Math.round((to.getTime() - from.getTime()) / 60_000);
 

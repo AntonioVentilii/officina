@@ -8,26 +8,6 @@
 
   let open = $state<Record<string, boolean>>({});
 
-  const stats = $derived(
-    board.agents.map((entry) => {
-      const runs = board.runs.filter((run) => run.role === entry.role);
-      const finished = runs.filter((run) => run.status === 'succeeded' || run.status === 'failed');
-      return {
-        ...entry,
-        running: runs.some((run) => run.status === 'running'),
-        runs: runs.length,
-        success: finished.length
-          ? Math.round(
-              (finished.filter((run) => run.status === 'succeeded').length / finished.length) * 100
-            )
-          : null,
-        cost: runs.reduce((sum, run) => sum + (run.costCents ?? 0), 0)
-      };
-    })
-  );
-
-  const total = $derived(board.runs.reduce((sum, run) => sum + (run.costCents ?? 0), 0));
-
   // Maintainers' page: the API refuses its data to anyone else.
   $effect(() => {
     if (session.project && !session.technical) void goto('/', { replaceState: true });
@@ -41,12 +21,12 @@
       {board.running.length
         ? `${board.running.length} working right now.`
         : 'Nobody is working right now.'}
-      Recent sessions cost {money(total) || '$0.00'} in total.
+      Recent sessions cost {money(board.runsCostCents) || '$0.00'} in total.
     </p>
   </header>
 
   <div class="roster">
-    {#each stats as agent (agent.role)}
+    {#each board.agents as agent (agent.role)}
       <div class="agent" class:running={agent.running}>
         <AgentAvatar role={agent.role} label={agent.label} running={agent.running} size={40} />
         <div class="info">
@@ -56,7 +36,7 @@
             {[
               `${agent.runs} runs`,
               agent.success !== null ? `${agent.success}% ok` : '',
-              agent.cost ? money(agent.cost) : ''
+              agent.costCents ? money(agent.costCents) : ''
             ]
               .filter(Boolean)
               .join('   ')}
