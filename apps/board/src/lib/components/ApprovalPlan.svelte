@@ -53,7 +53,8 @@
           >
         </li>
       {/each}
-      {#each plan.verifiers as verifier (verifier.name)}
+      <!-- Nor is a name: two members can share one, and the chooser can name a member twice. -->
+      {#each plan.verifiers as verifier, index (index)}
         <li>
           <MemberAvatar name={verifier.name} size={20} />
           <span>
