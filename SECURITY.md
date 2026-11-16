@@ -43,3 +43,6 @@ Each advisory names the versions it affects and the first version with the fix.
 | [GHSA-2fw3-r47f-8fp6](https://github.com/AntonioVentilii/officina/security/advisories/GHSA-2fw3-r47f-8fp6): a build's own commits on the branch of a learning accepted during its run     | low      | 1.7.3    |
 | [GHSA-fvrw-vmpg-vj88](https://github.com/AntonioVentilii/officina/security/advisories/GHSA-fvrw-vmpg-vj88): a return path after sign-in that could lead to another site                   | low      | 1.7.3    |
 | [GHSA-hq84-4v24-5vrg](https://github.com/AntonioVentilii/officina/security/advisories/GHSA-hq84-4v24-5vrg): a project's access log showing events from the members' other projects        | low      | 1.7.3    |
+| [GHSA-59fm-g28g-2w2w](https://github.com/AntonioVentilii/officina/security/advisories/GHSA-59fm-g28g-2w2w): a check suite from another branch or a fork sending a task back to building   | medium   | 1.7.5    |
+| [GHSA-j598-pp47-p3jp](https://github.com/AntonioVentilii/officina/security/advisories/GHSA-j598-pp47-p3jp): a review steering a task from someone who may only read the repository        | low      | 1.7.5    |
+| [GHSA-59cq-rp5p-crvw](https://github.com/AntonioVentilii/officina/security/advisories/GHSA-59cq-rp5p-crvw): a build's write token still valid after its run, most often across a deploy   | low      | 1.7.5    |
