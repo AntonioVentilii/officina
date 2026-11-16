@@ -11,6 +11,8 @@ export const INPUT_LIMITS = {
   title: { min: 3, max: 200 },
   /** What a person asks for when they open a request. */
   request: 20_000,
+  /** The name a client gives one request it sends, so sending it again opens nothing new. */
+  requestId: 200,
   comment: 20_000,
   /** What a person says should change when they ask for changes. */
   note: 10_000,
