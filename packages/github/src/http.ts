@@ -44,13 +44,15 @@ export const rateLimitResetAt = (status: number, headers: Headers, now: number):
  * One call to GitHub's REST or GraphQL API with a token, as the App or as a person. An answer that
  * is not 2xx is a `GitHubError` with the start of its body, and when a rate limit refused it, the
  * time the limit resets; an empty body reads as `{}`. A call that takes longer than
- * `REQUEST_TIMEOUT_MS` is aborted and rejects with a `TimeoutError`.
+ * `REQUEST_TIMEOUT_MS` is aborted and rejects with a `TimeoutError`. `now` is the caller's clock,
+ * which a `retry-after` counts from.
  */
 export const githubRequest = async <T>(
   http: typeof fetch,
   token: string,
   path: string,
-  init: { readonly method?: string | undefined; readonly body?: unknown } = {}
+  init: { readonly method?: string | undefined; readonly body?: unknown } = {},
+  now: () => number = Date.now
 ): Promise<T> => {
   const response = await http(`${API}${path}`, {
     method: init.method ?? 'GET',
@@ -69,7 +71,7 @@ export const githubRequest = async <T>(
       response.status,
       path,
       text.slice(0, 300),
-      rateLimitResetAt(response.status, response.headers, Date.now())
+      rateLimitResetAt(response.status, response.headers, now())
     );
   return (text ? JSON.parse(text) : {}) as T;
 };

@@ -63,7 +63,8 @@ export const collectEachProject = async (
  * for many minutes. A step already running in this process is never started again; the database
  * claim guards against other processes. A failing pass or step is logged and never stops the loop;
  * passes that keep failing wait longer each time (`nextPassDelay`), and one that succeeds resets it.
- * The next pass also waits until `resumeAt`, when it gives a time (`heldPassDelay`).
+ * The next pass also waits until `resumeAt`, when it gives a time (`heldPassDelay`), read again when
+ * the wait ends, since a step still running may have moved it.
  */
 export const startScheduler = (options: SchedulerOptions): Scheduler => {
   const log = options.log ?? (() => {});
@@ -93,10 +94,20 @@ export const startScheduler = (options: SchedulerOptions): Scheduler => {
     }
   };
 
-  const delayAfterPass = () => {
+  /** `delayMs` stretched until `resumeAt`, logged when something holds the next pass. */
+  const heldDelay = (delayMs: number) => {
     const resumeAt = options.resumeAt?.() ?? null;
     if (resumeAt !== null) log('next pass held', { until: new Date(resumeAt).toISOString() });
-    return heldPassDelay(nextPassDelay(options.intervalMs, failedInARow), resumeAt, Date.now());
+    return heldPassDelay(delayMs, resumeAt, Date.now());
+  };
+
+  // A step runs on after its pass, so a rate limit it meets can come after the wait was set: the
+  // wait is checked again when it ends, and the pass waits on while something still holds it.
+  const passUnlessHeld = () => {
+    if (stopped) return;
+    const wait = heldDelay(0);
+    if (wait > 0) timer = setTimeout(passUnlessHeld, wait);
+    else void loop();
   };
 
   const loop = async () => {
@@ -113,7 +124,8 @@ export const startScheduler = (options: SchedulerOptions): Scheduler => {
         passes += 1;
       });
     await currentPass;
-    if (!stopped) timer = setTimeout(loop, delayAfterPass());
+    if (!stopped)
+      timer = setTimeout(passUnlessHeld, heldDelay(nextPassDelay(options.intervalMs, failedInARow)));
   };
   void loop();
 

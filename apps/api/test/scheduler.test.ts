@@ -118,6 +118,26 @@ describe('scheduler', () => {
     await scheduler.stop();
   });
 
+  test('a rate limit a step meets after its pass holds the pass already waiting', async () => {
+    let resumeAt: number | null = null;
+    const scheduler = startScheduler({
+      intervalMs: 20,
+      collect: async () => [work],
+      runStep: async () => {
+        // Still running when the wait for the next pass was set, as an agent session is.
+        await Bun.sleep(5);
+        resumeAt = Date.now() + 200;
+      },
+      resumeAt: () => resumeAt
+    });
+    // The 20 ms wait set before the step met the limit would give several passes by now.
+    await Bun.sleep(120);
+    expect(scheduler.passes()).toBe(1);
+    resumeAt = null;
+    await waitFor(() => scheduler.passes() >= 2);
+    await scheduler.stop({ waitForSteps: true });
+  });
+
   test('the wait before the next pass lasts until the time it is held to, at most an hour', () => {
     const now = 1_000_000;
     expect(heldPassDelay(15_000, null, now)).toBe(15_000);

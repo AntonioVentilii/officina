@@ -431,6 +431,28 @@ describe('GitHub client', () => {
     expect(client.rateLimitedUntil()).toBeNull();
   });
 
+  test('a secondary limit holds the App for its retry-after, counted on the client clock', async () => {
+    const nowMs = Date.parse('2026-09-16T12:00:00Z');
+    const { fetchImpl } = fakeGitHub({
+      'POST /app/installations/99/access_tokens': tokenRoute('2099-01-01T00:00:00Z'),
+      'POST /repos/ViciApp/vici-app/issues/3/comments': () =>
+        new Response('You have exceeded a secondary rate limit', {
+          status: 403,
+          headers: { 'retry-after': '60' }
+        })
+    });
+    const client = createGitHubClient({
+      appId: '1',
+      privateKeyPem,
+      fetch: fetchImpl,
+      now: () => nowMs
+    });
+    await expect(
+      client.commentOnIssue({ ...ref, issueNumber: 3, body: 'hi' })
+    ).rejects.toMatchObject({ resetAt: nowMs + 60_000 });
+    expect(client.rateLimitedUntil()).toBe(nowMs + 60_000);
+  });
+
   test('opening a pull request again returns the one the first attempt opened', async () => {
     const opened: { number: number; html_url: string }[] = [];
     const { fetchImpl, calls } = fakeGitHub({
