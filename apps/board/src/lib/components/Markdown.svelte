@@ -1,6 +1,5 @@
 <script lang="ts">
-  import DOMPurify from 'dompurify';
-  import { marked } from 'marked';
+  import { renderMarkdown } from '$lib/markdown';
 
   interface Props {
     source: string;
@@ -9,12 +8,7 @@
   let { source }: Props = $props();
 
   // Agent-written text is data: rendered, then sanitized, and links open outside the board.
-  const html = $derived(
-    DOMPurify.sanitize(marked.parse(source, { async: false, gfm: true, breaks: false }), {
-      FORBID_TAGS: ['style', 'form', 'input', 'button', 'iframe'],
-      FORBID_ATTR: ['style']
-    })
-  );
+  const html = $derived(renderMarkdown(source));
 
   const external = (node: HTMLElement) => {
     const apply = () => {
@@ -30,7 +24,7 @@
   };
 </script>
 
-<!-- eslint-disable-next-line svelte/no-at-html-tags -- the one place agent text is rendered, sanitized by DOMPurify above -->
+<!-- eslint-disable-next-line svelte/no-at-html-tags -- the one place agent text is rendered, sanitized by renderMarkdown -->
 <div class="md" use:external>{@html html}</div>
 
 <style>

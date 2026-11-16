@@ -32,7 +32,7 @@ The patterns Officina really uses, each with one place to copy from. [`../archit
 - **A person's rights are one matrix.** Every check of what a member may do asks `can(member, action)` (`packages/core/src/permissions.ts`), never `hasRole` against a role written at the call site; `hasRole` is left for routing a question to the role it is asked of. Who may answer or read a question (`canAnswer`, `seesQuestion`) and who reads a confidential task (`readsTask`) are decided there too, for the lifecycle, the policies, the board and the CLI alike. A new kind of right is a new action in `ACTIONS` with its least role in `PERMISSIONS`, its words in `ACTION_LABELS` and its row in `docs/architecture.md` section 2, which a test compares with the code. The board reads the viewer's actions from the API (`session.can`), never a role.
 - **What a viewer may see is decided in the API**, by the permission matrix, in the view builders of `apps/api/src/board.ts` (`PUBLIC_FIELDS` for event payloads). Every member sees every task of their projects; roles change the detail, not which tasks. The board never hides data the API sent.
 - **Loads that can overlap only let the latest land.** A refresh or a page's own fetch takes a check from `latestOnly` (`apps/board/src/lib/latest.ts`) before it asks and drops its answer once the check says a newer load has started, as `refresh` in `board.svelte.ts` and the access log on the Members page do.
-- **Board state is one class instance per concern** with Svelte 5 runes, exported as a singleton from `apps/board/src/lib/state` (`board`, `session`, `look`, `live`, `clock`, `toasts`).
+- **Board state is one class instance per concern** with Svelte 5 runes, exported as a singleton from `apps/board/src/lib/state` (`board`, `session`, `look`, `live`, `clock`, `toasts`, `guide`).
 - **A component that differs per look branches in one place** (`look.current` in markup, or CSS under `[data-look='tecnica']`), never as a second copy.
 
 ## Anti-patterns found in the code
@@ -40,3 +40,4 @@ The patterns Officina really uses, each with one place to copy from. [`../archit
 Named so nobody copies them; each is a follow-up of its own.
 
 - Stage, lane and role types are mirrored by hand in `apps/board/src/lib/types.ts`.
+- Other values the API owns are mirrored by hand in the board: the request header (`REQUEST_HEADER` in `apps/api/src/api.ts`, written again in `post` in `apps/board/src/lib/api.ts`), the problem codes (`GitHubSignInProblem` and `AuthorizationProblem` in `apps/board/src/lib/types.ts`, copies of the ones in `apps/api/src/github-accounts.ts` and `apps/api/src/connector/oauth.ts`), and the rule for a path on this site (`localPath` in `apps/api/src/api.ts` and `returnPath` in `apps/board/src/lib/return-path.ts`).
