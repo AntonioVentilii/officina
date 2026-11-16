@@ -47,6 +47,7 @@ export type BoardAction =
   | 'decline'
   | 'claim'
   | 'hand_in'
+  | 'hand_back'
   | 'approve'
   | 'changes'
   | 'answer'
