@@ -14,17 +14,20 @@ import {
   loadTask,
   loadTaskContext,
   recordSpecStatus,
+  recordSpecStatusIn,
   type StoredTaskContext,
   whileTaskAt
 } from '@officina/db';
 import {
   COPILOT_REVIEWERS,
+  GitHubError,
   type GitHubAsUser,
   type GitHubClient,
   type RepoRef
 } from '@officina/github';
 import type { Pool } from 'pg';
 import { cancelTaskAutoMerge } from './auto-merge';
+import { eachTaskOnItsOwn, type TaskFailure } from './each-task';
 import { hasPendingBotComments } from './github-feedback';
 
 /**
@@ -434,6 +437,12 @@ export const specPathIn = (
   return changedPaths.find((path) => pattern.test(path)) ?? null;
 };
 
+/** The spec status a task's pull request gets once its result is verified. */
+export const implementedStatus = (pullRequest: number) => `Implemented (#${pullRequest})`;
+
+/** What telling Officina's own status commit from any other head reads on GitHub. */
+type StatusCommitPort = Pick<SyncGitHubPort, 'commitChanges' | 'readFile'>;
+
 const withStatus = (text: string, status: string) =>
   text.replace(/^Status: .*$/m, `Status: ${status}`);
 
@@ -443,7 +452,7 @@ const withStatus = (text: string, status: string) =>
  * expected head and it changes only the spec file, to the expected head's text with this status.
  */
 const isOwnStatusCommit = async (
-  github: SyncGitHubPort,
+  github: StatusCommitPort,
   input: { ref: RepoRef; head: string; expected: string; path: string; status: string }
 ): Promise<boolean> => {
   const commit = await github.commitChanges({ ...input.ref, sha: input.head });
@@ -453,6 +462,38 @@ const isOwnStatusCommit = async (
   const [before, after] = await Promise.all([at(input.expected), at(input.head)]);
   if (!before || !after || after.text === before.text) return false;
   return after.text === withStatus(before.text, input.status);
+};
+
+/**
+ * Records the branch head as the status commit when it is Officina's own (`isOwnStatusCommit`),
+ * so it stands for the task's head. `false`, and nothing recorded, for any other head. With `at`,
+ * only while the task is still at that stage and head, under its row lock: a task that moved while
+ * GitHub was read keeps what moved it, and `false` says so.
+ */
+export const recordOwnStatusCommit = async (
+  pool: Pool,
+  github: StatusCommitPort,
+  input: {
+    taskId: string;
+    ref: RepoRef;
+    status: string;
+    head: string;
+    expected: string;
+    path: string;
+    at?: { readonly stage: string; readonly headSha: string | null };
+  }
+): Promise<boolean> => {
+  if (!(await isOwnStatusCommit(github, input))) return false;
+  const payload = { status: input.status, path: input.path, commitSha: input.head };
+  if (!input.at) {
+    await recordSpecStatus(pool, input.taskId, payload);
+    return true;
+  }
+  const at = { taskId: input.taskId, ...input.at };
+  return (
+    (await whileTaskAt(pool, at, (client) => recordSpecStatusIn(client, input.taskId, payload))) !==
+    null
+  );
 };
 
 /**
@@ -477,22 +518,17 @@ const recordUnexpectedHead = async (
   const own =
     expected !== null &&
     path !== null &&
-    (await isOwnStatusCommit(github, { ref: input.ref, head, expected, path, status }));
-  await recordSpecStatus(
-    pool,
-    taskId,
-    own
-      ? { status, path, commitSha: head }
-      : { status, path: null, commitSha: null, branchMoved: head }
-  );
-  return own ? 'updated' : 'moved';
+    (await recordOwnStatusCommit(pool, github, { ...input, expected, path }));
+  if (own) return 'updated';
+  await recordSpecStatus(pool, taskId, { status, path: null, commitSha: null, branchMoved: head });
+  return 'moved';
 };
 
 /**
  * Sets the spec's `Status:` line on the task branch, once per status. The builder cannot do it: it
  * does not know the pull request number when it pushes.
  */
-export const syncSpecStatus = async (
+const writeSpecStatus = async (
   pool: Pool,
   github: SyncGitHubPort,
   input: {
@@ -541,6 +577,26 @@ export const syncSpecStatus = async (
     ...(unverified ? { unverified } : {})
   });
   return text === file.text ? 'unchanged' : 'updated';
+};
+
+/**
+ * `writeSpecStatus`, safe when two writers set the same status at once (a hand-in and the
+ * catch-up opening the same pull request, or two passes finishing the same verified task): both
+ * write on top of the same file and the second gets GitHub's 409, though the status it wanted is
+ * on the branch. Writing again reads the branch as it is now and records that commit as the status
+ * written (or the branch as moved), so the writer that lost the race still completes.
+ */
+export const syncSpecStatus = async (
+  pool: Pool,
+  github: SyncGitHubPort,
+  input: Parameters<typeof writeSpecStatus>[2]
+): ReturnType<typeof writeSpecStatus> => {
+  try {
+    return await writeSpecStatus(pool, github, input);
+  } catch (error) {
+    if (!(error instanceof GitHubError) || error.status !== 409) throw error;
+    return writeSpecStatus(pool, github, input);
+  }
 };
 
 interface ChooserResult {
@@ -623,7 +679,7 @@ const finishVerifiedSpec = async (
     branch: branchForTask(context.number),
     base: context.defaultBranch,
     specDir: config.config.docs.specDir,
-    status: `Implemented (#${context.pullRequest})`
+    status: implementedStatus(context.pullRequest)
   });
   await resolveForwardedThreads(pool, github, {
     taskId,
@@ -702,12 +758,5 @@ export const finishVerifiedSpecs = async (
   github: SyncGitHubPort,
   taskIds: readonly string[],
   onBehalf?: OnBehalf
-): Promise<{ taskId: string; error: string }[]> => {
-  const failures: { taskId: string; error: string }[] = [];
-  for (const taskId of taskIds) {
-    await finishVerifiedSpec(pool, github, taskId, onBehalf).catch((error: unknown) =>
-      failures.push({ taskId, error: (error as Error).message })
-    );
-  }
-  return failures;
-};
+): Promise<TaskFailure[]> =>
+  eachTaskOnItsOwn(taskIds, (taskId) => finishVerifiedSpec(pool, github, taskId, onBehalf));

@@ -286,7 +286,7 @@
           </button>
         {/if}
         {#if can('hand_in')}
-          <HandIn number={task.number} {onchanged} />
+          <HandIn number={task.number} branch={task.branch} {onchanged} />
         {/if}
         {#if can('claim')}
           <button
@@ -297,10 +297,12 @@
             Claim the build
           </button>
         {/if}
-        {#if can('approve') && gate}
+        {#if can('changes') && gate}
           <button class="btn" disabled={busy} onclick={() => (mode = 'changes')}
             >Ask for changes</button
           >
+        {/if}
+        {#if can('approve') && gate}
           <button
             class="btn primary"
             disabled={busy}

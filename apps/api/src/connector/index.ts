@@ -8,15 +8,18 @@ import {
   authorizationServerMetadata,
   checkAuthorization,
   exchangeToken,
+  MCP_PATH,
   mcpResource,
   OAuthError,
+  PROTECTED_RESOURCE_METADATA_PATH,
+  PROTECTED_RESOURCE_PREFIX,
   protectedResourceMetadata,
   protectedResourceMetadataUrl,
   registerClient,
   SCOPE
 } from './oauth';
 
-export { checkAuthorization, consentRedirect, LOOPBACK_HOSTS } from './oauth';
+export { checkAuthorization, consentRedirect, LOOPBACK_HOSTS, mcpResource } from './oauth';
 
 const json = (status: number, body: unknown, headers: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), {
@@ -44,21 +47,24 @@ export const createConnector = (deps: {
   const resource = mcpResource(publicUrl);
   const board = publicUrl.replace(/\/$/, '');
 
-  const unauthorized = (invalid: boolean) =>
+  const challenge = `Bearer resource_metadata="${protectedResourceMetadataUrl(publicUrl)}", scope="${SCOPE}"`;
+  /** No token sent: the challenge tells the client where to start authorizing. */
+  const tokenMissing = () =>
+    json(401, { error: 'unauthorized' }, { 'www-authenticate': challenge });
+  /** A token sent that Officina does not accept for this resource. */
+  const tokenInvalid = () =>
     json(
       401,
-      { error: invalid ? 'invalid_token' : 'unauthorized' },
-      {
-        'www-authenticate': `Bearer resource_metadata="${protectedResourceMetadataUrl(publicUrl)}", scope="${SCOPE}"${invalid ? ', error="invalid_token"' : ''}`
-      }
+      { error: 'invalid_token' },
+      { 'www-authenticate': `${challenge}, error="invalid_token"` }
     );
 
   const methodNotAllowed = () => json(405, { error: 'use POST' }, { allow: 'POST' });
 
   return (
     new Elysia()
-      .get('/.well-known/oauth-protected-resource', () => protectedResourceMetadata(publicUrl))
-      .get('/.well-known/oauth-protected-resource/mcp', () => protectedResourceMetadata(publicUrl))
+      .get(PROTECTED_RESOURCE_PREFIX, () => protectedResourceMetadata(publicUrl))
+      .get(PROTECTED_RESOURCE_METADATA_PATH, () => protectedResourceMetadata(publicUrl))
       .get('/.well-known/oauth-authorization-server', () => authorizationServerMetadata(publicUrl))
       .post('/oauth/register', async ({ body }) => {
         try {
@@ -81,16 +87,16 @@ export const createConnector = (deps: {
           return oauthFailure(error);
         }
       })
-      .get('/mcp', methodNotAllowed)
-      .delete('/mcp', methodNotAllowed)
+      .get(MCP_PATH, methodNotAllowed)
+      .delete(MCP_PATH, methodNotAllowed)
       .post(
-        '/mcp',
+        MCP_PATH,
         async ({ request }) => {
           const header = request.headers.get('authorization');
           const token = header?.match(/^Bearer (\S+)$/i)?.[1];
-          if (!token) return unauthorized(false);
+          if (!token) return tokenMissing();
           const memberId = await memberForConnectorToken(pool, token, resource);
-          if (!memberId) return unauthorized(true);
+          if (!memberId) return tokenInvalid();
 
           let message: unknown;
           try {

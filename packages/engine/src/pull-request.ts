@@ -8,7 +8,9 @@ import {
   type AgentOutput,
   type Catalog,
   type CatalogPages,
-  type PushFacts
+  type ProjectConfig,
+  type PushFacts,
+  type Task
 } from '@officina/core';
 import {
   applyCommand,
@@ -21,10 +23,18 @@ import {
   stillRunning,
   type StoredTaskContext
 } from '@officina/db';
-import { GitHubError, type GitHubClient, type RepoRef } from '@officina/github';
+import type { GitHubClient, RepoRef } from '@officina/github';
 import type { Pool } from 'pg';
 import { cancelTaskAutoMerge, stopAutoMergeOnLeaving } from './auto-merge';
-import { syncSpecStatus, taskLink, type SyncGitHubPort } from './github-sync';
+import { eachTaskOnItsOwn, type TaskFailure } from './each-task';
+import {
+  implementedStatus,
+  recordOwnStatusCommit,
+  specPathIn,
+  syncSpecStatus,
+  taskLink,
+  type SyncGitHubPort
+} from './github-sync';
 
 export type PullRequestPort = Pick<GitHubClient, 'openPullRequest'> & SyncGitHubPort;
 
@@ -110,7 +120,7 @@ export const openTaskPullRequest = async (
       context.issue
     )
   });
-  await syncSpecStatusOnce(pool, github, {
+  await syncSpecStatus(pool, github, {
     taskId: input.taskId,
     ref,
     branch,
@@ -120,25 +130,6 @@ export const openTaskPullRequest = async (
   });
   await linkPullRequest(pool, input.taskId, pr.number);
   return pr;
-};
-
-/**
- * A hand-in and the catch-up can open the same pull request at once, and both write the spec
- * status on top of the same file: the second write gets GitHub's 409, though the status it wanted
- * is on the branch. Syncing again reads the branch as it is now and records that commit as the
- * status written (or the branch as moved), so the opening that lost the race still completes.
- */
-const syncSpecStatusOnce = async (
-  pool: Pool,
-  github: PullRequestPort,
-  input: Parameters<typeof syncSpecStatus>[2]
-): Promise<void> => {
-  try {
-    await syncSpecStatus(pool, github, input);
-  } catch (error) {
-    if (!(error instanceof GitHubError) || error.status !== 409) throw error;
-    await syncSpecStatus(pool, github, input);
-  }
 };
 
 /**
@@ -153,19 +144,14 @@ export const openMissingPullRequests = async (
   github: PullRequestPort,
   taskIds: readonly string[],
   publicUrl: string
-): Promise<{ taskId: string; error: string }[]> => {
-  const failures: { taskId: string; error: string }[] = [];
-  for (const taskId of taskIds) {
-    if (!awaitsPullRequest(await loadTaskContext(pool, taskId))) continue;
+): Promise<TaskFailure[]> =>
+  eachTaskOnItsOwn(taskIds, async (taskId) => {
+    if (!awaitsPullRequest(await loadTaskContext(pool, taskId))) return;
     // A step still running opens its own pull request.
     const built = recordedPush(await latestBuild(pool, taskId, BUILD_ROLES));
-    if (!built) continue;
-    await openTaskPullRequest(pool, github, { taskId, publicUrl, built }).catch((error: unknown) =>
-      failures.push({ taskId, error: (error as Error).message })
-    );
-  }
-  return failures;
-};
+    if (!built) return;
+    await openTaskPullRequest(pool, github, { taskId, publicUrl, built });
+  });
 
 /** A task whose open pull request holds a head Officina took in, which someone else may move. */
 type MovableContext = StoredTaskContext & { pullRequest: number; installationId: number };
@@ -186,32 +172,46 @@ const movableFromOutside = (context: StoredTaskContext | null): context is Movab
  * still going: its push, and the status commit after it, are not recorded yet.
  */
 export type AdoptPort = PushFactsPort &
-  Pick<GitHubClient, 'pullRequest' | 'failedChecks' | 'cancelAutoMerge' | 'changeOf'>;
+  Pick<
+    GitHubClient,
+    'pullRequest' | 'failedChecks' | 'cancelAutoMerge' | 'changeOf' | 'commitChanges'
+  >;
+
+/**
+ * Sends a head that just reached review back to the builder when its checks are already red:
+ * GitHub reported them before any task held that commit (a push from outside, a hand-in, or a
+ * build whose checks failed before its push was applied), and nothing will report them again.
+ * `null` when the head did not reach review or nothing failed on it.
+ */
+export const sendBackRedChecks = async (
+  pool: Pool,
+  github: Pick<GitHubClient, 'failedChecks'>,
+  input: { readonly taskId: string; readonly ref: RepoRef; readonly branch: string },
+  task: Task
+): Promise<ApplyResult | null> => {
+  if (task.stage !== 'reviewing' || !task.headSha) return null;
+  const headSha = task.headSha;
+  const failures = await github.failedChecks({ ...input.ref, sha: headSha, branch: input.branch });
+  if (failures.length === 0) return null;
+  return applyCommand(pool, {
+    taskId: input.taskId,
+    command: { type: 'ci_failed', headSha, details: failures.join('; ') },
+    actor: ENGINE
+  });
+};
 
 /**
  * What follows a head taken in: auto-merge off if the task left `merging`, since GitHub would land
- * the new head once its checks pass, and the checks already red on it sent to the builder, since
- * GitHub reported them before any task held that commit and nothing will report them again.
+ * the new head once its checks pass, and the checks already red on it sent to the builder.
  */
 const afterAdoption = async (
   pool: Pool,
   github: AdoptPort,
-  input: { taskId: string; ref: RepoRef; pullRequest: number; headSha: string; branch: string },
+  input: { taskId: string; ref: RepoRef; pullRequest: number; branch: string },
   adopted: ApplyResult
 ) => {
   await stopAutoMergeOnLeaving(pool, github, input, adopted);
-  if (!adopted.ok || adopted.task.stage !== 'reviewing') return;
-  const failures = await github.failedChecks({
-    ...input.ref,
-    sha: input.headSha,
-    branch: input.branch
-  });
-  if (failures.length === 0) return;
-  await applyCommand(pool, {
-    taskId: input.taskId,
-    command: { type: 'ci_failed', headSha: input.headSha, details: failures.join('; ') },
-    actor: ENGINE
-  });
+  if (adopted.ok) await sendBackRedChecks(pool, github, input, adopted.task);
 };
 
 /**
@@ -283,47 +283,76 @@ const carryHead = async (
   );
 };
 
+/**
+ * The branch head to take in from outside, or `null` when there is none: the head is the expected
+ * one after all, or the Implemented status commit an earlier pass wrote at merging but never
+ * recorded (its answer lost, or the process gone right after the write), which is recorded now as
+ * the task's head instead, so the verified task is not sent back for Officina's own commit.
+ */
+const outsideHead = async (
+  pool: Pool,
+  github: AdoptPort,
+  input: { context: MovableContext; ref: RepoRef; expected: string; config: ProjectConfig }
+): Promise<(PushFacts & { readonly catalogPages: CatalogPages }) | null> => {
+  const { context, config } = input;
+  const head = await readPush(github, input.ref, {
+    base: context.defaultBranch,
+    branch: branchForTask(context.number),
+    catalogs: config.docs.standards.catalogs
+  });
+  if (head.headSha === input.expected) return null;
+  const path = specPathIn(head.changedPaths, config.docs.specDir);
+  if (context.task.stage !== 'merging' || !path) return head;
+  const own = await recordOwnStatusCommit(pool, github, {
+    taskId: context.task.id,
+    ref: input.ref,
+    status: implementedStatus(context.pullRequest),
+    head: head.headSha,
+    expected: input.expected,
+    path,
+    at: { stage: context.task.stage, headSha: context.task.headSha }
+  });
+  return own ? null : head;
+};
+
+const adoptOutsidePush = async (pool: Pool, github: AdoptPort, taskId: string) => {
+  const context = await loadTaskContext(pool, taskId);
+  if (!movableFromOutside(context)) return;
+  const { task } = context;
+  const build = await latestBuild(pool, taskId, BUILD_ROLES);
+  if (build && stillRunning(build)) return;
+  const ref = { installationId: context.installationId, repo: context.repo };
+  const expected = await expectedHead(pool, taskId);
+  const prHead = (await github.pullRequest({ ...ref, pullRequest: context.pullRequest })).head.sha;
+  if (!expected || prHead === expected) return;
+  const base = context.defaultBranch;
+  if (await sameChange(github, ref, { base, verified: expected, head: prHead })) {
+    await carryHead(pool, github, { context, ref, headSha: prHead, from: expected });
+    return;
+  }
+  const config = parseProjectConfig(context.rawConfig);
+  if (!config.ok) return;
+  const head = await outsideHead(pool, github, { context, ref, expected, config: config.config });
+  if (!head) return;
+  const branch = branchForTask(context.number);
+  const adopted = await applyCommand(pool, {
+    taskId,
+    command: { type: 'outside_push', ...head },
+    actor: ENGINE,
+    guard: (current) => current.stage === task.stage && current.headSha === task.headSha
+  });
+  await afterAdoption(
+    pool,
+    github,
+    { taskId, ref, pullRequest: context.pullRequest, branch },
+    adopted
+  );
+};
+
+/** Each task on its own; the failures are returned for the log and tried again on the next pass. */
 export const adoptOutsidePushes = async (
   pool: Pool,
   github: AdoptPort,
   taskIds: readonly string[]
-) => {
-  for (const taskId of taskIds) {
-    const context = await loadTaskContext(pool, taskId);
-    if (!movableFromOutside(context)) continue;
-    const { task } = context;
-    const build = await latestBuild(pool, taskId, BUILD_ROLES);
-    if (build && stillRunning(build)) continue;
-    const ref = { installationId: context.installationId, repo: context.repo };
-    const expected = await expectedHead(pool, taskId);
-    const prHead = (await github.pullRequest({ ...ref, pullRequest: context.pullRequest })).head
-      .sha;
-    if (!expected || prHead === expected) continue;
-    const base = context.defaultBranch;
-    if (await sameChange(github, ref, { base, verified: expected, head: prHead })) {
-      await carryHead(pool, github, { context, ref, headSha: prHead, from: expected });
-      continue;
-    }
-    const config = parseProjectConfig(context.rawConfig);
-    if (!config.ok) continue;
-    const branch = branchForTask(context.number);
-    const head = await readPush(github, ref, {
-      base: context.defaultBranch,
-      branch,
-      catalogs: config.config.docs.standards.catalogs
-    });
-    if (head.headSha === expected) continue;
-    const adopted = await applyCommand(pool, {
-      taskId,
-      command: { type: 'outside_push', ...head },
-      actor: ENGINE,
-      guard: (current) => current.stage === task.stage && current.headSha === task.headSha
-    });
-    await afterAdoption(
-      pool,
-      github,
-      { taskId, ref, pullRequest: context.pullRequest, headSha: head.headSha, branch },
-      adopted
-    );
-  }
-};
+): Promise<TaskFailure[]> =>
+  eachTaskOnItsOwn(taskIds, (taskId) => adoptOutsidePush(pool, github, taskId));

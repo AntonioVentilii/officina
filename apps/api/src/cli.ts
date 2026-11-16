@@ -1,5 +1,5 @@
 import { parseArgs } from 'node:util';
-import { branchForTask } from '@officina/core';
+import { ROLES, branchForTask } from '@officina/core';
 import { createGitHubClient } from '@officina/github';
 import { PROMPTS_DIR, anthropicAuthFrom, createModelResolver } from '@officina/runner';
 import { Pool } from 'pg';
@@ -45,7 +45,7 @@ const USAGE = `usage (on your machine, prefix with scripts/officina; on the serv
 
   People
     login-link    [--email <email>]          one-time sign-in link to the board, valid ${SIGN_IN_TTL_MINUTES} minutes
-    invite        --email <email> --name "<name>" --role watcher|contributor|maintainer|owner
+    invite        --email <email> --name "<name>" --role ${ROLES.join('|')}
                   [--domains product,legal]  adds or updates a member; the link is valid ${INVITE_TTL_DAYS} days
     members                                  who is in the project, when they joined, whether their
                                              latest link was used, when they were last seen and
@@ -284,7 +284,7 @@ const main = async () => {
       console.log(JSON.stringify(result, null, 2));
       if (result.onboardingTask !== null) {
         console.log(
-          `agent docs missing on the default branch: ${result.missingDocs.join(', ')}. Task ${result.onboardingTask} writes them; no other task is built until it is merged.`
+          `agent docs missing on the default branch: ${result.missingDocs.join(', ')}. Task ${result.onboardingTask} writes them; no other task is built until it is merged or cancelled.`
         );
       }
       return;

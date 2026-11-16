@@ -13,7 +13,7 @@ import { parseProjectConfig } from '@officina/core';
 import { Pool } from 'pg';
 import { resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
 import { createApp } from '../src/app';
-import { agentsView, logEntries } from '../src/board';
+import { agentsView, logEntries, RUN_LOG_PAGE } from '../src/board';
 import { invite, loginLink } from '../src/people';
 import { startRealtime, type BoardEvent } from '../src/realtime';
 import { createRequest, createRequestAs, describeTask } from '../src/tasks';
@@ -198,6 +198,7 @@ describe.skipIf(!url)('board api', () => {
     ]);
     expect(me.limits.title).toEqual({ min: 3, max: 200 });
     expect(me.limits.prTitle).toEqual({ min: 3, max: 120 });
+    expect(me.connectorUrl).toBe(`${PUBLIC_URL}/mcp`);
 
     const again = await call(null, '/auth/redeem', { token: tokenFrom(link) });
     expect(again.status).toBe(410);
@@ -407,6 +408,53 @@ describe.skipIf(!url)('board api', () => {
     expect((await json(await call(gio, path))).waitingOn.me).toBe(false);
   });
 
+  test('asking for changes is offered only to the people the gate names, as the lifecycle allows', async () => {
+    const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    const tim = await signIn(
+      await invite(pool, {
+        publicUrl: PUBLIC_URL,
+        email: 'tim@example.com',
+        name: 'Tim',
+        role: 'contributor',
+        domains: []
+      })
+    );
+    await createRequest(pool, {
+      title: 'Rename settings',
+      request: 'Call it Preferences.',
+      skipInterview: true
+    });
+    const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
+    const path = `/api/projects/${seeded.projectId}/tasks/1`;
+    await call(owner, `${path}/actions`, { type: 'accept' });
+    await applyCommand(pool, {
+      taskId,
+      command: { type: 'post_spec', predictedPaths: ['src/settings.ts'], userVisible: false },
+      actor: { kind: 'agent', role: 'spec', version: 1 }
+    });
+    await applyCommand(pool, {
+      taskId,
+      command: {
+        type: 'plan_approval',
+        userVisible: false,
+        plan: { depth: 'glance', rationale: 'A label.', extra: [], verifiers: [] }
+      },
+      actor: { kind: 'agent', role: 'chooser', version: 1 }
+    });
+
+    // The plan needs an owner; a contributor may approve plans but is not named, so cannot send it back.
+    expect((await json(await call(owner, path))).actions).toEqual(
+      expect.arrayContaining(['approve', 'changes'])
+    );
+    const forTim = await json(await call(tim, path));
+    expect(forTim.stage).toBe('spec_review');
+    expect(forTim.actions).toContain('approve');
+    expect(forTim.actions).not.toContain('changes');
+    const refused = await call(tim, `${path}/actions`, { type: 'changes', note: 'Too short.' });
+    expect(refused.status).toBe(409);
+    expect((await json(await call(tim, path))).stage).toBe('spec_review');
+  });
+
   test('every decision route refuses a request without the request header and changes nothing', async () => {
     const cookie = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
     await createRequest(pool, {
@@ -456,9 +504,34 @@ describe.skipIf(!url)('board api', () => {
       ).rows[0];
     const before = await state();
 
-    for (const [path, body] of routes) {
-      const refused = await call(cookie, path, body, false);
-      expect(refused.status).toBe(403);
+    // Every route that changes something, read off the app so a new one cannot miss the check;
+    // only the ones GitHub, an OAuth client and an MCP client call answer without the header.
+    const headerFree = new Set(['/github/webhook', '/oauth/register', '/oauth/token', '/mcp']);
+    const params: Record<string, string> = {
+      projectId: seeded.projectId,
+      number: '1',
+      learningId
+    };
+    const changing = app()
+      .routes.filter((route) => route.method !== 'GET' && !headerFree.has(route.path))
+      .map((route) => ({
+        method: route.method,
+        path: route.path.replace(
+          /:(\w+)/g,
+          (_, name: string) => params[name] ?? crypto.randomUUID()
+        )
+      }));
+    // The routes tried with the header below are among them, so the list is not empty.
+    for (const [path] of routes) expect(changing).toContainEqual({ method: 'POST', path });
+    for (const { method, path } of changing) {
+      const refused = await app().handle(
+        new Request(`http://local${path}`, {
+          method,
+          headers: { cookie, 'content-type': 'application/json' },
+          body: '{}'
+        })
+      );
+      expect({ method, path, status: refused.status }).toEqual({ method, path, status: 403 });
       expect(await json(refused)).toEqual({ error: 'missing request header' });
     }
     expect(await state()).toEqual(before);
@@ -753,6 +826,7 @@ describe.skipIf(!url)('board api', () => {
     });
     const building = await json(await call(developer, path));
     expect(building.actions).toContain('hand_in');
+    expect(building.branch).toBe(`officina/task-${building.number}`);
     expect(building.waitingOn).toEqual({
       kind: 'people',
       label: 'Dev is building it, then hands it in',
@@ -872,6 +946,39 @@ describe.skipIf(!url)('board api', () => {
     const later = await json(await call(cookie, `/api/runs/${run.runId}/log?after=${log.cursor}`));
     expect(later.entries).toEqual([]);
     expect((await call(null, `/api/runs/${run.runId}/log`)).status).toBe(401);
+  });
+
+  test('a run log page of events the log drops still says more are left', async () => {
+    const cookie = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    await createRequest(pool, {
+      title: 'Rename settings',
+      request: 'Call it Preferences.',
+      skipInterview: true
+    });
+    const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
+    const run = await startRun(pool, {
+      taskId,
+      stage: 'speccing',
+      role: 'spec',
+      agentVersion: 1,
+      runner: 'managed_agents'
+    });
+    if (!run.ok) throw new Error('run not started');
+    // A full page of model spans, which the log leaves out, before the message it shows.
+    await pool.query(
+      `insert into run_events (run_id, type, payload)
+       select $1, 'span.model_request_start', '{}'::jsonb from generate_series(1, $2)`,
+      [run.runId, RUN_LOG_PAGE]
+    );
+    await appendRunEvent(pool, run.runId, 'agent.message', {
+      content: [{ type: 'text', text: 'Done' }]
+    });
+    const first = await json(await call(cookie, `/api/runs/${run.runId}/log`));
+    expect(first.entries).toEqual([]);
+    expect(first.more).toBe(true);
+    const next = await json(await call(cookie, `/api/runs/${run.runId}/log?after=${first.cursor}`));
+    expect(next.entries).toEqual([expect.objectContaining({ kind: 'message', text: 'Done' })]);
+    expect(next.more).toBe(false);
   });
 
   test("a question's options reach whoever may answer it, and picking one answers in its words", async () => {

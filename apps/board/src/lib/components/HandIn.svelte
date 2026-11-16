@@ -5,10 +5,11 @@
 
   interface Props {
     number: number;
+    branch: string;
     onchanged: () => void;
   }
 
-  let { number, onchanged }: Props = $props();
+  let { number, branch, onchanged }: Props = $props();
 
   let open = $state(false);
   let title = $state('');
@@ -47,8 +48,8 @@
 {#if open}
   <form class="hand-in" onsubmit={handIn}>
     <p class="faint">
-      Push the task branch <code>officina/task-{number}</code> first, built by hand or with your own agents.
-      Officina reads the push from GitHub and opens the pull request.
+      Push the task branch <code>{branch}</code> first, built by hand or with your own agents. Officina
+      reads the push from GitHub and opens the pull request.
     </p>
     <label class="caps" for="hand-in-title-{number}">Pull request title</label>
     <input

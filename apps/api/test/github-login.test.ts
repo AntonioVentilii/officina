@@ -128,7 +128,7 @@ describe.skipIf(!url)('GitHub sign-in', () => {
         exchangeCode: async () => tokens,
         refresh
       },
-      asUser: { user: async () => user } as never
+      asUser: { user: async () => user }
     });
     return accounts;
   };
