@@ -6,11 +6,12 @@ import {
   branchForTask,
   checksSchema,
   clip,
+  heldForOwner,
   redactSecrets,
   taskUrl,
   type Preview
 } from '@officina/core';
-import type { MemberProject } from '@officina/db';
+import { loadBoardTask, type MemberProject } from '@officina/db';
 import { fence, type HandInPort } from '@officina/engine';
 import type { Pool } from 'pg';
 import { z } from 'zod';
@@ -178,6 +179,20 @@ const WHAT_TO_DO: Record<string, string> = {
   cancel: 'cancel it on the board'
 };
 
+/** What happens next to a request just opened, in words for the person who opened it. */
+const afterOpening = async (
+  pool: Pool,
+  projectId: string,
+  created: { readonly number: number; readonly stage: string }
+): Promise<string> => {
+  if (created.stage !== 'request')
+    return 'It waits for a maintainer to accept it; then an agent writes the plan.';
+  const row = await loadBoardTask(pool, projectId, created.number);
+  return row && heldForOwner(row.blocked)
+    ? 'It touches something only an owner may allow, so it waits for an owner to decide before any agent reads it; show_task says where it stands.'
+    : 'An agent reads it now and may ask a few questions; they show up in whats_waiting_on_me and on the board.';
+};
+
 interface Tool<T extends z.ZodType> {
   readonly name: string;
   readonly title: string;
@@ -285,10 +300,7 @@ After it is opened, tell the person the task link and that an agent may ask them
         skipInterview: input.skip_interview === true,
         requestId: input.request_id
       });
-      const next =
-        created.stage === 'request'
-          ? 'An agent reads it now and may ask a few questions; they show up in whats_waiting_on_me and on the board.'
-          : 'It waits for a maintainer to accept it; then an agent writes the plan.';
+      const next = await afterOpening(context.pool, project.id, created);
       return `Opened task ${created.number} in ${project.name}: ${taskUrl(context.publicUrl, project.id, created.number)}\n${next}`;
     }
   }),
