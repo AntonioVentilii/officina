@@ -9,6 +9,12 @@ export type LiveEvent =
 
 type Listener = (event: LiveEvent) => void;
 
+/** The project id of the event sent after a reconnect, which every view and run log refreshes on. */
+const EVERY_PROJECT = '*';
+
+/** Whether the event asks every view to refresh, whatever it shows: the stream reconnected. */
+export const refreshesAll = (event: LiveEvent) => event.projectId === EVERY_PROJECT;
+
 /** How long to wait before opening the stream again after the server closed it. */
 const RECONNECT_MS = 5000;
 
@@ -18,14 +24,18 @@ class Live {
   #source: EventSource | null = null;
   #listeners = new Set<Listener>();
   #retry: ReturnType<typeof setTimeout> | null = null;
+  /** Whether the stream opened since the board connected it, so any later open is a reconnect. */
+  #opened = false;
 
   connect() {
     if (this.#source) return;
     const source = new EventSource('/api/stream');
     this.#source = source;
     source.onopen = () => {
-      // After a reconnect anything may have changed, so every view refreshes once.
-      if (this.status !== 'connecting') this.#emitAll();
+      // After any reconnect, including one the browser makes on its own, anything may have
+      // changed, so every view refreshes once.
+      if (this.#opened) this.#emitAll();
+      this.#opened = true;
       this.status = 'live';
     };
     source.onerror = () => {
@@ -52,7 +62,8 @@ class Live {
   }
 
   #emitAll() {
-    for (const listener of this.#listeners) listener({ kind: 'task', projectId: '*', number: 0 });
+    const event: LiveEvent = { kind: 'task', projectId: EVERY_PROJECT, number: 0 };
+    for (const listener of this.#listeners) listener(event);
   }
 
   disconnect() {
@@ -60,6 +71,7 @@ class Live {
     this.#retry = null;
     this.#source?.close();
     this.#source = null;
+    this.#opened = false;
     this.status = 'connecting';
   }
 

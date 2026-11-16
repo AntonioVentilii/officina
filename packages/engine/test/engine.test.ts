@@ -28,10 +28,11 @@ import {
   saveAgentVersion,
   startRun
 } from '@officina/db';
-import type { RefSnapshot } from '@officina/github';
+import { GitHubError, type RefSnapshot } from '@officina/github';
 import { RUNNER_ROLES, type SessionRequest } from '@officina/runner';
 import { Pool } from 'pg';
 import { CONFIG_YAML } from '../../core/test/fixtures';
+import { rowLockHolder, untilWaitingOn } from '../../db/test/locks';
 import {
   PLAN,
   applyOrThrow,
@@ -41,6 +42,7 @@ import {
 } from '../../db/test/seed';
 import { createFakePort, idle, toolUse, type ScriptItem } from '../../runner/test/fake-port';
 import {
+  COMMENT_SETTLE_SECONDS,
   adoptOutsidePushes,
   cancelStaleAutoMerges,
   createLiveRuns,
@@ -1690,15 +1692,16 @@ describe.skipIf(!url)('engine', () => {
 
   /**
    * A GitHub where the first status write lands on the branch on top of `base` but its answer is
-   * lost, as when the process dies or the connection drops right after the write.
+   * lost, as when the process dies or the connection drops right after the write; or, with a 409
+   * as `answer`, where another writer landed the same status first and this write was refused.
    */
-  const lostStatusWrite = (base: string) => {
+  const lostStatusWrite = (base: string, answer = new Error('socket hang up')) => {
     const github = fakeGitHub({ branchHead: base });
     const draft = '# Settings title\n\nStatus: Draft\n';
     let head = base;
     let written = draft;
     let writes = 0;
-    const port: GitHubPort = {
+    const port: GitHubPort & AdoptPort = {
       ...github.port,
       pushFacts: async (input) => ({ ...(await github.port.pushFacts(input)), headSha: head }),
       readFile: async ({ branch }) => ({
@@ -1709,7 +1712,7 @@ describe.skipIf(!url)('engine', () => {
         writes += 1;
         written = text;
         head = 'status1';
-        throw new Error('socket hang up');
+        throw answer;
       },
       commitChanges: async ({ sha }) =>
         sha === 'status1' ? { parents: [base], paths: [SPEC] } : { parents: [], paths: [] },
@@ -1747,6 +1750,54 @@ describe.skipIf(!url)('engine', () => {
     ]);
   });
 
+  test('an Implemented status commit whose answer was lost is not taken in as a push from outside', async () => {
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    const github = lostStatusWrite('abc');
+    await finishVerifiedSpecs(pool, github.port, [taskId]);
+
+    // The next pass looks for outside pushes first and finds the status commit as the head.
+    await adoptOutsidePushes(pool, github.port, [taskId]);
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({
+      stage: 'merging',
+      headSha: 'abc'
+    });
+    expect(await expectedHead(pool, taskId)).toBe('status1');
+    await finishVerifiedSpecs(pool, github.port, [taskId]);
+
+    expect(github.writes()).toBe(1);
+    const events = await pool.query<{ type: string }>(
+      `select type from task_events where task_id = $1
+         and type in ('merge_held', 'awaiting_merge') order by id`,
+      [taskId]
+    );
+    expect(events.rows.map((row) => row.type)).toEqual(['awaiting_merge']);
+  });
+
+  test('a lost status commit is not recorded for a task that moved while GitHub was read', async () => {
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    const github = lostStatusWrite('abc');
+    await finishVerifiedSpecs(pool, github.port, [taskId]);
+
+    // A newer head is taken in while the pass reads the status commit on GitHub.
+    const port: typeof github.port = {
+      ...github.port,
+      commitChanges: async (input) => {
+        await pool.query(`update tasks set head_sha = 'newer' where id = $1`, [taskId]);
+        return github.port.commitChanges(input);
+      }
+    };
+    await adoptOutsidePushes(pool, port, [taskId]);
+
+    const recorded = await pool.query(
+      `select 1 from task_events where task_id = $1 and type = 'spec_status_set'
+         and payload->>'commitSha' = 'status1'`,
+      [taskId]
+    );
+    expect(recorded.rowCount).toBe(0);
+  });
+
   test('an in-progress status commit whose answer was lost is taken when the catch-up opens the pull request', async () => {
     const github = lostStatusWrite('sha1');
     const agents = createFakePort(succeed);
@@ -1758,6 +1809,28 @@ describe.skipIf(!url)('engine', () => {
     expect(await linkedPullRequest(taskId)).toBe(42);
     expect(github.writes()).toBe(1);
     expect(await expectedHead(pool, taskId)).toBe('status1');
+  });
+
+  test('an Implemented status another writer set first is recorded, not failed on', async () => {
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    const github = lostStatusWrite(
+      'abc',
+      new GitHubError(409, `/contents/${SPEC}`, 'is at status1')
+    );
+
+    expect(await finishVerifiedSpecs(pool, github.port, [taskId])).toEqual([]);
+
+    expect(await expectedHead(pool, taskId)).toBe('status1');
+    const events = await pool.query<{ type: string; commit: string | null }>(
+      `select type, payload->>'commitSha' as commit from task_events where task_id = $1
+         and type in ('spec_status_set', 'merge_held', 'awaiting_merge') order by id`,
+      [taskId]
+    );
+    expect(events.rows).toEqual([
+      { type: 'spec_status_set', commit: 'status1' },
+      { type: 'awaiting_merge', commit: null }
+    ]);
   });
 
   test('GitHub merges on its own only when the project allows it and the chooser chose it', async () => {
@@ -1929,18 +2002,6 @@ describe.skipIf(!url)('engine', () => {
        where id = $1`,
       [taskId]
     );
-    // Until the other pass waits for the task's row lock, past every check made before taking it.
-    const otherPassWaitsForTheLock = async () => {
-      for (let tries = 0; tries < 200; tries += 1) {
-        const { rowCount } = await pool.query(
-          `select 1 from pg_stat_activity
-           where wait_event_type = 'Lock' and query like 'select stage, head_sha from tasks%'`
-        );
-        if (rowCount) return;
-        await Bun.sleep(10);
-      }
-      throw new Error('the other pass never waited for the lock');
-    };
     let second: Promise<unknown> | undefined;
     const merges: string[] = [];
     const github = fakeGitHub({
@@ -1962,8 +2023,10 @@ describe.skipIf(!url)('engine', () => {
         mergeWhenReady: async () => {
           merges.push('mergeWhenReady');
           if (!second) {
+            // Until the other pass waits for the task's row lock, past every check made before it.
+            const holder = await rowLockHolder(pool, 'tasks');
             second = finishVerifiedSpecs(pool, github.port, [taskId], onBehalf);
-            await otherPassWaitsForTheLock();
+            await untilWaitingOn(pool, holder);
           }
           return 'auto_merge' as const;
         },
@@ -2380,6 +2443,47 @@ describe.skipIf(!url)('engine', () => {
     expect(failed.rows.map((row) => row.details)).toEqual(['GitHub Actions: failure']);
   });
 
+  test('a task whose outside push check fails is reported and the tasks after it are still checked', async () => {
+    const broken = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, broken, 41);
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    const bot = fakeGitHub({ branchHead: 'bot1' });
+    const port: AdoptPort = {
+      ...bot.port,
+      pullRequest: async (input) => {
+        if (input.pullRequest === 41) throw new Error('GitHub 502 on /pulls/41');
+        return bot.port.pullRequest(input);
+      }
+    };
+    expect(await adoptOutsidePushes(pool, port, [broken, taskId])).toEqual([
+      { taskId: broken, error: 'GitHub 502 on /pulls/41' }
+    ]);
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({
+      stage: 'reviewing',
+      headSha: 'bot1'
+    });
+  });
+
+  test('a task whose bot comments fail to forward is reported and the tasks after it still get theirs', async () => {
+    await pool.query(
+      `update projects set config = jsonb_set(config, '{pull_request}', '{"review_bots": ["claude[bot]"]}')
+       where id = $1`,
+      [seeded.projectId]
+    );
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    await pool.query(
+      `insert into task_events (task_id, actor, type, payload, created_at)
+       values ($1, '{"kind":"engine"}', 'github_comment_seen', $2, now() - interval '5 minutes')`,
+      [taskId, JSON.stringify({ commentId: 31, by: 'claude[bot]', body: 'One finding.' })]
+    );
+    // An id the database refuses fails that task's share of the pass, as a lost connection would.
+    const failures = await forwardSettledComments(pool, fakeGitHub().port, ['not-a-task', taskId]);
+    expect(failures.map((failure) => failure.taskId)).toEqual(['not-a-task']);
+    expect((await loadTask(pool, taskId))?.task.stage).toBe('building');
+  });
+
   test('an update from the default branch with the same change keeps the verification, and merges as the new head', async () => {
     const taskId = await createTaskInMerging(pool, seeded);
     await linkPullRequest(pool, taskId, 42);
@@ -2474,27 +2578,25 @@ describe.skipIf(!url)('engine', () => {
     );
     const taskId = await createTaskInMerging(pool, seeded);
     await linkPullRequest(pool, taskId, 42);
-    const seen = (by: string, body: string, minutesAgo: number, commentId = 31) =>
+    const seen = (by: string, body: string, secondsAgo: number, commentId = 31) =>
       pool.query(
         `insert into task_events (task_id, actor, type, payload, created_at)
-         values ($1, '{"kind":"engine"}', 'github_comment_seen', $2, now() - make_interval(mins => $3))`,
-        [taskId, JSON.stringify({ commentId, by, body }), minutesAgo]
+         values ($1, '{"kind":"engine"}', 'github_comment_seen', $2, now() - make_interval(secs => $3))`,
+        [taskId, JSON.stringify({ commentId, by, body }), secondsAgo]
       );
+    // A minute past the window a comment must stay unchanged for.
+    const settled = COMMENT_SETTLE_SECONDS + 60;
     const github = fakeGitHub();
 
     // A placeholder the bot just edited again is not settled yet.
-    await seen('claude[bot]', 'Claude is working...', 10);
+    await seen('claude[bot]', 'Claude is working...', settled);
     await seen('claude[bot]', 'Two findings in the cache.', 0);
     await forwardSettledComments(pool, github.port, [taskId]);
     expect((await loadTask(pool, taskId))?.task.stage).toBe('merging');
 
     // Settled: forwarded with its last text only, and auto-merge off as it leaves merging.
-    await pool.query(
-      `insert into task_events (task_id, actor, type, payload, created_at)
-       values ($1, '{"kind":"engine"}', 'github_comment_seen', $2, now() - interval '5 minutes')`,
-      [taskId, JSON.stringify({ commentId: 31, by: 'claude[bot]', body: 'Final: one finding.' })]
-    );
-    await seen('vercel[bot]', 'Preview ready.', 10, 32);
+    await seen('claude[bot]', 'Final: one finding.', settled);
+    await seen('vercel[bot]', 'Preview ready.', settled, 32);
     await forwardSettledComments(pool, github.port, [taskId]);
     await forwardSettledComments(pool, github.port, [taskId]);
     expect((await loadTask(pool, taskId))?.task).toMatchObject({ stage: 'building', fixRounds: 1 });
@@ -2516,11 +2618,7 @@ describe.skipIf(!url)('engine', () => {
       command: { type: 'unchanged', note: 'The cache is fine.' },
       actor: { kind: 'agent', role: 'builder', version: 1 }
     });
-    await pool.query(
-      `insert into task_events (task_id, actor, type, payload, created_at)
-       values ($1, '{"kind":"engine"}', 'github_comment_seen', $2, now() - interval '5 minutes')`,
-      [taskId, JSON.stringify({ commentId: 33, by: 'claude[bot]', body: 'Still one finding.' })]
-    );
+    await seen('claude[bot]', 'Still one finding.', settled, 33);
     await forwardSettledComments(pool, github.port, [taskId]);
     expect((await loadTask(pool, taskId))?.task.stage).toBe('reviewing');
     const handled = await pool.query(

@@ -105,7 +105,13 @@ export const listAccessEvents = async (
     )
   ).rows;
 
-/** Drops events older than a year: enough to answer "who had access when", short of forever. */
+/** How long an access event is kept: enough to answer "who had access when", short of forever. */
+export const ACCESS_EVENT_RETENTION = '1 year';
+
+/** Drops events older than `ACCESS_EVENT_RETENTION`. */
 export const purgeOldAccessEvents = async (db: Queryable): Promise<number> =>
-  (await db.query(`delete from access_events where created_at < now() - interval '1 year'`))
-    .rowCount ?? 0;
+  (
+    await db.query('delete from access_events where created_at < now() - $1::interval', [
+      ACCESS_EVENT_RETENTION
+    ])
+  ).rowCount ?? 0;

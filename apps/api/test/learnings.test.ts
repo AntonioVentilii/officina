@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { branchForLearning, type LearningTarget } from '@officina/core';
 import {
+  DECISION_LEASE,
   claimLearningDecision,
   failLearningRewrite,
   insertLearnings,
@@ -191,8 +192,8 @@ describe.skipIf(!url)('learning decisions', () => {
   /** Ages a learning's claim past its lease, as if the process holding it had stopped. */
   const expireClaim = (id: string) =>
     pool.query(
-      "update learnings set decision_claimed_at = now() - interval '11 minutes' where id = $1",
-      [id]
+      "update learnings set decision_claimed_at = now() - $2::interval - interval '1 minute' where id = $1",
+      [id, DECISION_LEASE]
     );
 
   test('a decision made while an accept is opening its pull request is refused, and the accept lands', async () => {

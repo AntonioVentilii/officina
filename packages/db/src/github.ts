@@ -402,15 +402,21 @@ export const recordSpecStatus = (
   pool: Pool,
   taskId: string,
   payload: { readonly status: string } & Record<string, unknown>
-): Promise<boolean> =>
-  inTransaction(pool, async (client) => {
-    await client.query('select 1 from tasks where id = $1 for update', [taskId]);
-    const recorded = await client.query(
-      `select 1 from task_events
-       where task_id = $1 and type = 'spec_status_set' and payload @> $2::jsonb`,
-      [taskId, JSON.stringify({ status: payload.status })]
-    );
-    if (recorded.rowCount) return false;
-    await appendTaskEvent(client, { taskId, actor: ENGINE, type: 'spec_status_set', payload });
-    return true;
-  });
+): Promise<boolean> => inTransaction(pool, (client) => recordSpecStatusIn(client, taskId, payload));
+
+/** `recordSpecStatus` in the caller's transaction, as part of work under the task's row lock. */
+export const recordSpecStatusIn = async (
+  client: PoolClient,
+  taskId: string,
+  payload: { readonly status: string } & Record<string, unknown>
+): Promise<boolean> => {
+  await client.query('select 1 from tasks where id = $1 for update', [taskId]);
+  const recorded = await client.query(
+    `select 1 from task_events
+     where task_id = $1 and type = 'spec_status_set' and payload @> $2::jsonb`,
+    [taskId, JSON.stringify({ status: payload.status })]
+  );
+  if (recorded.rowCount) return false;
+  await appendTaskEvent(client, { taskId, actor: ENGINE, type: 'spec_status_set', payload });
+  return true;
+};
