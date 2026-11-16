@@ -43,6 +43,7 @@ import { createFakePort, idle, toolUse, type ScriptItem } from '../../runner/tes
 import {
   adoptOutsidePushes,
   cancelStaleAutoMerges,
+  createLiveRuns,
   finishVerifiedSpecs,
   forwardSettledComments,
   guardOrphanedBuilds,
@@ -1259,10 +1260,112 @@ describe.skipIf(!url)('engine', () => {
     const order = github.calls
       .map((call) => call.method)
       .filter((method) => ['runToken', 'refSnapshot', 'revokeToken'].includes(method));
-    expect(order).toEqual(['runToken', 'refSnapshot', 'revokeToken', 'refSnapshot']);
+    // The refs are read before the token exists, so nothing is left to revoke if that fails.
+    expect(order).toEqual(['refSnapshot', 'runToken', 'revokeToken', 'refSnapshot']);
     expect(github.calls.find((call) => call.method === 'revokeToken')!.args).toEqual([
       'token-write'
     ]);
+  });
+
+  const taskInBuilding = async (github: ReturnType<typeof fakeGitHub>) => {
+    const taskId = await taskInReady(github);
+    await applyOrThrow(
+      pool,
+      taskId,
+      { type: 'dispatch', assignee: { kind: 'agent', role: 'builder' }, openInLane: 0 },
+      { kind: 'engine' }
+    );
+    return taskId;
+  };
+
+  test('no token is minted for a build whose starting refs cannot be read', async () => {
+    const github = fakeGitHub();
+    const agents = createFakePort(succeed);
+    const taskId = await taskInBuilding(github);
+    const port = {
+      ...github.port,
+      refSnapshot: async () => {
+        throw new Error('GitHub 502 on the refs');
+      }
+    };
+    await expect(
+      runAgentStep({ pool, github: port, agents, publicUrl: PUBLIC_URL }, taskId, 'builder')
+    ).rejects.toThrow('GitHub 502 on the refs');
+    expect(github.calls.filter((call) => call.method === 'runToken')).toEqual([]);
+  });
+
+  test("a token GitHub fails to revoke is tried again, and the build's result still applies", async () => {
+    const github = fakeGitHub();
+    const agents = createFakePort(succeed);
+    const taskId = await taskInBuilding(github);
+    let revokes = 0;
+    const flaky = {
+      ...github.port,
+      revokeToken: async () => {
+        revokes += 1;
+        if (revokes === 1) throw new Error('GitHub 502 on /installation/token');
+      }
+    };
+    const result = await runAgentStep(
+      { pool, github: flaky, agents, publicUrl: PUBLIC_URL },
+      taskId,
+      'builder'
+    );
+    expect(result).toEqual({ status: 'applied' });
+    expect(revokes).toBe(2);
+    expect((await loadTask(pool, taskId))?.task.stage).toBe('reviewing');
+  });
+
+  test("a token GitHub refuses to revoke every time is on the run's log, and the result stands", async () => {
+    const github = fakeGitHub();
+    const agents = createFakePort(succeed);
+    const second = await taskInBuilding(github);
+    const refusing = {
+      ...github.port,
+      revokeToken: async () => {
+        throw new Error('GitHub 502 on /installation/token');
+      }
+    };
+    expect(
+      await runAgentStep(
+        { pool, github: refusing, agents, publicUrl: PUBLIC_URL },
+        second,
+        'builder'
+      )
+    ).toEqual({ status: 'applied' });
+    const logged = await pool.query(
+      `select 1 from run_events e join runs r on r.id = e.run_id
+       where r.task_id = $1 and e.type = 'token_revoke_failed'`,
+      [second]
+    );
+    expect(logged.rowCount).toBe(1);
+  });
+
+  test('a shutdown during a build interrupts its session and revokes its token, once', async () => {
+    const github = fakeGitHub();
+    const taskId = await taskInBuilding(github);
+    let stopped: boolean | undefined;
+    const agents = createFakePort((request) =>
+      request.metadata.role === 'builder'
+        ? [
+            async () => {
+              stopped = await liveRuns.stopAll(1_000);
+            },
+            idle('end_turn')
+          ]
+        : succeed(request)
+    );
+    const liveRuns = createLiveRuns({ agents, github: github.port });
+    await runAgentStep(
+      { pool, github: github.port, agents, publicUrl: PUBLIC_URL, liveRuns },
+      taskId,
+      'builder'
+    );
+    expect(stopped).toBe(true);
+    expect(agents.log).toContain('send sesn_1 user.interrupt');
+    expect(
+      github.calls.filter((call) => call.method === 'revokeToken').map((call) => call.args)
+    ).toEqual([['token-write']]);
   });
 
   test('a builder that moves or creates any branch but its own is blocked', async () => {

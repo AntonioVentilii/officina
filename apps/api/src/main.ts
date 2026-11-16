@@ -1,4 +1,5 @@
 import { migrate } from '@officina/db';
+import type { LiveRuns } from '@officina/engine';
 import { createGitHubAsUser, createGitHubClient, createGitHubUserAuth } from '@officina/github';
 import { PROMPTS_DIR, anthropicAuthFrom, createModelResolver } from '@officina/runner';
 import { join } from 'node:path';
@@ -116,11 +117,18 @@ const server = createApp({
 });
 log('api listening', { port: env.PORT, engine: Boolean(github && agents) });
 
-let scheduler: Scheduler | undefined;
+let engine: { scheduler: Scheduler; liveRuns: LiveRuns } | undefined;
+
+// Fly kills the machine 5 seconds after the signal (its default `kill_timeout`), and a build's token
+// and session must be stopped before that.
+const STOP_RUNS_DEADLINE_MS = 4_000;
 
 const shutdown = async (signal: string) => {
   log('shutting down', { signal });
-  await scheduler?.stop();
+  // First: the pass the scheduler waits for can take longer than the platform does.
+  if (engine && !(await engine.liveRuns.stopAll(STOP_RUNS_DEADLINE_MS)))
+    log('live runs not all stopped before the deadline');
+  await engine?.scheduler.stop();
   await server.stop();
   await realtime.close();
   await pool.end();
@@ -131,7 +139,7 @@ process.on('SIGINT', () => void shutdown('SIGINT'));
 
 // Started after the server listens: the boot sync talks to Anthropic, and an outage there must
 // not take the health check and the board down with it.
-scheduler =
+engine =
   github && agents
     ? await startEngine({
         pool,
@@ -152,7 +160,7 @@ scheduler =
       })
     : undefined;
 
-if (scheduler) {
+if (engine) {
   log('anthropic credentials', { mode: anthropicAuth?.kind });
 } else {
   const missing = [

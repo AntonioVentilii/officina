@@ -2,6 +2,7 @@ import {
   adoptOutsidePushes,
   forwardSettledComments,
   collectDueSteps,
+  createLiveRuns,
   guardOrphanedBuilds,
   cancelStaleAutoMerges,
   finishVerifiedSpecs,
@@ -9,7 +10,8 @@ import {
   requestCopilotReviews,
   type OnBehalf,
   runAgentStep,
-  type EngineDependencies
+  type EngineDependencies,
+  type LiveRuns
 } from '@officina/engine';
 import {
   failOrphanedRuns,
@@ -94,7 +96,8 @@ const purgeStaleRows = async (
  * Starts the engine inside this process. Runs orphaned by a previous process are failed first, and
  * their sessions interrupted best-effort, so their steps can run again; a build among them whose
  * refs outside its branch moved blocks its task. With a prompts directory, the role agents are
- * synced first, so a new Opus release or a merged prompt change takes effect on the next boot.
+ * synced first, so a new Opus release or a merged prompt change takes effect on the next boot. The
+ * live runs are what a shutdown stops before the process exits.
  */
 export const startEngine = async (input: {
   pool: Pool;
@@ -106,13 +109,15 @@ export const startEngine = async (input: {
   promptsDir?: string;
   onBehalf?: OnBehalf | undefined;
   log: (message: string, details?: Record<string, unknown>) => void;
-}): Promise<Scheduler> => {
+}): Promise<{ scheduler: Scheduler; liveRuns: LiveRuns }> => {
+  const liveRuns = createLiveRuns({ agents: input.agents, github: input.github });
   const deps: EngineDependencies = {
     pool: input.pool,
     github: input.github,
     agents: input.agents,
     publicUrl: input.publicUrl,
-    promptsDir: input.promptsDir
+    promptsDir: input.promptsDir,
+    liveRuns
   };
 
   const orphaned = await failOrphanedRuns(input.pool);
@@ -197,7 +202,7 @@ export const startEngine = async (input: {
   };
 
   let lastPurge = 0;
-  return startScheduler({
+  const scheduler = startScheduler({
     intervalMs: input.intervalMs,
     log: input.log,
     collect: async () => {
@@ -225,4 +230,5 @@ export const startEngine = async (input: {
     },
     runStep: (work) => runAgentStep(deps, work.taskId, work.role as RunnerRole)
   });
+  return { scheduler, liveRuns };
 };
