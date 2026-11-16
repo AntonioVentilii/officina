@@ -24,6 +24,7 @@
   import StageTrack from './StageTrack.svelte';
   import TaskPeople from './TaskPeople.svelte';
   import Timeline from './Timeline.svelte';
+  import ViaApp from './ViaApp.svelte';
 
   interface Props {
     number: number;
@@ -203,6 +204,7 @@
                   <div class="who">
                     <MemberAvatar name={task.request.author} size={22} />
                     <strong>{task.request.author}</strong>
+                    <ViaApp name={task.request.via} />
                     <time class="faint" title={dateTime(task.request.at)}
                       >{ago(task.request.at, clock.now)}</time
                     >

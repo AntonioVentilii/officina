@@ -61,7 +61,8 @@ resumes it. When the plan says a person must build it (or the lane forbids agent
 `ready` until a maintainer, or a contributor with the `developer` domain, runs
 `task claim --number <n>` (or claims it on the board, or from Claude with `claim_build`). They build it on `officina/task-<n>` by hand or with their own agents,
 push, and hand it in from the board ("Hand in the build"), from Claude (`hand_in_build`) or with
-`task hand-in --number <n> --title "<pull request title>"`; it then
+`task hand-in --number <n> --title "<pull request title>"`, adding `--body "<pull request body>"`
+written in the project's pull request template when its config names one; it then
 goes to the same review as an agent's build. A developer who will not build it after all gives it
 back from Claude with `hand_back_build`, and the task returns to `ready`.
 

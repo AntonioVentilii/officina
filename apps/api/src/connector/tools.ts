@@ -8,6 +8,7 @@ import {
   clip,
   redactSecrets,
   taskUrl,
+  type ConnectedApp,
   type Preview
 } from '@officina/core';
 import type { MemberProject } from '@officina/db';
@@ -20,7 +21,7 @@ import { TaskCommandError, actOnTaskAs, commentAs, createRequestAs, handInAs } f
 /**
  * The connector's tools. Each one is a thin call into what the board's API already does
  * (`createRequestAs`, `actOnTaskAs`, `boardView`, `taskView`), as the member the token belongs to,
- * with the same permissions. Descriptions are written for Claude talking to someone who is not a
+ * with the same permissions, and records the app (`via`) on everything it does. Descriptions are written for Claude talking to someone who is not a
  * developer: what to ask them first, and what a good request looks like.
  */
 
@@ -28,6 +29,8 @@ export interface ToolContext {
   readonly pool: Pool;
   readonly publicUrl: string;
   readonly memberId: string;
+  /** The app the token was granted to, recorded on every action it takes for the member. */
+  readonly via: ConnectedApp;
   readonly workspaceId: string;
   readonly projects: readonly MemberProject[];
   /** Reads a handed-in push from GitHub; absent where the GitHub App is not configured. */
@@ -281,6 +284,7 @@ After it is opened, tell the person the task link and that an agent may ask them
       const created = await createRequestAs(context.pool, {
         projectId: project.id,
         memberId: context.memberId,
+        via: context.via,
         title: input.title,
         request: input.request,
         skipInterview: input.skip_interview === true,
@@ -417,6 +421,7 @@ After it is opened, tell the person the task link and that an agent may ask them
       await actOnTaskAs(context.pool, {
         projectId: project.id,
         memberId: context.memberId,
+        via: context.via,
         number: input.number,
         action: {
           type: 'answer',
@@ -449,6 +454,7 @@ After it is opened, tell the person the task link and that an agent may ask them
       await commentAs(context.pool, {
         projectId: project.id,
         memberId: context.memberId,
+        via: context.via,
         number: input.number,
         text: input.text
       });
@@ -466,6 +472,7 @@ After it is opened, tell the person the task link and that an agent may ask them
       await actOnTaskAs(context.pool, {
         projectId: project.id,
         memberId: context.memberId,
+        via: context.via,
         number: input.number,
         action: { type: 'claim' }
       });
@@ -485,6 +492,15 @@ After it is opened, tell the person the task link and that an agent may ask them
         .min(INPUT_LIMITS.prTitle.min)
         .max(INPUT_LIMITS.prTitle.max)
         .describe("The pull request title, in the repository's own format."),
+      pr_body: z
+        .string()
+        .trim()
+        .min(1)
+        .max(INPUT_LIMITS.prBody)
+        .optional()
+        .describe(
+          'The pull request body, in Markdown, only when the project names a pull request template (`docs.pr_template` in `.github/officina.yml`), and then required: write it in that template, keeping every heading. Officina adds the link to the task after it.'
+        ),
       verified: checksSchema
         .optional()
         .describe('What you checked, one item each, for example the commands you ran.'),
@@ -496,9 +512,11 @@ After it is opened, tell the person the task link and that an agent may ask them
       const result = await handInAs(context.pool, context.github, {
         projectId: project.id,
         memberId: context.memberId,
+        via: context.via,
         number: input.number,
         publicUrl: context.publicUrl,
         prTitle: input.pr_title,
+        prBody: input.pr_body,
         verified: input.verified ?? [],
         notVerified: input.not_verified ?? []
       });
@@ -517,6 +535,7 @@ After it is opened, tell the person the task link and that an agent may ask them
       const result = await actOnTaskAs(context.pool, {
         projectId: project.id,
         memberId: context.memberId,
+        via: context.via,
         number: input.number,
         action: { type: 'release' }
       });
@@ -552,6 +571,7 @@ Always call show_task first, show the person the plan or the list of what to che
       const result = await actOnTaskAs(context.pool, {
         projectId: project.id,
         memberId: context.memberId,
+        via: context.via,
         number: input.number,
         action:
           input.decision === 'approve'
