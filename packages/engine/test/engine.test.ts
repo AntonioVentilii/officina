@@ -1942,7 +1942,12 @@ describe.skipIf(!url)('engine', () => {
         if (webhookLands) {
           webhookLands = false;
           // What the webhook records when a bot comments, after this pass checked for comments.
-          await recordBotComment(pool, taskId, { commentId: 7, by: 'claude[bot]', body: 'Hm' });
+          await recordBotComment(pool, taskId, {
+            commentId: 7,
+            by: 'claude[bot]',
+            body: 'Hm',
+            updatedAt: null
+          });
           await appendTaskEvent(pool, {
             taskId,
             actor: { kind: 'engine' },
