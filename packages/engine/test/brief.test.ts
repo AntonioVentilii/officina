@@ -35,7 +35,8 @@ describe('the brief', () => {
     requestThread: [],
     feedback: [],
     firstRound: true,
-    prTitlePattern: null
+    prTitlePattern: null,
+    prTemplate: null
   };
 
   test('tells the agents that ask and build what only a person can provide', () => {
@@ -45,5 +46,15 @@ describe('the brief', () => {
       expect(brief).toContain('- `dns`: a domain or a DNS change');
     }
     expect(buildBrief({ ...input, role: 'reviewer_spec' })).not.toContain('needs_person');
+  });
+
+  test("asks a build for its pull request body in the project's template, only when there is one", () => {
+    const template = { ...input, prTemplate: '.github/pull_request_template.md' };
+    for (const role of ['builder', 'onboarder'] as const) {
+      expect(buildBrief({ ...template, role })).toContain(
+        "Return `prBody` written in the project's pull request template, `.github/pull_request_template.md`"
+      );
+      expect(buildBrief({ ...input, role })).not.toContain('## Pull request body');
+    }
   });
 });
