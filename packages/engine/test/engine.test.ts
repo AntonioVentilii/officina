@@ -8,6 +8,7 @@ import {
 } from '@officina/core';
 import {
   appendTaskEvent,
+  claimLearningDecision,
   decideLearning,
   insertLearnings,
   listLearnings,
@@ -134,7 +135,7 @@ const fakeGitHub = (
   let branch = options.branchHead ?? 'sha1';
   const refs = [...(options.refs ?? [REFS])];
   let snapshots = 0;
-  const port = {
+  const port: GitHubPort & AdoptPort = {
     refSnapshot: async (...args: unknown[]) => {
       calls.push({ method: 'refSnapshot', args });
       if (++snapshots === 2) await options.afterBuild?.();
@@ -184,7 +185,7 @@ const fakeGitHub = (
       calls.push({ method: 'updateFile', args });
       if (updateFails-- > 0) throw new Error('GitHub 502 on /contents');
       if (options.written) branch = options.written.commitSha;
-      return options.written;
+      return options.written ?? { commitSha: null, parentSha: null };
     },
     commentOnIssue: async (...args: unknown[]) => {
       calls.push({ method: 'commentOnIssue', args });
@@ -231,7 +232,7 @@ const fakeGitHub = (
         ? 'change of abc'
         : `change of ${head}`;
     }
-  } as unknown as GitHubPort & AdoptPort;
+  };
   return { port, calls };
 };
 
@@ -514,7 +515,7 @@ describe.skipIf(!url)('engine', () => {
       tokenFor: async (memberId) => ({ token: `token-${memberId}`, login: 'antonio', userId: 1 }),
       asUser: {
         pullRequest: notExpected,
-        reviews: notExpected,
+        reviews: async () => [],
         approve: notExpected,
         mergeWhenReady: notExpected,
         requestCopilotReview: async (...args) => {
@@ -1197,6 +1198,7 @@ describe.skipIf(!url)('engine', () => {
       afterBuild: async () => {
         await decideLearning(pool, {
           id: learning!.id,
+          claim: (await claimLearningDecision(pool, seeded.projectId, learning!.id))!,
           status: 'accepted',
           memberId: seeded.ownerId,
           note: null,
@@ -2304,7 +2306,12 @@ describe.skipIf(!url)('engine', () => {
     );
     const taskId = await createTaskInMerging(pool, seeded);
     await linkPullRequest(pool, taskId, 42);
-    await recordBotComment(pool, taskId, { commentId: 41, by: 'claude[bot]', body: 'Working...' });
+    await recordBotComment(pool, taskId, {
+      commentId: 41,
+      by: 'claude[bot]',
+      body: 'Working...',
+      updatedAt: null
+    });
     const github = fakeGitHub({
       branchHead: 'abc',
       written: { commitSha: 'abc2', parentSha: 'abc' }
