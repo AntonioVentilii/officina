@@ -2,7 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import { GitHubError } from '../src';
 import { githubRequest } from '../src/http';
 
-const answering = (response: () => Response) => (async () => response()) as unknown as typeof fetch;
+const answering = (response: () => Response): typeof fetch =>
+  Object.assign(async () => response(), { preconnect: fetch.preconnect });
 
 describe('one GitHub request', () => {
   test('a successful answer with no body reads as an empty object', async () => {
@@ -31,5 +32,16 @@ describe('one GitHub request', () => {
     );
     await expect(failing).rejects.toBeInstanceOf(GitHubError);
     await expect(failing).rejects.toThrow('GitHub 403 on /user: nope');
+  });
+
+  test('every call carries a deadline, so a GitHub that never answers cannot hold the caller', async () => {
+    const signals: (AbortSignal | null | undefined)[] = [];
+    const http = (async (_url: string, init?: RequestInit) => {
+      signals.push(init?.signal);
+      return Response.json({});
+    }) as unknown as typeof fetch;
+    await githubRequest<unknown>(http, 't', '/user');
+    expect(signals[0]).toBeInstanceOf(AbortSignal);
+    expect(signals[0]?.aborted).toBe(false);
   });
 });
