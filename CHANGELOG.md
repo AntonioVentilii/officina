@@ -1,5 +1,43 @@
 # Changelog
 
+## [1.7.6](https://github.com/AntonioVentilii/officina/compare/v1.7.5...v1.7.6) (2026-11-16)
+
+
+### Bug Fixes
+
+* **api,board:** keep reading a run log past a page the log mostly drops ([#209](https://github.com/AntonioVentilii/officina/issues/209)) ([5addd77](https://github.com/AntonioVentilii/officina/commit/5addd77cec15958726b2f41d26d3da20b65e94e4))
+* **board:** list every card the Inbox badge counts on the Inbox page ([#221](https://github.com/AntonioVentilii/officina/issues/221)) ([c157861](https://github.com/AntonioVentilii/officina/commit/c157861e8a901aeab30ebc5ec66c7f969c05dee8))
+* **board:** make the task drawer a modal dialog that takes and gives back focus ([#225](https://github.com/AntonioVentilii/officina/issues/225)) ([976af47](https://github.com/AntonioVentilii/officina/commit/976af47f02787f8f8006199ad84c0109c1e8fa4b))
+* **board:** refresh every view when the browser reconnects the change stream ([#212](https://github.com/AntonioVentilii/officina/issues/212)) ([6dd8f3a](https://github.com/AntonioVentilii/officina/commit/6dd8f3aa8dedad5b0f3aa28512ad789ff9bd1fcb))
+* **core,api,board:** offer asking for changes only to the people the gate names ([#216](https://github.com/AntonioVentilii/officina/issues/216)) ([461b846](https://github.com/AntonioVentilii/officina/commit/461b8467e424439ce5de5e4f7e8a47fdd66cdb23))
+* **core,board:** ask for each approval once at a gate, so a guarded task's panel opens ([#227](https://github.com/AntonioVentilii/officina/issues/227)) ([f0f0d1d](https://github.com/AntonioVentilii/officina/commit/f0f0d1d50ce7b620362e2045ef51ae0de8f388a7))
+* **engine,api:** check each task on its own when taking in outside pushes and forwarding bot comments ([#210](https://github.com/AntonioVentilii/officina/issues/210)) ([79c24e7](https://github.com/AntonioVentilii/officina/commit/79c24e7fe1b9dc2de9ae6227a664e8056de46a13))
+* **engine,db:** check pending bot comments on the locked transaction when turning auto-merge on ([#220](https://github.com/AntonioVentilii/officina/issues/220)) ([62f3538](https://github.com/AntonioVentilii/officina/commit/62f3538b597d9e38671393c8df60ed029ec3a2c1))
+* **engine:** send a pushed or handed-in head back when its checks were already red ([#218](https://github.com/AntonioVentilii/officina/issues/218)) ([8af1d9e](https://github.com/AntonioVentilii/officina/commit/8af1d9eeef34de8f1477ba870d2abac011d47503))
+* **engine:** take Officina's own lost status commit as the task's head at merging ([#211](https://github.com/AntonioVentilii/officina/issues/211)) ([0b0aefe](https://github.com/AntonioVentilii/officina/commit/0b0aefee4fa7e3ae537fb3a02854b4bd77eb6afb))
+* **engine:** write the Implemented spec status safely when another writer set it first ([#214](https://github.com/AntonioVentilii/officina/issues/214)) ([bc63f08](https://github.com/AntonioVentilii/officina/commit/bc63f0869764cbcaa110d717c7982ec941f5b5fa))
+* **github,api:** wait for a GitHub rate limit to reset before the next scheduler pass ([#224](https://github.com/AntonioVentilii/officina/issues/224)) ([5a2fac0](https://github.com/AntonioVentilii/officina/commit/5a2fac0bbace7bbac8511633bb64807fd0c8d887))
+
+
+### Documentation
+
+* **ai:** catalog the shared pieces that had no row ([#223](https://github.com/AntonioVentilii/officina/issues/223)) ([d9672b5](https://github.com/AntonioVentilii/officina/commit/d9672b592922e31a36b53111a0731feb91a9e029))
+* **repo:** describe as current only what exists ([#208](https://github.com/AntonioVentilii/officina/issues/208)) ([cd8eac3](https://github.com/AntonioVentilii/officina/commit/cd8eac3fe37e552209e3ba57b95d50bbe6ffcfcc))
+
+
+### Code Refactoring
+
+* **api,board,core,db:** write each value once ([#215](https://github.com/AntonioVentilii/officina/issues/215)) ([baa0959](https://github.com/AntonioVentilii/officina/commit/baa09591fc07971c8da9320e385a3d1ffa13d022))
+* **api:** name the connector's two unauthorized responses ([#219](https://github.com/AntonioVentilii/officina/issues/219)) ([acb3218](https://github.com/AntonioVentilii/officina/commit/acb3218a17418335cb22c7d574a08d07cac2f918))
+
+
+### Tests
+
+* **api,engine,github:** type fakes as their port instead of casting them ([#217](https://github.com/AntonioVentilii/officina/issues/217)) ([b839325](https://github.com/AntonioVentilii/officina/commit/b83932576fe0e88c7bcae872eff8bee692d63026))
+* **api:** try every route that changes something without the request header ([#207](https://github.com/AntonioVentilii/officina/issues/207)) ([e41198a](https://github.com/AntonioVentilii/officina/commit/e41198abfde167d2e87caebc904b638994fe1ec1))
+* **board:** cover the diff shown for a learning's edit ([#222](https://github.com/AntonioVentilii/officina/issues/222)) ([18edd36](https://github.com/AntonioVentilii/officina/commit/18edd36b0a8beb81dbe15804e32de38f8c74243b))
+* **db,api,engine:** age rows from the named windows and wait on the lock holder ([#213](https://github.com/AntonioVentilii/officina/issues/213)) ([eecc8c9](https://github.com/AntonioVentilii/officina/commit/eecc8c92bcec2bd8c2d3611707ef0d053b44349f))
+
 ## [1.7.5](https://github.com/AntonioVentilii/officina/compare/v1.7.4...v1.7.5) (2026-11-16)
 
 
