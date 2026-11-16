@@ -55,7 +55,7 @@ export const createGitHubAccounts = (deps: {
   pool: Pool;
   box: TokenBox;
   auth: GitHubUserAuth;
-  asUser: GitHubAsUser;
+  asUser: Pick<GitHubAsUser, 'user'>;
 }) => {
   const { pool, box } = deps;
 

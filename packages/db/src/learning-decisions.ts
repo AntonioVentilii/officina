@@ -7,7 +7,7 @@ type Queryable = Pool | PoolClient;
  * stopped before it recorded or released it, and the next decision takes it over: every GitHub
  * write an accept makes lands once, so the decision that takes over finishes without repeating it.
  */
-const DECISION_LEASE = '10 minutes';
+export const DECISION_LEASE = '10 minutes';
 
 /**
  * Marks a proposed learning as being decided, unless a live claim holds it already, and returns

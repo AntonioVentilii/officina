@@ -408,15 +408,21 @@ export const needsOwner = (task: Pick<Task, 'guards'>): boolean =>
   task.guards.some((guard) => OWNER_GUARDS.has(guard));
 
 /**
- * Whether the policy in force at a gate names a member: whatever they decide there would meet one
- * of its requirements, their own request included.
+ * Whether a member may send the work at the gate a task is at back: the policy in force there names
+ * them, so whatever they decide would meet one of its requirements, their own request included.
  */
-const namedAt = (task: Task, context: DecideContext, gate: Gate, member: Member): boolean => {
+export const canRequestChanges = (
+  task: Pick<Task, 'stage' | 'lane' | 'approvalPlans' | 'guards' | 'requesterId' | 'userVisible'>,
+  project: Pick<DecideContext, 'config' | 'members'>,
+  member: Member
+): boolean => {
+  if (!isGate(task.stage)) return false;
+  const gate = task.stage;
   const eligibility = {
-    ...policyContext(context.config, task, gate, { members: context.members, subject: '' }),
+    ...policyContext(project.config, task, gate, { members: project.members, subject: '' }),
     selfApproval: true
   };
-  return applicableRequirements(effectivePolicy(context.config, task, gate), task.userVisible).some(
+  return applicableRequirements(effectivePolicy(project.config, task, gate), task.userVisible).some(
     (requirement) => eligibleMembers(requirement, eligibility).some(({ id }) => id === member.id)
   );
 };
@@ -871,7 +877,7 @@ export const decide = (
       if (task.stage !== 'spec_review' && task.stage !== 'verifying') return fail('wrong_stage');
       const member = memberFor(actor, context);
       // Sending the work back is for the people the gate's policy names, as approving it is.
-      if (member === undefined || !namedAt(task, context, task.stage, member))
+      if (member === undefined || !canRequestChanges(task, context, member))
         return fail('not_allowed');
       const why: DomainEvent = { type: 'changes_requested', stage: task.stage, note: command.note };
       if (task.stage === 'verifying') return backToBuilding(task, context, why);
