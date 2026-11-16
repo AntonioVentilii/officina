@@ -260,6 +260,7 @@ export type TaskAction =
   | { readonly type: 'submit' }
   | { readonly type: 'accept' }
   | { readonly type: 'claim' }
+  | { readonly type: 'release' }
   | { readonly type: 'approve' }
   | { readonly type: 'changes'; readonly note: string }
   /**
@@ -281,6 +282,7 @@ const toCommand = (action: TaskAction): Command => {
       return { type: 'submit_request' };
     case 'accept':
     case 'claim':
+    case 'release':
     case 'approve':
       return { type: action.type };
     case 'changes':

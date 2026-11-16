@@ -172,8 +172,9 @@ const WHAT_TO_DO: Record<string, string> = {
   changes: 'ask for changes, saying what is wrong (review with decision "changes")',
   comment: 'add a comment (comment)',
   accept: 'accept or decline it on the board',
-  claim: 'claim the build, to build it yourself, on the board',
-  hand_in: 'hand in the build once its branch is pushed (hand_in_build)',
+  claim: 'claim the build, to build it yourself (claim_build)',
+  hand_in:
+    'hand in the build once its branch is pushed (hand_in_build), or hand it back (hand_back_build)',
   submit: 'send it on as it is, on the board',
   cancel: 'cancel it on the board'
 };
@@ -455,6 +456,23 @@ After it is opened, tell the person the task link and that an agent may ask them
     }
   }),
   tool({
+    name: 'claim_build',
+    title: 'Claim a build',
+    description: `For a developer who builds a task themselves, by hand or with their own agents (for example in Claude Code), instead of the build agent. Claim only when the person asks to build it. Call show_task first: it says whether the build waits for a developer and why, who may claim it, and the approved plan. Claiming makes the person the task's builder; a build the agent already started is taken over and the agent's part ends. Then build exactly the approved plan on the task branch (\`${branchForTask('<number>')}\`), push it and call hand_in_build. If the person stops, hand_back_build gives the build back.`,
+    input: z.object({ project: PROJECT, number: NUMBER }),
+    readOnly: false,
+    run: async (context, input) => {
+      const project = projectFor(context, input.project);
+      await actOnTaskAs(context.pool, {
+        projectId: project.id,
+        memberId: context.memberId,
+        number: input.number,
+        action: { type: 'claim' }
+      });
+      return `Claimed; you build task ${input.number} now. Build the approved plan on the branch ${branchForTask(input.number)}, push it, then hand it in with hand_in_build: ${taskUrl(context.publicUrl, project.id, input.number)}`;
+    }
+  }),
+  tool({
     name: 'hand_in_build',
     title: 'Hand in a build',
     description: `For a developer who claimed a task's build and pushed it to the task branch (\`${branchForTask('<number>')}\`), by hand or with their own agents, for example in Claude Code. Officina reads what was pushed from GitHub, sends it to the same review an agent's build gets (two reviewer agents, then the people who check the result) and opens the pull request. Call show_task first to read the approved plan; build exactly that, push the branch, then call this with a pull request title in the repository's format and what you checked.`,
@@ -485,6 +503,24 @@ After it is opened, tell the person the task link and that an agent may ask them
         notVerified: input.not_verified ?? []
       });
       return `Handed in; task ${input.number} is now ${result.stage}${result.pullRequest ? `, pull request #${result.pullRequest}` : ''}: ${taskUrl(context.publicUrl, project.id, input.number)}`;
+    }
+  }),
+  tool({
+    name: 'hand_back_build',
+    title: 'Hand a build back',
+    description:
+      "Gives back a build the person claimed and has not handed in, when they say they will not build it: the task goes back to ready, for the build agent or, when it needs a developer, for another developer to claim. Handing back someone else's build needs the right to steer the work (maintainers and owners). Call show_task first to check whose build it is.",
+    input: z.object({ project: PROJECT, number: NUMBER }),
+    readOnly: false,
+    run: async (context, input) => {
+      const project = projectFor(context, input.project);
+      const result = await actOnTaskAs(context.pool, {
+        projectId: project.id,
+        memberId: context.memberId,
+        number: input.number,
+        action: { type: 'release' }
+      });
+      return `Handed back; task ${input.number} is now ${result.stage}: ${taskUrl(context.publicUrl, project.id, input.number)}`;
     }
   }),
   tool({
