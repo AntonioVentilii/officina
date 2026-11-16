@@ -110,13 +110,6 @@
       </button>
     {/if}
   </header>
-  {#if board.error}
-    <p class="load-error" role="alert">
-      The board could not load: {board.error}
-      <button class="btn ghost sm" onclick={() => void board.refresh()}>Try again</button>
-    </p>
-  {/if}
-
   <div class="columns">
     {#each columns as column, index (column.id)}
       <section class="column" aria-label={column.title}>
@@ -155,14 +148,6 @@
   /* The heading takes focus only when a drawer closes on a card the board does not show. */
   h1:focus-visible {
     outline: none;
-  }
-
-  .load-error {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin: 0 0 12px;
-    color: var(--danger);
   }
 
   .board {
