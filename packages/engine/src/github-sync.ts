@@ -14,6 +14,7 @@ import {
   loadTask,
   loadTaskContext,
   recordSpecStatus,
+  recordSpecStatusIn,
   type StoredTaskContext,
   whileTaskAt
 } from '@officina/db';
@@ -463,7 +464,9 @@ const isOwnStatusCommit = async (
 
 /**
  * Records the branch head as the status commit when it is Officina's own (`isOwnStatusCommit`),
- * so it stands for the task's head. `false`, and nothing recorded, for any other head.
+ * so it stands for the task's head. `false`, and nothing recorded, for any other head. With `at`,
+ * only while the task is still at that stage and head, under its row lock: a task that moved while
+ * GitHub was read keeps what moved it, and `false` says so.
  */
 export const recordOwnStatusCommit = async (
   pool: Pool,
@@ -475,15 +478,20 @@ export const recordOwnStatusCommit = async (
     head: string;
     expected: string;
     path: string;
+    at?: { readonly stage: string; readonly headSha: string | null };
   }
 ): Promise<boolean> => {
   if (!(await isOwnStatusCommit(github, input))) return false;
-  await recordSpecStatus(pool, input.taskId, {
-    status: input.status,
-    path: input.path,
-    commitSha: input.head
-  });
-  return true;
+  const payload = { status: input.status, path: input.path, commitSha: input.head };
+  if (!input.at) {
+    await recordSpecStatus(pool, input.taskId, payload);
+    return true;
+  }
+  const at = { taskId: input.taskId, ...input.at };
+  return (
+    (await whileTaskAt(pool, at, (client) => recordSpecStatusIn(client, input.taskId, payload))) !==
+    null
+  );
 };
 
 /**

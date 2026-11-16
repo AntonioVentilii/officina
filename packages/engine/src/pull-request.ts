@@ -320,7 +320,8 @@ const outsideHead = async (
     status: implementedStatus(context.pullRequest),
     head: head.headSha,
     expected: input.expected,
-    path
+    path,
+    at: { stage: context.task.stage, headSha: context.task.headSha }
   });
   return own ? null : head;
 };
