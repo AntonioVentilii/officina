@@ -20,6 +20,7 @@ import {
   addComment,
   applyCommand,
   applyCommandIn,
+  buildRunInProgress,
   findRequestedTask,
   findTaskIdByNumber,
   inTransaction,
@@ -260,6 +261,7 @@ export type TaskAction =
   | { readonly type: 'submit' }
   | { readonly type: 'accept' }
   | { readonly type: 'claim' }
+  | { readonly type: 'release' }
   | { readonly type: 'approve' }
   | { readonly type: 'changes'; readonly note: string }
   /**
@@ -281,6 +283,7 @@ const toCommand = (action: TaskAction): Command => {
       return { type: 'submit_request' };
     case 'accept':
     case 'claim':
+    case 'release':
     case 'approve':
       return { type: action.type };
     case 'changes':
@@ -337,6 +340,18 @@ const resolveAnswer = async (
   };
 };
 
+/**
+ * A build is handed back only once no agent run is left on it: the scheduler stops a run taken over
+ * from the agent on its next pass, and a run still going when the build is handed back would no
+ * longer count as taken over, so its result could land once the agent is given the build again.
+ */
+const refuseWhileAgentRuns = async (client: PoolClient, taskId: string) => {
+  if (await buildRunInProgress(client, taskId))
+    throw new TaskCommandError(
+      "the agent's run on this build is still being stopped; hand it back again in a minute"
+    );
+};
+
 /** Applies one person's decision to a task, as that person. */
 export const actOnTask = async (
   pool: Pool,
@@ -362,8 +377,10 @@ export const actOnTaskAs = async (
     command: toCommand(action),
     actor,
     ...(expectedVersion === undefined ? {} : { expectedVersion }),
-    // In the same transaction as the decision: someone not allowed to answer leaves no comment.
+    // In the same transaction as the decision: someone not allowed to answer leaves no comment, and
+    // a build is not handed back while an agent's run on it is still being stopped.
     onApplied: async (client) => {
+      if (action.type === 'release') await refuseWhileAgentRuns(client, taskId);
       if (action.type === 'answer') await addComment(client, taskId, actor, action.text);
     }
   });
@@ -379,6 +396,8 @@ export const actOnTaskAs = async (
 export interface HandInInput {
   readonly number: number;
   readonly prTitle: string;
+  /** Required in the sections of the project's pull request template when it names one. */
+  readonly prBody?: string | undefined;
   readonly verified: readonly string[];
   readonly notVerified: readonly string[];
 }
@@ -402,7 +421,7 @@ export const handInAs = async (
     );
     if (result.ok) return { stage: result.stage, pullRequest: result.pullRequest };
     throw new TaskCommandError(
-      result.error === 'bad_title'
+      result.error === 'bad_pull_request'
         ? result.problems.join('; ')
         : result.error === 'not_installed'
           ? 'the GitHub App is not installed on this repository'
