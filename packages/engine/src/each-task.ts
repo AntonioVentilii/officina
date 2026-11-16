@@ -15,9 +15,11 @@ export const eachTaskOnItsOwn = async (
 ): Promise<TaskFailure[]> => {
   const failures: TaskFailure[] = [];
   for (const taskId of taskIds) {
-    await work(taskId).catch((error: unknown) =>
-      failures.push({ taskId, error: (error as Error).message })
-    );
+    try {
+      await work(taskId);
+    } catch (error) {
+      failures.push({ taskId, error: error instanceof Error ? error.message : String(error) });
+    }
   }
   return failures;
 };
