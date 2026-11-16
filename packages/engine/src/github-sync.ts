@@ -19,6 +19,7 @@ import {
 } from '@officina/db';
 import {
   COPILOT_REVIEWERS,
+  GitHubError,
   type GitHubAsUser,
   type GitHubClient,
   type RepoRef
@@ -493,7 +494,7 @@ const recordUnexpectedHead = async (
  * Sets the spec's `Status:` line on the task branch, once per status. The builder cannot do it: it
  * does not know the pull request number when it pushes.
  */
-export const syncSpecStatus = async (
+const writeSpecStatus = async (
   pool: Pool,
   github: SyncGitHubPort,
   input: {
@@ -542,6 +543,26 @@ export const syncSpecStatus = async (
     ...(unverified ? { unverified } : {})
   });
   return text === file.text ? 'unchanged' : 'updated';
+};
+
+/**
+ * `writeSpecStatus`, safe when two writers set the same status at once (a hand-in and the
+ * catch-up opening the same pull request, or two passes finishing the same verified task): both
+ * write on top of the same file and the second gets GitHub's 409, though the status it wanted is
+ * on the branch. Writing again reads the branch as it is now and records that commit as the status
+ * written (or the branch as moved), so the writer that lost the race still completes.
+ */
+export const syncSpecStatus = async (
+  pool: Pool,
+  github: SyncGitHubPort,
+  input: Parameters<typeof writeSpecStatus>[2]
+): ReturnType<typeof writeSpecStatus> => {
+  try {
+    return await writeSpecStatus(pool, github, input);
+  } catch (error) {
+    if (!(error instanceof GitHubError) || error.status !== 409) throw error;
+    return writeSpecStatus(pool, github, input);
+  }
 };
 
 interface ChooserResult {
