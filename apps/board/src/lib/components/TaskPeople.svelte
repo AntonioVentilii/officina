@@ -18,6 +18,9 @@
   {#each people.gates as gate (gate.gate)}
     <dt class:current={gate.current}>{gate.does}</dt>
     <dd class="stack">
+      {#if gate.skipped}
+        <span class="line faint">{gate.skipped}</span>
+      {/if}
       <!-- Two requirements can read alike (a product approver, and one only when user visible). -->
       {#each gate.requirements as requirement, index (index)}
         <span class="line">

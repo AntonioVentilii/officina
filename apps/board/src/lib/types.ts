@@ -234,6 +234,8 @@ export interface TaskDetail extends Card {
       readonly gate: 'spec_review' | 'verifying';
       readonly does: string;
       readonly current: boolean;
+      /** Why nobody had to approve this gate, when the lifecycle skipped it; otherwise `null`. */
+      readonly skipped: string | null;
       readonly requirements: readonly {
         readonly label: string;
         readonly who: readonly { readonly name: string; readonly approved: boolean }[];

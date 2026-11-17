@@ -11,7 +11,11 @@ import {
 } from '@officina/db';
 import { parseProjectConfig } from '@officina/core';
 import { Pool } from 'pg';
+import { CONFIG_YAML } from '../../../packages/core/test/fixtures';
 import {
+  PLAN,
+  applyOrThrow,
+  createTaskInChoosing,
   createTaskInMerging,
   createTaskInVerifying,
   recordChooserChecklist,
@@ -354,6 +358,7 @@ describe.skipIf(!url)('board api', () => {
           gate: 'spec_review',
           does: 'Approve the plan',
           current: false,
+          skipped: null,
           requirements: [
             { label: 'an owner', who: [{ name: 'Antonio', approved: false }], waived: false }
           ],
@@ -363,6 +368,7 @@ describe.skipIf(!url)('board api', () => {
           gate: 'verifying',
           does: 'Check the result',
           current: false,
+          skipped: null,
           requirements: [
             { label: 'an owner', who: [{ name: 'Antonio', approved: false }], waived: false }
           ],
@@ -469,6 +475,34 @@ describe.skipIf(!url)('board api', () => {
       who: [],
       waived: true
     });
+  });
+
+  test('a result the lifecycle let skip the people check names no approvers', async () => {
+    const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    const autoVerifying = CONFIG_YAML.replace(
+      'version: 1',
+      'version: 1\nrelease: { on_merge: staging }'
+    ).replace('  green:\n', '  green:\n    auto_verify: true\n');
+    await pool.query('update projects set config = $2 where id = $1', [
+      seeded.projectId,
+      JSON.stringify(Bun.YAML.parse(autoVerifying))
+    ]);
+    const taskId = await createTaskInChoosing(pool, seeded);
+    await applyOrThrow(
+      pool,
+      taskId,
+      { type: 'choose', userVisible: true, plan: { ...PLAN, depth: 'glance' } },
+      { kind: 'agent', role: 'chooser', version: 1 }
+    );
+
+    const task = await json(await call(owner, `/api/projects/${seeded.projectId}/tasks/1`));
+    expect(task.stage).toBe('merging');
+    expect(task.people.gates[1]).toMatchObject({
+      gate: 'verifying',
+      skipped: expect.stringContaining('low-risk'),
+      requirements: []
+    });
+    expect(task.people.gates[0].skipped).toBeNull();
   });
 
   test('the approval plan shows whom the chooser asked, and waits on them while approval is pending', async () => {

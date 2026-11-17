@@ -126,7 +126,7 @@ const requirementLine = (requirement: Requirement) =>
 const peopleLines = ({ people }: TaskDetail) => [
   ...people.gates.map(
     (gate) =>
-      `${gate.does}: ${gate.requirements.map(requirementLine).join(', ')}.${gate.asked.length ? ` Asked to check: ${gate.asked.join(', ')}.` : ''}`
+      `${gate.does}: ${gate.skipped ?? gate.requirements.map(requirementLine).join(', ')}.${gate.asked.length ? ` Asked to check: ${gate.asked.join(', ')}.` : ''}`
   ),
   people.build.by === 'person'
     ? `Build: a developer, not the agents (${people.build.reason}). Who can claim it: ${people.build.who.join(', ') || 'nobody yet'}.`

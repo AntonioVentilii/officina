@@ -55,8 +55,8 @@ const agent = (
   version: 1
 });
 
-/** Creates a copy-change task and takes it to `verifying`, built at `abc` and planned. */
-export const createTaskInVerifying = async (pool: Pool, seeded: Seeded): Promise<string> => {
+/** Creates a copy-change task and takes it to `choosing`, built at `abc` and reviewed. */
+export const createTaskInChoosing = async (pool: Pool, seeded: Seeded): Promise<string> => {
   const paths = ['src/lib/constants/messages/en.ts'];
   const { task } = await createTask(pool, {
     projectId: seeded.projectId,
@@ -115,6 +115,12 @@ export const createTaskInVerifying = async (pool: Pool, seeded: Seeded): Promise
     { type: 'review', verdict: 'approve', notes: 'ok' },
     agent('reviewer_correctness')
   );
+  return id;
+};
+
+/** Creates a copy-change task and takes it to `verifying`, built at `abc` and planned. */
+export const createTaskInVerifying = async (pool: Pool, seeded: Seeded): Promise<string> => {
+  const id = await createTaskInChoosing(pool, seeded);
   await applyOrThrow(pool, id, { type: 'choose', userVisible: true, plan: PLAN }, agent('chooser'));
   return id;
 };
