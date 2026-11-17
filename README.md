@@ -164,7 +164,7 @@ Protect your default branch and tags with a ruleset the App cannot bypass: Offic
 
 ## Status
 
-Early preview. Phase 0 of the [roadmap](./docs/architecture.md#14-phases) is running in production for one team: engine, GitHub App, Managed Agents runner, all eight roles, the board, approvals and learnings. Next: email sign-in, notifications, multiple projects per workspace and a self-hosted runner.
+Early preview. Phase 0 of the [roadmap](./docs/architecture.md#14-phases) is running in production for one team: engine, GitHub App, Managed Agents runner, all eight roles, the board, approvals, learnings with their pull requests, several projects per workspace and the Claude connector. Next, in phase 1: emailed sign-in links, notifications by email and push, inline comments on specs, preview links and metrics.
 
 Officina is built to be built with Officina. [`AGENTS.md`](./AGENTS.md) is the entry point for agents working on this repository, and [`docs/architecture.md`](./docs/architecture.md) is the source of truth for the design.
 
