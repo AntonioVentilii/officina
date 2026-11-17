@@ -7,7 +7,9 @@ import {
   findTaskIdByNumber,
   purgeConnectorCredentials,
   purgeOldAccessEvents,
-  startRun
+  startRun,
+  UNUSED_CLIENT_LIMIT,
+  UNUSED_CLIENT_RETENTION
 } from '@officina/db';
 import { Pool } from 'pg';
 import { PLAN, applyOrThrow, resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
@@ -249,6 +251,28 @@ describe.skipIf(!url)('connector for Claude', () => {
     await pool.query('update connector_codes set expires_at = now()');
     expect(await purgeConnectorCredentials(pool)).toBeGreaterThan(0);
     expect(await purgeConnectorCredentials(pool)).toBe(0);
+  });
+
+  test('registration is refused while too many apps wait to authorize, until the purge frees room', async () => {
+    // An app that completed an authorization does not count against the limit.
+    await connect();
+    await pool.query(
+      `insert into connector_clients (id, name, redirect_uris)
+       select 'waiting-' || n, 'Waiting', array['${CALLBACK}'] from generate_series(2, $1) n`,
+      [UNUSED_CLIENT_LIMIT]
+    );
+    expect((await register()).status).toBe(201);
+
+    const refused = await register();
+    expect(refused.status).toBe(503);
+    expect((await json(refused)).error).toBe('temporarily_unavailable');
+
+    await pool.query(
+      `update connector_clients set created_at = now() - $1::interval - interval '1 minute'`,
+      [UNUSED_CLIENT_RETENTION]
+    );
+    expect(await purgeConnectorCredentials(pool)).toBe(UNUSED_CLIENT_LIMIT);
+    expect((await register()).status).toBe(201);
   });
 
   test('a code works once, and presented again it revokes the grant it opened', async () => {
