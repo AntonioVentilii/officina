@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
+import { ERROR_TEXT_MAX } from '@officina/core';
 import { appendTaskEvent } from '@officina/db';
 import { Pool } from 'pg';
 import { createTaskInMerging, resetAndSeed, type Seeded } from '../../db/test/seed';
@@ -295,6 +296,29 @@ describe.skipIf(!url)('approving on GitHub for the verifier', () => {
           },
           member: seeded.ownerId
         }
+      ]);
+    });
+
+    test('a long refusal is recorded clipped, saying how much was left out', async () => {
+      const taskId = await createTaskInMerging(pool, seeded);
+      const { onBehalf } = fake();
+      const refusing: OnBehalf = {
+        ...onBehalf,
+        asUser: {
+          ...onBehalf.asUser,
+          requestCopilotReview: async () => {
+            throw new Error('x'.repeat(ERROR_TEXT_MAX + 4_500));
+          }
+        }
+      };
+      await askCopilotToReview(pool, refusing, ask(taskId));
+      expect(await events(taskId)).toEqual([
+        expect.objectContaining({
+          type: 'github_copilot_review_failed',
+          payload: expect.objectContaining({
+            error: `${'x'.repeat(ERROR_TEXT_MAX)} … (4500 more characters)`
+          })
+        })
       ]);
     });
 

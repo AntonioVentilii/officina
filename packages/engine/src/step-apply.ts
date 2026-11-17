@@ -1,5 +1,6 @@
 import {
   commandForOutput,
+  errorText,
   questionMarkdown,
   type AgentOutput,
   type RoleOutput,
@@ -100,9 +101,7 @@ const afterApplied = async <T>(
   try {
     return await write();
   } catch (error) {
-    await appendRunEvent(step.deps.pool, step.runId, failedEvent, {
-      error: (error as Error).message
-    });
+    await appendRunEvent(step.deps.pool, step.runId, failedEvent, { error: errorText(error) });
     return null;
   }
 };
