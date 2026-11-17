@@ -10,6 +10,7 @@ import {
   can,
   canAnswer,
   canRequestChanges,
+  canSubmitRequest,
   clip,
   effectivePolicy,
   eligibleMembers,
@@ -525,8 +526,7 @@ const actionsFor = (
   if (TERMINAL_STAGES.has(row.stage)) return writes && can(member, 'comment') ? ['comment'] : [];
   const actions: BoardAction[] = [];
   const requester = row.requesterId === viewer.memberId;
-  if (row.stage === 'request' && can(member, 'request') && (requester || can(member, 'triage')))
-    actions.push('submit');
+  if (canSubmitRequest(row, member)) actions.push('submit');
   if (row.blocked) {
     if (writes && canAnswer(member, row.blocked.askedOf)) actions.push('answer');
   } else if (!row.paused) {
