@@ -6,12 +6,13 @@ import {
   branchForTask,
   checksSchema,
   clip,
+  heldForOwner,
   redactSecrets,
   taskUrl,
   type ConnectedApp,
   type Preview
 } from '@officina/core';
-import type { MemberProject } from '@officina/db';
+import { loadBoardTask, type MemberProject } from '@officina/db';
 import { fence, type HandInPort } from '@officina/engine';
 import type { Pool } from 'pg';
 import { z } from 'zod';
@@ -182,6 +183,20 @@ const WHAT_TO_DO: Record<string, string> = {
   cancel: 'cancel it on the board'
 };
 
+/** What happens next to a request just opened, in words for the person who opened it. */
+const afterOpening = async (
+  pool: Pool,
+  projectId: string,
+  created: { readonly number: number; readonly stage: string }
+): Promise<string> => {
+  if (created.stage !== 'request')
+    return 'It waits for a maintainer to accept it; then an agent writes the plan.';
+  const row = await loadBoardTask(pool, projectId, created.number);
+  return row && heldForOwner(row.blocked)
+    ? 'It touches something only an owner may allow, so it waits for an owner to decide before any agent reads it; show_task says where it stands.'
+    : 'An agent reads it now and may ask a few questions; they show up in whats_waiting_on_me and on the board.';
+};
+
 interface Tool<T extends z.ZodType> {
   readonly name: string;
   readonly title: string;
@@ -247,7 +262,7 @@ Examples:
 - Report a bug: title "Profile photo does not save", request "I pick a new photo in Settings > Profile and press Save. The old photo is still there after reloading. Expected: the new photo stays."
 - Ask for a feature: title "Remind people of unfinished orders", request "People forget orders they started. Send a reminder the next morning if one is unfinished. Only once per order."
 
-After it is opened, tell the person the task link and that an agent may ask them questions there or here (whats_waiting_on_me).`,
+After it is opened, tell the person the task link and what happens next, as the answer says: usually that an agent may ask them questions there or here (whats_waiting_on_me), or, for a request held for an owner, that it waits for an owner's decision first.`,
     input: z.object({
       project: PROJECT,
       title: z
@@ -290,10 +305,7 @@ After it is opened, tell the person the task link and that an agent may ask them
         skipInterview: input.skip_interview === true,
         requestId: input.request_id
       });
-      const next =
-        created.stage === 'request'
-          ? 'An agent reads it now and may ask a few questions; they show up in whats_waiting_on_me and on the board.'
-          : 'It waits for a maintainer to accept it; then an agent writes the plan.';
+      const next = await afterOpening(context.pool, project.id, created);
       return `Opened task ${created.number} in ${project.name}: ${taskUrl(context.publicUrl, project.id, created.number)}\n${next}`;
     }
   }),
