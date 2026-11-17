@@ -4,10 +4,11 @@ import {
   finishRun,
   learningsDecidedDuring,
   loadTaskContext,
+  markRefsChecked,
   overlappingRunTasks,
   ownStatusCommitsDuring,
   recordRunRefs,
-  runsWithRefs,
+  uncheckedRunRefs,
   type RunRefs
 } from '@officina/db';
 import type { RefSnapshot } from '@officina/github';
@@ -214,6 +215,8 @@ export const recordStartingRefs = async (step: Step, nowMs: number): Promise<Run
  * Compares the refs now with those a build run started from. When something the builder could have
  * done moved, the run fails with what moved and a maintainer is asked to check, whoever builds the
  * task now. A comparison GitHub cannot answer counts as a change: nothing would check again later.
+ * The task is blocked before the run ends and the check is recorded last, so a process that stops
+ * on the way leaves the run to be checked again when the engine starts (`guardOrphanedBuilds`).
  */
 export const guardRefs = async (
   step: RefStep,
@@ -224,14 +227,12 @@ export const guardRefs = async (
     .refSnapshot(step.repoRef)
     .then((after) => refChanges(step, before.refs, after, before.since))
     .catch((error: unknown) => [`the refs could not be checked (${(error as Error).message})`]);
-  if (!changes.length) return null;
   const { pool } = step.deps;
+  if (!changes.length) {
+    await markRefsChecked(pool, step.runId);
+    return null;
+  }
   const { role, taskBranch } = step;
-  await finishRun(pool, step.runId, {
-    status: 'failed',
-    costCents: run.costCents,
-    result: { ...run.result, refsChanged: changes }
-  });
   await applyCommand(pool, {
     taskId: step.taskId,
     command: {
@@ -241,6 +242,12 @@ export const guardRefs = async (
     },
     actor: ENGINE
   });
+  await finishRun(pool, step.runId, {
+    status: 'failed',
+    costCents: run.costCents,
+    result: { ...run.result, refsChanged: changes }
+  });
+  await markRefsChecked(pool, step.runId);
   return {
     status: 'blocked',
     reason: `refs outside ${taskBranch} changed during the build: ${changes.join('; ')}`
@@ -248,15 +255,16 @@ export const guardRefs = async (
 };
 
 /**
- * Checks the build runs a previous process left unfinished, among `runIds` (already failed), against
- * the refs each recorded before its session: the process that would have checked them is gone.
+ * Checks the build runs whose refs were never checked against the refs each recorded before its
+ * session: a previous process left them unfinished (they are failed first), or stopped, or failed,
+ * before it recorded their check. Each is recorded as checked once done, so a start that stops
+ * halfway leaves the rest to the next one.
  */
 export const guardOrphanedBuilds = async (
-  deps: EngineDependencies,
-  runIds: readonly string[]
+  deps: EngineDependencies
 ): Promise<{ readonly runId: string; readonly reason: string }[]> => {
   const blocked = [];
-  for (const run of await runsWithRefs(deps.pool, runIds)) {
+  for (const run of await uncheckedRunRefs(deps.pool)) {
     const context = await loadTaskContext(deps.pool, run.taskId);
     if (!context || context.installationId === null) continue;
     const step: RefStep = {

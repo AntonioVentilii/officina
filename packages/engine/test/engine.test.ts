@@ -1480,8 +1480,15 @@ describe.skipIf(!url)('engine', () => {
 
   const MOVED_MAIN: RefSnapshot = { branches: { ...REFS.branches, main: 'evil' }, tags: REFS.tags };
 
-  /** A builder that runs `script` instead of submitting its result, and then the step's outcome. */
-  const buildRunning = async (script: ScriptItem[], refs: RefSnapshot[] = [REFS, MOVED_MAIN]) => {
+  /**
+   * A builder that runs `script` instead of submitting its result, and then the step's outcome; the
+   * step writes through `db`.
+   */
+  const buildRunning = async (
+    script: ScriptItem[],
+    refs: RefSnapshot[] = [REFS, MOVED_MAIN],
+    db: Pool = pool
+  ) => {
     const github = fakeGitHub({ refs });
     const agents = createFakePort((request) =>
       request.metadata.role === 'builder' ? script : succeed(request)
@@ -1494,7 +1501,7 @@ describe.skipIf(!url)('engine', () => {
       ENGINE
     );
     const deps = { pool, github: github.port, agents, publicUrl: PUBLIC_URL };
-    return { taskId, deps, step: runAgentStep(deps, taskId, 'builder') };
+    return { taskId, deps, step: runAgentStep({ ...deps, pool: db }, taskId, 'builder') };
   };
 
   const lastBuildRun = async (taskId: string) =>
@@ -1543,6 +1550,18 @@ describe.skipIf(!url)('engine', () => {
     });
   });
 
+  test('a build that moved refs blocks its task before its run ends', async () => {
+    const { taskId, step } = await buildRunning([toolUse(RESULTS.builder), idle('end_turn')]);
+    expect(await step).toMatchObject({ status: 'blocked' });
+
+    const { rows } = await pool.query<{ blockedFirst: boolean }>(
+      `select (select max(created_at) from task_events where task_id = $1 and type = 'blocked')
+                < (select finished_at from runs where id = $2) as "blockedFirst"`,
+      [taskId, (await lastBuildRun(taskId)).id]
+    );
+    expect(rows[0]?.blockedFirst).toBe(true);
+  });
+
   /** A build left running by a process that died during its session, then the engine's next boot. */
   const orphanedBuild = async (refs: RefSnapshot[]) => {
     let started!: () => void;
@@ -1552,15 +1571,70 @@ describe.skipIf(!url)('engine', () => {
       refs
     );
     await inSession;
-    const orphaned = await failOrphanedRuns(pool);
-    return {
-      taskId,
-      blocked: await guardOrphanedBuilds(
-        deps,
-        orphaned.map((run) => run.id)
-      )
-    };
+    await failOrphanedRuns(pool);
+    return { taskId, deps, blocked: await guardOrphanedBuilds(deps) };
   };
+
+  /** `pool`, except that no transaction can start while `refused()` says so. */
+  const refusingTransactions = (refused: () => boolean): Pool =>
+    new Proxy(pool, {
+      get: (target, key) => {
+        if (key === 'connect' && refused())
+          return () => Promise.reject(new Error('connection refused'));
+        const value: unknown = Reflect.get(target, key);
+        return typeof value === 'function' ? value.bind(target) : value;
+      }
+    });
+
+  test('a build whose task could not be blocked for its refs is checked again when the engine starts', async () => {
+    let refused = false;
+    const { taskId, deps, step } = await buildRunning(
+      [
+        async () => {
+          refused = true;
+          throw new Error('stream lost');
+        }
+      ],
+      [REFS, MOVED_MAIN],
+      refusingTransactions(() => refused)
+    );
+    await expect(step).rejects.toThrow('connection refused');
+    refused = false;
+    expect((await loadTask(pool, taskId))?.task.blocked).toBeNull();
+    expect((await lastBuildRun(taskId)).status).toBe('failed');
+
+    expect(await failOrphanedRuns(pool)).toEqual([]);
+    expect(await guardOrphanedBuilds(deps)).toEqual([
+      {
+        runId: expect.any(String),
+        reason: expect.stringContaining('main moved from main1 to evil')
+      }
+    ]);
+    expect((await loadTask(pool, taskId))?.task.blocked?.question).toContain(
+      'While the builder ran, branch main moved from main1 to evil'
+    );
+  });
+
+  test('a start whose check of an orphaned build fails leaves it to the next start', async () => {
+    let started!: () => void;
+    const inSession = new Promise<void>((resolve) => (started = resolve));
+    const { taskId, deps } = await buildRunning([
+      async () => started(),
+      () => new Promise<void>(() => {})
+    ]);
+    await inSession;
+    await failOrphanedRuns(pool);
+    await expect(
+      guardOrphanedBuilds({ ...deps, pool: refusingTransactions(() => true) })
+    ).rejects.toThrow('connection refused');
+
+    expect(await failOrphanedRuns(pool)).toEqual([]);
+    expect(await guardOrphanedBuilds(deps)).toHaveLength(1);
+    expect((await loadTask(pool, taskId))?.task.blocked?.question).toContain(
+      'main moved from main1 to evil'
+    );
+    expect(await guardOrphanedBuilds(deps)).toEqual([]);
+  });
 
   test('a build orphaned by a restart is checked against the refs it started from', async () => {
     const { taskId, blocked } = await orphanedBuild([REFS, MOVED_MAIN]);
@@ -1584,12 +1658,14 @@ describe.skipIf(!url)('engine', () => {
     });
   });
 
-  test('a build orphaned by a restart with its refs as they were is only failed', async () => {
-    const { taskId, blocked } = await orphanedBuild([REFS]);
+  test('a build orphaned by a restart with its refs as they were is only failed, and checked once', async () => {
+    const { taskId, deps, blocked } = await orphanedBuild([REFS, REFS, MOVED_MAIN]);
 
     expect(blocked).toEqual([]);
     expect((await loadTask(pool, taskId))?.task.blocked).toBeNull();
     expect((await lastBuildRun(taskId)).status).toBe('failed');
+    expect(await guardOrphanedBuilds(deps)).toEqual([]);
+    expect((await loadTask(pool, taskId))?.task.blocked).toBeNull();
   });
 
   test('the branch of another task whose build runs alongside may move', async () => {
