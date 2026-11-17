@@ -585,7 +585,7 @@ export const ownerHold = (guards: readonly Guard[]): Blocked => ({
 });
 
 /** Whether a held question already waits on whoever may `publish`, who alone lifts a hold. */
-const heldForOwner = (blocked: Blocked | null): boolean =>
+export const heldForOwner = (blocked: Blocked | null): boolean =>
   blocked !== null && 'role' in blocked.askedOf && blocked.askedOf.role === PERMISSIONS.publish;
 
 /** The guards a person's words on a task call for, by the request's rule, that it lacks so far. */
