@@ -627,14 +627,20 @@ describe.skipIf(!url)('connector for Claude', () => {
         headers: { cookie, 'content-type': 'application/json', 'x-officina-request': '1' },
         body: JSON.stringify(body)
       });
-    expect((await task()).proposal).toEqual({ gate: 'spec_review', app: 'Claude' });
+    const [grant] = (await json(await handle('/api/connector/grants', { headers: { cookie } })))
+      .grants;
+    const waiting = {
+      gate: 'spec_review',
+      via: { id: grant.id, label: 'via Claude', client: 'Claude', connection: grant.connection }
+    };
+    expect((await task()).proposal).toEqual(waiting);
 
     // Discarded on the board, it no longer waits; proposed again, it waits again.
     expect((await act({ type: 'discard_proposal' })).status).toBe(200);
     expect((await task()).proposal).toBeNull();
     expect((await act({ type: 'discard_proposal' })).status).toBe(409);
     await tool(token, 'review', { number: 1, decision: 'approve' });
-    expect((await task()).proposal).toEqual({ gate: 'spec_review', app: 'Claude' });
+    expect((await task()).proposal).toEqual(waiting);
 
     // Approving on the board confirms it: the approval counts, as the member, from the board.
     expect((await act({ type: 'approve' })).status).toBe(200);
