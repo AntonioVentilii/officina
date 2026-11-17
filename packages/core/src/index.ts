@@ -11,3 +11,4 @@ export * from './contracts';
 export * from './questions';
 export * from './steps';
 export * from './catalogs';
+export * from './checklist';

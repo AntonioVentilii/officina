@@ -109,7 +109,11 @@ back from Claude with `hand_back_build`, and the task returns to `ready`.
 6. **Wait for build and review.** `task show` lists every agent run with its cost and a link to its
    live session in the Claude Console. The pull request link appears once the builder has pushed.
 
-7. **Verify the result** on the pull request, using the chooser's checklist, then decide.
+7. **Verify the result** on the pull request, using the chooser's checklist, then decide. Record
+   what you checked for each item on the task page (**Check**: ok, a problem, or partly checked,
+   with one line on how), or ask Claude to record it with `check_item`. The checklist comment on
+   the pull request follows: an item is ticked once its latest check is ok, and says who checked
+   it and how. "Looks good" does not tick anything; items left open show as not checked.
 
    ```bash
    scripts/officina task approve --number 1
