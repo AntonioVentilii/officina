@@ -1,13 +1,13 @@
 <script lang="ts">
   import { Bot, Check, ExternalLink, FileText, GitPullRequest, X } from '@lucide/svelte';
-  import { post } from '$lib/api';
-  import { editLines } from '$lib/diff';
-  import { ago } from '$lib/format';
-  import { board } from '$lib/state/board.svelte';
-  import { clock } from '$lib/state/clock.svelte';
-  import { session } from '$lib/state/session.svelte';
-  import { toasts } from '$lib/state/toasts.svelte';
-  import type { Learning } from '$lib/types';
+  import { post } from '#lib/api.ts';
+  import { editLines } from '#lib/diff.ts';
+  import { ago } from '#lib/format.ts';
+  import { board } from '#lib/state/board.svelte.ts';
+  import { clock } from '#lib/state/clock.svelte.ts';
+  import { session } from '#lib/state/session.svelte.ts';
+  import { toasts } from '#lib/state/toasts.svelte.ts';
+  import type { Learning } from '#lib/types.ts';
   import AgentAvatar from './AgentAvatar.svelte';
 
   interface Props {

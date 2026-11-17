@@ -1,10 +1,10 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import { goto } from '$app/navigation';
-  import { post } from '$lib/api';
-  import { board } from '$lib/state/board.svelte';
-  import { session } from '$lib/state/session.svelte';
-  import { toasts } from '$lib/state/toasts.svelte';
+  import { post } from '#lib/api.ts';
+  import { board } from '#lib/state/board.svelte.ts';
+  import { session } from '#lib/state/session.svelte.ts';
+  import { toasts } from '#lib/state/toasts.svelte.ts';
   import Modal from './Modal.svelte';
 
   interface Props {
