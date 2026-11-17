@@ -30,7 +30,7 @@ import {
   type Approval
 } from './policies';
 import type { QuestionOption } from './questions';
-import type { ApproverRole, Member, Role } from './roles';
+import { hasRole, type ApproverRole, type Member, type Role } from './roles';
 
 export const STAGES = [
   'request',
@@ -247,6 +247,16 @@ export type Command =
       readonly askedOf: Blocked['askedOf'];
       readonly handoff?: Blocked['handoff'];
       readonly options?: Blocked['options'];
+    }
+  /**
+   * Officina asks something that cannot wait for the answer to a question the task already holds:
+   * the two become one question, asked of whichever role ranks higher, so whoever answers it has
+   * read both. On a task with no question it asks like `block`.
+   */
+  | {
+      readonly type: 'add_question';
+      readonly question: string;
+      readonly askedOf: { readonly role: Role };
     }
   | { readonly type: 'answer'; readonly text: string }
   /** A person's words on the task after its request, a comment: they guard it as the request's would. */
@@ -827,6 +837,7 @@ const ALLOWED_WHILE_HELD: ReadonlySet<Command['type']> = new Set([
   'resume',
   'cancel',
   'block',
+  'add_question',
   'pause',
   'pull_request_closed'
 ]);
@@ -1168,6 +1179,24 @@ export const decide = (
       // Needing a secret, access or publishing guards the task as asking for it would.
       const [guards, guardEvents] = withAdded(task, guardsForHandoff(handoff?.needs ?? []));
       return ok({ ...task, blocked, guards }, [...guardEvents, { type: 'blocked', blocked }]);
+    }
+
+    case 'add_question': {
+      if (actor.kind !== 'engine') return fail('not_allowed');
+      const open = task.blocked;
+      // Asked again, as a check that runs twice would, it changes nothing.
+      if (open?.question.includes(command.question)) return fail('already_blocked');
+      const blocked: Blocked = open
+        ? {
+            ...open,
+            question: `${open.question}\n\n${command.question}`,
+            askedOf:
+              'role' in open.askedOf && hasRole(open.askedOf, command.askedOf.role)
+                ? open.askedOf
+                : command.askedOf
+          }
+        : { question: command.question, askedOf: command.askedOf };
+      return ok({ ...task, blocked }, [{ type: 'blocked', blocked }]);
     }
 
     case 'answer': {

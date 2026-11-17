@@ -17,6 +17,10 @@ export const RESULT_TOOL = 'submit_result';
 export const RUNNER_ROLES = AGENT_ROLES;
 export type RunnerRole = AgentRole;
 
+/** Whether a role named outside the type system (a step due, a prompt's file name) runs here. */
+export const isRunnerRole = (role: string): role is RunnerRole =>
+  (RUNNER_ROLES as readonly string[]).includes(role);
+
 const WRITE_TOOLS_OFF: AgentToolConfig[] = [
   { name: 'write', type: 'write', enabled: false },
   { name: 'edit', type: 'edit', enabled: false }

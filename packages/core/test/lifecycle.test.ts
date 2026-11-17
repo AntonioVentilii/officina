@@ -6,6 +6,7 @@ import {
   evaluatePolicy,
   humanBuildReason,
   nextAgentRoles,
+  ownerHold,
   type Member,
   type PlanInput,
   type Task
@@ -1689,6 +1690,50 @@ describe('guarded tasks', () => {
     expect(driver.step(task, { type: 'submit_request' }, asMember(productContributor)).stage).toBe(
       'triage'
     );
+  });
+
+  test("Officina's added question joins an open one, asked of whichever role ranks higher", () => {
+    const maintainer: Member = { id: 'marta', role: 'maintainer', domains: [] };
+    const driver = createDriver([owner, maintainer, productContributor]);
+    const refs = {
+      type: 'add_question',
+      question: 'A tag moved during the build.',
+      askedOf: { role: 'maintainer' }
+    } as const;
+    const ask = (blocked: Task['blocked']): Task => ({ ...toReady(driver, PAGE_PATHS), blocked });
+
+    expect(driver.step(ask(null), refs, engine).blocked).toEqual({
+      question: 'A tag moved during the build.',
+      askedOf: { role: 'maintainer' }
+    });
+    for (const askedOf of [{ role: 'contributor' }, { memberId: productContributor.id }] as const) {
+      const joined = driver.step(ask({ question: 'Which colour?', askedOf }), refs, engine);
+      expect(joined.blocked).toEqual({
+        question: 'Which colour?\n\nA tag moved during the build.',
+        askedOf: { role: 'maintainer' }
+      });
+      expect(
+        driver.attempt(joined, { type: 'answer', text: 'Red.' }, asMember(productContributor))
+      ).toEqual({ ok: false, error: 'not_allowed' });
+      expect(
+        driver.step(joined, { type: 'answer', text: 'Red.' }, asMember(maintainer)).blocked
+      ).toBeNull();
+    }
+
+    const held = driver.step(ask(ownerHold(['secrets'])), refs, engine);
+    expect(held.blocked?.askedOf).toEqual({ role: 'owner' });
+    expect(held.blocked?.question).toContain('A tag moved during the build.');
+    expect(driver.attempt(held, { type: 'answer', text: 'Go.' }, asMember(maintainer))).toEqual({
+      ok: false,
+      error: 'not_allowed'
+    });
+
+    // The same question again, as a check run twice would ask it, changes nothing.
+    expect(driver.attempt(held, refs, engine)).toEqual({ ok: false, error: 'already_blocked' });
+    expect(driver.attempt(ask(null), refs, asMember(owner))).toEqual({
+      ok: false,
+      error: 'not_allowed'
+    });
   });
 
   test("a later answer's words guard the task and hold it for the owner, who alone lifts it", () => {
