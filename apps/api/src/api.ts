@@ -36,6 +36,7 @@ import {
   taskView,
   type BoardViewer
 } from './board';
+import { checklistCheckSchema, recordCheckAs } from './checks';
 import { checkAuthorization, consentRedirect, mcpResource } from './connector';
 import type { GitHubAccounts, GitHubSignInProblem } from './github-accounts';
 import type { LearningGitHub } from './learning-pull-request';
@@ -148,6 +149,7 @@ const actionSchema = z.discriminatedUnion('type', [
 
 const handInSchema = z.strictObject({
   prTitle: z.string().trim().min(INPUT_LIMITS.prTitle.min).max(INPUT_LIMITS.prTitle.max),
+  prBody: z.string().trim().min(1).max(INPUT_LIMITS.prBody).optional(),
   verified: checksSchema.default([]),
   notVerified: checksSchema.default([])
 });
@@ -565,6 +567,16 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
           memberId: viewer.memberId,
           number: taskNumber(params.number),
           action
+        });
+      })
+      .post('/api/projects/:projectId/tasks/:number/checks', async ({ request, params, body }) => {
+        mutation(request);
+        const viewer = viewerFor(await signedIn(request), params.projectId);
+        return recordCheckAs(pool, {
+          projectId: viewer.projectId,
+          memberId: viewer.memberId,
+          number: taskNumber(params.number),
+          ...parse(checklistCheckSchema, body)
         });
       })
       .post('/api/projects/:projectId/tasks/:number/hand-in', async ({ request, params, body }) => {

@@ -129,6 +129,12 @@ export const registerClient = async (pool: Pool, body: unknown) => {
     name: input.client_name || 'An MCP client',
     redirectUris: input.redirect_uris
   });
+  if (!client)
+    throw new OAuthError(
+      'temporarily_unavailable',
+      'too many registered apps are waiting to be authorized; try again later',
+      503
+    );
   return {
     client_id: client.id,
     client_id_issued_at: Math.floor(Date.now() / 1000),

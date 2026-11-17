@@ -59,10 +59,12 @@ agents cannot do or decide (a domain, a secret, a new host, an account, access, 
 new), the task is handed to the owner or a maintainer with the list of what is needed; `task answer`
 resumes it. When the plan says a person must build it (or the lane forbids agents), it waits in
 `ready` until a maintainer, or a contributor with the `developer` domain, runs
-`task claim --number <n>`. They build it on `officina/task-<n>` by hand or with their own agents,
+`task claim --number <n>` (or claims it on the board, or from Claude with `claim_build`). They build it on `officina/task-<n>` by hand or with their own agents,
 push, and hand it in from the board ("Hand in the build"), from Claude (`hand_in_build`) or with
-`task hand-in --number <n> --title "<pull request title>"`; it then
-goes to the same review as an agent's build.
+`task hand-in --number <n> --title "<pull request title>"`, adding `--body "<pull request body>"`
+written in the project's pull request template when its config names one; it then
+goes to the same review as an agent's build. A developer who will not build it after all gives it
+back from Claude with `hand_back_build`, and the task returns to `ready`.
 
 ## Step by step
 
@@ -107,7 +109,11 @@ goes to the same review as an agent's build.
 6. **Wait for build and review.** `task show` lists every agent run with its cost and a link to its
    live session in the Claude Console. The pull request link appears once the builder has pushed.
 
-7. **Verify the result** on the pull request, using the chooser's checklist, then decide.
+7. **Verify the result** on the pull request, using the chooser's checklist, then decide. Record
+   what you checked for each item on the task page (**Check**: ok, a problem, or partly checked,
+   with one line on how), or ask Claude to record it with `check_item`. The checklist comment on
+   the pull request follows: an item is ticked once its latest check is ok, and says who checked
+   it and how. "Looks good" does not tick anything; items left open show as not checked.
 
    ```bash
    scripts/officina task approve --number 1

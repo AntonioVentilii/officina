@@ -1,5 +1,6 @@
 import {
   commandForOutput,
+  errorText,
   questionMarkdown,
   type AgentOutput,
   type RoleOutput,
@@ -17,7 +18,7 @@ import {
 } from '@officina/db';
 import type { RunnerRole } from '@officina/runner';
 import type { PoolClient } from 'pg';
-import { postChecklist, taskLink } from './github-sync';
+import { syncChecklistComment } from './checklist';
 import { openTaskPullRequest, readPush, sendBackRedChecks, type PushedBuild } from './pull-request';
 import type { StepInputs } from './step-session';
 import type { Step, StepResult } from './step';
@@ -100,9 +101,7 @@ const afterApplied = async <T>(
   try {
     return await write();
   } catch (error) {
-    await appendRunEvent(step.deps.pool, step.runId, failedEvent, {
-      error: (error as Error).message
-    });
+    await appendRunEvent(step.deps.pool, step.runId, failedEvent, { error: errorText(error) });
     return null;
   }
 };
@@ -181,12 +180,9 @@ const mirrorToGitHub = async (
   const pullRequest = context.pullRequest;
   if (step.role === 'chooser' && pullRequest !== null) {
     await afterApplied(step, 'officina.checklist_failed', () =>
-      postChecklist(step.deps.pool, step.deps.github, {
+      syncChecklistComment(step.deps.pool, step.deps.github, {
         taskId: step.taskId,
-        ref: step.repoRef,
-        pullRequest,
-        taskLink: taskLink(step.deps.publicUrl, context.projectId, context.number),
-        result: output
+        publicUrl: step.deps.publicUrl
       })
     );
   }

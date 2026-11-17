@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { CHECKLIST_LIMITS, INPUT_LIMITS, parseAgentOutput } from '@officina/core';
-import { checklistMarkdown } from '../src/github-sync';
+import { checklistMarkdown } from '../src/checklist';
 
 /** GitHub refuses a comment longer than this. */
 const GITHUB_COMMENT_LIMIT = 65_536;

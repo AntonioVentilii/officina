@@ -67,10 +67,10 @@ describe.skipIf(!url)('members command', () => {
     await pin('Gio', { created: '2026-11-05T22:15:00Z', expires: '2026-11-12T22:15:00Z' });
     await inviteAs('Mia', 'maintainer');
     await pool.query('delete from login_links where member_id = $1', [await memberId('Mia')]);
-    const client = await registerConnectorClient(pool, {
+    const client = (await registerConnectorClient(pool, {
       name: 'Claude',
       redirectUris: ['https://claude.ai/callback']
-    });
+    }))!;
     await issueConnectorTokens(pool, {
       clientId: client.id,
       memberId: seeded.ownerId,

@@ -31,6 +31,8 @@
 
   const path = $derived(page.url.pathname);
   const onBoard = $derived(path === '/' || path.startsWith('/tasks'));
+  // Assistive technology hears which link is the current page; the style reads the same attribute.
+  const current = (here: boolean) => (here ? 'page' : undefined);
 
   const inboxCount = $derived(board.waitingOnMe.length + board.notices.length);
 
@@ -60,17 +62,17 @@
 
   <ul class="nav">
     <li>
-      <a href="/" class:on={onBoard}><SquareKanban size={16} />Board</a>
+      <a href="/" aria-current={current(onBoard)}><SquareKanban size={16} />Board</a>
     </li>
     <li>
-      <a href="/inbox" class:on={path === '/inbox'}>
+      <a href="/inbox" aria-current={current(path === '/inbox')}>
         <Inbox size={16} />Inbox
         {#if inboxCount}<span class="badge num">{inboxCount}</span>{/if}
       </a>
     </li>
     {#if session.technical}
       <li>
-        <a href="/agents" class:on={path === '/agents'}>
+        <a href="/agents" aria-current={current(path === '/agents')}>
           <Bot size={16} />Agents
           {#if board.running.length}<span class="running num"
               ><span class="pulse"></span>{board.running.length} at work</span
@@ -78,7 +80,7 @@
         </a>
       </li>
       <li>
-        <a href="/learnings" class:on={path === '/learnings'}>
+        <a href="/learnings" aria-current={current(path === '/learnings')}>
           <GraduationCap size={16} />Learnings
           {#if board.proposedLearnings.length}<span class="badge quiet num"
               >{board.proposedLearnings.length}</span
@@ -86,11 +88,15 @@
         </a>
       </li>
       <li>
-        <a href="/members" class:on={path === '/members'}><Users size={16} />Members</a>
+        <a href="/members" aria-current={current(path === '/members')}>
+          <Users size={16} />Members
+        </a>
       </li>
     {/if}
     <li>
-      <a href="/connect" class:on={path === '/connect'}><PlugZap size={16} />Connected apps</a>
+      <a href="/connect" aria-current={current(path === '/connect')}>
+        <PlugZap size={16} />Connected apps
+      </a>
     </li>
     <li>
       <button onclick={() => (guide.open = true)}><BookOpen size={16} />Guide</button>
@@ -242,7 +248,7 @@
     color: var(--nav-text);
   }
 
-  .nav a.on {
+  .nav a[aria-current='page'] {
     border-left-color: var(--nav-text);
     color: var(--nav-text);
     font-weight: 700;
@@ -459,7 +465,7 @@
     font-size: 14px;
   }
 
-  :global([data-look='tecnica']) .nav a.on {
+  :global([data-look='tecnica']) .nav a[aria-current='page'] {
     background: var(--bg);
     border-color: var(--border);
     font-weight: 600;
@@ -537,7 +543,7 @@
       font-size: 11px;
     }
 
-    .nav a.on {
+    .nav a[aria-current='page'] {
       border-top-color: var(--nav-text);
     }
 

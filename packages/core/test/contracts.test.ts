@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { commandForOutput, newTask, parseAgentOutput, type ContractRole } from '../src';
+import { commandForOutput, parseAgentOutput, type ContractRole } from '../src';
+import { newTask } from './fixtures';
 
 const task = newTask('t1', 'gio');
 

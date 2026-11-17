@@ -11,7 +11,12 @@ import {
 } from '@officina/db';
 import { parseProjectConfig } from '@officina/core';
 import { Pool } from 'pg';
-import { resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
+import {
+  createTaskInVerifying,
+  recordChooserChecklist,
+  resetAndSeed,
+  type Seeded
+} from '../../../packages/db/test/seed';
 import { createApp } from '../src/app';
 import { agentsView, logEntries, RUN_LOG_PAGE } from '../src/board';
 import { invite, loginLink } from '../src/people';
@@ -184,6 +189,45 @@ describe.skipIf(!url)('board api', () => {
       label: 'Builds once the agent docs of task 2 are merged',
       me: false
     });
+  });
+
+  test('a verifier records checks on the board, and the task page shows each with who and how', async () => {
+    const cookie = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    const taskId = await createTaskInVerifying(pool, seeded);
+    await recordChooserChecklist(pool, taskId, ['Read the title', 'Open the page']);
+    const path = `/api/projects/${seeded.projectId}/tasks/1`;
+
+    const refused = await call(cookie, `${path}/checks`, { item: 1, outcome: 'maybe' });
+    expect(refused.status).toBe(400);
+    const bare = await call(cookie, `${path}/checks`, { item: 1, outcome: 'ok', evidence: ' ' });
+    expect(bare.status).toBe(400);
+    const sent = await call(cookie, `${path}/checks`, {
+      item: 2,
+      outcome: 'problem',
+      evidence: 'the page\nanswers 404'
+    });
+    expect(await json(sent)).toEqual({ recorded: true });
+
+    const { checklist } = await json(await call(cookie, path));
+    expect(checklist).toMatchObject({
+      checklist: ['Read the title', 'Open the page'],
+      headSha: 'abc',
+      canCheck: true,
+      outcomes: [
+        { value: 'ok', label: 'ok' },
+        { value: 'problem', label: 'problem' },
+        { value: 'partial', label: 'partly checked' }
+      ]
+    });
+    expect(checklist.checks).toMatchObject([
+      {
+        item: 1,
+        outcome: 'problem',
+        outcomeLabel: 'problem',
+        by: 'Antonio on the board',
+        evidence: 'the page answers 404'
+      }
+    ]);
   });
 
   test('a sign-in link works once and opens a session', async () => {
@@ -640,7 +684,10 @@ describe.skipIf(!url)('board api', () => {
       label: 'A question for an owner',
       me: false
     });
-    // Neither the requester nor a maintainer's accept can move it on before the owner decides.
+    // Neither the requester nor a maintainer's accept can move it on before the owner decides,
+    // and the board does not offer to send it on as it is.
+    expect(secrets.actions).not.toContain('submit');
+    expect((await json(await call(owner, `${project}/tasks/1`))).actions).not.toContain('submit');
     expect((await call(gio, `${project}/tasks/1/actions`, { type: 'submit' })).status).toBe(409);
     expect((await call(owner, `${project}/tasks/1/actions`, { type: 'accept' })).status).toBe(409);
     expect((await json(await call(owner, `${project}/tasks/1`))).waitingOn.me).toBe(true);

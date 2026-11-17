@@ -5,6 +5,7 @@
   import AgentAvatar from './AgentAvatar.svelte';
   import Markdown from './Markdown.svelte';
   import MemberAvatar from './MemberAvatar.svelte';
+  import ViaApp from './ViaApp.svelte';
   import { clock } from '#lib/state/clock.svelte.ts';
 
   interface Props {
@@ -106,6 +107,8 @@
           : `could not ask Copilot to review pull request #${p.pullRequest}`;
       case 'checklist_posted':
         return `posted the checklist on pull request #${p.pullRequest}`;
+      case 'checklist_checked':
+        return `checked item ${Number(p.item) + 1} of the checklist: ${p.outcome}`;
       default:
         return event.type.replaceAll('_', ' ');
     }
@@ -155,6 +158,7 @@
         item.kind === 'event' &&
         last?.kind === 'event' &&
         last.event.actor === item.event.actor &&
+        last.event.via === item.event.via &&
         Math.abs(new Date(item.at).getTime() - new Date(last.at).getTime()) < 2000
       ) {
         last.texts.push(...item.texts);
@@ -175,6 +179,7 @@
         <div class="bubble">
           <div class="meta">
             <strong>{item.comment.author}</strong>
+            <ViaApp name={item.comment.via} />
             <time class="faint" datetime={item.at} title={dateTime(item.at)}
               >{ago(item.at, clock.now)}</time
             >
@@ -194,7 +199,11 @@
           {/if}
         </span>
         <div class="line">
-          <span><strong>{item.event.actor}</strong> {join(item.texts)}</span>
+          <span
+            ><strong>{item.event.actor}</strong>
+            <ViaApp name={item.event.via} />
+            {join(item.texts)}</span
+          >
           <time class="faint" datetime={item.at} title={dateTime(item.at)}
             >{ago(item.at, clock.now)}</time
           >

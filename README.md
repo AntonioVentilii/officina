@@ -77,7 +77,7 @@ A maintainer can **claim the build** from the agent, before it starts or while i
   <img src="./docs/assets/task-check.png" alt="A task in Check: the chooser's checklist for the requester and a maintainer, with a before and after table of the changed strings in en, it and de" width="880" />
 </div>
 
-The chooser decided this text change needs the requester and one maintainer, at a glance. They tick the checklist and press **Looks good**; the engine approves the pull request on GitHub as them. Whether a person merges it or GitHub does once its checks pass is the project's setting and the chooser's call for each result.
+The chooser decided this text change needs the requester and one maintainer, at a glance. They record what they checked for each item, on the board or through Claude, and the checklist on the pull request says who checked what and how; then they press **Looks good**; the engine approves the pull request on GitHub as them. Whether a person merges it or GitHub does once its checks pass is the project's setting and the chooser's call for each result.
 
 ### Approve the plan before anything is built
 
@@ -164,7 +164,7 @@ Protect your default branch and tags with a ruleset the App cannot bypass: Offic
 
 ## Status
 
-Early preview. Phase 0 of the [roadmap](./docs/architecture.md#14-phases) is running in production for one team: engine, GitHub App, Managed Agents runner, all eight roles, the board, approvals and learnings. Next: email sign-in, notifications, multiple projects per workspace and a self-hosted runner.
+Early preview. Phase 0 of the [roadmap](./docs/architecture.md#14-phases) is running in production for one team: engine, GitHub App, Managed Agents runner, all eight roles, the board, approvals, learnings with their pull requests, several projects per workspace and the Claude connector. Next, in phase 1: emailed sign-in links, notifications by email and push, inline comments on specs, preview links and metrics.
 
 Officina is built to be built with Officina. [`AGENTS.md`](./AGENTS.md) is the entry point for agents working on this repository, and [`docs/architecture.md`](./docs/architecture.md) is the source of truth for the design.
 

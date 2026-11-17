@@ -23,6 +23,12 @@ export const INPUT_LIMITS = {
   option: 2,
   /** A pull request title handed in with a push, by a person or the builder. */
   prTitle: { min: 3, max: 120 },
+  /**
+   * A pull request body handed in with a push, in the sections of the project's template. GitHub
+   * holds 65,536 characters; this leaves room for what Officina adds after it: the task link, the
+   * issue it closes and an onboarding's follow-ups (15 of at most 500 characters).
+   */
+  prBody: 50_000,
   /** One thing checked, or left unchecked, in a hand-in. */
   check: 500,
   /** How many checks a hand-in lists, of each kind. */
@@ -32,6 +38,16 @@ export const INPUT_LIMITS = {
 /** Text cut to `max` characters, saying how many were left out, for a brief or a log to show. */
 export const clip = (text: string, max: number): string =>
   text.length > max ? `${text.slice(0, max)} … (${text.length - max} more characters)` : text;
+
+/**
+ * How much of an error's message a task event, a run event or a run's result keeps: enough to read
+ * the cause, short of a whole response body a failed call can carry.
+ */
+export const ERROR_TEXT_MAX = 500;
+
+/** An error's message as an event or a run's result records it, clipped to `ERROR_TEXT_MAX`. */
+export const errorText = (error: unknown): string =>
+  clip(error instanceof Error ? error.message : String(error), ERROR_TEXT_MAX);
 
 /**
  * What the approval chooser's checklist for verification may hold: its items and the rows of its
@@ -63,6 +79,15 @@ export const pushedFields = {
     .regex(new RegExp(`^${TASK_BRANCH_PREFIX}`), `branch must start with ${TASK_BRANCH_PREFIX}`),
   /** The pull request title, in the repository's required format. */
   prTitle: z.string().trim().min(1).max(INPUT_LIMITS.prTitle.max),
+  prBody: z
+    .string()
+    .trim()
+    .min(1)
+    .max(INPUT_LIMITS.prBody)
+    .optional()
+    .describe(
+      "The pull request body, in Markdown, only when the brief names the project's pull request template, and then required: keep every heading of the template and fill each one. Officina adds the link to the task and the issue it closes after it."
+    ),
   verified: checksSchema,
   notVerified: checksSchema
 };

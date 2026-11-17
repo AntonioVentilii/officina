@@ -1,4 +1,11 @@
-import { branchForTask, ENGINE, parseProjectConfig, taskUrl, type Actor } from '@officina/core';
+import {
+  branchForTask,
+  ENGINE,
+  errorText,
+  parseProjectConfig,
+  taskUrl,
+  type Actor
+} from '@officina/core';
 import {
   appendTaskEvent,
   autoMergeSpent,
@@ -77,7 +84,7 @@ const approvingAccount = async (pool: Pool, onBehalf: OnBehalf, taskId: string) 
       type: 'github_approval_failed',
       payload: {
         login: (await githubLoginOf(pool, verifier)) ?? 'unknown',
-        error: (error as Error).message.slice(0, 500)
+        error: errorText(error)
       }
     });
     return null;
@@ -172,7 +179,7 @@ export const approveOnGitHub = async (
       taskId: input.taskId,
       actor,
       type: 'github_approval_failed',
-      payload: { login: account.login, error: (error as Error).message.slice(0, 500) }
+      payload: { login: account.login, error: errorText(error) }
     });
     return;
   }
@@ -208,13 +215,13 @@ export const askCopilotToReview = async (
       taskId: input.taskId,
       actor,
       type: 'github_copilot_review_failed',
-      payload: { pullRequest: input.pullRequest, login, error: error.slice(0, 500) }
+      payload: { pullRequest: input.pullRequest, login, error }
     });
   let account: { token: string; login: string } | null = null;
   try {
     account = onBehalf ? await onBehalf.tokenFor(input.requesterId) : null;
   } catch (error) {
-    await failed(ENGINE, null, (error as Error).message);
+    await failed(ENGINE, null, errorText(error));
     return;
   }
   if (!onBehalf || !account) {
@@ -242,7 +249,7 @@ export const askCopilotToReview = async (
       payload: { pullRequest: input.pullRequest, login: account.login, outcome }
     });
   } catch (error) {
-    await failed(requester, account.login, (error as Error).message);
+    await failed(requester, account.login, errorText(error));
   }
 };
 
@@ -278,6 +285,7 @@ export type SyncGitHubPort = Pick<
   | 'pushFacts'
   | 'commitChanges'
   | 'commentOnIssue'
+  | 'editComment'
   | 'mergeWhenReady'
   | 'cancelAutoMerge'
   | 'pullRequest'
@@ -393,7 +401,7 @@ const autoMergeOnGitHub = async (
         taskId,
         actor: input.actor,
         type: 'github_auto_merge_failed',
-        payload: { error: (error as Error).message.slice(0, 500) }
+        payload: { error: errorText(error) }
       });
     }
     return true;
@@ -597,54 +605,6 @@ export const syncSpecStatus = async (
     if (!(error instanceof GitHubError) || error.status !== 409) throw error;
     return writeSpecStatus(pool, github, input);
   }
-};
-
-interface ChooserResult {
-  readonly checklist?: readonly string[];
-  readonly beforeAfter?: readonly { key: string; locale: string; before: string; after: string }[];
-}
-
-const cell = (value: string) => value.replaceAll('|', '\\|').replaceAll('\n', ' ');
-
-/** The verification checklist as markdown, for the pull request and for people reading it there. */
-export const checklistMarkdown = (result: unknown, taskLink: string): string | null => {
-  const chosen = result as ChooserResult | null;
-  if (!chosen?.checklist?.length) return null;
-  const lines = [
-    `### Verification checklist for ${taskLink}`,
-    '',
-    ...chosen.checklist.map((item) => `- [ ] ${item}`)
-  ];
-  if (chosen.beforeAfter?.length) {
-    lines.push('', '| Key | Locale | Before | After |', '| --- | --- | --- | --- |');
-    for (const row of chosen.beforeAfter) {
-      lines.push(
-        `| \`${cell(row.key)}\` | ${cell(row.locale)} | ${cell(row.before)} | ${cell(row.after)} |`
-      );
-    }
-  }
-  return lines.join('\n');
-};
-
-/** Posts the chooser's checklist on the pull request, once. */
-export const postChecklist = async (
-  pool: Pool,
-  github: SyncGitHubPort,
-  input: { taskId: string; ref: RepoRef; pullRequest: number; taskLink: string; result: unknown }
-) => {
-  if (
-    await hasTaskEvent(pool, input.taskId, 'checklist_posted', { pullRequest: input.pullRequest })
-  )
-    return;
-  const body = checklistMarkdown(input.result, input.taskLink);
-  if (!body) return;
-  await github.commentOnIssue({ ...input.ref, issueNumber: input.pullRequest, body });
-  await appendTaskEvent(pool, {
-    taskId: input.taskId,
-    actor: ENGINE,
-    type: 'checklist_posted',
-    payload: { pullRequest: input.pullRequest }
-  });
 };
 
 /**

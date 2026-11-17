@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { branchForTask, newTask, nextAgentRoles, type Task } from '../src';
+import { branchForTask, nextAgentRoles, type Task } from '../src';
+import { newTask } from './fixtures';
 
 const at = (changes: Partial<Task>): Task => ({ ...newTask('t1', 'antonio'), ...changes });
 

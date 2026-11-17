@@ -96,7 +96,14 @@
     <Sidebar {theme} oncycletheme={cycleTheme} />
     <main>
       {#if session.project}
-        {@render children()}
+        <!-- Every page reads the board's state, so a failed load is shown on every page. -->
+        {#if board.error}
+          <p class="load-error" role="alert">
+            The board could not load: {board.error}
+            <button class="btn ghost sm" onclick={() => void board.refresh()}>Try again</button>
+          </p>
+        {/if}
+        <div class="view">{@render children()}</div>
       {:else}
         <div class="state">
           <h1>No projects yet</h1>
@@ -139,9 +146,27 @@
 
   main {
     position: relative;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
     min-width: 0;
     height: 100dvh;
     overflow: hidden;
+  }
+
+  .view {
+    grid-row: 2;
+    min-height: 0;
+  }
+
+  .load-error {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+    padding: 10px 32px;
+    border-bottom: 3px solid var(--rule);
+    color: var(--danger);
   }
 
   .state {

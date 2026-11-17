@@ -1,4 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
+import { RUN_IS_ACTIVE } from './run-status';
 
 /** The refs a build run's token could move, as they stood before its session, and since when. */
 export interface RunRefs {
@@ -18,16 +19,25 @@ export const recordRunRefs = async (pool: Pool, runId: string, { refs, since }: 
   ]);
 };
 
-/** Of these runs, those that recorded their starting refs, with the task and what they recorded. */
-export const runsWithRefs = async (
-  db: Pool | PoolClient,
-  runIds: readonly string[]
+/** Records that a build run's refs were checked, so no later start checks them again. */
+export const markRefsChecked = async (pool: Pool, runId: string) => {
+  await pool.query('update runs set refs_checked_at = now() where id = $1', [runId]);
+};
+
+/**
+ * The build runs that ended with their starting refs recorded and never checked: the process that
+ * ran them stopped, or its check failed, before the check was recorded. Oldest first, with the task
+ * and what each recorded.
+ */
+export const uncheckedRunRefs = async (
+  db: Pool | PoolClient
 ): Promise<(RunRefs & { runId: string; taskId: string; role: string; result: unknown })[]> =>
   (
     await db.query<RunRefs & { runId: string; taskId: string; role: string; result: unknown }>(
       `select id as "runId", task_id as "taskId", agent_role as role, result,
               refs_before as refs, refs_since as since
-       from runs where id = any($1::uuid[]) and refs_before is not null order by created_at`,
-      [runIds]
+       from runs
+       where refs_before is not null and refs_checked_at is null and not (status ${RUN_IS_ACTIVE})
+       order by created_at`
     )
   ).rows;
