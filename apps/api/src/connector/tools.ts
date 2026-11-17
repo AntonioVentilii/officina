@@ -6,11 +6,13 @@ import {
   branchForTask,
   checksSchema,
   clip,
+  heldForOwner,
   redactSecrets,
   taskUrl,
+  type ConnectedApp,
   type Preview
 } from '@officina/core';
-import type { MemberProject } from '@officina/db';
+import { loadBoardTask, type MemberProject } from '@officina/db';
 import { fence, type HandInPort } from '@officina/engine';
 import type { Pool } from 'pg';
 import { z } from 'zod';
@@ -20,7 +22,7 @@ import { TaskCommandError, actOnTaskAs, commentAs, createRequestAs, handInAs } f
 /**
  * The connector's tools. Each one is a thin call into what the board's API already does
  * (`createRequestAs`, `actOnTaskAs`, `boardView`, `taskView`), as the member the token belongs to,
- * with the same permissions. Descriptions are written for Claude talking to someone who is not a
+ * with the same permissions, and records the app (`via`) on everything it does. Descriptions are written for Claude talking to someone who is not a
  * developer: what to ask them first, and what a good request looks like.
  */
 
@@ -28,6 +30,8 @@ export interface ToolContext {
   readonly pool: Pool;
   readonly publicUrl: string;
   readonly memberId: string;
+  /** The app the token was granted to, recorded on every action it takes for the member. */
+  readonly via: ConnectedApp;
   readonly workspaceId: string;
   readonly projects: readonly MemberProject[];
   /** Reads a handed-in push from GitHub; absent where the GitHub App is not configured. */
@@ -172,10 +176,25 @@ const WHAT_TO_DO: Record<string, string> = {
   changes: 'ask for changes, saying what is wrong (review with decision "changes")',
   comment: 'add a comment (comment)',
   accept: 'accept or decline it on the board',
-  claim: 'claim the build, to build it yourself, on the board',
+  claim: 'claim the build, to build it yourself (claim_build)',
   hand_in: 'hand in the build once its branch is pushed (hand_in_build)',
+  hand_back: 'hand the build back, so it waits to be built again (hand_back_build)',
   submit: 'send it on as it is, on the board',
   cancel: 'cancel it on the board'
+};
+
+/** What happens next to a request just opened, in words for the person who opened it. */
+const afterOpening = async (
+  pool: Pool,
+  projectId: string,
+  created: { readonly number: number; readonly stage: string }
+): Promise<string> => {
+  if (created.stage !== 'request')
+    return 'It waits for a maintainer to accept it; then an agent writes the plan.';
+  const row = await loadBoardTask(pool, projectId, created.number);
+  return row && heldForOwner(row.blocked)
+    ? 'It touches something only an owner may allow, so it waits for an owner to decide before any agent reads it; show_task says where it stands.'
+    : 'An agent reads it now and may ask a few questions; they show up in whats_waiting_on_me and on the board.';
 };
 
 interface Tool<T extends z.ZodType> {
@@ -243,7 +262,7 @@ Examples:
 - Report a bug: title "Profile photo does not save", request "I pick a new photo in Settings > Profile and press Save. The old photo is still there after reloading. Expected: the new photo stays."
 - Ask for a feature: title "Remind people of unfinished orders", request "People forget orders they started. Send a reminder the next morning if one is unfinished. Only once per order."
 
-After it is opened, tell the person the task link and that an agent may ask them questions there or here (whats_waiting_on_me).`,
+After it is opened, tell the person the task link and what happens next, as the answer says: usually that an agent may ask them questions there or here (whats_waiting_on_me), or, for a request held for an owner, that it waits for an owner's decision first.`,
     input: z.object({
       project: PROJECT,
       title: z
@@ -280,15 +299,13 @@ After it is opened, tell the person the task link and that an agent may ask them
       const created = await createRequestAs(context.pool, {
         projectId: project.id,
         memberId: context.memberId,
+        via: context.via,
         title: input.title,
         request: input.request,
         skipInterview: input.skip_interview === true,
         requestId: input.request_id
       });
-      const next =
-        created.stage === 'request'
-          ? 'An agent reads it now and may ask a few questions; they show up in whats_waiting_on_me and on the board.'
-          : 'It waits for a maintainer to accept it; then an agent writes the plan.';
+      const next = await afterOpening(context.pool, project.id, created);
       return `Opened task ${created.number} in ${project.name}: ${taskUrl(context.publicUrl, project.id, created.number)}\n${next}`;
     }
   }),
@@ -416,6 +433,7 @@ After it is opened, tell the person the task link and that an agent may ask them
       await actOnTaskAs(context.pool, {
         projectId: project.id,
         memberId: context.memberId,
+        via: context.via,
         number: input.number,
         action: {
           type: 'answer',
@@ -448,10 +466,29 @@ After it is opened, tell the person the task link and that an agent may ask them
       await commentAs(context.pool, {
         projectId: project.id,
         memberId: context.memberId,
+        via: context.via,
         number: input.number,
         text: input.text
       });
       return `Comment added to task ${input.number}: ${taskUrl(context.publicUrl, project.id, input.number)}`;
+    }
+  }),
+  tool({
+    name: 'claim_build',
+    title: 'Claim a build',
+    description: `For a developer who builds a task themselves, by hand or with their own agents (for example in Claude Code), instead of the build agent. Claim only when the person asks to build it. Call show_task first: it says whether the build waits for a developer and why, who may claim it, and the approved plan. Claiming makes the person the task's builder; a build the agent already started is taken over and the agent's part ends. Then build exactly the approved plan on the task branch (\`${branchForTask('<number>')}\`), push it and call hand_in_build. If the person stops, hand_back_build gives the build back.`,
+    input: z.object({ project: PROJECT, number: NUMBER }),
+    readOnly: false,
+    run: async (context, input) => {
+      const project = projectFor(context, input.project);
+      await actOnTaskAs(context.pool, {
+        projectId: project.id,
+        memberId: context.memberId,
+        via: context.via,
+        number: input.number,
+        action: { type: 'claim' }
+      });
+      return `Claimed; you build task ${input.number} now. Build the approved plan on the branch ${branchForTask(input.number)}, push it, then hand it in with hand_in_build: ${taskUrl(context.publicUrl, project.id, input.number)}`;
     }
   }),
   tool({
@@ -467,6 +504,15 @@ After it is opened, tell the person the task link and that an agent may ask them
         .min(INPUT_LIMITS.prTitle.min)
         .max(INPUT_LIMITS.prTitle.max)
         .describe("The pull request title, in the repository's own format."),
+      pr_body: z
+        .string()
+        .trim()
+        .min(1)
+        .max(INPUT_LIMITS.prBody)
+        .optional()
+        .describe(
+          'The pull request body, in Markdown, only when the project names a pull request template (`docs.pr_template` in `.github/officina.yml`), and then required: write it in that template, keeping every heading. Officina adds the link to the task after it.'
+        ),
       verified: checksSchema
         .optional()
         .describe('What you checked, one item each, for example the commands you ran.'),
@@ -478,13 +524,34 @@ After it is opened, tell the person the task link and that an agent may ask them
       const result = await handInAs(context.pool, context.github, {
         projectId: project.id,
         memberId: context.memberId,
+        via: context.via,
         number: input.number,
         publicUrl: context.publicUrl,
         prTitle: input.pr_title,
+        prBody: input.pr_body,
         verified: input.verified ?? [],
         notVerified: input.not_verified ?? []
       });
       return `Handed in; task ${input.number} is now ${result.stage}${result.pullRequest ? `, pull request #${result.pullRequest}` : ''}: ${taskUrl(context.publicUrl, project.id, input.number)}`;
+    }
+  }),
+  tool({
+    name: 'hand_back_build',
+    title: 'Hand a build back',
+    description:
+      "Gives back a build the person claimed and has not handed in, when they say they will not build it: the task goes back to ready, for the build agent or, when it needs a developer, for another developer to claim. Handing back someone else's build needs the right to steer the work (maintainers and owners). Call show_task first to check whose build it is.",
+    input: z.object({ project: PROJECT, number: NUMBER }),
+    readOnly: false,
+    run: async (context, input) => {
+      const project = projectFor(context, input.project);
+      const result = await actOnTaskAs(context.pool, {
+        projectId: project.id,
+        memberId: context.memberId,
+        via: context.via,
+        number: input.number,
+        action: { type: 'release' }
+      });
+      return `Handed back; task ${input.number} is now ${result.stage}: ${taskUrl(context.publicUrl, project.id, input.number)}`;
     }
   }),
   tool({
@@ -516,6 +583,7 @@ Always call show_task first, show the person the plan or the list of what to che
       const result = await actOnTaskAs(context.pool, {
         projectId: project.id,
         memberId: context.memberId,
+        via: context.via,
         number: input.number,
         action:
           input.decision === 'approve'
