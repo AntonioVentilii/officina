@@ -11,8 +11,28 @@ import {
   type Member,
   type PlanInput,
   type ProjectConfig,
-  type Task
+  type Task,
+  type TaskKind
 } from '../src';
+
+/** A task as a request opens it, before anyone acts on it. */
+export const newTask = (id: string, requesterId: string, kind: TaskKind = 'request'): Task => ({
+  id,
+  kind,
+  requesterId,
+  stage: 'request',
+  lane: null,
+  specVersion: 0,
+  headSha: null,
+  userVisible: false,
+  assignee: null,
+  blocked: null,
+  paused: false,
+  fixRounds: 0,
+  reviews: {},
+  approvalPlans: {},
+  guards: []
+});
 
 export const CONFIG_YAML = `
 version: 1

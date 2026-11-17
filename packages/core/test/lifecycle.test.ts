@@ -5,7 +5,6 @@ import {
   effectivePolicy,
   evaluatePolicy,
   humanBuildReason,
-  newTask,
   nextAgentRoles,
   ownerHold,
   type Member,
@@ -20,6 +19,7 @@ import {
   createDriver,
   engine,
   loadConfig,
+  newTask,
   owner,
   productContributor,
   watcher
