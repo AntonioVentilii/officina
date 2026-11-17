@@ -739,8 +739,16 @@ describe.skipIf(!url)('connector for Claude', () => {
     const taskId = await taskInSpecReview(owner);
     await applyOrThrow(pool, taskId, { type: 'approve' }, seeded.owner);
     const dev = await contributor('Dev', ['developer']);
+    const beforeTemplate = (await tool(dev, 'show_task', { number: 1 })).content[0]!.text;
+    expect(beforeTemplate).toContain('claim the build, to build it yourself (claim_build)');
+    // A project that names no pull request template says nothing about one.
+    expect(beforeTemplate).not.toContain('Pull request template');
+    await pool.query(
+      `update projects set config = jsonb_set(config, '{docs,pr_template}', '".github/pull_request_template.md"') where id = $1`,
+      [seeded.projectId]
+    );
     expect((await tool(dev, 'show_task', { number: 1 })).content[0]!.text).toContain(
-      'claim the build, to build it yourself (claim_build)'
+      "Pull request template: `.github/pull_request_template.md` on the default branch. Write hand_in_build's pr_body in it, keeping every heading."
     );
 
     const claimed = await tool(dev, 'claim_build', { number: 1 });
