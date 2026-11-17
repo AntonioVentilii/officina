@@ -148,6 +148,7 @@ const actionSchema = z.discriminatedUnion('type', [
 
 const handInSchema = z.strictObject({
   prTitle: z.string().trim().min(INPUT_LIMITS.prTitle.min).max(INPUT_LIMITS.prTitle.max),
+  prBody: z.string().trim().min(1).max(INPUT_LIMITS.prBody).optional(),
   verified: checksSchema.default([]),
   notVerified: checksSchema.default([])
 });
