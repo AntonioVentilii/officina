@@ -176,7 +176,8 @@ const questionLines = (blocked: NonNullable<TaskView['blocked']>): string[] => {
 
 const WHAT_TO_DO: Record<string, string> = {
   answer: 'answer the open question (answer_question)',
-  approve: 'approve, after reading what to check (review with decision "approve")',
+  approve:
+    'propose your approval, after reading what to check, to confirm on the board (review with decision "approve")',
   changes: 'ask for changes, saying what is wrong (review with decision "changes")',
   comment: 'add a comment (comment)',
   accept: 'accept or decline it on the board',
@@ -620,10 +621,11 @@ Call it once an item was really checked, by the person or by you for them, never
   }),
   tool({
     name: 'review',
-    title: 'Approve or ask for changes',
+    title: 'Propose an approval or ask for changes',
     description: `Records the person's decision at one of the two moments people decide:
-- a plan to approve (before anything is built): "approve" sends it to be built;
-- a result to check (after it is built): "approve" is the "Looks good" button. Officina then approves the pull request on GitHub as them if they connected GitHub; depending on the project, a person merges it or GitHub does once its checks pass.
+- a plan to approve (before anything is built);
+- a result to check (after it is built), the "Looks good" button.
+"approve" from here is only a proposal: it waits on the board until the person confirms it there with Approve (or discards it), and only then counts, sends the plan to be built or the result towards merging. Tell them so and give them the task link.
 "changes" sends it back to the agents with the note, which must say what is wrong or missing.
 
 Always call show_task first, show the person the plan or the list of what to check, and only approve when they say they read the plan or checked the items. Record each item checked with check_item before; an item left unchecked shows as not checked on the pull request. Never approve on their behalf without that.`,
@@ -644,22 +646,20 @@ Always call show_task first, show the person the plan or the list of what to che
       const project = projectFor(context, input.project);
       if (input.decision === 'changes' && !input.note)
         throw new ToolError('Say what should change: the note is required to ask for changes.');
-      const result = await actOnTaskAs(context.pool, {
+      await actOnTaskAs(context.pool, {
         projectId: project.id,
         memberId: context.memberId,
         via: context.via,
         number: input.number,
         action:
           input.decision === 'approve'
-            ? { type: 'approve' }
+            ? { type: 'propose_approval' }
             : { type: 'changes', note: input.note! }
       });
       const outcome =
         input.decision === 'changes'
           ? 'Changes requested; the agents work on it again.'
-          : result.satisfied === false
-            ? 'Your approval is recorded; more approvals are still needed.'
-            : 'Approved.';
+          : 'Approval proposed: it counts once you confirm it on the board with Approve, where you can also discard it.';
       return `${outcome} Task ${input.number}: ${taskUrl(context.publicUrl, project.id, input.number)}`;
     }
   })

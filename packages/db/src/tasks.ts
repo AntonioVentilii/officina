@@ -1,4 +1,13 @@
-import type { Actor, Member, Task } from '@officina/core';
+import {
+  READS_PROPOSALS,
+  openProposals,
+  type Actor,
+  type Approval,
+  type Command,
+  type Member,
+  type ProposalEntry,
+  type Task
+} from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
 import { findProjectsByRepo } from './projects';
 
@@ -146,6 +155,36 @@ export const listApprovedSubjects = async (
       [taskId]
     )
   ).rows;
+
+/**
+ * The approvals connected apps proposed on a task and the ones discarded, oldest first: what
+ * `openProposals` reads to know which still wait.
+ */
+export const listProposalHistory = async (
+  db: Queryable,
+  taskId: string
+): Promise<ProposalEntry[]> =>
+  (
+    await db.query<ProposalEntry>(
+      `select type, payload->>'gate' as gate, payload->>'subject' as subject,
+         payload->>'memberId' as "memberId", actor->'via' as via
+       from task_events
+       where task_id = $1 and type in ('approval_proposed', 'approval_proposal_discarded')
+       order by id`,
+      [taskId]
+    )
+  ).rows;
+
+/** The proposals still open on a task, read only for the commands that decide on them. */
+export const proposalsFor = async (
+  db: Queryable,
+  command: Command,
+  task: Task,
+  approvals: readonly Approval[]
+) =>
+  READS_PROPOSALS.has(command.type)
+    ? openProposals(task, await listProposalHistory(db, task.id), approvals)
+    : [];
 
 /** One member's role in a project, or null when they hold none there. */
 export const loadProjectMember = async (db: Queryable, projectId: string, memberId: string) =>
