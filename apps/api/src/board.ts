@@ -30,6 +30,7 @@ import {
   sameRequirement,
   seesQuestion,
   type Actor,
+  type ConnectedApp,
   type AgentRole,
   type Approval,
   type ApprovalPlan,
@@ -180,15 +181,15 @@ export const actorLabel = (actor: Actor, names: ReadonlyMap<string, string>): st
  * connection as `/connect` lists it, so the trail tells an action from Claude from a click on the
  * board, and one app from another; null for everything else.
  */
+const appView = (via: ConnectedApp) => ({
+  id: via.grantId,
+  label: CHECK_CHANNEL_LABELS.claude,
+  client: via.name,
+  connection: connectionRef(via.grantId)
+});
+
 const viaView = (actor: Actor) =>
-  actor.kind === 'member' && actor.via
-    ? {
-        id: actor.via.grantId,
-        label: CHECK_CHANNEL_LABELS.claude,
-        client: actor.via.name,
-        connection: connectionRef(actor.via.grantId)
-      }
-    : null;
+  actor.kind === 'member' && actor.via ? appView(actor.via) : null;
 
 const viewerMember = (viewer: BoardViewer): Member => ({
   id: viewer.memberId,
@@ -918,7 +919,7 @@ export const taskView = async (
     ),
     reviewers: REVIEWER_ROLES.map((role) => ({ role, label: roleLabel(role) })),
     actions: actionsFor(row, viewer, facts),
-    proposal: proposal ? { gate: proposal.gate, app: proposal.via.name } : null
+    proposal: proposal ? { gate: proposal.gate, via: appView(proposal.via) } : null
   };
 };
 

@@ -33,8 +33,9 @@
 
 <p class="proposal">
   <span>
-    Claude proposed approving this for you, through the app named "{proposal.app}" (its own name,
-    not verified). It counts only once you approve it here.
+    Claude proposed approving this for you, through the app named "{proposal.via.client}" (its own
+    name, not verified), connection {proposal.via.connection} under Connected apps. It counts only once
+    you approve it here.
   </span>
   <button class="btn ghost" disabled={busy} onclick={discard}>Discard</button>
 </p>

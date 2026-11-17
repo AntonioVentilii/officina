@@ -261,7 +261,7 @@ export interface TaskDetail extends Card {
   readonly checklist: ChecklistView | null;
   readonly actions: readonly BoardAction[];
   /** Your approval Claude proposed, by the app's own name: it counts once you approve here. */
-  readonly proposal: { readonly gate: 'spec_review' | 'verifying'; readonly app: string } | null;
+  readonly proposal: { readonly gate: 'spec_review' | 'verifying'; readonly via: Via } | null;
 }
 
 export type LogEntry = { readonly id: string; readonly at: string } & (
