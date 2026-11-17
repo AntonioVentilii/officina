@@ -211,6 +211,16 @@ describe('project config', () => {
     });
   });
 
+  test('still accepts setup, which nothing uses yet, and leaves it out of the config', () => {
+    const result = parseProjectConfig({
+      version: 1,
+      docs: { entry: 'AGENTS.md' },
+      setup: ['npm ci']
+    });
+    if (!result.ok) throw new Error(result.errors.join('\n'));
+    expect(result.config).not.toHaveProperty('setup');
+  });
+
   test('reports unknown keys and bad requirements with their path', () => {
     const result = parseProjectConfig({
       version: 1,

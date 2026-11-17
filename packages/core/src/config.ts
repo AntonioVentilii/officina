@@ -83,6 +83,10 @@ const projectConfigSchema = z
        */
       catalogs: z.record(z.string().min(1), markdownPage).optional()
     }),
+    /**
+     * Accepted, not used yet: nothing reads it, and the schema refuses unknown keys, so it stays for
+     * a config that already sets it to keep parsing.
+     */
     setup: z.array(z.string().min(1)).optional(),
     intake: z
       .strictObject({
@@ -219,7 +223,6 @@ export interface ProjectConfig {
     readonly prTemplate: string | null;
     readonly standards: StandardsDocs;
   };
-  readonly setup: readonly string[];
   readonly intake: { readonly interview: boolean };
   readonly verify: readonly string[];
   readonly approvals: { readonly selfApproval: boolean };
@@ -354,7 +357,6 @@ export const parseProjectConfig = (input: unknown): ConfigResult => {
         prTemplate: raw.docs.pr_template ?? null,
         standards: normalizeStandards(raw.docs)
       },
-      setup: raw.setup ?? [],
       intake: { interview: raw.intake?.interview ?? true },
       verify: raw.verify ?? [],
       approvals: { selfApproval: raw.approvals?.self_approval ?? true },
