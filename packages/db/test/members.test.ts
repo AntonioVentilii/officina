@@ -94,10 +94,10 @@ describe.skipIf(!url)('member activity', () => {
   test('a member counts as connected to Claude while a refresh token of theirs is live', async () => {
     const tim = await addMember('Tim', 'contributor');
     expect((await byName()).Tim!.claudeConnected).toBe(false);
-    const client = await registerConnectorClient(pool, {
+    const client = (await registerConnectorClient(pool, {
       name: 'Claude',
       redirectUris: ['https://claude.ai/callback']
-    });
+    }))!;
     await issueConnectorTokens(pool, {
       clientId: client.id,
       memberId: tim,
@@ -257,10 +257,10 @@ describe.skipIf(!url)('member activity', () => {
       'insert into sessions (token_hash, member_id, expires_at) values ($1, $2, now())',
       ['old-session', tim]
     );
-    const client = await registerConnectorClient(pool, {
+    const client = (await registerConnectorClient(pool, {
       name: 'Claude',
       redirectUris: ['https://claude.ai/cb']
-    });
+    }))!;
     await issueConnectorTokens(pool, {
       clientId: client.id,
       memberId: gio,

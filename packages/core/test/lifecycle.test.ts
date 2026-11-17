@@ -1,11 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import {
   canAutoVerify,
+  canSubmitRequest,
   effectivePolicy,
   evaluatePolicy,
   humanBuildReason,
-  newTask,
   nextAgentRoles,
+  ownerHold,
   type Member,
   type PlanInput,
   type Task
@@ -18,6 +19,7 @@ import {
   createDriver,
   engine,
   loadConfig,
+  newTask,
   owner,
   productContributor,
   watcher
@@ -385,6 +387,24 @@ describe('permissions', () => {
     task = driver.step(task, { type: 'submit_request' }, asMember(owner));
     expect(task).toMatchObject({ stage: 'triage', blocked: null });
     expect(driver.events()).toContainEqual({ type: 'unblocked', answer: '(submitted as is)' });
+  });
+
+  test('a request is offered to send on as it is exactly when it may be', () => {
+    const driver = createDriver([owner, productContributor]);
+    const theirs = newTask('t1', productContributor.id);
+    const askThem = { question: 'Which screens?', askedOf: { memberId: productContributor.id } };
+    const askOwner = { question: 'Is this allowed?', askedOf: { role: 'owner' as const } };
+    const cases: readonly [Task, boolean][] = [
+      [theirs, true],
+      [{ ...theirs, blocked: askThem }, true],
+      [{ ...theirs, paused: true }, false],
+      [{ ...theirs, blocked: askOwner }, false]
+    ];
+    for (const [task, offered] of cases)
+      for (const member of [owner, productContributor]) {
+        expect(canSubmitRequest(task, member)).toBe(offered);
+        expect(driver.attempt(task, { type: 'submit_request' }, asMember(member)).ok).toBe(offered);
+      }
   });
 
   test('the interviewer may submit a request, other agents may not', () => {
@@ -1464,6 +1484,33 @@ describe('work agents cannot or should not do goes to a person', () => {
     });
   });
 
+  test('a person hands in only while they may still build the task they claimed', () => {
+    const dev: Member = { id: 'dev', role: 'contributor', domains: ['developer'] };
+    const driver = createDriver([owner, dev]);
+    const claimed = driver.step(toReady(driver, PAGE_PATHS), { type: 'claim' }, asMember(dev));
+    const push = {
+      type: 'push',
+      headSha: 'abc',
+      changedPaths: PAGE_PATHS,
+      addedPaths: [],
+      catalogPages: {},
+      diffLines: 10
+    } as const;
+    const refused = { ok: false, error: 'not_allowed' } as const;
+    // Demoted to a watcher, or no longer a developer.
+    const since: Member[] = [
+      { ...dev, role: 'watcher' },
+      { ...dev, domains: [] }
+    ];
+    for (const now of since)
+      expect(createDriver([owner, now]).attempt(claimed, push, asMember(dev))).toEqual(refused);
+    // The task became confidential, which they may not read.
+    expect(driver.attempt({ ...claimed, guards: ['confidential'] }, push, asMember(dev))).toEqual(
+      refused
+    );
+    expect(driver.attempt(claimed, push, asMember(dev)).ok).toBe(true);
+  });
+
   test('only an agent result hands a task to a person; a member asks an ordinary question', () => {
     const driver = createDriver([owner]);
     const task = newTask('t1', owner.id);
@@ -1672,6 +1719,50 @@ describe('guarded tasks', () => {
     );
   });
 
+  test("Officina's added question joins an open one, asked of whichever role ranks higher", () => {
+    const maintainer: Member = { id: 'marta', role: 'maintainer', domains: [] };
+    const driver = createDriver([owner, maintainer, productContributor]);
+    const refs = {
+      type: 'add_question',
+      question: 'A tag moved during the build.',
+      askedOf: { role: 'maintainer' }
+    } as const;
+    const ask = (blocked: Task['blocked']): Task => ({ ...toReady(driver, PAGE_PATHS), blocked });
+
+    expect(driver.step(ask(null), refs, engine).blocked).toEqual({
+      question: 'A tag moved during the build.',
+      askedOf: { role: 'maintainer' }
+    });
+    for (const askedOf of [{ role: 'contributor' }, { memberId: productContributor.id }] as const) {
+      const joined = driver.step(ask({ question: 'Which colour?', askedOf }), refs, engine);
+      expect(joined.blocked).toEqual({
+        question: 'Which colour?\n\nA tag moved during the build.',
+        askedOf: { role: 'maintainer' }
+      });
+      expect(
+        driver.attempt(joined, { type: 'answer', text: 'Red.' }, asMember(productContributor))
+      ).toEqual({ ok: false, error: 'not_allowed' });
+      expect(
+        driver.step(joined, { type: 'answer', text: 'Red.' }, asMember(maintainer)).blocked
+      ).toBeNull();
+    }
+
+    const held = driver.step(ask(ownerHold(['secrets'])), refs, engine);
+    expect(held.blocked?.askedOf).toEqual({ role: 'owner' });
+    expect(held.blocked?.question).toContain('A tag moved during the build.');
+    expect(driver.attempt(held, { type: 'answer', text: 'Go.' }, asMember(maintainer))).toEqual({
+      ok: false,
+      error: 'not_allowed'
+    });
+
+    // The same question again, as a check run twice would ask it, changes nothing.
+    expect(driver.attempt(held, refs, engine)).toEqual({ ok: false, error: 'already_blocked' });
+    expect(driver.attempt(ask(null), refs, asMember(owner))).toEqual({
+      ok: false,
+      error: 'not_allowed'
+    });
+  });
+
   test("a later answer's words guard the task and hold it for the owner, who alone lifts it", () => {
     const driver = createDriver([owner, productContributor]);
     let task = newTask('t1', productContributor.id);
@@ -1751,6 +1842,39 @@ describe('guarded tasks', () => {
     );
     expect(kept.blocked?.question).toBe('Which host?');
     expect(kept.guards).toEqual(['publishing']);
+  });
+
+  test("a pull request closed while the task is held for the owner keeps the owner's hold", () => {
+    const maintainer: Member = { id: 'marta', role: 'maintainer', domains: [] };
+    const driver = createDriver([owner, maintainer, productContributor]);
+    const reviewing = driver.step(
+      dispatchAgent(driver, toReady(driver, PAGE_PATHS)),
+      {
+        type: 'push',
+        headSha: 'abc',
+        changedPaths: PAGE_PATHS,
+        addedPaths: [],
+        catalogPages: {},
+        diffLines: 10
+      },
+      asAgent('builder')
+    );
+    const held = driver.step(
+      reviewing,
+      { type: 'guard_words', text: 'Make it public tonight.' },
+      asMember(productContributor)
+    );
+    expect(held.blocked?.askedOf).toEqual({ role: 'owner' });
+    const closed = driver.step(held, { type: 'pull_request_closed', pullRequest: 7 }, engine);
+    expect(closed).toMatchObject({ stage: 'ready', assignee: null, headSha: null });
+    expect(closed.blocked).toEqual(held.blocked);
+    expect(driver.events()).not.toContainEqual(expect.objectContaining({ type: 'blocked' }));
+    expect(
+      driver.attempt(closed, { type: 'answer', text: 'build it again' }, asMember(maintainer))
+    ).toEqual({ ok: false, error: 'not_allowed' });
+    expect(
+      driver.step(closed, { type: 'answer', text: 'Not public.' }, asMember(owner)).blocked
+    ).toBeNull();
   });
 
   test('a handoff for a secret, access or publishing guards the task like asking for it', () => {
@@ -1855,5 +1979,94 @@ describe('guarded tasks', () => {
     );
     expect(exhausted.stage).toBe('ready');
     expect(exhausted.blocked?.askedOf).toEqual({ role: 'owner' });
+  });
+});
+
+describe('commands the task is not in a state for', () => {
+  test("a second question never replaces an open one, the owner's hold included", () => {
+    const driver = createDriver([owner, productContributor]);
+    const held = driver.step(
+      toReady(driver, PAGE_PATHS),
+      { type: 'guard_words', text: 'Make it public tonight.' },
+      asMember(productContributor)
+    );
+    expect(held.blocked?.askedOf).toEqual({ role: 'owner' });
+    const question = {
+      type: 'block',
+      question: 'Which colour?',
+      askedOf: { role: 'contributor' }
+    } as const;
+    for (const actor of [asAgent('spec'), engine, asMember(productContributor)]) {
+      expect(driver.attempt(held, question, actor)).toEqual({
+        ok: false,
+        error: 'already_blocked'
+      });
+    }
+    expect(
+      driver.attempt(held, { type: 'answer', text: 'Blue.' }, asMember(productContributor))
+    ).toEqual({ ok: false, error: 'not_allowed' });
+    expect(
+      driver.step(held, { type: 'answer', text: 'Not tonight.' }, asMember(owner)).blocked
+    ).toBeNull();
+  });
+
+  test('an answer to a task with no open question is refused', () => {
+    const driver = createDriver([owner]);
+    expect(
+      driver.attempt(newTask('t1', owner.id), { type: 'answer', text: 'it' }, asMember(owner))
+    ).toEqual({ ok: false, error: 'not_blocked' });
+  });
+
+  test('a task with no lane is neither approved nor dispatched', () => {
+    const driver = createDriver([owner]);
+    let planned = newTask('t1', owner.id);
+    planned = driver.step(planned, { type: 'submit_request' }, asMember(owner));
+    planned = driver.step(planned, { type: 'accept' }, asMember(owner));
+    planned = driver.step(
+      planned,
+      { type: 'post_spec', predictedPaths: PAGE_PATHS, userVisible: false },
+      asAgent('spec')
+    );
+    planned = driver.step(
+      planned,
+      { type: 'plan_approval', userVisible: false, plan: PLAN },
+      asAgent('chooser')
+    );
+    expect(planned.stage).toBe('spec_review');
+    expect(
+      driver.attempt({ ...planned, lane: null }, { type: 'approve' }, asMember(owner))
+    ).toEqual({ ok: false, error: 'no_lane' });
+
+    const ready = driver.step(planned, { type: 'approve' }, asMember(owner));
+    const dispatch = {
+      type: 'dispatch',
+      assignee: { kind: 'agent', role: 'builder' },
+      openInLane: 0
+    } as const;
+    expect(driver.attempt({ ...ready, lane: null }, dispatch, engine)).toEqual({
+      ok: false,
+      error: 'no_lane'
+    });
+  });
+
+  test('a result is neither planned nor approved without a pushed head', () => {
+    const driver = createDriver([owner]);
+    const choosing = buildAndReview(
+      driver,
+      dispatchAgent(driver, toReady(driver, PAGE_PATHS)),
+      'abc',
+      PAGE_PATHS
+    );
+    const choose = { type: 'choose', userVisible: false, plan: PLAN } as const;
+    expect(driver.attempt({ ...choosing, headSha: null }, choose, asAgent('chooser'))).toEqual({
+      ok: false,
+      error: 'no_head'
+    });
+
+    const verifying = driver.step(choosing, choose, asAgent('chooser'));
+    expect(verifying.stage).toBe('verifying');
+    expect(
+      driver.attempt({ ...verifying, headSha: null }, { type: 'approve' }, asMember(owner))
+    ).toEqual({ ok: false, error: 'no_head' });
   });
 });

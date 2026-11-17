@@ -6,6 +6,7 @@ import {
   RUNNER_ROLES,
   buildDefinition,
   ensureEnvironment,
+  isRunnerRole,
   STANDARD_URL,
   loadDefinitions,
   loadStandard,
@@ -22,6 +23,11 @@ const toolset = (role: (typeof RUNNER_ROLES)[number]) => {
 };
 
 describe('agent definitions', () => {
+  test('a role name is a runner role only when a role of that name runs', () => {
+    expect(RUNNER_ROLES.every(isRunnerRole)).toBe(true);
+    expect(['wizard', 'Builder', 'agents/builder', ''].some(isRunnerRole)).toBe(false);
+  });
+
   test('web access is off for every role and only the builder and the onboarder write files', () => {
     expect(RUNNER_ROLES.filter(isBuildRole)).toEqual(['builder', 'onboarder']);
     for (const role of RUNNER_ROLES) {
