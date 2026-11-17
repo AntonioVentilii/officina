@@ -9,11 +9,13 @@ import {
   type Guard,
   type Member,
   findOption,
+  memberActor,
   optionAnswer,
   parseProjectConfig,
   type Actor,
   type ApprovalPlan,
   type Command,
+  type ConnectedApp,
   type Task
 } from '@officina/core';
 import {
@@ -114,7 +116,11 @@ const resolve = async (pool: Pool, target: Target) => {
 export interface ProjectActor {
   readonly projectId: string;
   readonly memberId: string;
+  /** The connected app acting for the member, recorded on what it does; absent on the board. */
+  readonly via?: ConnectedApp | undefined;
 }
+
+const actorOf = (input: ProjectActor): Actor => memberActor(input.memberId, input.via);
 
 interface RequestInput {
   readonly title: string;
@@ -149,7 +155,7 @@ export const createRequestAs = async (
   input: ProjectActor & RequestInput
 ): Promise<{ number: number; stage: string }> => {
   const { projectId, memberId } = input;
-  const actor: Actor = { kind: 'member', memberId };
+  const actor = actorOf(input);
   // A request starts paid agent runs, so reading the board is not enough to open one.
   const member = await loadProjectMember(pool, projectId, memberId);
   if (!member || !can(member, 'request'))
@@ -170,6 +176,7 @@ export const createRequestAs = async (
       projectId,
       title: input.title,
       requesterId: memberId,
+      via: input.via,
       request: input.request,
       guards,
       ...(hold ? { hold } : {})
@@ -225,7 +232,7 @@ const writeComment = async (
   pool: Pool,
   input: ProjectActor & { readonly taskId: string; readonly task: Task; readonly text: string }
 ): Promise<void> => {
-  const actor: Actor = { kind: 'member', memberId: input.memberId };
+  const actor = actorOf(input);
   const config = parseProjectConfig(await loadProjectConfig(pool, input.projectId));
   const guards = config.ok ? guardsAddedBy(input.task, config.config, input.text) : [];
   if (TERMINAL_STAGES.has(input.task.stage) || !guards.length) {
@@ -368,7 +375,7 @@ export const actOnTaskAs = async (
   input: ProjectActor & { readonly number: number; readonly action: TaskAction }
 ): Promise<{ stage: string; satisfied?: boolean }> => {
   const { projectId } = input;
-  const actor: Actor = { kind: 'member', memberId: input.memberId };
+  const actor = actorOf(input);
   const taskId = await findTaskIdByNumber(pool, projectId, input.number);
   if (!taskId) throw new TaskCommandError(`task #${input.number} not found`);
   const { action, expectedVersion } = await resolveAnswer(pool, taskId, input.action);

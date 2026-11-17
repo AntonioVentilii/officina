@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type Anthropic from '@anthropic-ai/sdk';
+import Anthropic, { type ClientOptions } from '@anthropic-ai/sdk';
 import type { BetaManagedAgentsStreamSessionEvents } from '@anthropic-ai/sdk/resources/beta/sessions/events';
 import { createSdkPort, portEvents } from '../src/sdk';
 
@@ -33,27 +33,35 @@ describe('the SDK port', () => {
     expect(events).toEqual([RUNNING, TOOL_USE]);
   });
 
-  /** An Anthropic client that records what the port sends and answers with fixed ids. */
+  /**
+   * A real Anthropic client whose requests never leave the test: its `fetch` records each one and
+   * answers with fixed ids.
+   */
   const fakeClient = (usage?: { list_cost?: { amount: string; currency: string } }) => {
-    const calls: { method: string; args: unknown[] }[] = [];
-    const record =
-      <T>(method: string, answer: T) =>
-      async (...args: unknown[]) => {
-        calls.push({ method, args });
-        return answer;
-      };
-    const client = {
-      beta: {
-        sessions: {
-          create: record('sessions.create', { id: 'sesn_1' }),
-          retrieve: record('sessions.retrieve', { id: 'sesn_1', usage })
-        },
-        environments: {
-          create: record('environments.create', { id: 'env_1' }),
-          update: record('environments.update', { id: 'env_1' })
-        }
-      }
-    } as unknown as Anthropic;
+    const calls: { method: string; path: string; body: unknown }[] = [];
+    const answers: Record<string, unknown> = {
+      'POST /v1/sessions': { id: 'sesn_1' },
+      'GET /v1/sessions/sesn_1': { id: 'sesn_1', usage },
+      'POST /v1/environments': { id: 'env_1' },
+      'POST /v1/environments/env_1': { id: 'env_1' }
+    };
+    const fetch: NonNullable<ClientOptions['fetch']> = async (input, init) => {
+      const method = init?.method ?? 'GET';
+      const path = new URL(input.toString()).pathname;
+      const body = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined;
+      calls.push({ method, path, body });
+      const answer = answers[`${method} ${path}`];
+      return answer === undefined
+        ? Response.json({ error: 'not found' }, { status: 404 })
+        : Response.json(answer);
+    };
+    // The board's tests install a jsdom window in the same run, which the SDK takes for a browser.
+    const client = new Anthropic({
+      apiKey: 'test-key',
+      fetch,
+      maxRetries: 0,
+      dangerouslyAllowBrowser: true
+    });
     return { port: createSdkPort(client), calls };
   };
 
@@ -76,25 +84,24 @@ describe('the SDK port', () => {
     ).toEqual({ id: 'sesn_1' });
     expect(calls).toEqual([
       {
-        method: 'sessions.create',
-        args: [
-          {
-            agent: { type: 'agent', id: 'agent_builder', version: 3 },
-            environment_id: 'env_1',
-            title: 'Officina #7 builder',
-            metadata: { task_id: 't1', run_id: 'r1', role: 'builder' },
-            resources: [
-              {
-                type: 'github_repository',
-                url: 'https://github.com/ViciApp/vici-app',
-                authorization_token: 'ghs_token',
-                checkout: { type: 'branch', name: 'officina/task-7' }
-              }
-            ],
-            // The amount is in the currency's minor units: 300 is three dollars.
-            budget: { type: 'limit', max_list_cost: { amount: '300', currency: 'USD' } }
-          }
-        ]
+        method: 'POST',
+        path: '/v1/sessions',
+        body: {
+          agent: { type: 'agent', id: 'agent_builder', version: 3 },
+          environment_id: 'env_1',
+          title: 'Officina #7 builder',
+          metadata: { task_id: 't1', run_id: 'r1', role: 'builder' },
+          resources: [
+            {
+              type: 'github_repository',
+              url: 'https://github.com/ViciApp/vici-app',
+              authorization_token: 'ghs_token',
+              checkout: { type: 'branch', name: 'officina/task-7' }
+            }
+          ],
+          // The amount is in the currency's minor units: 300 is three dollars.
+          budget: { type: 'limit', max_list_cost: { amount: '300', currency: 'USD' } }
+        }
       }
     ]);
   });
@@ -102,7 +109,7 @@ describe('the SDK port', () => {
   test("reads a session's cost in cents, and none when it has no list cost yet", async () => {
     const priced = fakeClient({ list_cost: { amount: '2500', currency: 'USD' } });
     expect(await priced.port.sessionCostCents('sesn_1')).toBe(2500);
-    expect(priced.calls).toEqual([{ method: 'sessions.retrieve', args: ['sesn_1'] }]);
+    expect(priced.calls).toEqual([{ method: 'GET', path: '/v1/sessions/sesn_1', body: undefined }]);
     expect(await fakeClient().port.sessionCostCents('sesn_1')).toBeNull();
   });
 
@@ -121,8 +128,8 @@ describe('the SDK port', () => {
       }
     };
     expect(calls).toEqual([
-      { method: 'environments.create', args: [{ name: 'officina-vici-app', config }] },
-      { method: 'environments.update', args: ['env_1', { config }] }
+      { method: 'POST', path: '/v1/environments', body: { name: 'officina-vici-app', config } },
+      { method: 'POST', path: '/v1/environments/env_1', body: { config } }
     ]);
   });
 });

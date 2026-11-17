@@ -6,11 +6,13 @@ import {
   branchForTask,
   checksSchema,
   clip,
+  heldForOwner,
   redactSecrets,
   taskUrl,
+  type ConnectedApp,
   type Preview
 } from '@officina/core';
-import type { MemberProject } from '@officina/db';
+import { loadBoardTask, type MemberProject } from '@officina/db';
 import { fence, type HandInPort } from '@officina/engine';
 import type { Pool } from 'pg';
 import { z } from 'zod';
@@ -20,7 +22,7 @@ import { TaskCommandError, actOnTaskAs, commentAs, createRequestAs, handInAs } f
 /**
  * The connector's tools. Each one is a thin call into what the board's API already does
  * (`createRequestAs`, `actOnTaskAs`, `boardView`, `taskView`), as the member the token belongs to,
- * with the same permissions. Descriptions are written for Claude talking to someone who is not a
+ * with the same permissions, and records the app (`via`) on everything it does. Descriptions are written for Claude talking to someone who is not a
  * developer: what to ask them first, and what a good request looks like.
  */
 
@@ -28,6 +30,8 @@ export interface ToolContext {
   readonly pool: Pool;
   readonly publicUrl: string;
   readonly memberId: string;
+  /** The app the token was granted to, recorded on every action it takes for the member. */
+  readonly via: ConnectedApp;
   readonly workspaceId: string;
   readonly projects: readonly MemberProject[];
   /** Reads a handed-in push from GitHub; absent where the GitHub App is not configured. */
@@ -179,6 +183,20 @@ const WHAT_TO_DO: Record<string, string> = {
   cancel: 'cancel it on the board'
 };
 
+/** What happens next to a request just opened, in words for the person who opened it. */
+const afterOpening = async (
+  pool: Pool,
+  projectId: string,
+  created: { readonly number: number; readonly stage: string }
+): Promise<string> => {
+  if (created.stage !== 'request')
+    return 'It waits for a maintainer to accept it; then an agent writes the plan.';
+  const row = await loadBoardTask(pool, projectId, created.number);
+  return row && heldForOwner(row.blocked)
+    ? 'It touches something only an owner may allow, so it waits for an owner to decide before any agent reads it; show_task says where it stands.'
+    : 'An agent reads it now and may ask a few questions; they show up in whats_waiting_on_me and on the board.';
+};
+
 interface Tool<T extends z.ZodType> {
   readonly name: string;
   readonly title: string;
@@ -244,7 +262,7 @@ Examples:
 - Report a bug: title "Profile photo does not save", request "I pick a new photo in Settings > Profile and press Save. The old photo is still there after reloading. Expected: the new photo stays."
 - Ask for a feature: title "Remind people of unfinished orders", request "People forget orders they started. Send a reminder the next morning if one is unfinished. Only once per order."
 
-After it is opened, tell the person the task link and that an agent may ask them questions there or here (whats_waiting_on_me).`,
+After it is opened, tell the person the task link and what happens next, as the answer says: usually that an agent may ask them questions there or here (whats_waiting_on_me), or, for a request held for an owner, that it waits for an owner's decision first.`,
     input: z.object({
       project: PROJECT,
       title: z
@@ -281,15 +299,13 @@ After it is opened, tell the person the task link and that an agent may ask them
       const created = await createRequestAs(context.pool, {
         projectId: project.id,
         memberId: context.memberId,
+        via: context.via,
         title: input.title,
         request: input.request,
         skipInterview: input.skip_interview === true,
         requestId: input.request_id
       });
-      const next =
-        created.stage === 'request'
-          ? 'An agent reads it now and may ask a few questions; they show up in whats_waiting_on_me and on the board.'
-          : 'It waits for a maintainer to accept it; then an agent writes the plan.';
+      const next = await afterOpening(context.pool, project.id, created);
       return `Opened task ${created.number} in ${project.name}: ${taskUrl(context.publicUrl, project.id, created.number)}\n${next}`;
     }
   }),
@@ -417,6 +433,7 @@ After it is opened, tell the person the task link and that an agent may ask them
       await actOnTaskAs(context.pool, {
         projectId: project.id,
         memberId: context.memberId,
+        via: context.via,
         number: input.number,
         action: {
           type: 'answer',
@@ -449,6 +466,7 @@ After it is opened, tell the person the task link and that an agent may ask them
       await commentAs(context.pool, {
         projectId: project.id,
         memberId: context.memberId,
+        via: context.via,
         number: input.number,
         text: input.text
       });
@@ -466,6 +484,7 @@ After it is opened, tell the person the task link and that an agent may ask them
       await actOnTaskAs(context.pool, {
         projectId: project.id,
         memberId: context.memberId,
+        via: context.via,
         number: input.number,
         action: { type: 'claim' }
       });
@@ -505,6 +524,7 @@ After it is opened, tell the person the task link and that an agent may ask them
       const result = await handInAs(context.pool, context.github, {
         projectId: project.id,
         memberId: context.memberId,
+        via: context.via,
         number: input.number,
         publicUrl: context.publicUrl,
         prTitle: input.pr_title,
@@ -527,6 +547,7 @@ After it is opened, tell the person the task link and that an agent may ask them
       const result = await actOnTaskAs(context.pool, {
         projectId: project.id,
         memberId: context.memberId,
+        via: context.via,
         number: input.number,
         action: { type: 'release' }
       });
@@ -562,6 +583,7 @@ Always call show_task first, show the person the plan or the list of what to che
       const result = await actOnTaskAs(context.pool, {
         projectId: project.id,
         memberId: context.memberId,
+        via: context.via,
         number: input.number,
         action:
           input.decision === 'approve'
