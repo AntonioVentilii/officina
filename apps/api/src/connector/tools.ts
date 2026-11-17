@@ -384,7 +384,10 @@ After it is opened, tell the person the task link and what happens next, as the 
         lines.push('', `Still needs approval from: ${task.approval.pending.join(', ')}.`);
       if (task.plan?.current) lines.push(`How deep to check: ${task.plan.depthLabel}.`);
       if (task.stage === 'verifying' && task.checklist?.checklist.length)
-        lines.push('', ...checklistLines(task.checklist));
+        lines.push(
+          '',
+          ...checklistLines(task.checklist, 'What to check (record each with check_item):')
+        );
       if (task.comments.length) {
         lines.push('', 'Conversation:');
         for (const comment of task.comments.slice(-20))
