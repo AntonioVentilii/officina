@@ -77,7 +77,7 @@ A maintainer can **claim the build** from the agent, before it starts or while i
   <img src="./docs/assets/task-check.png" alt="A task in Check: the chooser's checklist for the requester and a maintainer, with a before and after table of the changed strings in en, it and de" width="880" />
 </div>
 
-The chooser decided this text change needs the requester and one maintainer, at a glance. They tick the checklist and press **Looks good**; the engine approves the pull request on GitHub as them. Whether a person merges it or GitHub does once its checks pass is the project's setting and the chooser's call for each result.
+The chooser decided this text change needs the requester and one maintainer, at a glance. They record what they checked for each item, on the board or through Claude, and the checklist on the pull request says who checked what and how; then they press **Looks good**; the engine approves the pull request on GitHub as them. Whether a person merges it or GitHub does once its checks pass is the project's setting and the chooser's call for each result.
 
 ### Approve the plan before anything is built
 

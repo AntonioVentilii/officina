@@ -26,6 +26,7 @@ export const gitHubWith = (calls: Partial<EngineGitHub>): EngineGitHub => ({
   pushFacts: unexpected('pushFacts'),
   commitChanges: unexpected('commitChanges'),
   commentOnIssue: unexpected('commentOnIssue'),
+  editComment: unexpected('editComment'),
   mergeWhenReady: unexpected('mergeWhenReady'),
   cancelAutoMerge: unexpected('cancelAutoMerge'),
   pullRequest: unexpected('pullRequest'),

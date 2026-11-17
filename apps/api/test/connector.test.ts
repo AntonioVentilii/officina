@@ -12,7 +12,14 @@ import {
   UNUSED_CLIENT_RETENTION
 } from '@officina/db';
 import { Pool } from 'pg';
-import { PLAN, applyOrThrow, resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
+import {
+  PLAN,
+  applyOrThrow,
+  createTaskInVerifying,
+  recordChooserChecklist,
+  resetAndSeed,
+  type Seeded
+} from '../../../packages/db/test/seed';
 import { gitHubWith } from '../../../packages/engine/test/fake-github';
 import { createApp } from '../src/app';
 import { accessLogView, invite, loginLink } from '../src/people';
@@ -471,6 +478,7 @@ describe.skipIf(!url)('connector for Claude', () => {
       'claim_build',
       'hand_in_build',
       'hand_back_build',
+      'check_item',
       'review'
     ]);
     const open = list.result.tools.find((tool: { name: string }) => tool.name === 'open_request');
@@ -613,6 +621,58 @@ describe.skipIf(!url)('connector for Claude', () => {
       [taskId]
     );
     expect(requested.rows).toEqual([{ note: 'Cover Italian too.' }]);
+  });
+
+  test('Claude records what was checked for an item, as the member via Claude, and show_task reads it back', async () => {
+    const token = (await connect()).tokens.access_token as string;
+    const taskId = await createTaskInVerifying(pool, seeded);
+    await recordChooserChecklist(pool, taskId, ['Only two files changed', 'Live check']);
+
+    const before = await tool(token, 'check_item', {
+      number: 1,
+      item: 3,
+      outcome: 'ok',
+      evidence: 'read'
+    });
+    expect(before).toMatchObject({ isError: true });
+    expect(before.content[0]!.text).toBe('the checklist has 2 items; there is no item 3');
+    const bare = await tool(token, 'check_item', {
+      number: 1,
+      item: 1,
+      outcome: 'ok',
+      evidence: ' '
+    });
+    expect(bare.isError).toBe(true);
+
+    const checked = await tool(token, 'check_item', {
+      number: 1,
+      item: 2,
+      outcome: 'partial',
+      evidence: 'curl answers 200 on both; the page itself not looked at'
+    });
+    expect(checked.content[0]!.text).toStartWith('Recorded: item 2 of task 1, partly checked.');
+    const again = await tool(token, 'check_item', {
+      number: 1,
+      item: 2,
+      outcome: 'partial',
+      evidence: 'curl answers 200 on both; the page itself not looked at'
+    });
+    expect(again.content[0]!.text).toStartWith('Already recorded, nothing new');
+
+    const shown = (await tool(token, 'show_task', { number: 1 })).content[0]!.text;
+    expect(shown).toContain('1. Only two files changed [not checked]');
+    expect(shown).toContain(
+      '2. Live check [partly checked, Antonio via Claude: curl answers 200 on both; the page itself not looked at]'
+    );
+
+    await applyOrThrow(pool, taskId, { type: 'approve' }, seeded.owner);
+    const late = await tool(token, 'check_item', {
+      number: 1,
+      item: 1,
+      outcome: 'ok',
+      evidence: 'read in the diff'
+    });
+    expect(late.content[0]!.text).toBe('the task is not waiting for its result to be checked');
   });
 
   test('Claude hands in a build the member claimed and pushed, and the pull request opens', async () => {

@@ -231,9 +231,10 @@
               <section>
                 <h3 class="caps">What to check</h3>
                 <Checklist
-                  items={task.checklist.checklist}
+                  view={task.checklist}
                   beforeAfter={task.checklist.beforeAfter ?? []}
-                  storageKey="officina.check.{session.projectId}.{task.number}.{task.headSha}"
+                  path="/api/projects/{session.projectId}/tasks/{task.number}/checks"
+                  onchanged={() => void load()}
                 />
               </section>
             {/if}

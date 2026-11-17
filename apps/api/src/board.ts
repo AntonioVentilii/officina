@@ -63,6 +63,7 @@ import {
   type TaskEventRow,
   loadProjectConfig
 } from '@officina/db';
+import { checklistView, type ChosenChecklist } from './checklist-view';
 import type { Pool } from 'pg';
 
 /** Who or what the task waits on right now, from the viewer's point of view. */
@@ -224,7 +225,8 @@ const PUBLIC_FIELDS: Readonly<Record<string, readonly string[]>> = {
   awaiting_merge: ['pullRequest'],
   merge_held: ['pullRequest'],
   head_carried: ['headSha'],
-  checklist_posted: ['pullRequest']
+  checklist_posted: ['pullRequest'],
+  checklist_checked: ['item', 'outcome', 'channel']
 };
 
 const HIDDEN_QUESTION =
@@ -880,11 +882,12 @@ export const taskView = async (
       approvedBy: approval.approvedBy
     },
     checklist: shown.value(
-      chooser as {
-        checklist: string[];
-        beforeAfter?: { key: string; locale: string; before: string; after: string }[];
-        userVisible: boolean;
-      } | null
+      await checklistView(pool, {
+        taskId: row.id,
+        task: row,
+        viewer: viewerMember(viewer),
+        chosen: chooser as ChosenChecklist | null
+      })
     ),
     reviewers: REVIEWER_ROLES.map((role) => ({ role, label: roleLabel(role) })),
     actions: actionsFor(row, viewer, facts)

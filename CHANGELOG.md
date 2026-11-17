@@ -1,5 +1,51 @@
 # Changelog
 
+## [1.8.0](https://github.com/AntonioVentilii/officina/compare/v1.7.7...v1.8.0) (2026-11-17)
+
+
+### Features
+
+* **api,board:** record which connected app acted for a member and show it in the timeline ([#232](https://github.com/AntonioVentilii/officina/issues/232)) ([80fca18](https://github.com/AntonioVentilii/officina/commit/80fca18a1604d9ac90a15f5921e8fa54138ea76b))
+* **api:** claim and hand back a build from the claude connector ([#231](https://github.com/AntonioVentilii/officina/issues/231)) ([9f8e48e](https://github.com/AntonioVentilii/officina/commit/9f8e48e3aba1be131240c2f58cf677ec9b21272f))
+* **core,engine,api,board:** pull requests follow the project's pull request template ([#249](https://github.com/AntonioVentilii/officina/issues/249)) ([5113141](https://github.com/AntonioVentilii/officina/commit/51131419b50c17f9352c4399b87fd27a3b1d1b64))
+
+
+### Bug Fixes
+
+* **api:** tell the requester a guarded request waits for an owner ([#237](https://github.com/AntonioVentilii/officina/issues/237)) ([7c70c02](https://github.com/AntonioVentilii/officina/commit/7c70c02c7f6157e8876a0b112045a4f5fd23e862))
+* **board:** let only the latest task drawer load land ([#247](https://github.com/AntonioVentilii/officina/issues/247)) ([0887387](https://github.com/AntonioVentilii/officina/commit/08873873d22fb768b51d18e79712f8dae33f32b7))
+* **board:** mark the current page in the sidebar for screen readers ([#251](https://github.com/AntonioVentilii/officina/issues/251)) ([6290bef](https://github.com/AntonioVentilii/officina/commit/6290bef90f1d48d9dd60622bae25bbc6a0647dbf))
+* **board:** show a failed board load on every page ([#250](https://github.com/AntonioVentilii/officina/issues/250)) ([5b0094e](https://github.com/AntonioVentilii/officina/commit/5b0094e6e66b6a17a159446002c7ff9f3a32e763))
+* **board:** stop counting done tasks as open ([#243](https://github.com/AntonioVentilii/officina/issues/243)) ([bb56274](https://github.com/AntonioVentilii/officina/commit/bb562740883859dc436cb5e67ef51112dc0d406d))
+* **core,api:** offer to send a request on as it is only when it may be ([#234](https://github.com/AntonioVentilii/officina/issues/234)) ([84a0433](https://github.com/AntonioVentilii/officina/commit/84a04335c35ddf5c6a40655a27f2092adc55c0f0))
+* **core:** say only what steering lets a maintainer do today ([#241](https://github.com/AntonioVentilii/officina/issues/241)) ([4392747](https://github.com/AntonioVentilii/officina/commit/4392747cf7d84f2b412af4631606715f497556c0))
+
+
+### Documentation
+
+* **ai:** list the board's other hand-mirrored values in patterns.md ([#246](https://github.com/AntonioVentilii/officina/issues/246)) ([76cf69b](https://github.com/AntonioVentilii/officina/commit/76cf69b9b837b87d574677d7230f9e0b84df7919))
+* **ai:** name each-task.ts in the structure row for running a step ([#244](https://github.com/AntonioVentilii/officina/issues/244)) ([46c5ed0](https://github.com/AntonioVentilii/officina/commit/46c5ed02252344c1c863f5dbb6d143ee3dd0da60))
+* **repo:** add fix_rounds and runtime.allowed_hosts to the example project config ([#239](https://github.com/AntonioVentilii/officina/issues/239)) ([571fd24](https://github.com/AntonioVentilii/officina/commit/571fd24afbc4c7bdccbb0d76bc880ea7973c68dc))
+* **repo:** move unbuilt triage, thread, spec and board features to the planned list ([#236](https://github.com/AntonioVentilii/officina/issues/236)) ([d093379](https://github.com/AntonioVentilii/officina/commit/d0933796c169e63db1fd202bcb0e439f5bb8e2cb))
+* **repo:** rewrite the roadmap phases and status from the code ([#242](https://github.com/AntonioVentilii/officina/issues/242)) ([4c424a5](https://github.com/AntonioVentilii/officina/commit/4c424a5dcacf76c8ad6cf615ef78b232aba9afd7))
+
+
+### Code Refactoring
+
+* **core,engine:** clip every error an event or a run records to one named length ([#252](https://github.com/AntonioVentilii/officina/issues/252)) ([85e5f72](https://github.com/AntonioVentilii/officina/commit/85e5f72fd550b7d6702c2ed22c1c9ffb0c59899e))
+* **core:** keep the setup key accepted, marked as not used yet ([#255](https://github.com/AntonioVentilii/officina/issues/255)) ([3b617b3](https://github.com/AntonioVentilii/officina/commit/3b617b3b43a202707e5767d6a4f2b8915535fe32))
+* **core:** move newTask to the core test fixtures ([#253](https://github.com/AntonioVentilii/officina/issues/253)) ([730560a](https://github.com/AntonioVentilii/officina/commit/730560adb5a343dfcf2d8ebcb91fa4f08560fd18))
+* **db,engine:** read the learner's timeline events through core's typed domain events ([#248](https://github.com/AntonioVentilii/officina/issues/248)) ([b6ea462](https://github.com/AntonioVentilii/officina/commit/b6ea462e79ab3c20e4e442e602fa2f02c0ef4cf6))
+* **runner,engine:** one guard for a runner role, beside RUNNER_ROLES ([#254](https://github.com/AntonioVentilii/officina/issues/254)) ([ca9d57d](https://github.com/AntonioVentilii/officina/commit/ca9d57d346a440306e4edf261d69206e2c02dfdb))
+
+
+### Tests
+
+* **api:** decide the held scheduler pass tests by a condition, not a sleep ([#235](https://github.com/AntonioVentilii/officina/issues/235)) ([2b99700](https://github.com/AntonioVentilii/officina/commit/2b997006b2780b422a0ffad555b7ec8e9080388d))
+* **core:** cover the lifecycle refusals no test exercised ([#233](https://github.com/AntonioVentilii/officina/issues/233)) ([b9bc5e7](https://github.com/AntonioVentilii/officina/commit/b9bc5e7b9af5ad0ee502883c88dad5f50f237cce))
+* **engine:** age a bot comment past the settle window by its constant ([#238](https://github.com/AntonioVentilii/officina/issues/238)) ([7dad1a1](https://github.com/AntonioVentilii/officina/commit/7dad1a147eb2e15402a12dbb6a6225cc3c21b262))
+* **runner:** drive the SDK port through a real client on a fake fetch, not a cast ([#240](https://github.com/AntonioVentilii/officina/issues/240)) ([893b77e](https://github.com/AntonioVentilii/officina/commit/893b77eb82fccff646b7b6f3bd4adfb1962fc438))
+
 ## [1.7.7](https://github.com/AntonioVentilii/officina/compare/v1.7.6...v1.7.7) (2026-11-16)
 
 

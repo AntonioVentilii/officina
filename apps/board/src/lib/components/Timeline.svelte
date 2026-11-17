@@ -107,6 +107,8 @@
           : `could not ask Copilot to review pull request #${p.pullRequest}`;
       case 'checklist_posted':
         return `posted the checklist on pull request #${p.pullRequest}`;
+      case 'checklist_checked':
+        return `checked item ${Number(p.item) + 1} of the checklist: ${p.outcome}`;
       default:
         return event.type.replaceAll('_', ' ');
     }

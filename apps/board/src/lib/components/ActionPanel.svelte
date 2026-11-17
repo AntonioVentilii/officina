@@ -1,6 +1,7 @@
 <script lang="ts">
   import { CircleCheck, CircleHelp, GitMerge, Radio, UserRound } from '@lucide/svelte';
   import { post } from '$lib/api';
+  import { stillOpen } from '$lib/checklist';
   import { look } from '$lib/state/look.svelte';
   import { session } from '$lib/state/session.svelte';
   import { toasts } from '$lib/state/toasts.svelte';
@@ -45,6 +46,19 @@
   const approvesOnGitHub = $derived(
     gate === 'result' && Boolean(session.me?.github) && Boolean(task.pullRequest)
   );
+
+  /** Items of the checklist that are not ok yet, said before a "Looks good" passes over them. */
+  const open = $derived(gate === 'result' && task.checklist ? stillOpen(task.checklist) : '');
+  let confirming = $state(false);
+
+  const approve = () => {
+    if (open && !confirming) {
+      confirming = true;
+      return;
+    }
+    confirming = false;
+    void act({ type: 'approve' }, gate === 'spec' ? 'Plan approved; it goes to build' : 'Checked');
+  };
 
   const act = async (body: Record<string, string | number>, done: string) => {
     if (!session.projectId) return;
@@ -303,20 +317,20 @@
           >
         {/if}
         {#if can('approve') && gate}
-          <button
-            class="btn primary"
-            disabled={busy}
-            onclick={() =>
-              act(
-                { type: 'approve' },
-                gate === 'spec' ? 'Plan approved; it goes to build' : 'Checked'
-              )}
-          >
+          {#if confirming}
+            <span class="confirm">
+              Still open: {open}. They show as such on the pull request.
+              <button class="btn ghost" onclick={() => (confirming = false)}>Back</button>
+            </span>
+          {/if}
+          <button class="btn primary" disabled={busy} onclick={approve}>
             <CircleCheck size={15} />{gate === 'spec'
               ? 'Approve plan'
-              : approvesOnGitHub
-                ? 'Looks good, approve on GitHub'
-                : 'Looks good'}
+              : confirming
+                ? 'Approve anyway'
+                : approvesOnGitHub
+                  ? 'Looks good, approve on GitHub'
+                  : 'Looks good'}
           </button>
         {/if}
       </div>
@@ -558,6 +572,14 @@
     cursor: pointer;
     text-decoration: underline;
     text-underline-offset: 3px;
+  }
+
+  .confirm {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--text-2);
   }
 
   .link {
