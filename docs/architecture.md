@@ -259,6 +259,8 @@ approvals:
 verify: ['npm ci', 'npm run lint', 'npm run check'] # run by the builder before pushing
 release:
   on_merge: staging # what merging into the default branch deploys: production (the default), staging or nothing
+runtime:
+  allowed_hosts: ['registry.example.com'] # hosts the agents' sandbox may reach besides package registries, set on its environment when add-project runs (section 7)
 board:
   look: tecnica # the board's look until a member picks their own: modernista (the default) or tecnica
 lanes:
@@ -272,6 +274,7 @@ lanes:
     wip: 3
     diff_lines: 800
     budget_usd: 25
+    fix_rounds: 2 # times the work goes back to building (the default); past it the task waits in ready, unassigned, for a maintainer (section 5)
     approvals:
       spec_review: [{ role: maintainer }]
       verifying: [{ domain: product, when: user_visible }, { role: maintainer }]
