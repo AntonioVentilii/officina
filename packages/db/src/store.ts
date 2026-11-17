@@ -5,8 +5,10 @@ import {
   isGate,
   decide,
   ENGINE,
+  memberActor,
   parseProjectConfig,
   type Actor,
+  type ConnectedApp,
   type Command,
   type DecisionError,
   type Blocked,
@@ -107,6 +109,8 @@ interface NewTask {
   readonly projectId: string;
   readonly title: string;
   readonly requesterId: string;
+  /** The connected app the requester opened it through, absent from the board or the CLI. */
+  readonly via?: ConnectedApp | undefined;
   /** The requester's own words, recorded as the thread's first comment with the task. */
   readonly request?: string;
   /** What the request's words touch that no agent may handle alone (`guardsInRequest`). */
@@ -133,9 +137,10 @@ export const insertTask = async (client: PoolClient, input: NewTask): Promise<St
     ]
   );
   const row = rows[0]!;
+  const requester = memberActor(input.requesterId, input.via);
   await appendTaskEvent(client, {
     taskId: row.id,
-    actor: { kind: 'member', memberId: input.requesterId },
+    actor: requester,
     type: 'created',
     payload: { title: input.title }
   });
@@ -143,12 +148,7 @@ export const insertTask = async (client: PoolClient, input: NewTask): Promise<St
     await insertEvent(client, row.id, ENGINE, { type: 'blocked', blocked: input.hold });
   }
   if (input.request !== undefined) {
-    await addComment(
-      client,
-      row.id,
-      { kind: 'member', memberId: input.requesterId },
-      input.request
-    );
+    await addComment(client, row.id, requester, input.request);
   }
   return toStored(row);
 };

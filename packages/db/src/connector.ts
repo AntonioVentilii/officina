@@ -1,4 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
+import type { ConnectedApp } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
 import { hashToken, newToken } from './auth';
 import { recordAccessEvent, recordConnectorUse } from './access';
@@ -265,19 +266,27 @@ export const rotateConnectorRefreshToken = async (
     });
   });
 
-/** The member an access token acts for, when it is live and was issued for `resource`. */
+/**
+ * The member an access token acts for, when it is live and was issued for `resource`, and the app
+ * acting for them: the token's grant, with the name its client registered under.
+ */
 export const memberForConnectorToken = async (
   db: Queryable,
   token: string,
   resource: string
-): Promise<string | null> =>
-  (
-    await db.query<{ member_id: string }>(
-      `select member_id from connector_tokens
-       where token_hash = $1 and kind = 'access' and resource = $2 and expires_at > now()`,
+): Promise<{ memberId: string; via: ConnectedApp } | null> => {
+  const found = (
+    await db.query<{ memberId: string; grantId: string; name: string }>(
+      `select t.member_id as "memberId", t.grant_id as "grantId", c.name
+       from connector_tokens t join connector_clients c on c.id = t.client_id
+       where t.token_hash = $1 and t.kind = 'access' and t.resource = $2 and t.expires_at > now()`,
       [hashToken(token), resource]
     )
-  ).rows[0]?.member_id ?? null;
+  ).rows[0];
+  return found
+    ? { memberId: found.memberId, via: { grantId: found.grantId, name: found.name } }
+    : null;
+};
 
 export interface ConnectorGrant {
   readonly grantId: string;
