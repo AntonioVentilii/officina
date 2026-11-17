@@ -12,6 +12,7 @@ import {
 import { executeRun, type RunnerRole } from '@officina/runner';
 import { buildBrief, type ChooserContext } from './brief';
 import type { LiveRun } from './live-runs';
+import { bodyProblems, readPrTemplate, type PrTemplate } from './pr-template';
 import type { Step } from './step';
 import {
   interviewProblems,
@@ -28,6 +29,8 @@ export interface StepInputs {
   readonly members: Awaited<ReturnType<typeof listProjectMemberProfiles>>;
   readonly questionsAsked: number;
   readonly githubReviews: readonly GitHubReview[];
+  /** The template a build writes its pull request body in, `null` when there is none to read. */
+  readonly prTemplate: PrTemplate | null;
 }
 
 export const gatherInputs = async (step: Step): Promise<StepInputs> => ({
@@ -37,7 +40,13 @@ export const gatherInputs = async (step: Step): Promise<StepInputs> => ({
       : [],
   questionsAsked:
     step.role === 'interviewer' ? await countInterviewQuestions(step.deps.pool, step.taskId) : 0,
-  githubReviews: step.builds ? await githubReviewsSinceLastPush(step.deps.pool, step.taskId) : []
+  githubReviews: step.builds ? await githubReviewsSinceLastPush(step.deps.pool, step.taskId) : [],
+  prTemplate: step.builds
+    ? await readPrTemplate(step.deps.github, step.repoRef, {
+        path: step.config.docs.prTemplate,
+        branch: step.context.defaultBranch
+      })
+    : null
 });
 
 const gateOf = (step: Step) =>
@@ -86,6 +95,7 @@ const briefFor = async (step: Step, inputs: StepInputs) => {
     feedback: step.builds ? await feedbackSinceLastPush(pool, taskId) : [],
     firstRound: context.task.headSha === null,
     prTitlePattern: config.pullRequest.titlePattern,
+    prTemplate: inputs.prTemplate?.path ?? null,
     chooser: role === 'chooser' ? await chooserContext(step, inputs) : undefined,
     questionsAsked: inputs.questionsAsked,
     standards: role === 'onboarder' ? config.docs.standards : undefined
@@ -97,6 +107,7 @@ const validatorFor = (step: Step, inputs: StepInputs) => {
   if (step.builds) {
     return (output: AgentOutput<RunnerRole>) => [
       ...titleProblems(step.config.pullRequest.titlePattern)(output),
+      ...bodyProblems(inputs.prTemplate)(output),
       // The onboarder's contract has no review answer, so only the builder is held to one.
       ...(step.role === 'builder' ? reviewProblems(inputs.githubReviews)(output) : [])
     ];
