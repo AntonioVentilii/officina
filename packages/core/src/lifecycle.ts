@@ -30,7 +30,7 @@ import {
   type Approval
 } from './policies';
 import type { QuestionOption } from './questions';
-import type { ApproverRole, Member, Role } from './roles';
+import { hasRole, type ApproverRole, type Member, type Role } from './roles';
 
 export const STAGES = [
   'request',
@@ -265,6 +265,16 @@ export type Command =
       readonly askedOf: Blocked['askedOf'];
       readonly handoff?: Blocked['handoff'];
       readonly options?: Blocked['options'];
+    }
+  /**
+   * Officina asks something that cannot wait for the answer to a question the task already holds:
+   * the two become one question, asked of whichever role ranks higher, so whoever answers it has
+   * read both. On a task with no question it asks like `block`.
+   */
+  | {
+      readonly type: 'add_question';
+      readonly question: string;
+      readonly askedOf: { readonly role: Role };
     }
   | { readonly type: 'answer'; readonly text: string }
   /** A person's words on the task after its request, a comment: they guard it as the request's would. */
@@ -585,7 +595,7 @@ export const ownerHold = (guards: readonly Guard[]): Blocked => ({
 });
 
 /** Whether a held question already waits on whoever may `publish`, who alone lifts a hold. */
-export const heldForOwner = (blocked: Blocked | null): boolean =>
+export const heldForOwner = (blocked: Blocked | null): blocked is Blocked =>
   blocked !== null && 'role' in blocked.askedOf && blocked.askedOf.role === PERMISSIONS.publish;
 
 /** The guards a person's words on a task call for, by the request's rule, that it lacks so far. */
@@ -845,6 +855,7 @@ const ALLOWED_WHILE_HELD: ReadonlySet<Command['type']> = new Set([
   'resume',
   'cancel',
   'block',
+  'add_question',
   'pause',
   'pull_request_closed'
 ]);
@@ -1121,7 +1132,9 @@ export const decide = (
       // The work on GitHub is gone, so the task cannot wait for it: it goes back to the start of
       // the build, held for a person, who rebuilds it (a new pull request opens on the next push)
       // or cancels it. An onboarding task left here would otherwise hold the project forever.
-      const blocked: Blocked = {
+      // A hold for the owner stays: only the owner lifts it, and their answer restarts the build.
+      const ownersHold = heldForOwner(task.blocked) ? task.blocked : null;
+      const blocked: Blocked = ownersHold ?? {
         question: `Pull request #${command.pullRequest} was closed without being merged. Answer to build the change again on a new pull request, or cancel the task.`,
         askedOf: { role: 'maintainer' }
       };
@@ -1132,12 +1145,12 @@ export const decide = (
         reviews: {},
         blocked
       });
-      return ok(moved, [
+      const events: DomainEvent[] = [
         { type: 'pull_request_closed', pullRequest: command.pullRequest },
         stageEvent,
-        { type: 'assigned', assignee: null },
-        { type: 'blocked', blocked }
-      ]);
+        { type: 'assigned', assignee: null }
+      ];
+      return ok(moved, ownersHold ? events : [...events, { type: 'blocked', blocked }]);
     }
 
     case 'github_review': {
@@ -1186,6 +1199,24 @@ export const decide = (
       // Needing a secret, access or publishing guards the task as asking for it would.
       const [guards, guardEvents] = withAdded(task, guardsForHandoff(handoff?.needs ?? []));
       return ok({ ...task, blocked, guards }, [...guardEvents, { type: 'blocked', blocked }]);
+    }
+
+    case 'add_question': {
+      if (actor.kind !== 'engine') return fail('not_allowed');
+      const open = task.blocked;
+      // Asked again, as a check that runs twice would, it changes nothing.
+      if (open?.question.includes(command.question)) return fail('already_blocked');
+      const blocked: Blocked = open
+        ? {
+            ...open,
+            question: `${open.question}\n\n${command.question}`,
+            askedOf:
+              'role' in open.askedOf && hasRole(open.askedOf, command.askedOf.role)
+                ? open.askedOf
+                : command.askedOf
+          }
+        : { question: command.question, askedOf: command.askedOf };
+      return ok({ ...task, blocked }, [{ type: 'blocked', blocked }]);
     }
 
     case 'answer': {

@@ -7,6 +7,7 @@ import {
   humanBuildReason,
   newTask,
   nextAgentRoles,
+  ownerHold,
   type Member,
   type PlanInput,
   type Task
@@ -1691,6 +1692,50 @@ describe('guarded tasks', () => {
     );
   });
 
+  test("Officina's added question joins an open one, asked of whichever role ranks higher", () => {
+    const maintainer: Member = { id: 'marta', role: 'maintainer', domains: [] };
+    const driver = createDriver([owner, maintainer, productContributor]);
+    const refs = {
+      type: 'add_question',
+      question: 'A tag moved during the build.',
+      askedOf: { role: 'maintainer' }
+    } as const;
+    const ask = (blocked: Task['blocked']): Task => ({ ...toReady(driver, PAGE_PATHS), blocked });
+
+    expect(driver.step(ask(null), refs, engine).blocked).toEqual({
+      question: 'A tag moved during the build.',
+      askedOf: { role: 'maintainer' }
+    });
+    for (const askedOf of [{ role: 'contributor' }, { memberId: productContributor.id }] as const) {
+      const joined = driver.step(ask({ question: 'Which colour?', askedOf }), refs, engine);
+      expect(joined.blocked).toEqual({
+        question: 'Which colour?\n\nA tag moved during the build.',
+        askedOf: { role: 'maintainer' }
+      });
+      expect(
+        driver.attempt(joined, { type: 'answer', text: 'Red.' }, asMember(productContributor))
+      ).toEqual({ ok: false, error: 'not_allowed' });
+      expect(
+        driver.step(joined, { type: 'answer', text: 'Red.' }, asMember(maintainer)).blocked
+      ).toBeNull();
+    }
+
+    const held = driver.step(ask(ownerHold(['secrets'])), refs, engine);
+    expect(held.blocked?.askedOf).toEqual({ role: 'owner' });
+    expect(held.blocked?.question).toContain('A tag moved during the build.');
+    expect(driver.attempt(held, { type: 'answer', text: 'Go.' }, asMember(maintainer))).toEqual({
+      ok: false,
+      error: 'not_allowed'
+    });
+
+    // The same question again, as a check run twice would ask it, changes nothing.
+    expect(driver.attempt(held, refs, engine)).toEqual({ ok: false, error: 'already_blocked' });
+    expect(driver.attempt(ask(null), refs, asMember(owner))).toEqual({
+      ok: false,
+      error: 'not_allowed'
+    });
+  });
+
   test("a later answer's words guard the task and hold it for the owner, who alone lifts it", () => {
     const driver = createDriver([owner, productContributor]);
     let task = newTask('t1', productContributor.id);
@@ -1770,6 +1815,39 @@ describe('guarded tasks', () => {
     );
     expect(kept.blocked?.question).toBe('Which host?');
     expect(kept.guards).toEqual(['publishing']);
+  });
+
+  test("a pull request closed while the task is held for the owner keeps the owner's hold", () => {
+    const maintainer: Member = { id: 'marta', role: 'maintainer', domains: [] };
+    const driver = createDriver([owner, maintainer, productContributor]);
+    const reviewing = driver.step(
+      dispatchAgent(driver, toReady(driver, PAGE_PATHS)),
+      {
+        type: 'push',
+        headSha: 'abc',
+        changedPaths: PAGE_PATHS,
+        addedPaths: [],
+        catalogPages: {},
+        diffLines: 10
+      },
+      asAgent('builder')
+    );
+    const held = driver.step(
+      reviewing,
+      { type: 'guard_words', text: 'Make it public tonight.' },
+      asMember(productContributor)
+    );
+    expect(held.blocked?.askedOf).toEqual({ role: 'owner' });
+    const closed = driver.step(held, { type: 'pull_request_closed', pullRequest: 7 }, engine);
+    expect(closed).toMatchObject({ stage: 'ready', assignee: null, headSha: null });
+    expect(closed.blocked).toEqual(held.blocked);
+    expect(driver.events()).not.toContainEqual(expect.objectContaining({ type: 'blocked' }));
+    expect(
+      driver.attempt(closed, { type: 'answer', text: 'build it again' }, asMember(maintainer))
+    ).toEqual({ ok: false, error: 'not_allowed' });
+    expect(
+      driver.step(closed, { type: 'answer', text: 'Not public.' }, asMember(owner)).blocked
+    ).toBeNull();
   });
 
   test('a handoff for a secret, access or publishing guards the task like asking for it', () => {

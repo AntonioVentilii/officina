@@ -4,7 +4,10 @@ import {
   branchForTask,
   ENGINE,
   HANDOFF_NEED_KEYS,
-  type AgentRole
+  ownerHold,
+  type Actor,
+  type AgentRole,
+  type Command
 } from '@officina/core';
 import {
   appendTaskEvent,
@@ -1670,6 +1673,62 @@ describe.skipIf(!url)('engine', () => {
     expect((await lastBuildRun(taskId)).status).toBe('failed');
     expect(await guardOrphanedBuilds(deps)).toEqual([]);
     expect((await loadTask(pool, taskId))?.task.blocked).toBeNull();
+  });
+
+  /** A build that moves main, on a task that comes to wait on `question` while the build runs. */
+  const buildWhileAsked = async (question: Command, actor: Actor) => {
+    let taskId = '';
+    const github = fakeGitHub({
+      refs: [REFS, MOVED_MAIN],
+      afterBuild: async () => {
+        await applyOrThrow(pool, taskId, question, actor);
+      }
+    });
+    const agents = createFakePort(succeed);
+    taskId = await taskInReady(github, agents);
+    await tick({ pool, github: github.port, agents, publicUrl: PUBLIC_URL }, seeded.projectId);
+    return (await loadTask(pool, taskId))?.task;
+  };
+
+  test('refs moved during a build reach the question a person asked meanwhile', async () => {
+    const task = await buildWhileAsked(
+      { type: 'block', question: 'Which colour?', askedOf: { role: 'maintainer' } },
+      seeded.owner
+    );
+
+    expect(task?.blocked?.askedOf).toEqual({ role: 'maintainer' });
+    expect(task?.blocked?.question).toStartWith('Which colour?');
+    expect(task?.blocked?.question).toContain('main moved from main1 to evil');
+  });
+
+  test("refs moved during a build reach a hold for the owner, which stays the owner's", async () => {
+    const task = await buildWhileAsked({ type: 'block', ...ownerHold(['secrets']) }, ENGINE);
+
+    expect(task?.blocked?.askedOf).toEqual({ role: 'owner' });
+    expect(task?.blocked?.question).toContain('main moved from main1 to evil');
+  });
+
+  test('refs moved by a build a restart left behind reach the question the task holds', async () => {
+    let started!: () => void;
+    const inSession = new Promise<void>((resolve) => (started = resolve));
+    const { taskId, deps } = await buildRunning([
+      async () => started(),
+      () => new Promise<void>(() => {})
+    ]);
+    await inSession;
+    await applyOrThrow(
+      pool,
+      taskId,
+      { type: 'block', question: 'Which colour?', askedOf: { role: 'contributor' } },
+      seeded.owner
+    );
+    await failOrphanedRuns(pool);
+    await guardOrphanedBuilds(deps);
+
+    expect((await loadTask(pool, taskId))?.task.blocked).toMatchObject({
+      askedOf: { role: 'maintainer' },
+      question: expect.stringContaining('main moved from main1 to evil')
+    });
   });
 
   test('the branch of another task whose build runs alongside may move', async () => {
