@@ -11,7 +11,7 @@ import {
 } from '@officina/db';
 import { parseProjectConfig } from '@officina/core';
 import { Pool } from 'pg';
-import { resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
+import { createTaskInMerging, resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
 import { createApp } from '../src/app';
 import { agentsView, logEntries, RUN_LOG_PAGE } from '../src/board';
 import { invite, loginLink } from '../src/people';
@@ -399,6 +399,26 @@ describe.skipIf(!url)('board api', () => {
         { name: 'Antonio', approved: false }
       ])
     );
+  });
+
+  test('a gate already passed shows what it waived then, not who joined since', async () => {
+    const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    // The copy lane asks for a product approver on the plan; nobody holds the domain yet.
+    await createTaskInMerging(pool, seeded);
+    await invite(pool, {
+      publicUrl: PUBLIC_URL,
+      email: 'tim@example.com',
+      name: 'Tim',
+      role: 'contributor',
+      domains: ['product']
+    });
+
+    const task = await json(await call(owner, `/api/projects/${seeded.projectId}/tasks/1`));
+    expect(task.people.gates[0].requirements).toContainEqual({
+      label: 'a product approver',
+      who: [],
+      waived: true
+    });
   });
 
   test('the approval plan shows whom the chooser asked, and waits on them while approval is pending', async () => {
