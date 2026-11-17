@@ -84,13 +84,33 @@ export const buildRoleFor = (kind: TaskKind): BuildRole =>
 export const REVIEWER_ROLES = ['reviewer_spec', 'reviewer_correctness'] as const;
 export type ReviewerRole = (typeof REVIEWER_ROLES)[number];
 
+/**
+ * The connected app a member acted through: one OAuth grant of the Claude connector. `name` is the
+ * name the app gave itself when it registered, unverified, copied onto each action so the history
+ * still reads after the grant is revoked or its app is gone. Nothing decides on it: it records the
+ * channel, not who may act.
+ */
+export interface ConnectedApp {
+  readonly grantId: string;
+  readonly name: string;
+}
+
 export type Actor =
-  | { readonly kind: 'member'; readonly memberId: string }
+  | {
+      readonly kind: 'member';
+      readonly memberId: string;
+      /** Absent when the member acted on the board or through the CLI. */
+      readonly via?: ConnectedApp;
+    }
   | { readonly kind: 'agent'; readonly role: AgentRole; readonly version: number }
   | { readonly kind: 'engine' };
 
 /** Officina itself acting: dispatching, recording GitHub events, blocking a failed step. */
 export const ENGINE: Actor = { kind: 'engine' };
+
+/** A member acting, through the connected app `via` when one acts for them. */
+export const memberActor = (memberId: string, via?: ConnectedApp): Actor =>
+  via ? { kind: 'member', memberId, via } : { kind: 'member', memberId };
 
 export type Assignee =
   | { readonly kind: 'member'; readonly memberId: string }
@@ -519,6 +539,26 @@ const withPlan = (
 const isAskedOf = (blocked: Blocked, memberId: string): boolean =>
   'memberId' in blocked.askedOf && blocked.askedOf.memberId === memberId;
 
+type SubmitFacts = Pick<Task, 'stage' | 'paused' | 'blocked' | 'requesterId'>;
+
+/** Whether a person may send a request on: its requester or someone who triages, who may request. */
+const sendsRequest = (task: SubmitFacts, member: Member): boolean =>
+  can(member, 'request') && (member.id === task.requesterId || can(member, 'triage'));
+
+/**
+ * What keeps a request from being sent on as it is: a pause, or a question held for anyone but
+ * its requester (the owner, for a guarded request), which stays until they answer. Only the
+ * interview's own question to the requester can be skipped.
+ */
+const submitHold = (task: SubmitFacts): 'paused' | 'blocked' | null => {
+  if (task.paused) return 'paused';
+  return task.blocked && !isAskedOf(task.blocked, task.requesterId) ? 'blocked' : null;
+};
+
+/** Whether a member may send a request on as it is now, for the lifecycle and the board alike. */
+export const canSubmitRequest = (task: SubmitFacts, member: Member): boolean =>
+  task.stage === 'request' && sendsRequest(task, member) && submitHold(task) === null;
+
 /** The task's guards once these are added, and the event when they grew. */
 const withAdded = (task: Task, added: readonly Guard[]): [readonly Guard[], DomainEvent[]] => {
   const guards = withGuards(task.guards, added);
@@ -830,14 +870,10 @@ export const decide = (
       // The interviewer submits a request once it is specific enough; people can submit it as is.
       const allowed =
         (actor.kind === 'agent' && actor.role === 'interviewer') ||
-        (member !== undefined &&
-          can(member, 'request') &&
-          (member.id === task.requesterId || can(member, 'triage')));
+        (member !== undefined && sendsRequest(task, member));
       if (!allowed) return fail('not_allowed');
-      if (task.paused) return fail('paused');
-      // Only the interview's own question to the requester can be skipped; a hold for anyone else
-      // (the owner, for a guarded request) stays until they answer.
-      if (task.blocked && !isAskedOf(task.blocked, task.requesterId)) return fail('blocked');
+      const hold = submitHold(task);
+      if (hold) return fail(hold);
       // Submitting as is closes an open interview question: triage decides with what is there.
       const [moved, event] = moveTo(task, 'triage', { blocked: null });
       const events: DomainEvent[] = task.blocked

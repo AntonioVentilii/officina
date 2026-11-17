@@ -3,9 +3,11 @@ import { createHash, randomBytes } from 'node:crypto';
 import {
   ACCESS_EVENT_RETENTION,
   applyCommand,
+  failTakenOverRuns,
   findTaskIdByNumber,
   purgeConnectorCredentials,
-  purgeOldAccessEvents
+  purgeOldAccessEvents,
+  startRun
 } from '@officina/db';
 import { Pool } from 'pg';
 import { PLAN, applyOrThrow, resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
@@ -442,7 +444,9 @@ describe.skipIf(!url)('connector for Claude', () => {
       'show_task',
       'answer_question',
       'comment',
+      'claim_build',
       'hand_in_build',
+      'hand_back_build',
       'review'
     ]);
     const open = list.result.tools.find((tool: { name: string }) => tool.name === 'open_request');
@@ -494,10 +498,10 @@ describe.skipIf(!url)('connector for Claude', () => {
   });
 
   /** Opens task 1 on the copy path and takes it to `spec_review`, planned by the chooser. */
-  const taskInSpecReview = async (token: string) => {
+  const taskInSpecReview = async (token: string, request = 'It should say Prediction.') => {
     await tool(token, 'open_request', {
       title: 'Rename the Wager button',
-      request: 'It should say Prediction.',
+      request,
       skip_interview: true
     });
     const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
@@ -579,6 +583,151 @@ describe.skipIf(!url)('connector for Claude', () => {
       `Handed in; task 1 is now reviewing, pull request #9: ${PUBLIC_URL}/tasks/1?project=${seeded.projectId}`
     );
     expect(await stageOf(taskId)).toBe('reviewing');
+
+    // The push and its hand-in record are the member's, through the app's grant.
+    const grantId = (
+      await pool.query<{ grant_id: string }>('select distinct grant_id from connector_tokens')
+    ).rows[0]!.grant_id;
+    const recorded = await pool.query<{ type: string; actor: unknown }>(
+      `select type, actor from task_events
+       where task_id = $1 and type in ('pushed', 'build_handed_in') order by id`,
+      [taskId]
+    );
+    const viaClaude = {
+      kind: 'member',
+      memberId: seeded.ownerId,
+      via: { grantId, name: 'Claude' }
+    };
+    expect(recorded.rows).toEqual([
+      { type: 'pushed', actor: viaClaude },
+      { type: 'build_handed_in', actor: viaClaude }
+    ]);
+  });
+
+  const builderOf = async (taskId: string) =>
+    (
+      await pool.query<{ stage: string; assignee: unknown }>(
+        'select stage, assignee from tasks where id = $1',
+        [taskId]
+      )
+    ).rows[0];
+
+  const contributor = async (name: string, domains: string[]) => {
+    await invite(pool, {
+      publicUrl: PUBLIC_URL,
+      email: `${name.toLowerCase()}@example.com`,
+      name,
+      role: 'contributor',
+      domains
+    });
+    return (await connect(`${name.toLowerCase()}@example.com`)).tokens.access_token as string;
+  };
+
+  test('a developer claims a build through Claude and hands it back to ready', async () => {
+    const owner = (await connect()).tokens.access_token as string;
+    const taskId = await taskInSpecReview(owner);
+    await applyOrThrow(pool, taskId, { type: 'approve' }, seeded.owner);
+    const dev = await contributor('Dev', ['developer']);
+    expect((await tool(dev, 'show_task', { number: 1 })).content[0]!.text).toContain(
+      'claim the build, to build it yourself (claim_build)'
+    );
+
+    const claimed = await tool(dev, 'claim_build', { number: 1 });
+    expect(claimed.isError).toBe(false);
+    expect(claimed.content[0]!.text).toBe(
+      `Claimed; you build task 1 now. Build the approved plan on the branch officina/task-1, push it, then hand it in with hand_in_build: ${PUBLIC_URL}/tasks/1?project=${seeded.projectId}`
+    );
+    const devId = (
+      await pool.query<{ id: string }>(`select id from members where email = 'dev@example.com'`)
+    ).rows[0]!.id;
+    expect(await builderOf(taskId)).toEqual({
+      stage: 'building',
+      assignee: { kind: 'member', memberId: devId }
+    });
+    const handBack = 'hand the build back, so it waits to be built again (hand_back_build)';
+    expect((await tool(dev, 'show_task', { number: 1 })).content[0]!.text).toContain(handBack);
+    // Whoever may steer the work reads that they may hand back another person's build too.
+    expect((await tool(owner, 'show_task', { number: 1 })).content[0]!.text).toContain(handBack);
+
+    const handedBack = await tool(dev, 'hand_back_build', { number: 1 });
+    expect(handedBack.isError).toBe(false);
+    expect(handedBack.content[0]!.text).toBe(
+      `Handed back; task 1 is now ready: ${PUBLIC_URL}/tasks/1?project=${seeded.projectId}`
+    );
+    expect(await builderOf(taskId)).toEqual({ stage: 'ready', assignee: null });
+    expect((await tool(dev, 'hand_back_build', { number: 1 })).isError).toBe(true);
+    // Both the claim and the hand-back are recorded through the app Dev connected.
+    const devEvents = await pool.query<{ app: string | null }>(
+      `select actor->'via'->>'name' as app from task_events
+       where task_id = $1 and actor->>'memberId' = $2`,
+      [taskId, devId]
+    );
+    expect(devEvents.rows.length).toBeGreaterThanOrEqual(2);
+    expect(devEvents.rows.every((row) => row.app === 'Claude')).toBe(true);
+  });
+
+  test('Claude claims no build for a member without build, nor a confidential one for a developer who may not read it', async () => {
+    await pool.query(
+      `update projects set config = jsonb_set(config, '{guards}', $1::jsonb) where id = $2`,
+      [JSON.stringify({ confidential_terms: ['investor'] }), seeded.projectId]
+    );
+    const owner = (await connect()).tokens.access_token as string;
+    const taskId = await taskInSpecReview(owner, 'Show the investor figures.');
+    await applyOrThrow(pool, taskId, { type: 'approve' }, seeded.owner);
+    const tim = await contributor('Tim', ['product']);
+    const dev = await contributor('Dev', ['developer']);
+
+    for (const token of [tim, dev]) {
+      const refused = await tool(token, 'claim_build', { number: 1 });
+      expect(refused.isError).toBe(true);
+      expect(refused.content[0]!.text).toBe('you do not have the role needed for that');
+    }
+    expect(await builderOf(taskId)).toEqual({ stage: 'ready', assignee: null });
+
+    expect((await tool(owner, 'claim_build', { number: 1 })).isError).toBe(false);
+    expect(await builderOf(taskId)).toEqual({
+      stage: 'building',
+      assignee: { kind: 'member', memberId: seeded.ownerId }
+    });
+    // Letting go of someone else's build needs the right to steer the work.
+    expect((await tool(dev, 'hand_back_build', { number: 1 })).isError).toBe(true);
+    expect((await builderOf(taskId))!.stage).toBe('building');
+  });
+
+  test("a build taken over from the agent is handed back only once the agent's run is stopped", async () => {
+    const owner = (await connect()).tokens.access_token as string;
+    const taskId = await taskInSpecReview(owner);
+    await applyOrThrow(pool, taskId, { type: 'approve' }, seeded.owner);
+    await applyOrThrow(
+      pool,
+      taskId,
+      { type: 'dispatch', assignee: { kind: 'agent', role: 'builder' }, openInLane: 0 },
+      { kind: 'engine' }
+    );
+    const run = await startRun(pool, {
+      taskId,
+      stage: 'building',
+      role: 'builder',
+      agentVersion: 1,
+      runner: 'managed_agents'
+    });
+    if (!run.ok) throw new Error('the build run did not start');
+    expect((await tool(owner, 'claim_build', { number: 1 })).isError).toBe(false);
+
+    const early = await tool(owner, 'hand_back_build', { number: 1 });
+    expect(early.isError).toBe(true);
+    expect(early.content[0]!.text).toBe(
+      "the agent's run on this build is still being stopped; hand it back again in a minute"
+    );
+    expect(await builderOf(taskId)).toEqual({
+      stage: 'building',
+      assignee: { kind: 'member', memberId: seeded.ownerId }
+    });
+
+    // The scheduler's next pass stops the run the member took over; then the build can go back.
+    expect(await failTakenOverRuns(pool)).toEqual([{ id: run.runId, externalId: null }]);
+    expect((await tool(owner, 'hand_back_build', { number: 1 })).isError).toBe(false);
+    expect(await builderOf(taskId)).toEqual({ stage: 'ready', assignee: null });
   });
 
   test('every member sees every task in progress, with who asked and who approves', async () => {
@@ -877,6 +1026,66 @@ describe.skipIf(!url)('connector for Claude', () => {
     };
     expect((await json(await form(refresh))).error).toBe('invalid_grant');
     expect(await grants(cookie)).toEqual([]);
+  });
+
+  test('what Claude does names the app it came through, and stays readable once the app is gone', async () => {
+    const { tokens, clientId } = await connect();
+    const token = tokens.access_token as string;
+    await tool(token, 'open_request', {
+      title: 'Rename the Wager button',
+      request: 'It should say Prediction.',
+      skip_interview: true
+    });
+    await tool(token, 'comment', { number: 1, text: 'Also in German.' });
+
+    const cookie = await signIn();
+    const [grant] = await grants(cookie);
+    const onBoard = (path: string, body: unknown) =>
+      handle(`/api/projects/${seeded.projectId}/tasks/1/${path}`, {
+        method: 'POST',
+        headers: { cookie, 'content-type': 'application/json', 'x-officina-request': '1' },
+        body: JSON.stringify(body)
+      });
+    expect((await onBoard('comments', { body: 'Thanks!' })).status).toBe(200);
+    expect((await onBoard('actions', { type: 'accept' })).status).toBe(200);
+
+    // The grant is recorded on the actor of each event, and its app's name with it.
+    const stored = await pool.query<{ type: string; actor: unknown }>(
+      `select type, actor from task_events where type in ('created', 'stage_changed') order by id`
+    );
+    expect(stored.rows.map((row) => row.actor)).toEqual([
+      { kind: 'member', memberId: seeded.ownerId, via: { grantId: grant.id, name: 'Claude' } },
+      { kind: 'member', memberId: seeded.ownerId, via: { grantId: grant.id, name: 'Claude' } },
+      { kind: 'member', memberId: seeded.ownerId }
+    ]);
+
+    // Revoked, and its client purged: the history still says which app it was.
+    expect((await revoke(cookie, grant.id)).status).toBe(200);
+    await pool.query('delete from connector_clients where id = $1', [clientId]);
+    const task = await json(
+      await handle(`/api/projects/${seeded.projectId}/tasks/1`, { headers: { cookie } })
+    );
+    expect(task.request).toMatchObject({ author: 'Antonio', via: 'Claude' });
+    expect(
+      task.comments.map((comment: { body: string; via: string | null }) => [
+        comment.body,
+        comment.via
+      ])
+    ).toEqual([
+      ['Also in German.', 'Claude'],
+      ['Thanks!', null]
+    ]);
+    expect(
+      task.events.map((event: { type: string; actor: string; via: string | null }) => [
+        event.type,
+        event.actor,
+        event.via
+      ])
+    ).toEqual([
+      ['created', 'Antonio', 'Claude'],
+      ['stage_changed', 'Antonio', 'Claude'],
+      ['stage_changed', 'Antonio', null]
+    ]);
   });
 
   test('removing a member from their last project ends the apps they connected', async () => {

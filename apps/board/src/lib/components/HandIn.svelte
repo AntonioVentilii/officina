@@ -13,6 +13,7 @@
 
   let open = $state(false);
   let title = $state('');
+  let body = $state('');
   let checked = $state('');
   let busy = $state(false);
 
@@ -32,6 +33,7 @@
     try {
       await post(`/api/projects/${session.projectId}/tasks/${number}/hand-in`, {
         prTitle: title.trim(),
+        ...(body.trim() ? { prBody: body.trim() } : {}),
         verified: lines(checked)
       });
       toasts.show('ok', 'Handed in; the reviewers read it next');
@@ -59,6 +61,15 @@
       placeholder="feat(scope): what it does"
       maxlength={limits?.max}
     />
+    <label class="caps" for="hand-in-body-{number}">Pull request body (with a template)</label>
+    <textarea
+      id="hand-in-body-{number}"
+      class="field"
+      bind:value={body}
+      rows="6"
+      maxlength={session.me?.limits.prBody}
+      placeholder="Only when the project has a pull request template, and then required: write it in the template, keeping every heading"
+    ></textarea>
     <label class="caps" for="hand-in-checked-{number}">What you checked (optional)</label>
     <textarea
       id="hand-in-checked-{number}"
