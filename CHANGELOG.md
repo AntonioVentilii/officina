@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.11.1](https://github.com/AntonioVentilii/officina/compare/v1.11.0...v1.11.1) (2026-11-17)
+
+
+### Bug Fixes
+
+* **api,board:** make the proposal notice readable and name the button that confirms it ([#270](https://github.com/AntonioVentilii/officina/issues/270)) ([58d06d4](https://github.com/AntonioVentilii/officina/commit/58d06d401e6c2858ad8be75c88f14d58357ae096))
+
 ## [1.11.0](https://github.com/AntonioVentilii/officina/compare/v1.10.0...v1.11.0) (2026-11-17)
 
 
