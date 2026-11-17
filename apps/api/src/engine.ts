@@ -95,8 +95,8 @@ const purgeStaleRows = async (
 
 /**
  * Starts the engine inside this process. Runs orphaned by a previous process are failed first, and
- * their sessions interrupted best-effort, so their steps can run again; a build among them whose
- * refs outside its branch moved blocks its task. With a prompts directory, the role agents are
+ * their sessions interrupted best-effort, so their steps can run again; a build among them, or any
+ * other whose refs were never checked, whose refs outside its branch moved blocks its task. With a prompts directory, the role agents are
  * synced first, so a new Opus release or a merged prompt change takes effect on the next boot. The
  * live runs are what a shutdown stops before the process exits.
  */
@@ -124,10 +124,7 @@ export const startEngine = async (input: {
   const orphaned = await failOrphanedRuns(input.pool);
   await interruptSessions(input.agents, orphaned, input.log, 'orphaned run failed');
   // After the sessions are stopped, so what the builders pushed until then is all in the refs.
-  const moved = await guardOrphanedBuilds(
-    deps,
-    orphaned.map((run) => run.id)
-  );
+  const moved = await guardOrphanedBuilds(deps);
   for (const run of moved) input.log('orphaned build blocked', run);
 
   if (input.promptsDir) {
