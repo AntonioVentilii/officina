@@ -9,14 +9,13 @@ import {
   checksSchema,
   clip,
   heldForOwner,
-  parseProjectConfig,
   redactSecrets,
   taskUrl,
   type ConnectedApp,
   type Preview
 } from '@officina/core';
-import { loadBoardTask, loadProjectConfig, type MemberProject } from '@officina/db';
-import { fence, type HandInPort } from '@officina/engine';
+import { loadBoardTask, type MemberProject } from '@officina/db';
+import { fence, taskPrTemplate, type HandInPort } from '@officina/engine';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import { boardView, taskView, type BoardViewer, type CardView, type TaskView } from '../board';
@@ -189,21 +188,21 @@ const WHAT_TO_DO: Record<string, string> = {
 };
 
 /**
- * For whoever may claim or hand in the build: the template the project's pull request body is
- * written in, which `hand_in_build` refuses a body without.
+ * For whoever may claim or hand in the build: the template the pull request body is written in,
+ * read as `hand_in_build` reads it, so it is named exactly when a hand-in takes a body.
  */
 const templateLines = async (
-  pool: Pool,
-  projectId: string,
-  actions: readonly string[]
+  context: ToolContext,
+  task: { readonly projectId: string; readonly number: number; readonly actions: readonly string[] }
 ): Promise<string[]> => {
-  if (!actions.includes('claim') && !actions.includes('hand_in')) return [];
-  const config = parseProjectConfig(await loadProjectConfig(pool, projectId));
-  const path = config.ok ? config.config.docs.prTemplate : null;
-  return path
+  const { github } = context;
+  if (!github || (!task.actions.includes('claim') && !task.actions.includes('hand_in'))) return [];
+  const row = await loadBoardTask(context.pool, task.projectId, task.number);
+  const template = row ? await taskPrTemplate(context.pool, github, row.id) : null;
+  return template
     ? [
         '',
-        `Pull request template: \`${path}\` on the default branch. Write hand_in_build's pr_body in it, keeping every heading.`
+        `Pull request template: \`${template.path}\` on the default branch. Write hand_in_build's pr_body in it, keeping every heading.`
       ]
     : [];
 };
@@ -411,7 +410,13 @@ After it is opened, tell the person the task link and what happens next, as the 
         for (const comment of task.comments.slice(-20))
           lines.push(`- ${comment.author}:`, fence(clip(comment.body, 1_500)));
       }
-      lines.push(...(await templateLines(context.pool, project.id, task.actions)));
+      lines.push(
+        ...(await templateLines(context, {
+          projectId: project.id,
+          number: task.number,
+          actions: task.actions
+        }))
+      );
       const actions = task.actions.map((action) => WHAT_TO_DO[action]).filter(Boolean);
       if (actions.length) lines.push('', `You can: ${actions.join('; ')}.`);
       return lines.join('\n');
