@@ -595,7 +595,7 @@ export const ownerHold = (guards: readonly Guard[]): Blocked => ({
 });
 
 /** Whether a held question already waits on whoever may `publish`, who alone lifts a hold. */
-export const heldForOwner = (blocked: Blocked | null): boolean =>
+export const heldForOwner = (blocked: Blocked | null): blocked is Blocked =>
   blocked !== null && 'role' in blocked.askedOf && blocked.askedOf.role === PERMISSIONS.publish;
 
 /** The guards a person's words on a task call for, by the request's rule, that it lacks so far. */
@@ -1132,7 +1132,9 @@ export const decide = (
       // The work on GitHub is gone, so the task cannot wait for it: it goes back to the start of
       // the build, held for a person, who rebuilds it (a new pull request opens on the next push)
       // or cancels it. An onboarding task left here would otherwise hold the project forever.
-      const blocked: Blocked = {
+      // A hold for the owner stays: only the owner lifts it, and their answer restarts the build.
+      const ownersHold = heldForOwner(task.blocked) ? task.blocked : null;
+      const blocked: Blocked = ownersHold ?? {
         question: `Pull request #${command.pullRequest} was closed without being merged. Answer to build the change again on a new pull request, or cancel the task.`,
         askedOf: { role: 'maintainer' }
       };
@@ -1143,12 +1145,12 @@ export const decide = (
         reviews: {},
         blocked
       });
-      return ok(moved, [
+      const events: DomainEvent[] = [
         { type: 'pull_request_closed', pullRequest: command.pullRequest },
         stageEvent,
-        { type: 'assigned', assignee: null },
-        { type: 'blocked', blocked }
-      ]);
+        { type: 'assigned', assignee: null }
+      ];
+      return ok(moved, ownersHold ? events : [...events, { type: 'blocked', blocked }]);
     }
 
     case 'github_review': {

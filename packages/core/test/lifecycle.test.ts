@@ -1817,6 +1817,39 @@ describe('guarded tasks', () => {
     expect(kept.guards).toEqual(['publishing']);
   });
 
+  test("a pull request closed while the task is held for the owner keeps the owner's hold", () => {
+    const maintainer: Member = { id: 'marta', role: 'maintainer', domains: [] };
+    const driver = createDriver([owner, maintainer, productContributor]);
+    const reviewing = driver.step(
+      dispatchAgent(driver, toReady(driver, PAGE_PATHS)),
+      {
+        type: 'push',
+        headSha: 'abc',
+        changedPaths: PAGE_PATHS,
+        addedPaths: [],
+        catalogPages: {},
+        diffLines: 10
+      },
+      asAgent('builder')
+    );
+    const held = driver.step(
+      reviewing,
+      { type: 'guard_words', text: 'Make it public tonight.' },
+      asMember(productContributor)
+    );
+    expect(held.blocked?.askedOf).toEqual({ role: 'owner' });
+    const closed = driver.step(held, { type: 'pull_request_closed', pullRequest: 7 }, engine);
+    expect(closed).toMatchObject({ stage: 'ready', assignee: null, headSha: null });
+    expect(closed.blocked).toEqual(held.blocked);
+    expect(driver.events()).not.toContainEqual(expect.objectContaining({ type: 'blocked' }));
+    expect(
+      driver.attempt(closed, { type: 'answer', text: 'build it again' }, asMember(maintainer))
+    ).toEqual({ ok: false, error: 'not_allowed' });
+    expect(
+      driver.step(closed, { type: 'answer', text: 'Not public.' }, asMember(owner)).blocked
+    ).toBeNull();
+  });
+
   test('a handoff for a secret, access or publishing guards the task like asking for it', () => {
     const driver = createDriver([owner]);
     const task = driver.step(
