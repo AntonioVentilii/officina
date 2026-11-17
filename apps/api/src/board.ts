@@ -1,5 +1,6 @@
 import {
   APPROVAL_FLOOR,
+  CHECK_CHANNEL_LABELS,
   GATE_ACTIONS,
   GUARD_LABELS,
   HANDOFF_NEEDS,
@@ -13,12 +14,14 @@ import {
   canRequestChanges,
   canSubmitRequest,
   clip,
+  connectionRef,
   effectivePolicy,
   eligibleMembers,
   evaluatePolicy,
   gateSubject,
   humanBuildReason,
   isGate,
+  openProposals,
   optionKey,
   outranks,
   parseProjectConfig,
@@ -43,6 +46,7 @@ import {
   domainEventOf,
   latestChooserResult,
   listApprovedSubjects,
+  listProposalHistory,
   listBoardTasks,
   listLearnings,
   listProjectMembers,
@@ -172,11 +176,19 @@ export const actorLabel = (actor: Actor, names: ReadonlyMap<string, string>): st
       : 'Officina';
 
 /**
- * The connected app a member acted through, by the name it registered under (unverified), so the
- * trail tells an action from Claude from a click on the board; null for everything else.
+ * The connected app a member acted through, by the name it registered under (unverified) and its
+ * connection as `/connect` lists it, so the trail tells an action from Claude from a click on the
+ * board, and one app from another; null for everything else.
  */
-const viaLabel = (actor: Actor): string | null =>
-  actor.kind === 'member' ? (actor.via?.name ?? null) : null;
+const viaView = (actor: Actor) =>
+  actor.kind === 'member' && actor.via
+    ? {
+        id: actor.via.grantId,
+        label: CHECK_CHANNEL_LABELS.claude,
+        client: actor.via.name,
+        connection: connectionRef(actor.via.grantId)
+      }
+    : null;
 
 const viewerMember = (viewer: BoardViewer): Member => ({
   id: viewer.memberId,
@@ -204,6 +216,8 @@ const PUBLIC_FIELDS: Readonly<Record<string, readonly string[]>> = {
   user_visible_changed: ['userVisible'],
   guards_changed: ['guards'],
   approval_recorded: ['gate', 'satisfied', 'memberId'],
+  approval_proposed: ['gate'],
+  approval_proposal_discarded: ['gate'],
   approval_planned: ['gate'],
   changes_requested: ['stage', 'note'],
   pushed: ['headSha', 'diffLines'],
@@ -813,17 +827,23 @@ export const taskView = async (
   const row = await loadBoardTask(pool, viewer.projectId, number);
   if (!row) return null;
   const facts = await projectFacts(pool, viewer);
-  const [approval, context, specs, comments, events, runs, chooser, approvals] = await Promise.all([
-    approvalState(pool, row, facts),
-    loadTaskContext(pool, row.id),
-    listSpecVersions(pool, row.id),
-    listTaskComments(pool, row.id),
-    listTaskEvents(pool, row.id),
-    listTaskRuns(pool, row.id),
-    latestChooserResult(pool, row.id),
-    listApprovedSubjects(pool, row.id)
-  ]);
+  const [approval, context, specs, comments, events, runs, chooser, approvals, proposals] =
+    await Promise.all([
+      approvalState(pool, row, facts),
+      loadTaskContext(pool, row.id),
+      listSpecVersions(pool, row.id),
+      listTaskComments(pool, row.id),
+      listTaskEvents(pool, row.id),
+      listTaskRuns(pool, row.id),
+      latestChooserResult(pool, row.id),
+      listApprovedSubjects(pool, row.id),
+      listProposalHistory(pool, row.id)
+    ]);
   const label = (actor: Actor) => actorLabel(actor, facts.names);
+  // The viewer's own approval that Claude proposed, waiting for them to confirm or discard it.
+  const proposal = openProposals(row, proposals, approvals).find(
+    (open) => open.memberId === viewer.memberId
+  );
   const [request, ...thread] = comments;
   const shown = confidentialView(row, viewer);
   return {
@@ -849,7 +869,7 @@ export const taskView = async (
     request: request
       ? {
           author: label(request.author),
-          via: viaLabel(request.author),
+          via: viaView(request.author),
           body: shown.text(request.body, request.author),
           at: request.createdAt
         }
@@ -858,7 +878,7 @@ export const taskView = async (
       id: comment.id,
       author: label(comment.author),
       authorKind: comment.author.kind,
-      via: viaLabel(comment.author),
+      via: viaView(comment.author),
       body: shown.text(comment.body, comment.author),
       at: comment.createdAt
     })),
@@ -874,7 +894,7 @@ export const taskView = async (
       actor: label(event.actor),
       actorKind: event.actor.kind,
       actorRole: event.actor.kind === 'agent' ? event.actor.role : null,
-      via: viaLabel(event.actor),
+      via: viaView(event.actor),
       payload: shown.payload(payloadFor(viewer, event.type, event.payload)),
       at: event.createdAt
     })),
@@ -897,7 +917,8 @@ export const taskView = async (
       })
     ),
     reviewers: REVIEWER_ROLES.map((role) => ({ role, label: roleLabel(role) })),
-    actions: actionsFor(row, viewer, facts)
+    actions: actionsFor(row, viewer, facts),
+    proposal: proposal ? { gate: proposal.gate, app: proposal.via.name } : null
   };
 };
 

@@ -9,6 +9,7 @@
   import AgentAvatar from './AgentAvatar.svelte';
   import HandIn from './HandIn.svelte';
   import Markdown from './Markdown.svelte';
+  import ProposalNotice from './ProposalNotice.svelte';
   import QuestionOptions from './QuestionOptions.svelte';
 
   interface Props {
@@ -302,6 +303,15 @@
         {#if can('hand_in')}
           <HandIn number={task.number} branch={task.branch} {onchanged} />
         {/if}
+        {#if can('hand_back')}
+          <button
+            class="btn ghost"
+            disabled={busy}
+            onclick={() => act({ type: 'release' }, 'Handed back; it waits to be built again')}
+          >
+            Hand the build back
+          </button>
+        {/if}
         {#if can('claim')}
           <button
             class="btn primary"
@@ -317,6 +327,9 @@
           >
         {/if}
         {#if can('approve') && gate}
+          {#if task.proposal}
+            <ProposalNotice number={task.number} proposal={task.proposal} {onchanged} />
+          {/if}
           {#if confirming}
             <span class="confirm">
               Still open: {open}. They show as such on the pull request.

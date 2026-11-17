@@ -162,7 +162,7 @@ export interface TaskEvent {
   readonly actorKind: 'member' | 'agent' | 'engine';
   readonly actorRole: string | null;
   /** The connected app a member acted through, by the name it gave itself; null on the board. */
-  readonly via: string | null;
+  readonly via: Via | null;
   readonly payload: Record<string, unknown>;
   readonly at: string;
 }
@@ -171,7 +171,7 @@ export interface Comment {
   readonly id: string;
   readonly author: string;
   readonly authorKind: 'member' | 'agent' | 'engine';
-  readonly via: string | null;
+  readonly via: Via | null;
   readonly body: string;
   readonly at: string;
 }
@@ -260,6 +260,8 @@ export interface TaskDetail extends Card {
   } | null;
   readonly checklist: ChecklistView | null;
   readonly actions: readonly BoardAction[];
+  /** Your approval Claude proposed, by the app's own name: it counts once you approve here. */
+  readonly proposal: { readonly gate: 'spec_review' | 'verifying'; readonly app: string } | null;
 }
 
 export type LogEntry = { readonly id: string; readonly at: string } & (
@@ -325,11 +327,16 @@ export interface Notice {
 /** An app the member allowed to act as them through the connector, until they revoke it. */
 export interface ConnectedApp {
   readonly id: string;
+  /** How it is told apart from another app with the same name, here and in the history. */
+  readonly connection: string;
   /** The name the app gave itself when it registered; Officina has not verified it. */
   readonly client: string;
   readonly returnsTo: readonly string[];
   readonly renewedAt: string;
 }
+
+/** The app a member acted through, as the history shows it: "via Claude", its name, its connection. */
+export type Via = Pick<ConnectedApp, 'id' | 'client' | 'connection'> & { readonly label: string };
 
 /** Why a GitHub sign-in did not complete, as the API puts it in `/signin?error=`. */
 export type GitHubSignInProblem =

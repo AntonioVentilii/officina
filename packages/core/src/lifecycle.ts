@@ -113,12 +113,69 @@ export type Actor =
   | { readonly kind: 'agent'; readonly role: AgentRole; readonly version: number }
   | { readonly kind: 'engine' };
 
+/**
+ * How a connected app is told apart from another with the same name: the start of its grant's id,
+ * shown on `/connect` and next to everything it did, so the two can be matched.
+ */
+export const connectionRef = (grantId: string): string => grantId.slice(0, 6).toUpperCase();
+
 /** Officina itself acting: dispatching, recording GitHub events, blocking a failed step. */
 export const ENGINE: Actor = { kind: 'engine' };
 
 /** A member acting, through the connected app `via` when one acts for them. */
 export const memberActor = (memberId: string, via?: ConnectedApp): Actor =>
   via ? { kind: 'member', memberId, via } : { kind: 'member', memberId };
+
+/** An approval proposed for a member at one gate's subject, waiting for them on the board. */
+export interface ProposedApproval {
+  readonly gate: Gate;
+  readonly subject: string;
+  readonly memberId: string;
+}
+
+/** A proposal still waiting, with the app that made it. */
+export interface ApprovalProposal extends ProposedApproval {
+  readonly via: ConnectedApp;
+}
+
+/** One entry of a task's proposals history, oldest first, as the store reads it from the events. */
+export type ProposalEntry =
+  | ({ readonly type: 'approval_proposed'; readonly via: ConnectedApp } & ProposedApproval)
+  | ({ readonly type: 'approval_proposal_discarded' } & ProposedApproval);
+
+const sameProposal = (a: ProposedApproval, b: ProposedApproval) =>
+  a.memberId === b.memberId && a.gate === b.gate && a.subject === b.subject;
+
+/**
+ * The proposals still waiting: proposed for what the task's gate approves now, and since then
+ * neither discarded nor met by the member's own approval of that subject. A new spec version or
+ * head leaves an older proposal behind, so nobody confirms what they did not see.
+ */
+export const openProposals = (
+  task: Pick<Task, 'stage' | 'specVersion' | 'headSha'>,
+  history: readonly ProposalEntry[],
+  approvals: readonly Approval[]
+): ApprovalProposal[] => {
+  if (!isGate(task.stage)) return [];
+  const subject = gateSubject(task, task.stage);
+  let open: ApprovalProposal[] = [];
+  for (const entry of history) {
+    open = open.filter((proposal) => !sameProposal(proposal, entry));
+    if (entry.type === 'approval_proposed') {
+      const { gate, subject: proposed, memberId, via } = entry;
+      open.push({ gate, subject: proposed, memberId, via });
+    }
+  }
+  return open.filter(
+    (proposal) =>
+      proposal.gate === task.stage &&
+      proposal.subject === subject &&
+      !approvals.some(
+        (approval) =>
+          approval.memberId === proposal.memberId && approval.subject === proposal.subject
+      )
+  );
+};
 
 export type Assignee =
   | { readonly kind: 'member'; readonly memberId: string }
@@ -216,6 +273,13 @@ export type Command =
       readonly userVisible: boolean;
     }
   | { readonly type: 'approve' }
+  /**
+   * A connected app asks to approve for the member: it is recorded as a proposal, and only the
+   * member's own approval on the board makes it count.
+   */
+  | { readonly type: 'propose_approval' }
+  /** The member withdraws an approval a connected app proposed for them. */
+  | { readonly type: 'discard_proposal' }
   | { readonly type: 'request_changes'; readonly note: string }
   | {
       readonly type: 'dispatch';
@@ -297,6 +361,8 @@ export type DomainEvent =
       readonly pending: readonly Requirement[];
       readonly waived: readonly Requirement[];
     }
+  | ({ readonly type: 'approval_proposed' } & ProposedApproval)
+  | ({ readonly type: 'approval_proposal_discarded' } & ProposedApproval)
   | { readonly type: 'changes_requested'; readonly stage: Stage; readonly note: string }
   | { readonly type: 'assigned'; readonly assignee: Assignee | null }
   | {
@@ -355,7 +421,9 @@ export type DecisionError =
   | 'needs_developer'
   | 'not_planned'
   | 'stale_head'
-  | 'awaiting_onboarding';
+  | 'awaiting_onboarding'
+  | 'confirm_on_board'
+  | 'no_proposal';
 
 export type Decision =
   | { readonly ok: true; readonly task: Task; readonly events: readonly DomainEvent[] }
@@ -371,7 +439,18 @@ export interface DecideContext {
    * lock that opening one takes, so a dispatch and a new gate can never cross.
    */
   readonly onboardingOpen: boolean;
+  /**
+   * The approvals connected apps proposed that still wait for their member (`openProposals`). Only
+   * proposing and discarding read them, so the store loads them for those commands alone.
+   */
+  readonly proposals?: readonly ApprovalProposal[];
 }
+
+/** The commands that read `DecideContext.proposals`, the only ones the store loads them for. */
+export const READS_PROPOSALS: ReadonlySet<Command['type']> = new Set([
+  'propose_approval',
+  'discard_proposal'
+]);
 
 const fail = (error: DecisionError): Decision => ({ ok: false, error });
 
@@ -850,6 +929,31 @@ const ALLOWED_WHILE_HELD: ReadonlySet<Command['type']> = new Set([
   'pull_request_closed'
 ]);
 
+/**
+ * Whether `actor` may approve the task's gate now, and what they would approve: the gate, its
+ * subject and who they are. Approving and proposing an approval ask the same.
+ */
+const approvalFor = (
+  task: Task,
+  actor: Actor,
+  context: DecideContext
+):
+  | { readonly ok: true; readonly gate: Gate; readonly subject: string; readonly member: Member }
+  | { readonly ok: false; readonly error: DecisionError } => {
+  if (!isGate(task.stage)) return { ok: false, error: 'wrong_stage' };
+  if (actor.kind !== 'member') return { ok: false, error: 'agents_cannot_approve' };
+  const member = memberFor(actor, context);
+  const gate: Gate = task.stage;
+  if (member === undefined || !can(member, GATE_ACTIONS[gate]))
+    return { ok: false, error: 'not_allowed' };
+  if (task.lane === null) return { ok: false, error: 'no_lane' };
+  const subject = gateSubject(task, gate);
+  if (subject === null) return { ok: false, error: 'no_head' };
+  // Nobody can approve before the approval chooser has said who needs to.
+  if (task.approvalPlans[gate]?.subject !== subject) return { ok: false, error: 'not_planned' };
+  return { ok: true, gate, subject, member };
+};
+
 export const decide = (
   task: Task,
   command: Command,
@@ -923,16 +1027,11 @@ export const decide = (
     }
 
     case 'approve': {
-      if (!isGate(task.stage)) return fail('wrong_stage');
-      if (actor.kind !== 'member') return fail('agents_cannot_approve');
-      const member = memberFor(actor, context);
-      const gate: Gate = task.stage;
-      if (member === undefined || !can(member, GATE_ACTIONS[gate])) return fail('not_allowed');
-      if (task.lane === null) return fail('no_lane');
-      const subject = gateSubject(task, gate);
-      if (subject === null) return fail('no_head');
-      // Nobody can approve before the approval chooser has said who needs to.
-      if (task.approvalPlans[gate]?.subject !== subject) return fail('not_planned');
+      // An app acting for a member only proposes; the member confirms on the board.
+      if (actor.kind === 'member' && actor.via) return fail('confirm_on_board');
+      const allowed = approvalFor(task, actor, context);
+      if (!allowed.ok) return fail(allowed.error);
+      const { gate, subject, member } = allowed;
       const approval: Approval = { memberId: member.id, subject };
       const result = evaluatePolicy(
         effectivePolicy(context.config, task, gate),
@@ -951,6 +1050,31 @@ export const decide = (
       if (!result.satisfied) return ok(task, [recorded]);
       const [moved, stageEvent] = moveTo(task, gate === 'spec_review' ? 'ready' : 'merging');
       return ok(moved, [recorded, stageEvent]);
+    }
+
+    case 'propose_approval': {
+      if (actor.kind !== 'member' || !actor.via) return fail('not_allowed');
+      const allowed = approvalFor(task, actor, context);
+      if (!allowed.ok) return fail(allowed.error);
+      const proposal = { gate: allowed.gate, subject: allowed.subject, memberId: actor.memberId };
+      // Proposed again, or already approved by the member, there is nothing to wait for: nothing new
+      // to record.
+      const open = (context.proposals ?? []).some((other) => sameProposal(other, proposal));
+      const approved = context.approvals.some(
+        (approval) =>
+          approval.memberId === proposal.memberId && approval.subject === proposal.subject
+      );
+      return ok(task, open || approved ? [] : [{ type: 'approval_proposed', ...proposal }]);
+    }
+
+    case 'discard_proposal': {
+      if (actor.kind !== 'member') return fail('not_allowed');
+      const mine = (context.proposals ?? []).find(
+        (proposal) => proposal.memberId === actor.memberId
+      );
+      if (!mine) return fail('no_proposal');
+      const { gate, subject, memberId } = mine;
+      return ok(task, [{ type: 'approval_proposal_discarded', gate, subject, memberId }]);
     }
 
     case 'request_changes': {

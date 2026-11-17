@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { INPUT_LIMITS, allowedActions, can, checksSchema } from '@officina/core';
+import { INPUT_LIMITS, allowedActions, can, checksSchema, connectionRef } from '@officina/core';
 import type { HandInPort } from '@officina/engine';
 import {
   consumeOAuthState,
@@ -130,7 +130,10 @@ const actionSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('submit') }),
   z.strictObject({ type: z.literal('accept') }),
   z.strictObject({ type: z.literal('claim') }),
+  z.strictObject({ type: z.literal('release') }),
   z.strictObject({ type: z.literal('approve') }),
+  // The member withdraws an approval Claude proposed for them; approving confirms it instead.
+  z.strictObject({ type: z.literal('discard_proposal') }),
   z.strictObject({
     type: z.literal('changes'),
     note: z.string().trim().min(1).max(INPUT_LIMITS.note)
@@ -505,6 +508,7 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
         return {
           grants: grants.map((grant) => ({
             id: grant.grantId,
+            connection: connectionRef(grant.grantId),
             client: grant.clientName,
             returnsTo: [...new Set(grant.redirectUris.map((uri) => new URL(uri).host))],
             renewedAt: grant.renewedAt

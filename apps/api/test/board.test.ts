@@ -999,6 +999,82 @@ describe.skipIf(!url)('board api', () => {
     expect((await handInWith(31)).status).toBe(400);
   });
 
+  test('a claimed build is handed back from the board by its builder or whoever may steer, by no one else', async () => {
+    const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    const developer = (email: string, name: string) =>
+      invite(pool, {
+        publicUrl: PUBLIC_URL,
+        email,
+        name,
+        role: 'contributor',
+        domains: ['developer']
+      }).then(signIn);
+    const builder = await developer('dev@example.com', 'Dev');
+    const other = await developer('ada@example.com', 'Ada');
+    const maintainer = await signIn(
+      await invite(pool, {
+        publicUrl: PUBLIC_URL,
+        email: 'mai@example.com',
+        name: 'Mai',
+        role: 'maintainer',
+        domains: []
+      })
+    );
+    await createRequest(pool, {
+      title: 'Publish the deck',
+      request: 'Put it on deck.example.app.',
+      skipInterview: true
+    });
+    const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
+    const path = `/api/projects/${seeded.projectId}/tasks/1`;
+    await call(owner, `${path}/actions`, { type: 'accept' });
+    await applyCommand(pool, {
+      taskId,
+      command: { type: 'post_spec', predictedPaths: ['src/deck.ts'], userVisible: true },
+      actor: { kind: 'agent', role: 'spec', version: 1 }
+    });
+    await applyCommand(pool, {
+      taskId,
+      command: {
+        type: 'plan_approval',
+        userVisible: true,
+        plan: {
+          depth: 'test',
+          rationale: 'A new public page.',
+          extra: [],
+          verifiers: [],
+          build: 'person',
+          buildReason: 'It needs the hosting set up by hand.'
+        }
+      },
+      actor: { kind: 'engine' }
+    });
+    await call(owner, `${path}/actions`, { type: 'approve' });
+    const handBack = (cookie: string) => call(cookie, `${path}/actions`, { type: 'release' });
+
+    // The builder sees it next to handing in; another developer neither sees it nor may do it.
+    await call(builder, `${path}/actions`, { type: 'claim' });
+    expect((await json(await call(builder, path))).actions).toEqual(
+      expect.arrayContaining(['hand_in', 'hand_back'])
+    );
+    expect((await json(await call(other, path))).actions).not.toContain('hand_back');
+    const refused = await handBack(other);
+    expect(refused.status).toBe(409);
+    expect(await json(refused)).toEqual({ error: 'you do not have the role needed for that' });
+    expect((await json(await call(owner, path))).stage).toBe('building');
+
+    expect(await json(await handBack(builder))).toEqual({ stage: 'ready' });
+    const ready = await json(await call(builder, path));
+    expect(ready.actions).toContain('claim');
+    expect(ready.actions).not.toContain('hand_back');
+
+    // A maintainer may steer, so they hand back another person's build too.
+    await call(builder, `${path}/actions`, { type: 'claim' });
+    expect((await json(await call(maintainer, path))).actions).toContain('hand_back');
+    expect(await json(await handBack(maintainer))).toEqual({ stage: 'ready' });
+    expect((await handBack(maintainer)).status).toBe(409);
+  });
+
   test('watchers read but cannot act, and other projects stay invisible', async () => {
     await createRequest(pool, {
       title: 'Rename settings',

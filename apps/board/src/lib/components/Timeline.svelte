@@ -37,6 +37,10 @@
           : 'marked it as not user-visible';
       case 'approval_recorded':
         return `approved ${GATES[String(p.gate)] ?? p.gate}${p.satisfied ? '' : ', more approvals needed'}`;
+      case 'approval_proposed':
+        return `proposed approving ${GATES[String(p.gate)] ?? p.gate}, to confirm on the board`;
+      case 'approval_proposal_discarded':
+        return `discarded the approval proposed for ${GATES[String(p.gate)] ?? p.gate}`;
       case 'changes_requested':
         return 'asked for changes';
       case 'assigned':
@@ -158,7 +162,7 @@
         item.kind === 'event' &&
         last?.kind === 'event' &&
         last.event.actor === item.event.actor &&
-        last.event.via === item.event.via &&
+        last.event.via?.id === item.event.via?.id &&
         Math.abs(new Date(item.at).getTime() - new Date(last.at).getTime()) < 2000
       ) {
         last.texts.push(...item.texts);
@@ -179,7 +183,7 @@
         <div class="bubble">
           <div class="meta">
             <strong>{item.comment.author}</strong>
-            <ViaApp name={item.comment.via} />
+            <ViaApp via={item.comment.via} />
             <time class="faint" datetime={item.at} title={dateTime(item.at)}
               >{ago(item.at, clock.now)}</time
             >
@@ -201,7 +205,7 @@
         <div class="line">
           <span
             ><strong>{item.event.actor}</strong>
-            <ViaApp name={item.event.via} />
+            <ViaApp via={item.event.via} />
             {join(item.texts)}</span
           >
           <time class="faint" datetime={item.at} title={dateTime(item.at)}
