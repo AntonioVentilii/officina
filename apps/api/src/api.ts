@@ -576,7 +576,6 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
           projectId: viewer.projectId,
           memberId: viewer.memberId,
           number: taskNumber(params.number),
-          channel: 'board',
           ...parse(checklistCheckSchema, body)
         });
       })

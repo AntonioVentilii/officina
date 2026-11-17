@@ -4,7 +4,6 @@ import {
   checklistHead,
   evidenceSchema,
   readsTask,
-  type CheckChannel,
   type CheckOutcome
 } from '@officina/core';
 import {
@@ -61,7 +60,7 @@ const checkableTask = async (pool: Pool, input: ProjectActor & { readonly number
  */
 export const recordCheckAs = async (
   pool: Pool,
-  input: ProjectActor & CheckRequest & { readonly number: number; readonly channel: CheckChannel }
+  input: ProjectActor & CheckRequest & { readonly number: number }
 ): Promise<{ recorded: boolean }> => {
   const { taskId, headSha, items } = await checkableTask(pool, input);
   if (input.item > items)
@@ -73,6 +72,8 @@ export const recordCheckAs = async (
     outcome: input.outcome,
     evidence: input.evidence,
     memberId: input.memberId,
-    channel: input.channel
+    // Through the connector a member acts with an app; anywhere else, on the board.
+    channel: input.via ? 'claude' : 'board',
+    via: input.via
   });
 };

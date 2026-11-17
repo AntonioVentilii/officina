@@ -1,4 +1,10 @@
-import type { ChecklistCheck, CheckChannel, CheckOutcome } from '@officina/core';
+import {
+  memberActor,
+  type ChecklistCheck,
+  type CheckChannel,
+  type CheckOutcome,
+  type ConnectedApp
+} from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
 import { inTransaction } from './store';
 import { appendTaskEvent } from './task-history';
@@ -14,6 +20,8 @@ export interface CheckInput {
   readonly evidence: string;
   readonly memberId: string;
   readonly channel: CheckChannel;
+  /** The connector app that recorded it for the member, kept on the timeline's event. */
+  readonly via?: ConnectedApp | undefined;
 }
 
 const CHECK_COLUMNS = `item, outcome, evidence, member_id as "memberId", channel, created_at as at`;
@@ -74,7 +82,7 @@ export const recordCheck = (pool: Pool, input: CheckInput): Promise<{ recorded: 
     );
     await appendTaskEvent(client, {
       taskId: input.taskId,
-      actor: { kind: 'member', memberId: input.memberId },
+      actor: memberActor(input.memberId, input.via),
       type: 'checklist_checked',
       payload: {
         item: input.item,

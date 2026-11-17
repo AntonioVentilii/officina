@@ -166,6 +166,13 @@ export const actorLabel = (actor: Actor, names: ReadonlyMap<string, string>): st
       ? roleLabel(actor.role)
       : 'Officina';
 
+/**
+ * The connected app a member acted through, by the name it registered under (unverified), so the
+ * trail tells an action from Claude from a click on the board; null for everything else.
+ */
+const viaLabel = (actor: Actor): string | null =>
+  actor.kind === 'member' ? (actor.via?.name ?? null) : null;
+
 const viewerMember = (viewer: BoardViewer): Member => ({
   id: viewer.memberId,
   role: viewer.role,
@@ -809,6 +816,7 @@ export const taskView = async (
     request: request
       ? {
           author: label(request.author),
+          via: viaLabel(request.author),
           body: shown.text(request.body, request.author),
           at: request.createdAt
         }
@@ -817,6 +825,7 @@ export const taskView = async (
       id: comment.id,
       author: label(comment.author),
       authorKind: comment.author.kind,
+      via: viaLabel(comment.author),
       body: shown.text(comment.body, comment.author),
       at: comment.createdAt
     })),
@@ -832,6 +841,7 @@ export const taskView = async (
       actor: label(event.actor),
       actorKind: event.actor.kind,
       actorRole: event.actor.kind === 'agent' ? event.actor.role : null,
+      via: viaLabel(event.actor),
       payload: shown.payload(payloadFor(viewer, event.type, event.payload)),
       at: event.createdAt
     })),

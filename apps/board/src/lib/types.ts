@@ -161,6 +161,8 @@ export interface TaskEvent {
   readonly actor: string;
   readonly actorKind: 'member' | 'agent' | 'engine';
   readonly actorRole: string | null;
+  /** The connected app a member acted through, by the name it gave itself; null on the board. */
+  readonly via: string | null;
   readonly payload: Record<string, unknown>;
   readonly at: string;
 }
@@ -169,6 +171,7 @@ export interface Comment {
   readonly id: string;
   readonly author: string;
   readonly authorKind: 'member' | 'agent' | 'engine';
+  readonly via: string | null;
   readonly body: string;
   readonly at: string;
 }
@@ -206,14 +209,11 @@ export interface TaskDetail extends Card {
   readonly branch: string;
   readonly pullRequestUrl: string | null;
   readonly headSha: string | null;
-  readonly request: { readonly author: string; readonly body: string; readonly at: string } | null;
+  readonly request: Pick<Comment, 'author' | 'via' | 'body' | 'at'> | null;
   readonly comments: readonly Comment[];
-  readonly specs: readonly {
+  readonly specs: readonly (Pick<Comment, 'author' | 'body' | 'at'> & {
     readonly version: number;
-    readonly body: string;
-    readonly author: string;
-    readonly at: string;
-  }[];
+  })[];
   readonly events: readonly TaskEvent[];
   readonly runs: readonly Run[];
   readonly plan: {
