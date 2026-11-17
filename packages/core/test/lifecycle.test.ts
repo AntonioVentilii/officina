@@ -1876,3 +1876,92 @@ describe('guarded tasks', () => {
     expect(exhausted.blocked?.askedOf).toEqual({ role: 'owner' });
   });
 });
+
+describe('commands the task is not in a state for', () => {
+  test("a second question never replaces an open one, the owner's hold included", () => {
+    const driver = createDriver([owner, productContributor]);
+    const held = driver.step(
+      toReady(driver, PAGE_PATHS),
+      { type: 'guard_words', text: 'Make it public tonight.' },
+      asMember(productContributor)
+    );
+    expect(held.blocked?.askedOf).toEqual({ role: 'owner' });
+    const question = {
+      type: 'block',
+      question: 'Which colour?',
+      askedOf: { role: 'contributor' }
+    } as const;
+    for (const actor of [asAgent('spec'), engine, asMember(productContributor)]) {
+      expect(driver.attempt(held, question, actor)).toEqual({
+        ok: false,
+        error: 'already_blocked'
+      });
+    }
+    expect(
+      driver.attempt(held, { type: 'answer', text: 'Blue.' }, asMember(productContributor))
+    ).toEqual({ ok: false, error: 'not_allowed' });
+    expect(
+      driver.step(held, { type: 'answer', text: 'Not tonight.' }, asMember(owner)).blocked
+    ).toBeNull();
+  });
+
+  test('an answer to a task with no open question is refused', () => {
+    const driver = createDriver([owner]);
+    expect(
+      driver.attempt(newTask('t1', owner.id), { type: 'answer', text: 'it' }, asMember(owner))
+    ).toEqual({ ok: false, error: 'not_blocked' });
+  });
+
+  test('a task with no lane is neither approved nor dispatched', () => {
+    const driver = createDriver([owner]);
+    let planned = newTask('t1', owner.id);
+    planned = driver.step(planned, { type: 'submit_request' }, asMember(owner));
+    planned = driver.step(planned, { type: 'accept' }, asMember(owner));
+    planned = driver.step(
+      planned,
+      { type: 'post_spec', predictedPaths: PAGE_PATHS, userVisible: false },
+      asAgent('spec')
+    );
+    planned = driver.step(
+      planned,
+      { type: 'plan_approval', userVisible: false, plan: PLAN },
+      asAgent('chooser')
+    );
+    expect(planned.stage).toBe('spec_review');
+    expect(
+      driver.attempt({ ...planned, lane: null }, { type: 'approve' }, asMember(owner))
+    ).toEqual({ ok: false, error: 'no_lane' });
+
+    const ready = driver.step(planned, { type: 'approve' }, asMember(owner));
+    const dispatch = {
+      type: 'dispatch',
+      assignee: { kind: 'agent', role: 'builder' },
+      openInLane: 0
+    } as const;
+    expect(driver.attempt({ ...ready, lane: null }, dispatch, engine)).toEqual({
+      ok: false,
+      error: 'no_lane'
+    });
+  });
+
+  test('a result is neither planned nor approved without a pushed head', () => {
+    const driver = createDriver([owner]);
+    const choosing = buildAndReview(
+      driver,
+      dispatchAgent(driver, toReady(driver, PAGE_PATHS)),
+      'abc',
+      PAGE_PATHS
+    );
+    const choose = { type: 'choose', userVisible: false, plan: PLAN } as const;
+    expect(driver.attempt({ ...choosing, headSha: null }, choose, asAgent('chooser'))).toEqual({
+      ok: false,
+      error: 'no_head'
+    });
+
+    const verifying = driver.step(choosing, choose, asAgent('chooser'));
+    expect(verifying.stage).toBe('verifying');
+    expect(
+      driver.attempt({ ...verifying, headSha: null }, { type: 'approve' }, asMember(owner))
+    ).toEqual({ ok: false, error: 'no_head' });
+  });
+});
