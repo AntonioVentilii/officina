@@ -1,33 +1,45 @@
 <script lang="ts">
+  import { post } from '$lib/api';
+  import { ago } from '$lib/format';
+  import { toasts } from '$lib/state/toasts.svelte';
+  import { latestChecks, type ChecklistView } from '$lib/checklist';
   import type { BeforeAfter } from '$lib/types';
 
   interface Props {
-    items: readonly string[];
+    view: ChecklistView;
     beforeAfter: readonly BeforeAfter[];
-    /** Ticks are a personal aid, kept in this browser per task and commit. */
-    storageKey: string;
+    /** Where a check is sent: the task's checks route. */
+    path: string;
+    onchanged: () => void;
   }
 
-  let { items, beforeAfter, storageKey }: Props = $props();
+  let { view, beforeAfter, path, onchanged }: Props = $props();
 
-  const read = (): number[] => {
-    try {
-      return JSON.parse(localStorage.getItem(storageKey) ?? '[]') as number[];
-    } catch {
-      return [];
-    }
+  const latest = $derived(latestChecks(view));
+  const ok = $derived(latest.filter((check) => check?.outcome === 'ok').length);
+
+  let open = $state<number | null>(null);
+  let outcome = $state('ok');
+  let evidence = $state('');
+  let busy = $state(false);
+
+  const start = (index: number) => {
+    open = open === index ? null : index;
+    outcome = latest[index]?.outcome ?? 'ok';
+    evidence = '';
   };
 
-  let checked = $state<number[]>(read());
-
-  const toggle = (index: number) => {
-    checked = checked.includes(index)
-      ? checked.filter((item) => item !== index)
-      : [...checked, index];
+  const record = async (event: SubmitEvent, index: number) => {
+    event.preventDefault();
+    busy = true;
     try {
-      localStorage.setItem(storageKey, JSON.stringify(checked));
-    } catch {
-      // Ticks then last for this visit only.
+      await post(path, { item: index + 1, outcome, evidence: evidence.trim() });
+      open = null;
+      onchanged();
+    } catch (error) {
+      toasts.show('error', (error as Error).message);
+    } finally {
+      busy = false;
     }
   };
 
@@ -39,16 +51,51 @@
 
 <div class="checklist">
   <div class="progress">
-    <span class="bar"><span style:width="{(checked.length / items.length) * 100}%"></span></span>
-    <span class="faint num">{checked.length}/{items.length}</span>
+    <span class="bar"><span style:width="{(ok / view.checklist.length) * 100}%"></span></span>
+    <span class="faint num">{ok}/{view.checklist.length} ok</span>
   </div>
   <ul>
-    {#each items as item, index (index)}
-      <li class:done={checked.includes(index)}>
-        <label>
-          <input type="checkbox" checked={checked.includes(index)} onchange={() => toggle(index)} />
-          <span>{item}</span>
-        </label>
+    {#each view.checklist as item, index (index)}
+      {@const check = latest[index]}
+      <li class={check?.outcome ?? 'unchecked'}>
+        <div class="item">
+          <span class="num">{index + 1}.</span>
+          <span class="text">{item}</span>
+          {#if view.canCheck}
+            <button class="link" onclick={() => start(index)}
+              >{check ? 'Check again' : 'Check'}</button
+            >
+          {/if}
+        </div>
+        <p class="state faint">
+          {#if check}
+            <strong>{check.outcomeLabel}</strong>, {check.by}, {ago(check.at)}{#if check.evidence}: {check.evidence}{/if}
+          {:else}
+            Not checked
+          {/if}
+        </p>
+        {#if open === index}
+          <form onsubmit={(event) => record(event, index)}>
+            <div class="outcomes">
+              {#each view.outcomes as choice (choice.value)}
+                <label>
+                  <input type="radio" bind:group={outcome} value={choice.value} />
+                  {choice.label}
+                </label>
+              {/each}
+            </div>
+            <input
+              class="field"
+              bind:value={evidence}
+              maxlength="300"
+              placeholder="How you checked it, and what is still open"
+            />
+            <div class="buttons">
+              <button type="button" class="btn ghost" onclick={() => (open = null)}>Back</button>
+              <button class="btn primary" disabled={busy}>Record</button>
+            </div>
+          </form>
+        {/if}
       </li>
     {/each}
   </ul>
@@ -116,30 +163,70 @@
     border-top: 1px solid var(--border);
   }
 
-  label {
-    display: flex;
-    gap: 12px;
+  li {
     padding: 10px 4px;
-    cursor: pointer;
     font-size: 14px;
     line-height: 1.5;
   }
 
-  label:hover {
-    background: var(--hover);
+  .item {
+    display: flex;
+    gap: 10px;
+    align-items: baseline;
   }
 
-  input {
-    flex: none;
-    width: 16px;
-    height: 16px;
-    margin-top: 2px;
-    accent-color: var(--text);
+  .item .text {
+    flex: 1;
   }
 
-  .done span {
+  .state {
+    margin: 2px 0 0 22px;
+    font-size: 12px;
+  }
+
+  .problem .state strong {
+    color: var(--danger);
+  }
+
+  .ok .item .text {
     color: var(--text-3);
-    text-decoration: line-through;
+  }
+
+  form {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 8px 0 0 22px;
+  }
+
+  .outcomes {
+    display: flex;
+    gap: 16px;
+    font-size: 13px;
+  }
+
+  .outcomes label {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    cursor: pointer;
+  }
+
+  .buttons {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+
+  .link {
+    flex: none;
+    border: 0;
+    background: none;
+    padding: 0;
+    font-size: 12.5px;
+    color: var(--text-2);
+    text-decoration: underline;
+    text-underline-offset: 3px;
   }
 
   .compare {

@@ -397,6 +397,24 @@ describe('GitHub client', () => {
     await expect(failure).rejects.toThrow('GitHub 403');
   });
 
+  test('posts a comment, answers its id, and edits that comment later', async () => {
+    const { fetchImpl, calls } = fakeGitHub({
+      'POST /app/installations/99/access_tokens': tokenRoute('2099-01-01T00:00:00Z'),
+      'POST /repos/ViciApp/vici-app/issues/42/comments': () => json({ id: 777 }, 201),
+      'PATCH /repos/ViciApp/vici-app/issues/comments/777': () => json({ id: 777 })
+    });
+    const client = createGitHubClient({ appId: '1', privateKeyPem, fetch: fetchImpl });
+    expect(await client.commentOnIssue({ ...ref, issueNumber: 42, body: 'first' })).toEqual({
+      id: 777
+    });
+    await client.editComment({ ...ref, commentId: 777, body: 'second' });
+    expect(calls.at(-1)).toMatchObject({
+      method: 'PATCH',
+      url: '/repos/ViciApp/vici-app/issues/comments/777',
+      body: { body: 'second' }
+    });
+  });
+
   test('remembers until when a rate limit refuses the App, and forgets it once that time passes', async () => {
     let nowMs = Date.parse('2026-09-16T12:00:00Z');
     const resetAt = Date.parse('2026-09-16T12:10:00Z');

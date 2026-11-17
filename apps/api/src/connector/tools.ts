@@ -1,5 +1,8 @@
 import {
   ACTION_LABELS,
+  CHECK_OUTCOME_LABELS,
+  CHECK_OUTCOMES,
+  evidenceSchema,
   INPUT_LIMITS,
   TERMINAL_STAGES,
   allowedActions,
@@ -15,6 +18,8 @@ import { fence, type HandInPort } from '@officina/engine';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import { boardView, taskView, type BoardViewer, type CardView, type TaskView } from '../board';
+import { checklistLines } from '../checklist-view';
+import { recordCheckAs } from '../checks';
 import { TaskCommandError, actOnTaskAs, commentAs, createRequestAs, handInAs } from '../tasks';
 
 /**
@@ -363,11 +368,8 @@ After it is opened, tell the person the task link and that an agent may ask them
       if (task.approval?.pending.length)
         lines.push('', `Still needs approval from: ${task.approval.pending.join(', ')}.`);
       if (task.plan?.current) lines.push(`How deep to check: ${task.plan.depthLabel}.`);
-      if (task.stage === 'verifying' && task.checklist?.checklist.length) {
-        lines.push('', 'What to check:', ...task.checklist.checklist.map((item) => `- ${item}`));
-        for (const row of task.checklist.beforeAfter ?? [])
-          lines.push(`- ${row.key} (${row.locale}): "${row.before}" becomes "${row.after}"`);
-      }
+      if (task.stage === 'verifying' && task.checklist?.checklist.length)
+        lines.push('', ...checklistLines(task.checklist));
       if (task.comments.length) {
         lines.push('', 'Conversation:');
         for (const comment of task.comments.slice(-20))
@@ -534,6 +536,39 @@ After it is opened, tell the person the task link and that an agent may ask them
     }
   }),
   tool({
+    name: 'check_item',
+    title: 'Record a check of one item',
+    description: `Records what was found for one item of the list of what to check, while a result waits to be checked. It is recorded as the person, "via Claude", and shows on the board, in the task's timeline and in the checklist on the pull request.
+
+Call it once an item was really checked, by the person or by you for them, never ahead: "ok" when it holds, "problem" when it does not, "partial" when only part of it was checked. The evidence says how it was checked and what was seen, in one line: "read in the diff", "curl on both addresses answers 200", "compared with Antonio's comment on the task", and for "partial" what is still open. Send it again with a new outcome when a fix changes it; the earlier check stays in the history. Checks never approve: the person still decides with review.`,
+    input: z.object({
+      project: PROJECT,
+      number: NUMBER,
+      item: z
+        .number()
+        .int()
+        .min(1)
+        .describe("The item's number in the list show_task gives, from 1."),
+      outcome: z.enum(CHECK_OUTCOMES),
+      evidence: evidenceSchema.pipe(z.string().min(1, 'say how it was checked'))
+    }),
+    readOnly: false,
+    run: async (context, input) => {
+      const project = projectFor(context, input.project);
+      const { recorded } = await recordCheckAs(context.pool, {
+        projectId: project.id,
+        memberId: context.memberId,
+        number: input.number,
+        item: input.item,
+        outcome: input.outcome,
+        evidence: input.evidence,
+        channel: 'claude'
+      });
+      const said = recorded ? 'Recorded' : 'Already recorded, nothing new';
+      return `${said}: item ${input.item} of task ${input.number}, ${CHECK_OUTCOME_LABELS[input.outcome]}. ${taskUrl(context.publicUrl, project.id, input.number)}`;
+    }
+  }),
+  tool({
     name: 'review',
     title: 'Approve or ask for changes',
     description: `Records the person's decision at one of the two moments people decide:
@@ -541,7 +576,7 @@ After it is opened, tell the person the task link and that an agent may ask them
 - a result to check (after it is built): "approve" is the "Looks good" button. Officina then approves the pull request on GitHub as them if they connected GitHub; depending on the project, a person merges it or GitHub does once its checks pass.
 "changes" sends it back to the agents with the note, which must say what is wrong or missing.
 
-Always call show_task first, show the person the plan or the list of what to check, and only approve when they say they read the plan or checked every item. Never approve on their behalf without that.`,
+Always call show_task first, show the person the plan or the list of what to check, and only approve when they say they read the plan or checked the items. Record each item checked with check_item before; an item left unchecked shows as not checked on the pull request. Never approve on their behalf without that.`,
     input: z.object({
       project: PROJECT,
       number: NUMBER,

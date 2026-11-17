@@ -494,12 +494,25 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     }
   };
 
+  /** Posts a comment on an issue or pull request, and answers its id, to edit it later. */
   const commentOnIssue = async (
     ref: RepoRef & { readonly issueNumber: number; readonly body: string }
+  ): Promise<{ id: number }> => {
+    const token = await installationToken(ref);
+    const posted = await request<{ id: number }>(
+      `/repos/${ref.repo}/issues/${ref.issueNumber}/comments`,
+      { method: 'POST', token, body: { body: ref.body } }
+    );
+    return { id: posted.id };
+  };
+
+  /** Replaces the text of a comment the App posted. */
+  const editComment = async (
+    ref: RepoRef & { readonly commentId: number; readonly body: string }
   ): Promise<void> => {
     const token = await installationToken(ref);
-    await request(`/repos/${ref.repo}/issues/${ref.issueNumber}/comments`, {
-      method: 'POST',
+    await request(`/repos/${ref.repo}/issues/comments/${ref.commentId}`, {
+      method: 'PATCH',
       token,
       body: { body: ref.body }
     });
@@ -682,6 +695,7 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     openPullRequest,
     closePullRequestsFrom,
     commentOnIssue,
+    editComment,
     reviewComments,
     canWrite,
     mergeWhenReady,

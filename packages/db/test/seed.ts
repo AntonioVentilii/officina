@@ -55,8 +55,8 @@ const agent = (
   version: 1
 });
 
-/** Creates a copy-change task and takes it to `merging`, the stage where a merge or CI result lands. */
-export const createTaskInMerging = async (pool: Pool, seeded: Seeded): Promise<string> => {
+/** Creates a copy-change task and takes it to `verifying`, built at `abc` and planned. */
+export const createTaskInVerifying = async (pool: Pool, seeded: Seeded): Promise<string> => {
   const paths = ['src/lib/constants/messages/en.ts'];
   const { task } = await createTask(pool, {
     projectId: seeded.projectId,
@@ -116,6 +116,25 @@ export const createTaskInMerging = async (pool: Pool, seeded: Seeded): Promise<s
     agent('reviewer_correctness')
   );
   await applyOrThrow(pool, id, { type: 'choose', userVisible: true, plan: PLAN }, agent('chooser'));
+  return id;
+};
+
+/** Creates a copy-change task and takes it to `merging`, the stage where a merge or CI result lands. */
+export const createTaskInMerging = async (pool: Pool, seeded: Seeded): Promise<string> => {
+  const id = await createTaskInVerifying(pool, seeded);
   await applyOrThrow(pool, id, { type: 'approve' }, seeded.owner);
   return id;
+};
+
+/** Records a chooser run whose result holds this verification checklist. */
+export const recordChooserChecklist = async (
+  pool: Pool,
+  taskId: string,
+  checklist: readonly string[]
+) => {
+  await pool.query(
+    `insert into runs (task_id, stage, runner, agent_role, agent_version, status, result)
+     values ($1, 'choosing', 'managed_agents', 'chooser', 1, 'succeeded', $2)`,
+    [taskId, JSON.stringify({ userVisible: true, checklist, beforeAfter: [] })]
+  );
 };

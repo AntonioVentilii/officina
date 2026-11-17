@@ -2,6 +2,8 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { Client, Pool } from 'pg';
 import {
   AGENT_ROLES,
+  CHECK_CHANNELS,
+  CHECK_OUTCOMES,
   GUARDS,
   LANES,
   LEARNING_TARGETS,
@@ -55,7 +57,8 @@ describe.skipIf(!url)('migrations', () => {
       '0024_access_event_project.sql',
       '0025_learning_decision_claim.sql',
       '0026_task_request_id.sql',
-      '0027_connector_code_grant.sql'
+      '0027_connector_code_grant.sql',
+      '0028_checklist_checks.sql'
     ]);
     expect(await migrate(client)).toEqual([]);
   });
@@ -79,6 +82,12 @@ describe.skipIf(!url)('migrations', () => {
     expect(quoted(await definition('agent_versions_role_check'))).toEqual([...AGENT_ROLES].sort());
     expect(quoted(await definition('learnings_target_check'))).toEqual(
       [...LEARNING_TARGETS].sort()
+    );
+    expect(quoted(await definition('checklist_checks_outcome_check'))).toEqual(
+      [...CHECK_OUTCOMES].sort()
+    );
+    expect(quoted(await definition('checklist_checks_channel_check'))).toEqual(
+      [...CHECK_CHANNELS].sort()
     );
   });
 

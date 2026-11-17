@@ -21,3 +21,4 @@ export * from './access';
 export * from './bot-comments';
 export * from './changes';
 export * from './demo';
+export * from './checks';

@@ -195,6 +195,10 @@ const fakeGitHub = (
     },
     commentOnIssue: async (...args: unknown[]) => {
       calls.push({ method: 'commentOnIssue', args });
+      return { id: 900 + calls.length };
+    },
+    editComment: async (...args: unknown[]) => {
+      calls.push({ method: 'editComment', args });
     },
     openPullRequest: async (...args: unknown[]) => {
       calls.push({ method: 'openPullRequest', args });
@@ -511,7 +515,7 @@ describe.skipIf(!url)('engine', () => {
     expect(comments).toHaveLength(1);
     const comment = comments[0]!.args[0] as { issueNumber: number; body: string };
     expect(comment.issueNumber).toBe(42);
-    expect(comment.body).toContain('- [ ] Open settings and read the title.');
+    expect(comment.body).toContain('- [ ] **1.** Open settings and read the title.');
     expect(comment.body).toContain('| `settings.title` | en | Settings | Preferences |');
 
     await applyOrThrow(pool, taskId, { type: 'approve' }, seeded.owner);

@@ -8,6 +8,7 @@ import {
   finishVerifiedSpecs,
   openMissingPullRequests,
   requestCopilotReviews,
+  syncChecklistComments,
   type OnBehalf,
   runAgentStep,
   type EngineDependencies,
@@ -162,6 +163,15 @@ export const startEngine = async (input: {
     ).catch((error: unknown) => [{ error: (error as Error).message }]);
     for (const failure of unfinished) {
       input.log('spec status update failed', { projectId, ...failure });
+    }
+    // After the verifications above, so a result verified in this pass already says so.
+    for (const failure of await syncChecklistComments(
+      input.pool,
+      input.github,
+      active,
+      input.publicUrl
+    )) {
+      input.log('checklist comment update failed', { projectId, ...failure });
     }
     // After the pass that may merge a pull request straight away, so that merge reaches its
     // task in the same pass.

@@ -50,7 +50,7 @@ const fakeGitHub = (openFails = 0, failed: string[] = [], files: Record<string, 
       return { number: 7, url: 'https://github.com/ViciApp/vici-app/pull/7' };
     },
     updateFile: async () => ({ commitSha: null, parentSha: null }),
-    commentOnIssue: async () => undefined,
+    commentOnIssue: async () => ({ id: 1 }),
     failedChecks: async () => failed
   });
   return { port, calls, bodies };
@@ -434,7 +434,7 @@ describe.skipIf(!url)('a developer hands in a build', () => {
           () => openMissingPullRequests(pool, port, [taskId], PUBLIC_URL)
         ),
       commitChanges: async () => ({ parents: ['dev1'], paths: [SPEC] }),
-      commentOnIssue: async () => undefined,
+      commentOnIssue: async () => ({ id: 1 }),
       failedChecks: async () => []
     });
     const taskId = await waitingForDeveloper();
