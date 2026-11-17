@@ -210,7 +210,7 @@
                   <div class="who">
                     <MemberAvatar name={task.request.author} size={22} />
                     <strong>{task.request.author}</strong>
-                    <ViaApp name={task.request.via} />
+                    <ViaApp via={task.request.via} />
                     <time class="faint" title={dateTime(task.request.at)}
                       >{ago(task.request.at, clock.now)}</time
                     >

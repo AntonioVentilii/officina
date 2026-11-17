@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { INPUT_LIMITS, allowedActions, can, checksSchema } from '@officina/core';
+import { INPUT_LIMITS, allowedActions, can, checksSchema, connectionRef } from '@officina/core';
 import type { HandInPort } from '@officina/engine';
 import {
   consumeOAuthState,
@@ -506,6 +506,7 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
         return {
           grants: grants.map((grant) => ({
             id: grant.grantId,
+            connection: connectionRef(grant.grantId),
             client: grant.clientName,
             returnsTo: [...new Set(grant.redirectUris.map((uri) => new URL(uri).host))],
             renewedAt: grant.renewedAt

@@ -158,7 +158,7 @@
         item.kind === 'event' &&
         last?.kind === 'event' &&
         last.event.actor === item.event.actor &&
-        last.event.via === item.event.via &&
+        last.event.via?.id === item.event.via?.id &&
         Math.abs(new Date(item.at).getTime() - new Date(last.at).getTime()) < 2000
       ) {
         last.texts.push(...item.texts);
@@ -179,7 +179,7 @@
         <div class="bubble">
           <div class="meta">
             <strong>{item.comment.author}</strong>
-            <ViaApp name={item.comment.via} />
+            <ViaApp via={item.comment.via} />
             <time class="faint" datetime={item.at} title={dateTime(item.at)}
               >{ago(item.at, clock.now)}</time
             >
@@ -201,7 +201,7 @@
         <div class="line">
           <span
             ><strong>{item.event.actor}</strong>
-            <ViaApp name={item.event.via} />
+            <ViaApp via={item.event.via} />
             {join(item.texts)}</span
           >
           <time class="faint" datetime={item.at} title={dateTime(item.at)}

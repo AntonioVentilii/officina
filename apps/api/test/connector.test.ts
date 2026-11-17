@@ -1122,6 +1122,7 @@ describe.skipIf(!url)('connector for Claude', () => {
     expect(listed).toEqual([
       {
         id: expect.any(String),
+        connection: expect.stringMatching(/^[0-9A-F]{6}$/),
         client: 'Claude',
         returnsTo: ['claude.ai'],
         renewedAt: expect.any(String)
@@ -1174,6 +1175,11 @@ describe.skipIf(!url)('connector for Claude', () => {
 
     const cookie = await signIn();
     const [grant] = await grants(cookie);
+    // A second app under the same name is told apart by its connection.
+    const other = (await connect()).tokens.access_token as string;
+    await tool(other, 'comment', { number: 1, text: 'And in Spanish.' });
+    const second = (await grants(cookie)).find((listed: { id: string }) => listed.id !== grant.id);
+    expect(second.connection).not.toBe(grant.connection);
     const onBoard = (path: string, body: unknown) =>
       handle(`/api/projects/${seeded.projectId}/tasks/1/${path}`, {
         method: 'POST',
@@ -1199,25 +1205,29 @@ describe.skipIf(!url)('connector for Claude', () => {
     const task = await json(
       await handle(`/api/projects/${seeded.projectId}/tasks/1`, { headers: { cookie } })
     );
-    expect(task.request).toMatchObject({ author: 'Antonio', via: 'Claude' });
+    const via = (connection: string) => ({
+      id: [grant, second].find((listed) => listed.connection === connection).id,
+      label: 'via Claude',
+      client: 'Claude',
+      connection
+    });
+    expect(task.request).toMatchObject({ author: 'Antonio', via: via(grant.connection) });
     expect(
-      task.comments.map((comment: { body: string; via: string | null }) => [
-        comment.body,
-        comment.via
-      ])
+      task.comments.map((comment: { body: string; via: unknown }) => [comment.body, comment.via])
     ).toEqual([
-      ['Also in German.', 'Claude'],
+      ['Also in German.', via(grant.connection)],
+      ['And in Spanish.', via(second.connection)],
       ['Thanks!', null]
     ]);
     expect(
-      task.events.map((event: { type: string; actor: string; via: string | null }) => [
+      task.events.map((event: { type: string; actor: string; via: unknown }) => [
         event.type,
         event.actor,
         event.via
       ])
     ).toEqual([
-      ['created', 'Antonio', 'Claude'],
-      ['stage_changed', 'Antonio', 'Claude'],
+      ['created', 'Antonio', via(grant.connection)],
+      ['stage_changed', 'Antonio', via(grant.connection)],
       ['stage_changed', 'Antonio', null]
     ]);
   });
