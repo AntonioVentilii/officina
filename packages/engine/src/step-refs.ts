@@ -236,7 +236,7 @@ export const guardRefs = async (
   await applyCommand(pool, {
     taskId: step.taskId,
     command: {
-      type: 'block',
+      type: 'add_question',
       question: `While the ${role} ran, ${changes.join('; ')}. The ${role} may only push ${taskBranch}. Check those refs on GitHub and restore them if the ${role} changed them, then answer to run the build again.`,
       askedOf: { role: 'maintainer' }
     },
