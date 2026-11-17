@@ -47,6 +47,14 @@
   const approvesOnGitHub = $derived(
     gate === 'result' && Boolean(session.me?.github) && Boolean(task.pullRequest)
   );
+  /** The approve button's name, which the notice of an approval Claude proposed points to. */
+  const approveName = $derived(
+    gate === 'spec'
+      ? 'Approve plan'
+      : approvesOnGitHub
+        ? 'Looks good, approve on GitHub'
+        : 'Looks good'
+  );
 
   /** Items of the checklist that are not ok yet, said before a "Looks good" passes over them. */
   const open = $derived(gate === 'result' && task.checklist ? stillOpen(task.checklist) : '');
@@ -328,7 +336,12 @@
         {/if}
         {#if can('approve') && gate}
           {#if task.proposal}
-            <ProposalNotice number={task.number} proposal={task.proposal} {onchanged} />
+            <ProposalNotice
+              number={task.number}
+              proposal={task.proposal}
+              approve={approveName}
+              {onchanged}
+            />
           {/if}
           {#if confirming}
             <span class="confirm">
@@ -337,13 +350,9 @@
             </span>
           {/if}
           <button class="btn primary" disabled={busy} onclick={approve}>
-            <CircleCheck size={15} />{gate === 'spec'
-              ? 'Approve plan'
-              : confirming
-                ? 'Approve anyway'
-                : approvesOnGitHub
-                  ? 'Looks good, approve on GitHub'
-                  : 'Looks good'}
+            <CircleCheck size={15} />{confirming && gate !== 'spec'
+              ? 'Approve anyway'
+              : approveName}
           </button>
         {/if}
       </div>

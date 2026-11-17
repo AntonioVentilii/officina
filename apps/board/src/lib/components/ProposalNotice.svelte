@@ -7,10 +7,12 @@
   interface Props {
     number: number;
     proposal: NonNullable<TaskDetail['proposal']>;
+    /** The name of the button that confirms it. */
+    approve: string;
     onchanged: () => void;
   }
 
-  let { number, proposal, onchanged }: Props = $props();
+  let { number, proposal, approve, onchanged }: Props = $props();
 
   let busy = $state(false);
 
@@ -35,9 +37,9 @@
   <span>
     Claude proposed approving this for you, through the app named "{proposal.via.client}" (its own
     name, not verified), connection {proposal.via.connection} under Connected apps. It counts only once
-    you approve it here.
+    you press {approve}.
   </span>
-  <button class="btn ghost" disabled={busy} onclick={discard}>Discard</button>
+  <button class="btn" disabled={busy} onclick={discard}>Discard</button>
 </p>
 
 <style>
@@ -49,7 +51,13 @@
     gap: 8px 12px;
     margin: 0;
     padding: 8px 12px;
-    border-left: 3px solid var(--accent);
+    border-left: 3px solid currentColor;
     font-size: 13px;
+  }
+
+  /* Inside the yellow block the panel's ink, not the page's: its own button styles stop at it. */
+  .proposal .btn {
+    border-color: currentColor;
+    color: inherit;
   }
 </style>
