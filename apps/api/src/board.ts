@@ -7,6 +7,7 @@ import {
   TERMINAL_STAGES,
   applicableRequirements,
   branchForTask,
+  buildsTask,
   can,
   canAnswer,
   canRequestChanges,
@@ -465,19 +466,13 @@ const waitingOn = (
   }
 };
 
-/** Whether a member may build this task: the `build` action, and reading it if it is confidential. */
-const buildsIt = (
-  row: Pick<BoardTaskRow, 'guards'>,
-  member: Pick<BoardViewer, 'role' | 'domains'>
-) => can(member, 'build') && readsTask(member, row);
-
 /**
  * A developer claims a build when it waits or the agent has it, and hands in what they pushed once
  * it is theirs: built by hand or with their own agents, it goes to the same review. They may hand
  * it back instead, and so may whoever may steer the work, for another person's build.
  */
 const buildActions = (row: BoardTaskRow, viewer: BoardViewer): BoardAction[] => {
-  if (!buildsIt(row, viewer)) return [];
+  if (!buildsTask(viewer, row)) return [];
   if (row.stage === 'ready' || (row.stage === 'building' && row.assignee?.kind === 'agent'))
     return ['claim'];
   return row.stage === 'building' && row.assignee?.kind === 'member'
@@ -701,7 +696,7 @@ const peopleView = (
     : [];
   const byPerson = buildReasonFor(facts.config, row, viewer);
   const developers = facts.members
-    .filter((member) => buildsIt(row, member))
+    .filter((member) => buildsTask(member, row))
     .map((member) => name(member.id));
   return {
     requester: row.requesterName,

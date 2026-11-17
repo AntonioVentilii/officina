@@ -290,6 +290,55 @@ describe.skipIf(!url)('a developer hands in a build', () => {
     return { taskId, handIn, events };
   };
 
+  test('a developer who may no longer build the task they claimed cannot hand it in', async () => {
+    const build = await claimedBuild();
+    const dev = await developer('dev@example.com', 'Dev');
+    await setProjectRole(pool, {
+      projectId: seeded.projectId,
+      memberId: dev.memberId,
+      role: 'watcher',
+      domains: []
+    });
+    const github = fakeGitHub();
+    expect(await build.handIn(github.port)).toEqual({ ok: false, error: 'not_allowed' });
+    expect((await loadTask(pool, build.taskId))?.task.stage).toBe('building');
+    expect(github.calls.filter((call) => call.startsWith('openPullRequest'))).toEqual([]);
+  });
+
+  test('a developer who may no longer read the task they claimed cannot hand it in', async () => {
+    await pool.query(
+      `update projects set config = jsonb_set(config, '{guards}', $1::jsonb) where id = $2`,
+      [JSON.stringify({ confidential_terms: ['investor'] }), seeded.projectId]
+    );
+    const build = await claimedBuild();
+    await applyOrThrow(
+      pool,
+      build.taskId,
+      { type: 'guard_words', text: 'Show it to the investor first.' },
+      seeded.owner
+    );
+    const github = fakeGitHub();
+    expect(await build.handIn(github.port)).toEqual({ ok: false, error: 'not_allowed' });
+    expect((await loadTask(pool, build.taskId))?.task.stage).toBe('building');
+  });
+
+  test('a hand-in taken in before the developer was demoted opens no pull request after', async () => {
+    const build = await claimedBuild();
+    const github = fakeGitHub(1);
+    await expect(build.handIn(github.port)).rejects.toThrow('GitHub 502');
+    expect((await loadTask(pool, build.taskId))?.task.stage).toBe('reviewing');
+    const dev = await developer('dev@example.com', 'Dev');
+    await setProjectRole(pool, {
+      projectId: seeded.projectId,
+      memberId: dev.memberId,
+      role: 'contributor',
+      domains: []
+    });
+
+    expect(await build.handIn(github.port)).toEqual({ ok: false, error: 'not_allowed' });
+    expect(github.calls.filter((call) => call.startsWith('openPullRequest'))).toHaveLength(1);
+  });
+
   test('a hand-in whose task moves while its checks are read says where the task is now', async () => {
     const build = await claimedBuild();
     // The webhook for the red check lands while the hand-in reads it, and sends the task back first.

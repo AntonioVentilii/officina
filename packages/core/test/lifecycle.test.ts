@@ -1484,6 +1484,33 @@ describe('work agents cannot or should not do goes to a person', () => {
     });
   });
 
+  test('a person hands in only while they may still build the task they claimed', () => {
+    const dev: Member = { id: 'dev', role: 'contributor', domains: ['developer'] };
+    const driver = createDriver([owner, dev]);
+    const claimed = driver.step(toReady(driver, PAGE_PATHS), { type: 'claim' }, asMember(dev));
+    const push = {
+      type: 'push',
+      headSha: 'abc',
+      changedPaths: PAGE_PATHS,
+      addedPaths: [],
+      catalogPages: {},
+      diffLines: 10
+    } as const;
+    const refused = { ok: false, error: 'not_allowed' } as const;
+    // Demoted to a watcher, or no longer a developer.
+    const since: Member[] = [
+      { ...dev, role: 'watcher' },
+      { ...dev, domains: [] }
+    ];
+    for (const now of since)
+      expect(createDriver([owner, now]).attempt(claimed, push, asMember(dev))).toEqual(refused);
+    // The task became confidential, which they may not read.
+    expect(driver.attempt({ ...claimed, guards: ['confidential'] }, push, asMember(dev))).toEqual(
+      refused
+    );
+    expect(driver.attempt(claimed, push, asMember(dev)).ok).toBe(true);
+  });
+
   test('only an agent result hands a task to a person; a member asks an ordinary question', () => {
     const driver = createDriver([owner]);
     const task = newTask('t1', owner.id);
