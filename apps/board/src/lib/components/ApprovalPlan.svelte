@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Eye, GitMerge, Hand, ShieldPlus, Smartphone, UserCheck } from '@lucide/svelte';
-  import { board } from '$lib/state/board.svelte';
-  import type { TaskDetail } from '$lib/types';
+  import { board } from '#lib/state/board.svelte.ts';
+  import type { TaskDetail } from '#lib/types.ts';
   import AgentAvatar from './AgentAvatar.svelte';
   import MemberAvatar from './MemberAvatar.svelte';
 

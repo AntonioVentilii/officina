@@ -1,12 +1,12 @@
 <script lang="ts">
   import { Plus, Search } from '@lucide/svelte';
   import { page } from '$app/state';
-  import { BOARD_HEADING_ID } from '$lib/drawer';
-  import { COLUMNS, CLOSED, isOpen } from '$lib/stages';
-  import { board } from '$lib/state/board.svelte';
-  import { clock } from '$lib/state/clock.svelte';
-  import { session } from '$lib/state/session.svelte';
-  import type { Card, Lane } from '$lib/types';
+  import { BOARD_HEADING_ID } from '#lib/drawer.ts';
+  import { COLUMNS, CLOSED, isOpen } from '#lib/stages.ts';
+  import { board } from '#lib/state/board.svelte.ts';
+  import { clock } from '#lib/state/clock.svelte.ts';
+  import { session } from '#lib/state/session.svelte.ts';
+  import type { Card, Lane } from '#lib/types.ts';
   import LaneChip from './LaneChip.svelte';
   import NewRequest from './NewRequest.svelte';
   import TaskCard from './TaskCard.svelte';

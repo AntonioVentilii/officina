@@ -1,7 +1,7 @@
-import { ApiError, get, post } from '$lib/api';
-import { latestOnly } from '$lib/latest';
-import { isActive } from '$lib/runs';
-import type { AgentRoleInfo, Card, Learning, MemberActivity, Notice, Run } from '$lib/types';
+import { ApiError, get, post } from '#lib/api.ts';
+import { latestOnly } from '#lib/latest.ts';
+import { isActive } from '#lib/runs.ts';
+import type { AgentRoleInfo, Card, Learning, MemberActivity, Notice, Run } from '#lib/types.ts';
 import { coalesce, live, refreshesAll } from './live.svelte';
 import { session } from './session.svelte';
 

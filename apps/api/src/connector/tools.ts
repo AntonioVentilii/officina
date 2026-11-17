@@ -119,7 +119,7 @@ const peopleOf = (who: Requirement['who']) =>
 /** One requirement of a gate: who holds it, and who of them approved. */
 const requirementLine = (requirement: Requirement) =>
   requirement.waived
-    ? `${requirement.label} (nobody holds it, so it is waived)`
+    ? `${requirement.label} (waived: nobody could approve it)`
     : `${requirement.label} (${peopleOf(requirement.who) || 'nobody yet'})`;
 
 /** Who asked, who approves each gate and who merges, so nobody assumes the requester decides. */
@@ -404,7 +404,10 @@ After it is opened, tell the person the task link and what happens next, as the 
         lines.push('', `Still needs approval from: ${task.approval.pending.join(', ')}.`);
       if (task.plan?.current) lines.push(`How deep to check: ${task.plan.depthLabel}.`);
       if (task.stage === 'verifying' && task.checklist?.checklist.length)
-        lines.push('', ...checklistLines(task.checklist));
+        lines.push(
+          '',
+          ...checklistLines(task.checklist, 'What to check (record each with check_item):')
+        );
       if (task.comments.length) {
         lines.push('', 'Conversation:');
         for (const comment of task.comments.slice(-20))

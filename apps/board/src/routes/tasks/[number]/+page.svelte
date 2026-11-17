@@ -1,8 +1,8 @@
 <script lang="ts">
   import { page } from '$app/state';
-  import BoardView from '$lib/components/BoardView.svelte';
-  import TaskDrawer from '$lib/components/TaskDrawer.svelte';
-  import { session } from '$lib/state/session.svelte';
+  import BoardView from '#lib/components/BoardView.svelte';
+  import TaskDrawer from '#lib/components/TaskDrawer.svelte';
+  import { session } from '#lib/state/session.svelte.ts';
 
   const number = $derived(Number(page.params.number));
 

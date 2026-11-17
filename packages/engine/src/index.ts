@@ -8,12 +8,7 @@ export {
   taskLink,
   type OnBehalf
 } from './github-sync';
-export {
-  checklistMarkdown,
-  syncChecklistComment,
-  syncChecklistComments,
-  type ChecklistGitHubPort
-} from './checklist';
+export { syncChecklistComment, syncChecklistComments, type ChecklistGitHubPort } from './checklist';
 export { runAgentStep, type EngineDependencies, type GitHubPort } from './step';
 export { createLiveRuns, type LiveRuns } from './live-runs';
 export { guardOrphanedBuilds } from './step-refs';
