@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   canAutoVerify,
+  canSubmitRequest,
   effectivePolicy,
   evaluatePolicy,
   humanBuildReason,
@@ -385,6 +386,24 @@ describe('permissions', () => {
     task = driver.step(task, { type: 'submit_request' }, asMember(owner));
     expect(task).toMatchObject({ stage: 'triage', blocked: null });
     expect(driver.events()).toContainEqual({ type: 'unblocked', answer: '(submitted as is)' });
+  });
+
+  test('a request is offered to send on as it is exactly when it may be', () => {
+    const driver = createDriver([owner, productContributor]);
+    const theirs = newTask('t1', productContributor.id);
+    const askThem = { question: 'Which screens?', askedOf: { memberId: productContributor.id } };
+    const askOwner = { question: 'Is this allowed?', askedOf: { role: 'owner' as const } };
+    const cases: readonly [Task, boolean][] = [
+      [theirs, true],
+      [{ ...theirs, blocked: askThem }, true],
+      [{ ...theirs, paused: true }, false],
+      [{ ...theirs, blocked: askOwner }, false]
+    ];
+    for (const [task, offered] of cases)
+      for (const member of [owner, productContributor]) {
+        expect(canSubmitRequest(task, member)).toBe(offered);
+        expect(driver.attempt(task, { type: 'submit_request' }, asMember(member)).ok).toBe(offered);
+      }
   });
 
   test('the interviewer may submit a request, other agents may not', () => {
