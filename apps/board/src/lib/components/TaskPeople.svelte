@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Check, GitMerge } from '@lucide/svelte';
-  import type { TaskDetail } from '$lib/types';
+  import type { TaskDetail } from '#lib/types.ts';
   import MemberAvatar from './MemberAvatar.svelte';
 
   interface Props {
@@ -23,7 +23,7 @@
         <span class="line">
           <span class="muted">{requirement.label}:</span>
           {#if requirement.waived}
-            <span class="faint">nobody holds it yet, so it is waived</span>
+            <span class="faint">waived: nobody could approve it</span>
           {:else if requirement.who.length}
             <!-- Two members can share a name. -->
             {#each requirement.who as person, index (index)}

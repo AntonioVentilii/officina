@@ -1,9 +1,9 @@
 <script lang="ts">
-  import { post } from '$lib/api';
-  import { ago } from '$lib/format';
-  import { toasts } from '$lib/state/toasts.svelte';
-  import { latestChecks, type ChecklistView } from '$lib/checklist';
-  import type { BeforeAfter } from '$lib/types';
+  import { post } from '#lib/api.ts';
+  import { ago } from '#lib/format.ts';
+  import { toasts } from '#lib/state/toasts.svelte.ts';
+  import { latestChecks, type ChecklistView } from '#lib/checklist.ts';
+  import type { BeforeAfter } from '#lib/types.ts';
 
   interface Props {
     view: ChecklistView;

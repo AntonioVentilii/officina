@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { isActive } from '$lib/runs';
+  import { isActive } from '#lib/runs.ts';
   import { ChevronRight, ExternalLink } from '@lucide/svelte';
-  import { duration, money } from '$lib/format';
-  import { STAGE_LABELS } from '$lib/stages';
-  import { clock } from '$lib/state/clock.svelte';
-  import type { Run, Stage } from '$lib/types';
+  import { duration, money } from '#lib/format.ts';
+  import { STAGE_LABELS } from '#lib/stages.ts';
+  import { clock } from '#lib/state/clock.svelte.ts';
+  import type { Run, Stage } from '#lib/types.ts';
   import AgentAvatar from './AgentAvatar.svelte';
   import RunLog from './RunLog.svelte';
 

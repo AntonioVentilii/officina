@@ -24,6 +24,7 @@ import {
   parseProjectConfig,
   policyContext,
   readsTask,
+  sameRequirement,
   seesQuestion,
   type Actor,
   type AgentRole,
@@ -39,6 +40,7 @@ import {
   type Role
 } from '@officina/core';
 import {
+  domainEventOf,
   latestChooserResult,
   listApprovedSubjects,
   listBoardTasks,
@@ -58,6 +60,7 @@ import {
   type BoardTaskRow,
   type RunEventRow,
   type RunRow,
+  type TaskEventRow,
   loadProjectConfig
 } from '@officina/db';
 import { checklistView, type ChosenChecklist } from './checklist-view';
@@ -648,16 +651,39 @@ const GATE_PEOPLE = [
 ] as const satisfies readonly { gate: Gate; does: string }[];
 
 /**
+ * What was waived when a gate passed for its current subject, or `null` while it has not passed. A
+ * gate already passed reads as it was decided then, not with the members who joined since.
+ */
+const waivedWhenPassed = (
+  events: readonly TaskEventRow[],
+  gate: Gate,
+  subject: string | null
+): readonly Requirement[] | null => {
+  const passed = events
+    .map(domainEventOf)
+    .filter(
+      (event) =>
+        event.type === 'approval_recorded' &&
+        event.gate === gate &&
+        event.subject === subject &&
+        event.satisfied
+    )
+    .at(-1);
+  return passed?.type === 'approval_recorded' ? passed.waived : null;
+};
+
+/**
  * The people of a task: who asked for it, who the approval policy expects at each gate (the
  * lane's policy plus what the chooser added, and the maintainer floor) with who already approved,
- * whom the chooser asked to check, and who merges. The requester approves only where a
- * requirement names them, or where the project lets them meet their own gates.
+ * whom the chooser asked to check, and who merges. A gate already passed shows what it waived then.
+ * The requester approves only where a requirement names them, or where the project lets them meet
+ * their own gates.
  */
 const peopleView = (
   row: BoardTaskRow,
   viewer: BoardViewer,
   facts: ProjectFacts,
-  approvals: readonly Approval[]
+  recorded: { readonly approvals: readonly Approval[]; readonly events: readonly TaskEventRow[] }
 ) => {
   const config = parseProjectConfig(facts.rawConfig);
   const name = (id: string) => facts.names.get(id) ?? 'a former member';
@@ -665,7 +691,7 @@ const peopleView = (
     ? GATE_PEOPLE.map(({ gate, does }) => {
         const subject = gateSubject(row, gate);
         const approved = new Set(
-          approvals
+          recorded.approvals
             .filter((approval) => subject !== null && approval.subject === subject)
             .map((approval) => approval.memberId)
         );
@@ -674,12 +700,17 @@ const peopleView = (
           subject: subject ?? ''
         });
         const policy = effectivePolicy(config.config, row, gate);
+        const waivedThen = waivedWhenPassed(recorded.events, gate, subject);
         return {
           gate,
           does,
           current: row.stage === gate,
           requirements: shownRequirements(policy, row.userVisible, context).map((requirement) => {
-            const eligible = eligibleMembers(requirement, context);
+            const waived = waivedThen
+              ? waivedThen.some((other) => sameRequirement(other, requirement))
+              : eligibleMembers(requirement, context).length === 0 &&
+                requirement !== APPROVAL_FLOOR;
+            const eligible = waived ? [] : eligibleMembers(requirement, context);
             return {
               label: describeRequirement(requirement),
               // Each person says whether they approved: a name alone could be two members.
@@ -687,7 +718,7 @@ const peopleView = (
                 name: name(member.id),
                 approved: approved.has(member.id)
               })),
-              waived: eligible.length === 0 && requirement !== APPROVAL_FLOOR
+              waived
             };
           }),
           asked: (row.approvalPlans[gate]?.verifiers ?? []).map((verifier) =>
@@ -842,7 +873,7 @@ export const taskView = async (
     })),
     runs: seesTechnical(viewer) ? runs.map((run) => runView(run, consoleWorkspace)) : [],
     plan: shown.value(planView(row, facts)),
-    people: peopleView(row, viewer, facts, approvals),
+    people: peopleView(row, viewer, facts, { approvals, events }),
     approval: approval && {
       gate: approval.gate,
       planned: approval.planned,

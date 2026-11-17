@@ -55,14 +55,15 @@ export const checklistView = async (
 };
 
 /**
- * The checklist as Claude reads it to the person: each item by its number, where its latest check
- * stands, and the before/after rows.
+ * The checklist as plain text, for Claude to read to the person and for `task show`: each item by
+ * its number, where its latest check stands, and the before/after rows, under `heading`.
  */
 export const checklistLines = (
-  view: NonNullable<Awaited<ReturnType<typeof checklistView>>>
+  view: NonNullable<Awaited<ReturnType<typeof checklistView>>>,
+  heading: string
 ): string[] => {
   const latest = new Map(view.checks.map((check) => [check.item, check]));
-  const lines = ['What to check (record each with check_item):'];
+  const lines = [heading];
   view.checklist.forEach((item, index) => {
     const check = latest.get(index);
     const state = check

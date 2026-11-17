@@ -1,16 +1,16 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
-  import { session } from '$lib/state/session.svelte';
-  import AgentAvatar from '$lib/components/AgentAvatar.svelte';
-  import RunRow from '$lib/components/RunRow.svelte';
-  import { money } from '$lib/format';
-  import { board } from '$lib/state/board.svelte';
+  import { session } from '#lib/state/session.svelte.ts';
+  import AgentAvatar from '#lib/components/AgentAvatar.svelte';
+  import RunRow from '#lib/components/RunRow.svelte';
+  import { money } from '#lib/format.ts';
+  import { board } from '#lib/state/board.svelte.ts';
 
   let open = $state<Record<string, boolean>>({});
 
   // Maintainers' page: the API refuses its data to anyone else.
   $effect(() => {
-    if (session.project && !session.technical) void goto('/', { replaceState: true });
+    if (session.project && !session.technical) void goto('/', { replace: true });
   });
 </script>
 
