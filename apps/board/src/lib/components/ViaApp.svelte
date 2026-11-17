@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Via } from '$lib/types';
+  import type { Via } from '#lib/types.ts';
 
   interface Props {
     via: Via | null;

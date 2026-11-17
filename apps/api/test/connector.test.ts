@@ -1205,7 +1205,12 @@ describe.skipIf(!url)('connector for Claude', () => {
     const task = await json(
       await handle(`/api/projects/${seeded.projectId}/tasks/1`, { headers: { cookie } })
     );
-    const via = (connection: string) => ({ label: 'via Claude', client: 'Claude', connection });
+    const via = (connection: string) => ({
+      id: [grant, second].find((listed) => listed.connection === connection).id,
+      label: 'via Claude',
+      client: 'Claude',
+      connection
+    });
     expect(task.request).toMatchObject({ author: 'Antonio', via: via(grant.connection) });
     expect(
       task.comments.map((comment: { body: string; via: unknown }) => [comment.body, comment.via])

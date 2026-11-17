@@ -332,7 +332,7 @@ export interface ConnectedApp {
 }
 
 /** The app a member acted through, as the history shows it: "via Claude", its name, its connection. */
-export type Via = Pick<ConnectedApp, 'client' | 'connection'> & { readonly label: string };
+export type Via = Pick<ConnectedApp, 'id' | 'client' | 'connection'> & { readonly label: string };
 
 /** Why a GitHub sign-in did not complete, as the API puts it in `/signin?error=`. */
 export type GitHubSignInProblem =

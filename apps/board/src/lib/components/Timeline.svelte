@@ -158,7 +158,7 @@
         item.kind === 'event' &&
         last?.kind === 'event' &&
         last.event.actor === item.event.actor &&
-        last.event.via?.connection === item.event.via?.connection &&
+        last.event.via?.id === item.event.via?.id &&
         Math.abs(new Date(item.at).getTime() - new Date(last.at).getTime()) < 2000
       ) {
         last.texts.push(...item.texts);

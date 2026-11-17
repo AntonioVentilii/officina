@@ -181,6 +181,7 @@ export const actorLabel = (actor: Actor, names: ReadonlyMap<string, string>): st
 const viaView = (actor: Actor) =>
   actor.kind === 'member' && actor.via
     ? {
+        id: actor.via.grantId,
         label: CHECK_CHANNEL_LABELS.claude,
         client: actor.via.name,
         connection: connectionRef(actor.via.grantId)
