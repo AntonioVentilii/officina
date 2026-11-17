@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { QuestionOption } from '$lib/types';
+  import type { QuestionOption } from '#lib/types.ts';
   import OptionPreview from './OptionPreview.svelte';
 
   interface Props {

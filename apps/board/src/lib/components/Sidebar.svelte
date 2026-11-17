@@ -14,11 +14,11 @@
     Users
   } from '@lucide/svelte';
   import { page } from '$app/state';
-  import { board } from '$lib/state/board.svelte';
-  import { guide } from '$lib/state/guide.svelte';
-  import { live } from '$lib/state/live.svelte';
-  import { LOOKS, look } from '$lib/state/look.svelte';
-  import { session } from '$lib/state/session.svelte';
+  import { board } from '#lib/state/board.svelte.ts';
+  import { guide } from '#lib/state/guide.svelte.ts';
+  import { live } from '#lib/state/live.svelte.ts';
+  import { LOOKS, look } from '#lib/state/look.svelte.ts';
+  import { session } from '#lib/state/session.svelte.ts';
   import Logo from './Logo.svelte';
   import MemberAvatar from './MemberAvatar.svelte';
 

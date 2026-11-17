@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { look } from '$lib/state/look.svelte';
-  import type { Lane } from '$lib/types';
+  import { look } from '#lib/state/look.svelte.ts';
+  import type { Lane } from '#lib/types.ts';
 
   interface Props {
     lane: Lane | null;

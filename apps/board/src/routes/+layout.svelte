@@ -3,16 +3,16 @@
   import type { Snippet } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import Guide from '$lib/components/Guide.svelte';
-  import NewRequest from '$lib/components/NewRequest.svelte';
-  import Sidebar from '$lib/components/Sidebar.svelte';
-  import Toasts from '$lib/components/Toasts.svelte';
-  import { board } from '$lib/state/board.svelte';
-  import { guide } from '$lib/state/guide.svelte';
-  import { live } from '$lib/state/live.svelte';
-  import { look } from '$lib/state/look.svelte';
-  import { session } from '$lib/state/session.svelte';
-  import { toasts } from '$lib/state/toasts.svelte';
+  import Guide from '#lib/components/Guide.svelte';
+  import NewRequest from '#lib/components/NewRequest.svelte';
+  import Sidebar from '#lib/components/Sidebar.svelte';
+  import Toasts from '#lib/components/Toasts.svelte';
+  import { board } from '#lib/state/board.svelte.ts';
+  import { guide } from '#lib/state/guide.svelte.ts';
+  import { live } from '#lib/state/live.svelte.ts';
+  import { look } from '#lib/state/look.svelte.ts';
+  import { session } from '#lib/state/session.svelte.ts';
+  import { toasts } from '#lib/state/toasts.svelte.ts';
 
   interface Props {
     children: Snippet;
@@ -68,7 +68,7 @@
     if (session.status !== 'ready' || page.url.searchParams.get('github') !== 'linked') return;
     const login = session.me?.github?.login;
     if (login) toasts.show('ok', `GitHub connected as @${login}`);
-    void goto(page.url.pathname, { replaceState: true, noScroll: true });
+    void goto(page.url.pathname, { replace: true, reset: false });
   });
 
   // The welcome guide, the first time someone signs in here. Not over the connector's consent

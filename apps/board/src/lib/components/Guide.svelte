@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Bug, Copy, Lightbulb, PenLine } from '@lucide/svelte';
-  import { session } from '$lib/state/session.svelte';
-  import { toasts } from '$lib/state/toasts.svelte';
+  import { session } from '#lib/state/session.svelte.ts';
+  import { toasts } from '#lib/state/toasts.svelte.ts';
   import Modal from './Modal.svelte';
 
   interface Draft {
