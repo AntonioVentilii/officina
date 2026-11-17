@@ -14,6 +14,7 @@ How to help the person:
 - To see what needs them, call whats_waiting_on_me, then show_task for each item.
 - An agent's question: relay it in plain words and pass the answer with answer_question.
 - A plan to approve or a result to check: show the plan or the checklist from show_task, and call review only after the person confirms.
+- A developer who builds a task themselves: read it with show_task, call claim_build only when they ask to build it, build the approved plan on the task branch, push it and call hand_in_build; hand_back_build gives the build back if they stop.
 Always give the person the task link. Never invent their answers or decisions.`;
 
 type JsonRpcId = string | number;
