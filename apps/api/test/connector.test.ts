@@ -590,30 +590,65 @@ describe.skipIf(!url)('connector for Claude', () => {
     (await pool.query<{ stage: string }>('select stage from tasks where id = $1', [taskId])).rows[0]
       ?.stage;
 
-  test('Claude approves a plan that still needs another approval, then asks for changes', async () => {
+  test('Claude only proposes an approval; the member confirms or discards it on the board', async () => {
     const token = (await connect()).tokens.access_token as string;
-    // A product approver exists, so the requester's approval is not enough on the copy lane.
-    await invite(pool, {
-      publicUrl: PUBLIC_URL,
-      email: 'tim@example.com',
-      name: 'Tim',
-      role: 'contributor',
-      domains: ['product']
-    });
     const taskId = await taskInSpecReview(token);
+    const link = `${PUBLIC_URL}/tasks/1?project=${seeded.projectId}`;
+    const proposed = `Approval proposed: it counts once you confirm it on the board with Approve, where you can also discard it. Task 1: ${link}`;
 
     const approved = await tool(token, 'review', { number: 1, decision: 'approve' });
     expect(approved.isError).toBe(false);
-    expect(approved.content[0]!.text).toBe(
-      `Your approval is recorded; more approvals are still needed. Task 1: ${PUBLIC_URL}/tasks/1?project=${seeded.projectId}`
+    expect(approved.content[0]!.text).toBe(proposed);
+    // Proposed twice, it is still one proposal, and nothing is approved yet.
+    expect((await tool(token, 'review', { number: 1, decision: 'approve' })).content[0]!.text).toBe(
+      proposed
     );
     expect(await stageOf(taskId)).toBe('spec_review');
-    const recorded = await pool.query(
-      `select 1 from task_events where task_id = $1 and type = 'approval_recorded'`,
+    const count = async (type: string) =>
+      (
+        await pool.query('select 1 from task_events where task_id = $1 and type = $2', [
+          taskId,
+          type
+        ])
+      ).rowCount;
+    expect(await count('approval_proposed')).toBe(1);
+    expect(await count('approval_recorded')).toBe(0);
+    expect(
+      (await pool.query('select 1 from approvals where task_id = $1', [taskId])).rowCount
+    ).toBe(0);
+
+    const cookie = await signIn();
+    const task = async () =>
+      json(await handle(`/api/projects/${seeded.projectId}/tasks/1`, { headers: { cookie } }));
+    const act = (body: unknown) =>
+      handle(`/api/projects/${seeded.projectId}/tasks/1/actions`, {
+        method: 'POST',
+        headers: { cookie, 'content-type': 'application/json', 'x-officina-request': '1' },
+        body: JSON.stringify(body)
+      });
+    expect((await task()).proposal).toEqual({ gate: 'spec_review', app: 'Claude' });
+
+    // Discarded on the board, it no longer waits; proposed again, it waits again.
+    expect((await act({ type: 'discard_proposal' })).status).toBe(200);
+    expect((await task()).proposal).toBeNull();
+    expect((await act({ type: 'discard_proposal' })).status).toBe(409);
+    await tool(token, 'review', { number: 1, decision: 'approve' });
+    expect((await task()).proposal).toEqual({ gate: 'spec_review', app: 'Claude' });
+
+    // Approving on the board confirms it: the approval counts, as the member, from the board.
+    expect((await act({ type: 'approve' })).status).toBe(200);
+    expect(await stageOf(taskId)).toBe('ready');
+    expect((await task()).proposal).toBeNull();
+    const confirmed = await pool.query<{ actor: unknown }>(
+      `select actor from task_events where task_id = $1 and type = 'approval_recorded'`,
       [taskId]
     );
-    expect(recorded.rowCount).toBe(1);
+    expect(confirmed.rows).toEqual([{ actor: { kind: 'member', memberId: seeded.ownerId } }]);
+  });
 
+  test('Claude asks for changes directly, with its note', async () => {
+    const token = (await connect()).tokens.access_token as string;
+    const taskId = await taskInSpecReview(token);
     const changes = await tool(token, 'review', {
       number: 1,
       decision: 'changes',

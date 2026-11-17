@@ -19,7 +19,7 @@ import {
 } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
 import { appendTaskEvent, saveSpecVersion } from './task-history';
-import { addComment, listApprovedSubjects, listProjectMembers } from './tasks';
+import { addComment, listApprovedSubjects, listProjectMembers, proposalsFor } from './tasks';
 
 export type StoreError = DecisionError | 'not_found' | 'conflict' | 'invalid_config';
 
@@ -286,6 +286,7 @@ export const applyCommandIn = async (
 
   const members = await listProjectMembers(client, row.project_id);
   const approvals = await listApprovedSubjects(client, input.taskId);
+  const proposals = await proposalsFor(client, input.command, toStored(row).task, approvals);
 
   const before = toStored(row).task;
   if (input.guard && !(await input.guard(before, client))) return { ok: false, error: 'conflict' };
@@ -300,7 +301,8 @@ export const applyCommandIn = async (
     config: parsedConfig.config,
     members,
     approvals,
-    onboardingOpen
+    onboardingOpen,
+    proposals
   });
   if (!decision.ok) return decision;
 

@@ -21,6 +21,7 @@ import {
   gateSubject,
   humanBuildReason,
   isGate,
+  openProposals,
   optionKey,
   outranks,
   parseProjectConfig,
@@ -45,6 +46,7 @@ import {
   domainEventOf,
   latestChooserResult,
   listApprovedSubjects,
+  listProposalHistory,
   listBoardTasks,
   listLearnings,
   listProjectMembers,
@@ -214,6 +216,8 @@ const PUBLIC_FIELDS: Readonly<Record<string, readonly string[]>> = {
   user_visible_changed: ['userVisible'],
   guards_changed: ['guards'],
   approval_recorded: ['gate', 'satisfied', 'memberId'],
+  approval_proposed: ['gate'],
+  approval_proposal_discarded: ['gate'],
   approval_planned: ['gate'],
   changes_requested: ['stage', 'note'],
   pushed: ['headSha', 'diffLines'],
@@ -823,17 +827,23 @@ export const taskView = async (
   const row = await loadBoardTask(pool, viewer.projectId, number);
   if (!row) return null;
   const facts = await projectFacts(pool, viewer);
-  const [approval, context, specs, comments, events, runs, chooser, approvals] = await Promise.all([
-    approvalState(pool, row, facts),
-    loadTaskContext(pool, row.id),
-    listSpecVersions(pool, row.id),
-    listTaskComments(pool, row.id),
-    listTaskEvents(pool, row.id),
-    listTaskRuns(pool, row.id),
-    latestChooserResult(pool, row.id),
-    listApprovedSubjects(pool, row.id)
-  ]);
+  const [approval, context, specs, comments, events, runs, chooser, approvals, proposals] =
+    await Promise.all([
+      approvalState(pool, row, facts),
+      loadTaskContext(pool, row.id),
+      listSpecVersions(pool, row.id),
+      listTaskComments(pool, row.id),
+      listTaskEvents(pool, row.id),
+      listTaskRuns(pool, row.id),
+      latestChooserResult(pool, row.id),
+      listApprovedSubjects(pool, row.id),
+      listProposalHistory(pool, row.id)
+    ]);
   const label = (actor: Actor) => actorLabel(actor, facts.names);
+  // The viewer's own approval that Claude proposed, waiting for them to confirm or discard it.
+  const proposal = openProposals(row, proposals, approvals).find(
+    (open) => open.memberId === viewer.memberId
+  );
   const [request, ...thread] = comments;
   const shown = confidentialView(row, viewer);
   return {
@@ -907,7 +917,8 @@ export const taskView = async (
       })
     ),
     reviewers: REVIEWER_ROLES.map((role) => ({ role, label: roleLabel(role) })),
-    actions: actionsFor(row, viewer, facts)
+    actions: actionsFor(row, viewer, facts),
+    proposal: proposal ? { gate: proposal.gate, app: proposal.via.name } : null
   };
 };
 
