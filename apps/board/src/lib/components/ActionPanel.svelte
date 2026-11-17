@@ -51,6 +51,16 @@
   /** Items of the checklist that are not ok yet, said before a "Looks good" passes over them. */
   const open = $derived(gate === 'result' && task.checklist ? stillOpen(task.checklist) : '');
   let confirming = $state(false);
+  /** The approve button's label as shown, which the notice of an approval Claude proposed names. */
+  const approveLabel = $derived(
+    gate === 'spec'
+      ? 'Approve plan'
+      : confirming
+        ? 'Approve anyway'
+        : approvesOnGitHub
+          ? 'Looks good, approve on GitHub'
+          : 'Looks good'
+  );
 
   const approve = () => {
     if (open && !confirming) {
@@ -328,7 +338,12 @@
         {/if}
         {#if can('approve') && gate}
           {#if task.proposal}
-            <ProposalNotice number={task.number} proposal={task.proposal} {onchanged} />
+            <ProposalNotice
+              number={task.number}
+              proposal={task.proposal}
+              approve={approveLabel}
+              {onchanged}
+            />
           {/if}
           {#if confirming}
             <span class="confirm">
@@ -337,13 +352,7 @@
             </span>
           {/if}
           <button class="btn primary" disabled={busy} onclick={approve}>
-            <CircleCheck size={15} />{gate === 'spec'
-              ? 'Approve plan'
-              : confirming
-                ? 'Approve anyway'
-                : approvesOnGitHub
-                  ? 'Looks good, approve on GitHub'
-                  : 'Looks good'}
+            <CircleCheck size={15} />{approveLabel}
           </button>
         {/if}
       </div>
