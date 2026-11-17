@@ -664,6 +664,9 @@ const GATE_PEOPLE = [
   { gate: 'verifying', does: 'Check the result' }
 ] as const satisfies readonly { gate: Gate; does: string }[];
 
+/** What a result's gate says when the lifecycle let it skip people's check (`canAutoVerify`). */
+const AUTO_VERIFIED_GATE = "skipped: a low-risk change the agents and GitHub's checks reviewed";
+
 /**
  * What was waived when a gate passed for its current subject, or `null` while it has not passed. A
  * gate already passed reads as it was decided then, not with the members who joined since.
@@ -715,11 +718,15 @@ const peopleView = (
         });
         const policy = effectivePolicy(config.config, row, gate);
         const waivedThen = waivedWhenPassed(recorded.events, gate, subject);
+        const skipped = gate === 'verifying' && row.autoVerified ? AUTO_VERIFIED_GATE : null;
+        // Nobody was asked to check a skipped result, so it names no approvers.
+        const shown = skipped ? [] : shownRequirements(policy, row.userVisible, context);
         return {
           gate,
           does,
           current: row.stage === gate,
-          requirements: shownRequirements(policy, row.userVisible, context).map((requirement) => {
+          skipped,
+          requirements: shown.map((requirement) => {
             const waived = waivedThen
               ? waivedThen.some((other) => sameRequirement(other, requirement))
               : eligibleMembers(requirement, context).length === 0 &&

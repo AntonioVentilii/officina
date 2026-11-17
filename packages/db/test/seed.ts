@@ -55,8 +55,8 @@ const agent = (
   version: 1
 });
 
-/** Creates a copy-change task and takes it to `verifying`, built at `abc` and planned. */
-export const createTaskInVerifying = async (pool: Pool, seeded: Seeded): Promise<string> => {
+/** Creates a copy-change task and takes it to `choosing`, built at `abc` and reviewed. */
+export const createTaskInChoosing = async (pool: Pool, seeded: Seeded): Promise<string> => {
   const paths = ['src/lib/constants/messages/en.ts'];
   const { task } = await createTask(pool, {
     projectId: seeded.projectId,
@@ -115,7 +115,32 @@ export const createTaskInVerifying = async (pool: Pool, seeded: Seeded): Promise
     { type: 'review', verdict: 'approve', notes: 'ok' },
     agent('reviewer_correctness')
   );
+  return id;
+};
+
+/** Creates a copy-change task and takes it to `verifying`, built at `abc` and planned. */
+export const createTaskInVerifying = async (pool: Pool, seeded: Seeded): Promise<string> => {
+  const id = await createTaskInChoosing(pool, seeded);
   await applyOrThrow(pool, id, { type: 'choose', userVisible: true, plan: PLAN }, agent('chooser'));
+  return id;
+};
+
+/**
+ * Lets the copy lane skip people's check (`auto_verify`, and a merge that does not deploy to
+ * production), then takes a copy-change task through a glance plan straight to `merging`.
+ */
+export const createAutoVerifiedTask = async (pool: Pool, seeded: Seeded): Promise<string> => {
+  const config = CONFIG_YAML.replace(
+    'version: 1',
+    'version: 1\nrelease: { on_merge: staging }'
+  ).replace('  green:\n', '  green:\n    auto_verify: true\n');
+  await pool.query('update projects set config = $2 where id = $1', [
+    seeded.projectId,
+    JSON.stringify(Bun.YAML.parse(config))
+  ]);
+  const id = await createTaskInChoosing(pool, seeded);
+  const plan = { ...PLAN, depth: 'glance' as const };
+  await applyOrThrow(pool, id, { type: 'choose', userVisible: true, plan }, agent('chooser'));
   return id;
 };
 

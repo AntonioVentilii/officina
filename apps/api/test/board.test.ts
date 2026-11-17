@@ -12,6 +12,7 @@ import {
 import { parseProjectConfig } from '@officina/core';
 import { Pool } from 'pg';
 import {
+  createAutoVerifiedTask,
   createTaskInMerging,
   createTaskInVerifying,
   recordChooserChecklist,
@@ -354,6 +355,7 @@ describe.skipIf(!url)('board api', () => {
           gate: 'spec_review',
           does: 'Approve the plan',
           current: false,
+          skipped: null,
           requirements: [
             { label: 'an owner', who: [{ name: 'Antonio', approved: false }], waived: false }
           ],
@@ -363,6 +365,7 @@ describe.skipIf(!url)('board api', () => {
           gate: 'verifying',
           does: 'Check the result',
           current: false,
+          skipped: null,
           requirements: [
             { label: 'an owner', who: [{ name: 'Antonio', approved: false }], waived: false }
           ],
@@ -469,6 +472,20 @@ describe.skipIf(!url)('board api', () => {
       who: [],
       waived: true
     });
+  });
+
+  test('a result the lifecycle let skip the people check names no approvers', async () => {
+    const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    await createAutoVerifiedTask(pool, seeded);
+
+    const task = await json(await call(owner, `/api/projects/${seeded.projectId}/tasks/1`));
+    expect(task.stage).toBe('merging');
+    expect(task.people.gates[1]).toMatchObject({
+      gate: 'verifying',
+      skipped: expect.stringContaining('low-risk'),
+      requirements: []
+    });
+    expect(task.people.gates[0].skipped).toBeNull();
   });
 
   test('the approval plan shows whom the chooser asked, and waits on them while approval is pending', async () => {
