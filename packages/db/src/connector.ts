@@ -1,4 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
+import type { ConnectedApp } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
 import { hashToken, newToken } from './auth';
 import { recordAccessEvent, recordConnectorUse } from './access';
@@ -12,18 +13,43 @@ export interface ConnectorClient {
   readonly redirectUris: readonly string[];
 }
 
-export const registerConnectorClient = async (
-  db: Queryable,
+/** How long a registered client may wait for its first authorization before it is purged. */
+export const UNUSED_CLIENT_RETENTION = '1 day';
+
+/**
+ * How many registered clients may wait for their first authorization at once. Registering needs no
+ * account, so this bounds what anyone can store; an app authorizes moments after it registers.
+ */
+export const UNUSED_CLIENT_LIMIT = 1_000;
+
+/** A client `c` that never completed an authorization: no code was issued to it, no token. */
+const UNUSED_CLIENT = `not exists (select 1 from connector_tokens t where t.client_id = c.id)
+  and not exists (select 1 from connector_codes k where k.client_id = c.id)`;
+
+/**
+ * Registers a client, or `null` when `UNUSED_CLIENT_LIMIT` clients already wait for their first
+ * authorization. Registrations take one lock in turn, so two at once cannot both take the last
+ * place.
+ */
+export const registerConnectorClient = (
+  pool: Pool,
   input: { name: string; redirectUris: readonly string[] }
-): Promise<ConnectorClient> => {
-  const id = `oc_${randomBytes(18).toString('base64url')}`;
-  await db.query('insert into connector_clients (id, name, redirect_uris) values ($1, $2, $3)', [
-    id,
-    input.name,
-    input.redirectUris
-  ]);
-  return { id, name: input.name, redirectUris: input.redirectUris };
-};
+) =>
+  inTransaction(pool, async (client): Promise<ConnectorClient | null> => {
+    await client.query("select pg_advisory_xact_lock(hashtextextended('connector_register', 0))");
+    const waiting = (
+      await client.query(`select 1 from connector_clients c where ${UNUSED_CLIENT} limit $1`, [
+        UNUSED_CLIENT_LIMIT
+      ])
+    ).rowCount;
+    if ((waiting ?? 0) >= UNUSED_CLIENT_LIMIT) return null;
+    const id = `oc_${randomBytes(18).toString('base64url')}`;
+    await client.query(
+      'insert into connector_clients (id, name, redirect_uris) values ($1, $2, $3)',
+      [id, input.name, input.redirectUris]
+    );
+    return { id, name: input.name, redirectUris: input.redirectUris };
+  });
 
 export const loadConnectorClient = async (
   db: Queryable,
@@ -265,19 +291,27 @@ export const rotateConnectorRefreshToken = async (
     });
   });
 
-/** The member an access token acts for, when it is live and was issued for `resource`. */
+/**
+ * The member an access token acts for, when it is live and was issued for `resource`, and the app
+ * acting for them: the token's grant, with the name its client registered under.
+ */
 export const memberForConnectorToken = async (
   db: Queryable,
   token: string,
   resource: string
-): Promise<string | null> =>
-  (
-    await db.query<{ member_id: string }>(
-      `select member_id from connector_tokens
-       where token_hash = $1 and kind = 'access' and resource = $2 and expires_at > now()`,
+): Promise<{ memberId: string; via: ConnectedApp } | null> => {
+  const found = (
+    await db.query<{ memberId: string; grantId: string; name: string }>(
+      `select t.member_id as "memberId", t.grant_id as "grantId", c.name
+       from connector_tokens t join connector_clients c on c.id = t.client_id
+       where t.token_hash = $1 and t.kind = 'access' and t.resource = $2 and t.expires_at > now()`,
       [hashToken(token), resource]
     )
-  ).rows[0]?.member_id ?? null;
+  ).rows[0];
+  return found
+    ? { memberId: found.memberId, via: { grantId: found.grantId, name: found.name } }
+    : null;
+};
 
 export interface ConnectorGrant {
   readonly grantId: string;
@@ -327,7 +361,7 @@ export const revokeConnectorGrant = (pool: Pool, memberId: string, grantId: stri
 
 /**
  * Deletes codes and tokens that can no longer be used, and clients that registered but never
- * completed an authorization within a day, since registering needs no account.
+ * completed an authorization within `UNUSED_CLIENT_RETENTION`, since registering needs no account.
  */
 export const purgeConnectorCredentials = async (db: Queryable): Promise<number> => {
   // A spent code or refresh token is kept until it expires: presenting it again is how a replay is
@@ -335,9 +369,8 @@ export const purgeConnectorCredentials = async (db: Queryable): Promise<number> 
   const codes = await db.query('delete from connector_codes where expires_at <= now()');
   const tokens = await db.query('delete from connector_tokens where expires_at <= now()');
   const clients = await db.query(
-    `delete from connector_clients c where c.created_at < now() - interval '1 day'
-       and not exists (select 1 from connector_tokens t where t.client_id = c.id)
-       and not exists (select 1 from connector_codes k where k.client_id = c.id)`
+    `delete from connector_clients c where c.created_at < now() - $1::interval and ${UNUSED_CLIENT}`,
+    [UNUSED_CLIENT_RETENTION]
   );
   return (codes.rowCount ?? 0) + (tokens.rowCount ?? 0) + (clients.rowCount ?? 0);
 };

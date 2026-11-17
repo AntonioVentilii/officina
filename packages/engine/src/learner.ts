@@ -9,6 +9,7 @@ import {
   type ProjectConfig
 } from '@officina/core';
 import {
+  domainEventOf,
   failIdleLearningRewrite,
   failLearningRewrite,
   insertLearnings,
@@ -28,7 +29,7 @@ import {
   type StoredTaskContext,
   type TaskEventRow
 } from '@officina/db';
-import { RUNNER_ROLES, loadPrompt, type RunnerRole } from '@officina/runner';
+import { RUNNER_ROLES, isRunnerRole, loadPrompt, type RunnerRole } from '@officina/runner';
 import { DATA_NOTICE, closingSections, fence } from './brief';
 import { PROJECT_SKIP_REASONS, claimStep, type SkipReason } from './claim';
 import { learnerRun } from './learner-run';
@@ -43,45 +44,45 @@ const duration = (total: number) =>
       ? `${(total / 60).toFixed(1)} h`
       : `${(total / 1440).toFixed(1)} days`;
 
-const describeEvent = (event: TaskEventRow): string | null => {
-  const p = event.payload as Record<string, unknown>;
+const describeEvent = (row: TaskEventRow): string | null => {
+  const event = domainEventOf(row);
   switch (event.type) {
     case 'stage_changed':
-      return `stage ${p.from} -> ${p.to}`;
+      return `stage ${event.from} -> ${event.to}`;
     case 'lane_changed':
-      return `lane ${p.from ?? 'none'} -> ${p.to}`;
+      return `lane ${event.from ?? 'none'} -> ${event.to}`;
     case 'spec_versioned':
-      return `spec version ${p.version}`;
+      return `spec version ${event.version}`;
     case 'approval_planned': {
-      const plan = p.plan as { depth: string; rationale: string };
-      const added = (p.added as unknown[]).map((item) => JSON.stringify(item)).join(', ');
-      return `approval plan for ${p.gate}: depth ${plan.depth}${added ? `, added ${added}` : ''}. ${plan.rationale}`;
+      const { plan } = event;
+      const added = event.added.map((item) => JSON.stringify(item)).join(', ');
+      return `approval plan for ${event.gate}: depth ${plan.depth}${added ? `, added ${added}` : ''}. ${plan.rationale}`;
     }
     case 'approval_recorded':
-      return `approved ${p.gate}${p.satisfied ? ' (gate passed)' : ' (more approvals needed)'}`;
+      return `approved ${event.gate}${event.satisfied ? ' (gate passed)' : ' (more approvals needed)'}`;
     case 'changes_requested':
-      return `changes requested at ${p.stage}: ${clip(String(p.note), 1500)}`;
+      return `changes requested at ${event.stage}: ${clip(event.note, 1500)}`;
     case 'pushed':
-      return `${p.outside ? 'pushed from outside Officina' : 'pushed'} ${(p.changedPaths as string[]).length} files, ${p.diffLines} lines`;
+      return `${event.outside ? 'pushed from outside Officina' : 'pushed'} ${event.changedPaths.length} files, ${event.diffLines} lines`;
     case 'build_unchanged':
-      return `kept the head, nothing to change: ${clip(String(p.note), 1500)}`;
+      return `kept the head, nothing to change: ${clip(event.note, 1500)}`;
     case 'review_recorded':
-      return `review ${p.verdict} by ${p.reviewer}: ${clip(String(p.notes), 1500)}`;
+      return `review ${event.verdict} by ${event.reviewer}: ${clip(event.notes, 1500)}`;
     case 'guardrail_tripped':
-      return `guardrail ${p.guardrail}: ${p.details}`;
+      return `guardrail ${event.guardrail}: ${event.details}`;
     case 'ci_failed':
-      return `CI failed: ${clip(String(p.details), 800)}`;
+      return `CI failed: ${clip(event.details, 800)}`;
     case 'blocked':
-      return `question: ${clip(String((p.blocked as { question: string }).question), 1000)}`;
+      return `question: ${clip(event.blocked.question, 1000)}`;
     case 'unblocked':
-      return `answered: ${clip(String(p.answer), 1000)}`;
+      return `answered: ${clip(event.answer, 1000)}`;
     case 'closed':
-      return `closed as ${p.stage}: ${p.reason}`;
+      return `closed as ${event.stage}: ${event.reason}`;
     case 'assigned':
     case 'user_visible_changed':
       return null;
     default:
-      return event.type.replaceAll('_', ' ');
+      return row.type.replaceAll('_', ' ');
   }
 };
 
@@ -119,12 +120,13 @@ export const learnerBrief = async (
   const first = events[0]?.createdAt;
   const last = events.at(-1)?.createdAt;
   const cost = runs.reduce((sum, run) => sum + (run.costCents ?? 0), 0);
-  const fixRounds = events.filter(
-    (event) =>
-      event.type === 'changes_requested' ||
-      (event.type === 'review_recorded' &&
-        (event.payload as { verdict?: string }).verdict === 'changes')
-  ).length;
+  const fixRounds = events
+    .map(domainEventOf)
+    .filter(
+      (event) =>
+        event.type === 'changes_requested' ||
+        (event.type === 'review_recorded' && event.verdict === 'changes')
+    ).length;
 
   const timeline = events.flatMap((event) => {
     const text = describeEvent(event);
@@ -213,7 +215,7 @@ export const learningProblems =
         }
       } else {
         const role = /^agents\/([a-z_]+)\.md$/.exec(file)?.[1];
-        if (!role || !(RUNNER_ROLES as readonly string[]).includes(role)) {
+        if (!role || !isRunnerRole(role)) {
           problems.push(`${at}: agent edits go to agents/<role>.md for a known role, not ${file}`);
           continue;
         }

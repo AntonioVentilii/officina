@@ -1,6 +1,7 @@
 import {
   branchForTask,
   ENGINE,
+  errorText,
   isBuildRole,
   nextAgentRoles,
   type Actor,
@@ -141,7 +142,7 @@ const runClaimed = async (step: Step): Promise<StepResult> => {
   } catch (error) {
     // A session that throws may have pushed somewhere too, and its retry starts from the refs as
     // they are then: they are checked now or never.
-    const result = { error: (error as Error).message };
+    const result = { error: errorText(error) };
     const moved = refsBefore
       ? await guardRefs(step, refsBefore, { costCents: null, result })
       : null;
@@ -195,7 +196,7 @@ export const runAgentStep = async (
   } catch (error) {
     // Failed already, by whoever stopped it, with the reason recorded on the run.
     if (error instanceof RunStoppedError) return { status: 'discarded', reason: error.message };
-    const message = (error as Error).message;
+    const message = errorText(error);
     // Blocking stops the scheduler from retrying a step that fails the same way every time;
     // answering the question retries it. Blocked first, while the run is still in progress.
     await blockTask(

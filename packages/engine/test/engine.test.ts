@@ -4,7 +4,10 @@ import {
   branchForTask,
   ENGINE,
   HANDOFF_NEED_KEYS,
-  type AgentRole
+  ownerHold,
+  type Actor,
+  type AgentRole,
+  type Command
 } from '@officina/core';
 import {
   appendTaskEvent,
@@ -130,6 +133,8 @@ const fakeGitHub = (
     openFails?: number;
     /** How many times writing a file (the spec status) fails before it works. */
     updateFails?: number;
+    /** Files read by path; any other path reads as the spec. */
+    files?: Record<string, string>;
   } = {}
 ) => {
   const calls: { method: string; args: unknown[] }[] = [];
@@ -182,7 +187,8 @@ const fakeGitHub = (
     },
     readFile: async (...args: unknown[]) => {
       calls.push({ method: 'readFile', args });
-      return { text: '# Settings title\n\nStatus: Draft\n', sha: 'blob1' };
+      const text = options.files?.[(args[0] as { path: string }).path];
+      return { text: text ?? '# Settings title\n\nStatus: Draft\n', sha: 'blob1' };
     },
     updateFile: async (...args: unknown[]) => {
       calls.push({ method: 'updateFile', args });
@@ -484,6 +490,8 @@ describe.skipIf(!url)('engine', () => {
       `[Officina task 1](https://officina.example/tasks/1?project=${seeded.projectId})`
     );
     expect(opened.body).not.toMatch(/(^|\s)#1\b/);
+    // No pull request template: Officina's own body.
+    expect(opened.body).toContain('Verified:\n- npm run check');
     expect(github.calls.find((call) => call.method === 'updateFile')!.args[0]).toMatchObject({
       path: SPEC,
       branch: 'officina/task-1',
@@ -769,6 +777,47 @@ describe.skipIf(!url)('engine', () => {
       (github.calls.find((call) => call.method === 'openPullRequest')!.args[0] as { title: string })
         .title
     ).toBe('fix(settings): rename the settings title');
+  });
+
+  test("a build writes its pull request body in the project's template, sent back until it keeps every heading", async () => {
+    const template = '.github/pull_request_template.md';
+    await pool.query(
+      `update projects set config = jsonb_set(config, '{docs,pr_template}', $1::jsonb) where id = $2`,
+      [JSON.stringify(template), seeded.projectId]
+    );
+    const github = fakeGitHub({
+      files: { [template]: '# Motivation\n\n<!-- Why. -->\n\n# Changes\n\n# Tests\n' }
+    });
+    const prBody =
+      '# Motivation\n\nThe title reads better.\n\n# Changes\n\n- Renamed it.\n\n# Tests\n\n- npm run check';
+    const agents = createFakePort((request) =>
+      request.metadata.role === 'builder'
+        ? [
+            toolUse({ ...(RESULTS.builder as object), prBody: '# Motivation\n\nThe title.' }),
+            idle('requires_action'),
+            toolUse({ ...(RESULTS.builder as object), prBody }),
+            idle('requires_action'),
+            idle('end_turn')
+          ]
+        : succeed(request)
+    );
+    const taskId = await taskInReady(github, agents);
+    await tick({ pool, github: github.port, agents, publicUrl: PUBLIC_URL }, seeded.projectId);
+
+    expect((await loadTask(pool, taskId))?.task.stage).toBe('reviewing');
+    expect(JSON.stringify(agents.sent)).toContain(
+      `Return \`prBody\` written in the project's pull request template, \`${template}\``
+    );
+    expect(JSON.stringify(agents.sent)).toContain(
+      `prBody misses the heading \\"Changes\\" of ${template}`
+    );
+    const opened = github.calls.find((call) => call.method === 'openPullRequest')!.args[0] as {
+      body: string;
+    };
+    expect(opened.body).toStartWith(
+      `${prBody}\n\n---\n\nImplements the approved spec of [Officina task 1]`
+    );
+    expect(opened.body).not.toContain('Verified:');
   });
 
   test('a fix round that answers a closer-look review keeps the head and replies on the pull request', async () => {
@@ -1434,8 +1483,15 @@ describe.skipIf(!url)('engine', () => {
 
   const MOVED_MAIN: RefSnapshot = { branches: { ...REFS.branches, main: 'evil' }, tags: REFS.tags };
 
-  /** A builder that runs `script` instead of submitting its result, and then the step's outcome. */
-  const buildRunning = async (script: ScriptItem[], refs: RefSnapshot[] = [REFS, MOVED_MAIN]) => {
+  /**
+   * A builder that runs `script` instead of submitting its result, and then the step's outcome; the
+   * step writes through `db`.
+   */
+  const buildRunning = async (
+    script: ScriptItem[],
+    refs: RefSnapshot[] = [REFS, MOVED_MAIN],
+    db: Pool = pool
+  ) => {
     const github = fakeGitHub({ refs });
     const agents = createFakePort((request) =>
       request.metadata.role === 'builder' ? script : succeed(request)
@@ -1448,7 +1504,7 @@ describe.skipIf(!url)('engine', () => {
       ENGINE
     );
     const deps = { pool, github: github.port, agents, publicUrl: PUBLIC_URL };
-    return { taskId, deps, step: runAgentStep(deps, taskId, 'builder') };
+    return { taskId, deps, step: runAgentStep({ ...deps, pool: db }, taskId, 'builder') };
   };
 
   const lastBuildRun = async (taskId: string) =>
@@ -1497,6 +1553,18 @@ describe.skipIf(!url)('engine', () => {
     });
   });
 
+  test('a build that moved refs blocks its task before its run ends', async () => {
+    const { taskId, step } = await buildRunning([toolUse(RESULTS.builder), idle('end_turn')]);
+    expect(await step).toMatchObject({ status: 'blocked' });
+
+    const { rows } = await pool.query<{ blockedFirst: boolean }>(
+      `select (select max(created_at) from task_events where task_id = $1 and type = 'blocked')
+                < (select finished_at from runs where id = $2) as "blockedFirst"`,
+      [taskId, (await lastBuildRun(taskId)).id]
+    );
+    expect(rows[0]?.blockedFirst).toBe(true);
+  });
+
   /** A build left running by a process that died during its session, then the engine's next boot. */
   const orphanedBuild = async (refs: RefSnapshot[]) => {
     let started!: () => void;
@@ -1506,15 +1574,70 @@ describe.skipIf(!url)('engine', () => {
       refs
     );
     await inSession;
-    const orphaned = await failOrphanedRuns(pool);
-    return {
-      taskId,
-      blocked: await guardOrphanedBuilds(
-        deps,
-        orphaned.map((run) => run.id)
-      )
-    };
+    await failOrphanedRuns(pool);
+    return { taskId, deps, blocked: await guardOrphanedBuilds(deps) };
   };
+
+  /** `pool`, except that no transaction can start while `refused()` says so. */
+  const refusingTransactions = (refused: () => boolean): Pool =>
+    new Proxy(pool, {
+      get: (target, key) => {
+        if (key === 'connect' && refused())
+          return () => Promise.reject(new Error('connection refused'));
+        const value: unknown = Reflect.get(target, key);
+        return typeof value === 'function' ? value.bind(target) : value;
+      }
+    });
+
+  test('a build whose task could not be blocked for its refs is checked again when the engine starts', async () => {
+    let refused = false;
+    const { taskId, deps, step } = await buildRunning(
+      [
+        async () => {
+          refused = true;
+          throw new Error('stream lost');
+        }
+      ],
+      [REFS, MOVED_MAIN],
+      refusingTransactions(() => refused)
+    );
+    await expect(step).rejects.toThrow('connection refused');
+    refused = false;
+    expect((await loadTask(pool, taskId))?.task.blocked).toBeNull();
+    expect((await lastBuildRun(taskId)).status).toBe('failed');
+
+    expect(await failOrphanedRuns(pool)).toEqual([]);
+    expect(await guardOrphanedBuilds(deps)).toEqual([
+      {
+        runId: expect.any(String),
+        reason: expect.stringContaining('main moved from main1 to evil')
+      }
+    ]);
+    expect((await loadTask(pool, taskId))?.task.blocked?.question).toContain(
+      'While the builder ran, branch main moved from main1 to evil'
+    );
+  });
+
+  test('a start whose check of an orphaned build fails leaves it to the next start', async () => {
+    let started!: () => void;
+    const inSession = new Promise<void>((resolve) => (started = resolve));
+    const { taskId, deps } = await buildRunning([
+      async () => started(),
+      () => new Promise<void>(() => {})
+    ]);
+    await inSession;
+    await failOrphanedRuns(pool);
+    await expect(
+      guardOrphanedBuilds({ ...deps, pool: refusingTransactions(() => true) })
+    ).rejects.toThrow('connection refused');
+
+    expect(await failOrphanedRuns(pool)).toEqual([]);
+    expect(await guardOrphanedBuilds(deps)).toHaveLength(1);
+    expect((await loadTask(pool, taskId))?.task.blocked?.question).toContain(
+      'main moved from main1 to evil'
+    );
+    expect(await guardOrphanedBuilds(deps)).toEqual([]);
+  });
 
   test('a build orphaned by a restart is checked against the refs it started from', async () => {
     const { taskId, blocked } = await orphanedBuild([REFS, MOVED_MAIN]);
@@ -1538,12 +1661,70 @@ describe.skipIf(!url)('engine', () => {
     });
   });
 
-  test('a build orphaned by a restart with its refs as they were is only failed', async () => {
-    const { taskId, blocked } = await orphanedBuild([REFS]);
+  test('a build orphaned by a restart with its refs as they were is only failed, and checked once', async () => {
+    const { taskId, deps, blocked } = await orphanedBuild([REFS, REFS, MOVED_MAIN]);
 
     expect(blocked).toEqual([]);
     expect((await loadTask(pool, taskId))?.task.blocked).toBeNull();
     expect((await lastBuildRun(taskId)).status).toBe('failed');
+    expect(await guardOrphanedBuilds(deps)).toEqual([]);
+    expect((await loadTask(pool, taskId))?.task.blocked).toBeNull();
+  });
+
+  /** A build that moves main, on a task that comes to wait on `question` while the build runs. */
+  const buildWhileAsked = async (question: Command, actor: Actor) => {
+    let taskId = '';
+    const github = fakeGitHub({
+      refs: [REFS, MOVED_MAIN],
+      afterBuild: async () => {
+        await applyOrThrow(pool, taskId, question, actor);
+      }
+    });
+    const agents = createFakePort(succeed);
+    taskId = await taskInReady(github, agents);
+    await tick({ pool, github: github.port, agents, publicUrl: PUBLIC_URL }, seeded.projectId);
+    return (await loadTask(pool, taskId))?.task;
+  };
+
+  test('refs moved during a build reach the question a person asked meanwhile', async () => {
+    const task = await buildWhileAsked(
+      { type: 'block', question: 'Which colour?', askedOf: { role: 'maintainer' } },
+      seeded.owner
+    );
+
+    expect(task?.blocked?.askedOf).toEqual({ role: 'maintainer' });
+    expect(task?.blocked?.question).toStartWith('Which colour?');
+    expect(task?.blocked?.question).toContain('main moved from main1 to evil');
+  });
+
+  test("refs moved during a build reach a hold for the owner, which stays the owner's", async () => {
+    const task = await buildWhileAsked({ type: 'block', ...ownerHold(['secrets']) }, ENGINE);
+
+    expect(task?.blocked?.askedOf).toEqual({ role: 'owner' });
+    expect(task?.blocked?.question).toContain('main moved from main1 to evil');
+  });
+
+  test('refs moved by a build a restart left behind reach the question the task holds', async () => {
+    let started!: () => void;
+    const inSession = new Promise<void>((resolve) => (started = resolve));
+    const { taskId, deps } = await buildRunning([
+      async () => started(),
+      () => new Promise<void>(() => {})
+    ]);
+    await inSession;
+    await applyOrThrow(
+      pool,
+      taskId,
+      { type: 'block', question: 'Which colour?', askedOf: { role: 'contributor' } },
+      seeded.owner
+    );
+    await failOrphanedRuns(pool);
+    await guardOrphanedBuilds(deps);
+
+    expect((await loadTask(pool, taskId))?.task.blocked).toMatchObject({
+      askedOf: { role: 'maintainer' },
+      question: expect.stringContaining('main moved from main1 to evil')
+    });
   });
 
   test('the branch of another task whose build runs alongside may move', async () => {
@@ -2543,8 +2724,12 @@ describe.skipIf(!url)('engine', () => {
     await linkPullRequest(pool, taskId, 42);
     await pool.query(
       `insert into task_events (task_id, actor, type, payload, created_at)
-       values ($1, '{"kind":"engine"}', 'github_comment_seen', $2, now() - interval '5 minutes')`,
-      [taskId, JSON.stringify({ commentId: 31, by: 'claude[bot]', body: 'One finding.' })]
+       values ($1, '{"kind":"engine"}', 'github_comment_seen', $2, now() - make_interval(secs => $3))`,
+      [
+        taskId,
+        JSON.stringify({ commentId: 31, by: 'claude[bot]', body: 'One finding.' }),
+        COMMENT_SETTLE_SECONDS + 60
+      ]
     );
     // An id the database refuses fails that task's share of the pass, as a lost connection would.
     const failures = await forwardSettledComments(pool, fakeGitHub().port, ['not-a-task', taskId]);

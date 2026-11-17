@@ -7,9 +7,11 @@ import {
   TERMINAL_STAGES,
   applicableRequirements,
   branchForTask,
+  buildsTask,
   can,
   canAnswer,
   canRequestChanges,
+  canSubmitRequest,
   clip,
   effectivePolicy,
   eligibleMembers,
@@ -74,6 +76,7 @@ export type BoardAction =
   | 'decline'
   | 'claim'
   | 'hand_in'
+  | 'hand_back'
   | 'approve'
   | 'changes'
   | 'answer'
@@ -163,6 +166,13 @@ export const actorLabel = (actor: Actor, names: ReadonlyMap<string, string>): st
     : actor.kind === 'agent'
       ? roleLabel(actor.role)
       : 'Officina';
+
+/**
+ * The connected app a member acted through, by the name it registered under (unverified), so the
+ * trail tells an action from Claude from a click on the board; null for everything else.
+ */
+const viaLabel = (actor: Actor): string | null =>
+  actor.kind === 'member' ? (actor.via?.name ?? null) : null;
 
 const viewerMember = (viewer: BoardViewer): Member => ({
   id: viewer.memberId,
@@ -456,25 +466,24 @@ const waitingOn = (
   }
 };
 
-/** Whether a member may build this task: the `build` action, and reading it if it is confidential. */
-const buildsIt = (
-  row: Pick<BoardTaskRow, 'guards'>,
-  member: Pick<BoardViewer, 'role' | 'domains'>
-) => can(member, 'build') && readsTask(member, row);
-
 /**
  * A developer claims a build when it waits or the agent has it, and hands in what they pushed once
- * it is theirs: built by hand or with their own agents, it goes to the same review.
+ * it is theirs: built by hand or with their own agents, it goes to the same review. They may hand
+ * it back instead, and so may whoever may steer the work, for another person's build.
  */
 const buildActions = (row: BoardTaskRow, viewer: BoardViewer): BoardAction[] => {
-  if (!buildsIt(row, viewer)) return [];
+  if (!buildsTask(viewer, row)) return [];
   if (row.stage === 'ready' || (row.stage === 'building' && row.assignee?.kind === 'agent'))
     return ['claim'];
-  return row.stage === 'building' &&
-    row.assignee?.kind === 'member' &&
-    row.assignee.memberId === viewer.memberId
-    ? ['hand_in']
+  return row.stage === 'building' && row.assignee?.kind === 'member'
+    ? heldBuildActions(row.assignee.memberId, viewer)
     : [];
+};
+
+/** What may be done with a build a member holds: theirs, or another's for whoever may steer. */
+const heldBuildActions = (holderId: string, viewer: BoardViewer): BoardAction[] => {
+  if (holderId === viewer.memberId) return ['hand_in', 'hand_back'];
+  return can(viewer, 'steer') ? ['hand_back'] : [];
 };
 
 /**
@@ -512,8 +521,7 @@ const actionsFor = (
   if (TERMINAL_STAGES.has(row.stage)) return writes && can(member, 'comment') ? ['comment'] : [];
   const actions: BoardAction[] = [];
   const requester = row.requesterId === viewer.memberId;
-  if (row.stage === 'request' && can(member, 'request') && (requester || can(member, 'triage')))
-    actions.push('submit');
+  if (canSubmitRequest(row, member)) actions.push('submit');
   if (row.blocked) {
     if (writes && canAnswer(member, row.blocked.askedOf)) actions.push('answer');
   } else if (!row.paused) {
@@ -688,7 +696,7 @@ const peopleView = (
     : [];
   const byPerson = buildReasonFor(facts.config, row, viewer);
   const developers = facts.members
-    .filter((member) => buildsIt(row, member))
+    .filter((member) => buildsTask(member, row))
     .map((member) => name(member.id));
   return {
     requester: row.requesterName,
@@ -801,6 +809,7 @@ export const taskView = async (
     request: request
       ? {
           author: label(request.author),
+          via: viaLabel(request.author),
           body: shown.text(request.body, request.author),
           at: request.createdAt
         }
@@ -809,6 +818,7 @@ export const taskView = async (
       id: comment.id,
       author: label(comment.author),
       authorKind: comment.author.kind,
+      via: viaLabel(comment.author),
       body: shown.text(comment.body, comment.author),
       at: comment.createdAt
     })),
@@ -824,6 +834,7 @@ export const taskView = async (
       actor: label(event.actor),
       actorKind: event.actor.kind,
       actorRole: event.actor.kind === 'agent' ? event.actor.role : null,
+      via: viaLabel(event.actor),
       payload: shown.payload(payloadFor(viewer, event.type, event.payload)),
       at: event.createdAt
     })),

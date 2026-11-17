@@ -19,7 +19,15 @@ import {
 } from './guards';
 import type { HandoffNeed } from './handoffs';
 import { computeLane, redPaths, stricterLane, type Lane } from './lanes';
-import { GATE_ACTIONS, PERMISSIONS, can, canAnswer, readsTask, type Action } from './permissions';
+import {
+  GATE_ACTIONS,
+  PERMISSIONS,
+  buildsTask,
+  can,
+  canAnswer,
+  readsTask,
+  type Action
+} from './permissions';
 import {
   applicableRequirements,
   distinctRequirements,
@@ -30,7 +38,7 @@ import {
   type Approval
 } from './policies';
 import type { QuestionOption } from './questions';
-import type { ApproverRole, Member, Role } from './roles';
+import { hasRole, type ApproverRole, type Member, type Role } from './roles';
 
 export const STAGES = [
   'request',
@@ -84,13 +92,33 @@ export const buildRoleFor = (kind: TaskKind): BuildRole =>
 export const REVIEWER_ROLES = ['reviewer_spec', 'reviewer_correctness'] as const;
 export type ReviewerRole = (typeof REVIEWER_ROLES)[number];
 
+/**
+ * The connected app a member acted through: one OAuth grant of the Claude connector. `name` is the
+ * name the app gave itself when it registered, unverified, copied onto each action so the history
+ * still reads after the grant is revoked or its app is gone. Nothing decides on it: it records the
+ * channel, not who may act.
+ */
+export interface ConnectedApp {
+  readonly grantId: string;
+  readonly name: string;
+}
+
 export type Actor =
-  | { readonly kind: 'member'; readonly memberId: string }
+  | {
+      readonly kind: 'member';
+      readonly memberId: string;
+      /** Absent when the member acted on the board or through the CLI. */
+      readonly via?: ConnectedApp;
+    }
   | { readonly kind: 'agent'; readonly role: AgentRole; readonly version: number }
   | { readonly kind: 'engine' };
 
 /** Officina itself acting: dispatching, recording GitHub events, blocking a failed step. */
 export const ENGINE: Actor = { kind: 'engine' };
+
+/** A member acting, through the connected app `via` when one acts for them. */
+export const memberActor = (memberId: string, via?: ConnectedApp): Actor =>
+  via ? { kind: 'member', memberId, via } : { kind: 'member', memberId };
 
 export type Assignee =
   | { readonly kind: 'member'; readonly memberId: string }
@@ -165,24 +193,6 @@ export interface ApprovalPlan {
 
 export type PlanInput = Omit<ApprovalPlan, 'subject'>;
 
-export const newTask = (id: string, requesterId: string, kind: TaskKind = 'request'): Task => ({
-  id,
-  kind,
-  requesterId,
-  stage: 'request',
-  lane: null,
-  specVersion: 0,
-  headSha: null,
-  userVisible: false,
-  assignee: null,
-  blocked: null,
-  paused: false,
-  fixRounds: 0,
-  reviews: {},
-  approvalPlans: {},
-  guards: []
-});
-
 /** What the real diff of a pushed head says, read from GitHub, never from an agent. */
 export interface PushedHead {
   readonly headSha: string;
@@ -245,6 +255,16 @@ export type Command =
       readonly askedOf: Blocked['askedOf'];
       readonly handoff?: Blocked['handoff'];
       readonly options?: Blocked['options'];
+    }
+  /**
+   * Officina asks something that cannot wait for the answer to a question the task already holds:
+   * the two become one question, asked of whichever role ranks higher, so whoever answers it has
+   * read both. On a task with no question it asks like `block`.
+   */
+  | {
+      readonly type: 'add_question';
+      readonly question: string;
+      readonly askedOf: { readonly role: Role };
     }
   | { readonly type: 'answer'; readonly text: string }
   /** A person's words on the task after its request, a comment: they guard it as the request's would. */
@@ -519,6 +539,26 @@ const withPlan = (
 const isAskedOf = (blocked: Blocked, memberId: string): boolean =>
   'memberId' in blocked.askedOf && blocked.askedOf.memberId === memberId;
 
+type SubmitFacts = Pick<Task, 'stage' | 'paused' | 'blocked' | 'requesterId'>;
+
+/** Whether a person may send a request on: its requester or someone who triages, who may request. */
+const sendsRequest = (task: SubmitFacts, member: Member): boolean =>
+  can(member, 'request') && (member.id === task.requesterId || can(member, 'triage'));
+
+/**
+ * What keeps a request from being sent on as it is: a pause, or a question held for anyone but
+ * its requester (the owner, for a guarded request), which stays until they answer. Only the
+ * interview's own question to the requester can be skipped.
+ */
+const submitHold = (task: SubmitFacts): 'paused' | 'blocked' | null => {
+  if (task.paused) return 'paused';
+  return task.blocked && !isAskedOf(task.blocked, task.requesterId) ? 'blocked' : null;
+};
+
+/** Whether a member may send a request on as it is now, for the lifecycle and the board alike. */
+export const canSubmitRequest = (task: SubmitFacts, member: Member): boolean =>
+  task.stage === 'request' && sendsRequest(task, member) && submitHold(task) === null;
+
 /** The task's guards once these are added, and the event when they grew. */
 const withAdded = (task: Task, added: readonly Guard[]): [readonly Guard[], DomainEvent[]] => {
   const guards = withGuards(task.guards, added);
@@ -545,7 +585,7 @@ export const ownerHold = (guards: readonly Guard[]): Blocked => ({
 });
 
 /** Whether a held question already waits on whoever may `publish`, who alone lifts a hold. */
-const heldForOwner = (blocked: Blocked | null): boolean =>
+export const heldForOwner = (blocked: Blocked | null): blocked is Blocked =>
   blocked !== null && 'role' in blocked.askedOf && blocked.askedOf.role === PERMISSIONS.publish;
 
 /** The guards a person's words on a task call for, by the request's rule, that it lacks so far. */
@@ -805,6 +845,7 @@ const ALLOWED_WHILE_HELD: ReadonlySet<Command['type']> = new Set([
   'resume',
   'cancel',
   'block',
+  'add_question',
   'pause',
   'pull_request_closed'
 ]);
@@ -830,14 +871,10 @@ export const decide = (
       // The interviewer submits a request once it is specific enough; people can submit it as is.
       const allowed =
         (actor.kind === 'agent' && actor.role === 'interviewer') ||
-        (member !== undefined &&
-          can(member, 'request') &&
-          (member.id === task.requesterId || can(member, 'triage')));
+        (member !== undefined && sendsRequest(task, member));
       if (!allowed) return fail('not_allowed');
-      if (task.paused) return fail('paused');
-      // Only the interview's own question to the requester can be skipped; a hold for anyone else
-      // (the owner, for a guarded request) stays until they answer.
-      if (task.blocked && !isAskedOf(task.blocked, task.requesterId)) return fail('blocked');
+      const hold = submitHold(task);
+      if (hold) return fail(hold);
       // Submitting as is closes an open interview question: triage decides with what is there.
       const [moved, event] = moveTo(task, 'triage', { blocked: null });
       const events: DomainEvent[] = task.blocked
@@ -954,13 +991,7 @@ export const decide = (
 
     case 'claim': {
       const builder = memberFor(actor, context);
-      // Nobody builds what they may not read.
-      if (
-        actor.kind !== 'member' ||
-        !builder ||
-        !can(builder, 'build') ||
-        !readsTask(builder, task)
-      )
+      if (actor.kind !== 'member' || !builder || !buildsTask(builder, task))
         return fail('not_allowed');
       const assignee: Assignee = { kind: 'member', memberId: actor.memberId };
       if (task.stage === 'ready') {
@@ -992,6 +1023,11 @@ export const decide = (
       if (task.stage !== 'building') return fail('wrong_stage');
       const assignee = task.assignee;
       if (assignee === null || !isAssignee(assignee, actor)) return fail('not_allowed');
+      // A person hands in only while they may still build the task they claimed.
+      if (actor.kind === 'member') {
+        const builder = memberFor(actor, context);
+        if (!builder || !buildsTask(builder, task)) return fail('not_allowed');
+      }
 
       return landPush(task, command, context, pushedEvent(command));
     }
@@ -1085,7 +1121,9 @@ export const decide = (
       // The work on GitHub is gone, so the task cannot wait for it: it goes back to the start of
       // the build, held for a person, who rebuilds it (a new pull request opens on the next push)
       // or cancels it. An onboarding task left here would otherwise hold the project forever.
-      const blocked: Blocked = {
+      // A hold for the owner stays: only the owner lifts it, and their answer restarts the build.
+      const ownersHold = heldForOwner(task.blocked) ? task.blocked : null;
+      const blocked: Blocked = ownersHold ?? {
         question: `Pull request #${command.pullRequest} was closed without being merged. Answer to build the change again on a new pull request, or cancel the task.`,
         askedOf: { role: 'maintainer' }
       };
@@ -1096,12 +1134,12 @@ export const decide = (
         reviews: {},
         blocked
       });
-      return ok(moved, [
+      const events: DomainEvent[] = [
         { type: 'pull_request_closed', pullRequest: command.pullRequest },
         stageEvent,
-        { type: 'assigned', assignee: null },
-        { type: 'blocked', blocked }
-      ]);
+        { type: 'assigned', assignee: null }
+      ];
+      return ok(moved, ownersHold ? events : [...events, { type: 'blocked', blocked }]);
     }
 
     case 'github_review': {
@@ -1150,6 +1188,24 @@ export const decide = (
       // Needing a secret, access or publishing guards the task as asking for it would.
       const [guards, guardEvents] = withAdded(task, guardsForHandoff(handoff?.needs ?? []));
       return ok({ ...task, blocked, guards }, [...guardEvents, { type: 'blocked', blocked }]);
+    }
+
+    case 'add_question': {
+      if (actor.kind !== 'engine') return fail('not_allowed');
+      const open = task.blocked;
+      // Asked again, as a check that runs twice would, it changes nothing.
+      if (open?.question.includes(command.question)) return fail('already_blocked');
+      const blocked: Blocked = open
+        ? {
+            ...open,
+            question: `${open.question}\n\n${command.question}`,
+            askedOf:
+              'role' in open.askedOf && hasRole(open.askedOf, command.askedOf.role)
+                ? open.askedOf
+                : command.askedOf
+          }
+        : { question: command.question, askedOf: command.askedOf };
+      return ok({ ...task, blocked }, [{ type: 'blocked', blocked }]);
     }
 
     case 'answer': {

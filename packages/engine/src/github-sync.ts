@@ -1,4 +1,11 @@
-import { branchForTask, ENGINE, parseProjectConfig, taskUrl, type Actor } from '@officina/core';
+import {
+  branchForTask,
+  ENGINE,
+  errorText,
+  parseProjectConfig,
+  taskUrl,
+  type Actor
+} from '@officina/core';
 import {
   appendTaskEvent,
   autoMergeSpent,
@@ -77,7 +84,7 @@ const approvingAccount = async (pool: Pool, onBehalf: OnBehalf, taskId: string) 
       type: 'github_approval_failed',
       payload: {
         login: (await githubLoginOf(pool, verifier)) ?? 'unknown',
-        error: (error as Error).message.slice(0, 500)
+        error: errorText(error)
       }
     });
     return null;
@@ -172,7 +179,7 @@ export const approveOnGitHub = async (
       taskId: input.taskId,
       actor,
       type: 'github_approval_failed',
-      payload: { login: account.login, error: (error as Error).message.slice(0, 500) }
+      payload: { login: account.login, error: errorText(error) }
     });
     return;
   }
@@ -208,13 +215,13 @@ export const askCopilotToReview = async (
       taskId: input.taskId,
       actor,
       type: 'github_copilot_review_failed',
-      payload: { pullRequest: input.pullRequest, login, error: error.slice(0, 500) }
+      payload: { pullRequest: input.pullRequest, login, error }
     });
   let account: { token: string; login: string } | null = null;
   try {
     account = onBehalf ? await onBehalf.tokenFor(input.requesterId) : null;
   } catch (error) {
-    await failed(ENGINE, null, (error as Error).message);
+    await failed(ENGINE, null, errorText(error));
     return;
   }
   if (!onBehalf || !account) {
@@ -242,7 +249,7 @@ export const askCopilotToReview = async (
       payload: { pullRequest: input.pullRequest, login: account.login, outcome }
     });
   } catch (error) {
-    await failed(requester, account.login, (error as Error).message);
+    await failed(requester, account.login, errorText(error));
   }
 };
 
@@ -393,7 +400,7 @@ const autoMergeOnGitHub = async (
         taskId,
         actor: input.actor,
         type: 'github_auto_merge_failed',
-        payload: { error: (error as Error).message.slice(0, 500) }
+        payload: { error: errorText(error) }
       });
     }
     return true;

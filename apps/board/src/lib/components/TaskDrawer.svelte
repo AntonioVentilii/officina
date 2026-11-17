@@ -6,6 +6,7 @@
   import { closesDrawer, focusAfterDrawer } from '$lib/drawer';
   import { ago, dateTime, money } from '$lib/format';
   import { inertAround } from '$lib/inert';
+  import { latestOnly } from '$lib/latest';
   import { STAGE_LABELS } from '$lib/stages';
   import { board } from '$lib/state/board.svelte';
   import { clock } from '$lib/state/clock.svelte';
@@ -24,6 +25,7 @@
   import StageTrack from './StageTrack.svelte';
   import TaskPeople from './TaskPeople.svelte';
   import Timeline from './Timeline.svelte';
+  import ViaApp from './ViaApp.svelte';
 
   interface Props {
     number: number;
@@ -40,16 +42,23 @@
   let comment = $state('');
   let sending = $state(false);
 
+  // A slow answer, or one for a task or project no longer shown, must not replace a newer one.
+  const latest = latestOnly();
+
   const load = async () => {
-    if (!session.projectId) return;
+    const newer = latest();
+    const projectId = session.projectId;
+    if (!projectId) return;
     try {
-      const next = await get<TaskDetail>(`/api/projects/${session.projectId}/tasks/${number}`);
+      const next = await get<TaskDetail>(`/api/projects/${projectId}/tasks/${number}`);
+      if (newer()) return;
       // Running sessions open themselves the first time they appear.
       for (const run of next.runs) {
         if (isActive(run) && !(run.id in openRuns)) openRuns[run.id] = true;
       }
       task = next;
     } catch (error) {
+      if (newer()) return;
       if (error instanceof ApiError && error.status === 404) missing = true;
       else toasts.show('error', (error as Error).message);
     }
@@ -203,6 +212,7 @@
                   <div class="who">
                     <MemberAvatar name={task.request.author} size={22} />
                     <strong>{task.request.author}</strong>
+                    <ViaApp name={task.request.via} />
                     <time class="faint" title={dateTime(task.request.at)}
                       >{ago(task.request.at, clock.now)}</time
                     >
