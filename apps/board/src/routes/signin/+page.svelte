@@ -1,11 +1,11 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
-  import { ApiError, post } from '$lib/api';
-  import Logo from '$lib/components/Logo.svelte';
-  import { wordsFor } from '$lib/format';
-  import { returnPath } from '$lib/return-path';
-  import { session } from '$lib/state/session.svelte';
-  import type { GitHubSignInProblem } from '$lib/types';
+  import { ApiError, post } from '#lib/api.ts';
+  import Logo from '#lib/components/Logo.svelte';
+  import { wordsFor } from '#lib/format.ts';
+  import { returnPath } from '#lib/return-path.ts';
+  import { session } from '#lib/state/session.svelte.ts';
+  import type { GitHubSignInProblem } from '#lib/types.ts';
 
   const PROBLEMS: Record<GitHubSignInProblem, string> = {
     github_mismatch: 'The GitHub sign-in did not match this browser; try again.',
@@ -44,7 +44,7 @@
     post('/auth/redeem', { token, replace })
       .then(async () => {
         await session.load();
-        await goto(next, { replaceState: true });
+        await goto(next, { replace: true });
       })
       .catch(async (error: Error) => {
         if (error instanceof ApiError && error.status === 409) {

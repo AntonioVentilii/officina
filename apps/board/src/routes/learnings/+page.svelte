@@ -1,10 +1,10 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
-  import { session } from '$lib/state/session.svelte';
+  import { session } from '#lib/state/session.svelte.ts';
   import { GraduationCap } from '@lucide/svelte';
-  import LearningCard from '$lib/components/LearningCard.svelte';
-  import { board } from '$lib/state/board.svelte';
-  import type { Learning } from '$lib/types';
+  import LearningCard from '#lib/components/LearningCard.svelte';
+  import { board } from '#lib/state/board.svelte.ts';
+  import type { Learning } from '#lib/types.ts';
 
   const FILTERS = [
     { id: 'proposed', label: 'To decide' },
@@ -21,7 +21,7 @@
 
   // Maintainers' page: the API refuses its data to anyone else.
   $effect(() => {
-    if (session.project && !session.technical) void goto('/', { replaceState: true });
+    if (session.project && !session.technical) void goto('/', { replace: true });
   });
 </script>
 

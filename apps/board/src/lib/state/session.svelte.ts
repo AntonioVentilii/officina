@@ -1,5 +1,5 @@
-import { ApiError, get, post } from '$lib/api';
-import type { Me, Permission, Project } from '$lib/types';
+import { ApiError, get, post } from '#lib/api.ts';
+import type { Me, Permission, Project } from '#lib/types.ts';
 import { toasts } from './toasts.svelte';
 
 const PROJECT_KEY = 'officina.project';
