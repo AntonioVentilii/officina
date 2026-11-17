@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.10.0](https://github.com/AntonioVentilii/officina/compare/v1.9.0...v1.10.0) (2026-11-17)
+
+
+### Features
+
+* **api,board:** hand a claimed build back from the board and the cli ([#264](https://github.com/AntonioVentilii/officina/issues/264)) ([83346bc](https://github.com/AntonioVentilii/officina/commit/83346bcabc69b75d4db20f55e1d906ccf2adc53a))
+* **api,board:** tell same-named connected apps apart by their connection ([#265](https://github.com/AntonioVentilii/officina/issues/265)) ([a7c98f6](https://github.com/AntonioVentilii/officina/commit/a7c98f650d7e612a4779b6baeaf382eb1abcc2ad))
+* **api:** show_task names the project's pull request template to whoever may build ([#262](https://github.com/AntonioVentilii/officina/issues/262)) ([38b9f72](https://github.com/AntonioVentilii/officina/commit/38b9f7253682023a6787e4ec51830e205bb99b3c))
+* **api:** task show lists each checklist item with its latest check ([#261](https://github.com/AntonioVentilii/officina/issues/261)) ([89510a5](https://github.com/AntonioVentilii/officina/commit/89510a5a0a01c82033e1a625feadcef3357d65ae))
+* **core,api,board:** an approval from chat is a proposal the member confirms on the board ([#266](https://github.com/AntonioVentilii/officina/issues/266)) ([6ef058f](https://github.com/AntonioVentilii/officina/commit/6ef058f597929809ea5da7d1ec9955fd44a24906))
+
+
+### Bug Fixes
+
+* **api,board:** say a result's check was skipped when it was auto-verified ([#267](https://github.com/AntonioVentilii/officina/issues/267)) ([9591f7b](https://github.com/AntonioVentilii/officina/commit/9591f7b15c082d89b87d827096a046912551fbb8))
+
 ## [1.9.0](https://github.com/AntonioVentilii/officina/compare/v1.8.0...v1.9.0) (2026-11-17)
 
 
