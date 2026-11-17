@@ -130,6 +130,8 @@ const fakeGitHub = (
     openFails?: number;
     /** How many times writing a file (the spec status) fails before it works. */
     updateFails?: number;
+    /** Files read by path; any other path reads as the spec. */
+    files?: Record<string, string>;
   } = {}
 ) => {
   const calls: { method: string; args: unknown[] }[] = [];
@@ -182,7 +184,8 @@ const fakeGitHub = (
     },
     readFile: async (...args: unknown[]) => {
       calls.push({ method: 'readFile', args });
-      return { text: '# Settings title\n\nStatus: Draft\n', sha: 'blob1' };
+      const text = options.files?.[(args[0] as { path: string }).path];
+      return { text: text ?? '# Settings title\n\nStatus: Draft\n', sha: 'blob1' };
     },
     updateFile: async (...args: unknown[]) => {
       calls.push({ method: 'updateFile', args });
@@ -484,6 +487,8 @@ describe.skipIf(!url)('engine', () => {
       `[Officina task 1](https://officina.example/tasks/1?project=${seeded.projectId})`
     );
     expect(opened.body).not.toMatch(/(^|\s)#1\b/);
+    // No pull request template: Officina's own body.
+    expect(opened.body).toContain('Verified:\n- npm run check');
     expect(github.calls.find((call) => call.method === 'updateFile')!.args[0]).toMatchObject({
       path: SPEC,
       branch: 'officina/task-1',
@@ -769,6 +774,47 @@ describe.skipIf(!url)('engine', () => {
       (github.calls.find((call) => call.method === 'openPullRequest')!.args[0] as { title: string })
         .title
     ).toBe('fix(settings): rename the settings title');
+  });
+
+  test("a build writes its pull request body in the project's template, sent back until it keeps every heading", async () => {
+    const template = '.github/pull_request_template.md';
+    await pool.query(
+      `update projects set config = jsonb_set(config, '{docs,pr_template}', $1::jsonb) where id = $2`,
+      [JSON.stringify(template), seeded.projectId]
+    );
+    const github = fakeGitHub({
+      files: { [template]: '# Motivation\n\n<!-- Why. -->\n\n# Changes\n\n# Tests\n' }
+    });
+    const prBody =
+      '# Motivation\n\nThe title reads better.\n\n# Changes\n\n- Renamed it.\n\n# Tests\n\n- npm run check';
+    const agents = createFakePort((request) =>
+      request.metadata.role === 'builder'
+        ? [
+            toolUse({ ...(RESULTS.builder as object), prBody: '# Motivation\n\nThe title.' }),
+            idle('requires_action'),
+            toolUse({ ...(RESULTS.builder as object), prBody }),
+            idle('requires_action'),
+            idle('end_turn')
+          ]
+        : succeed(request)
+    );
+    const taskId = await taskInReady(github, agents);
+    await tick({ pool, github: github.port, agents, publicUrl: PUBLIC_URL }, seeded.projectId);
+
+    expect((await loadTask(pool, taskId))?.task.stage).toBe('reviewing');
+    expect(JSON.stringify(agents.sent)).toContain(
+      `Return \`prBody\` written in the project's pull request template, \`${template}\``
+    );
+    expect(JSON.stringify(agents.sent)).toContain(
+      `prBody misses the heading \\"Changes\\" of ${template}`
+    );
+    const opened = github.calls.find((call) => call.method === 'openPullRequest')!.args[0] as {
+      body: string;
+    };
+    expect(opened.body).toStartWith(
+      `${prBody}\n\n---\n\nImplements the approved spec of [Officina task 1]`
+    );
+    expect(opened.body).not.toContain('Verified:');
   });
 
   test('a fix round that answers a closer-look review keeps the head and replies on the pull request', async () => {
