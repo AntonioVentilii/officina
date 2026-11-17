@@ -9,17 +9,20 @@ import {
   type Guard,
   type Member,
   findOption,
+  memberActor,
   optionAnswer,
   parseProjectConfig,
   type Actor,
   type ApprovalPlan,
   type Command,
+  type ConnectedApp,
   type Task
 } from '@officina/core';
 import {
   addComment,
   applyCommand,
   applyCommandIn,
+  buildRunInProgress,
   findRequestedTask,
   findTaskIdByNumber,
   inTransaction,
@@ -113,7 +116,11 @@ const resolve = async (pool: Pool, target: Target) => {
 export interface ProjectActor {
   readonly projectId: string;
   readonly memberId: string;
+  /** The connected app acting for the member, recorded on what it does; absent on the board. */
+  readonly via?: ConnectedApp | undefined;
 }
+
+const actorOf = (input: ProjectActor): Actor => memberActor(input.memberId, input.via);
 
 interface RequestInput {
   readonly title: string;
@@ -148,7 +155,7 @@ export const createRequestAs = async (
   input: ProjectActor & RequestInput
 ): Promise<{ number: number; stage: string }> => {
   const { projectId, memberId } = input;
-  const actor: Actor = { kind: 'member', memberId };
+  const actor = actorOf(input);
   // A request starts paid agent runs, so reading the board is not enough to open one.
   const member = await loadProjectMember(pool, projectId, memberId);
   if (!member || !can(member, 'request'))
@@ -169,6 +176,7 @@ export const createRequestAs = async (
       projectId,
       title: input.title,
       requesterId: memberId,
+      via: input.via,
       request: input.request,
       guards,
       ...(hold ? { hold } : {})
@@ -224,7 +232,7 @@ const writeComment = async (
   pool: Pool,
   input: ProjectActor & { readonly taskId: string; readonly task: Task; readonly text: string }
 ): Promise<void> => {
-  const actor: Actor = { kind: 'member', memberId: input.memberId };
+  const actor = actorOf(input);
   const config = parseProjectConfig(await loadProjectConfig(pool, input.projectId));
   const guards = config.ok ? guardsAddedBy(input.task, config.config, input.text) : [];
   if (TERMINAL_STAGES.has(input.task.stage) || !guards.length) {
@@ -260,6 +268,7 @@ export type TaskAction =
   | { readonly type: 'submit' }
   | { readonly type: 'accept' }
   | { readonly type: 'claim' }
+  | { readonly type: 'release' }
   | { readonly type: 'approve' }
   | { readonly type: 'changes'; readonly note: string }
   /**
@@ -281,6 +290,7 @@ const toCommand = (action: TaskAction): Command => {
       return { type: 'submit_request' };
     case 'accept':
     case 'claim':
+    case 'release':
     case 'approve':
       return { type: action.type };
     case 'changes':
@@ -337,6 +347,18 @@ const resolveAnswer = async (
   };
 };
 
+/**
+ * A build is handed back only once no agent run is left on it: the scheduler stops a run taken over
+ * from the agent on its next pass, and a run still going when the build is handed back would no
+ * longer count as taken over, so its result could land once the agent is given the build again.
+ */
+const refuseWhileAgentRuns = async (client: PoolClient, taskId: string) => {
+  if (await buildRunInProgress(client, taskId))
+    throw new TaskCommandError(
+      "the agent's run on this build is still being stopped; hand it back again in a minute"
+    );
+};
+
 /** Applies one person's decision to a task, as that person. */
 export const actOnTask = async (
   pool: Pool,
@@ -353,7 +375,7 @@ export const actOnTaskAs = async (
   input: ProjectActor & { readonly number: number; readonly action: TaskAction }
 ): Promise<{ stage: string; satisfied?: boolean }> => {
   const { projectId } = input;
-  const actor: Actor = { kind: 'member', memberId: input.memberId };
+  const actor = actorOf(input);
   const taskId = await findTaskIdByNumber(pool, projectId, input.number);
   if (!taskId) throw new TaskCommandError(`task #${input.number} not found`);
   const { action, expectedVersion } = await resolveAnswer(pool, taskId, input.action);
@@ -362,8 +384,10 @@ export const actOnTaskAs = async (
     command: toCommand(action),
     actor,
     ...(expectedVersion === undefined ? {} : { expectedVersion }),
-    // In the same transaction as the decision: someone not allowed to answer leaves no comment.
+    // In the same transaction as the decision: someone not allowed to answer leaves no comment, and
+    // a build is not handed back while an agent's run on it is still being stopped.
     onApplied: async (client) => {
+      if (action.type === 'release') await refuseWhileAgentRuns(client, taskId);
       if (action.type === 'answer') await addComment(client, taskId, actor, action.text);
     }
   });
@@ -379,6 +403,8 @@ export const actOnTaskAs = async (
 export interface HandInInput {
   readonly number: number;
   readonly prTitle: string;
+  /** Required in the sections of the project's pull request template when it names one. */
+  readonly prBody?: string | undefined;
   readonly verified: readonly string[];
   readonly notVerified: readonly string[];
 }
@@ -402,7 +428,7 @@ export const handInAs = async (
     );
     if (result.ok) return { stage: result.stage, pullRequest: result.pullRequest };
     throw new TaskCommandError(
-      result.error === 'bad_title'
+      result.error === 'bad_pull_request'
         ? result.problems.join('; ')
         : result.error === 'not_installed'
           ? 'the GitHub App is not installed on this repository'

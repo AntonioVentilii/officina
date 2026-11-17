@@ -16,23 +16,36 @@ import { gitHubWith } from './fake-github';
 const url = process.env.TEST_DATABASE_URL;
 const PUBLIC_URL = 'https://officina.example';
 const SPEC = 'docs/specs/room.md';
+const TEMPLATE_PATH = '.github/pull_request_template.md';
+const TEMPLATE = [
+  '<!-- Keep the headings below. # Not a heading -->',
+  '# Motivation',
+  '<!-- Why this change exists. -->',
+  '# Changes',
+  '```md',
+  '# Not a heading either',
+  '```',
+  '# Tests'
+].join('\n\n');
 
 /**
  * GitHub as a developer's push left it: one changed file on the task branch. `openFails` is how
  * many times opening the pull request fails before it works; `failed`, the checks already red on
- * the pushed head.
+ * the pushed head; `files`, what the default branch holds. `bodies` are the pull request bodies sent.
  */
-const fakeGitHub = (openFails = 0, failed: string[] = []) => {
+const fakeGitHub = (openFails = 0, failed: string[] = [], files: Record<string, string> = {}) => {
   const calls: string[] = [];
+  const bodies: string[] = [];
   let failures = openFails;
   const port = gitHubWith({
     pushFacts: async () => {
       calls.push('pushFacts');
       return { headSha: 'dev1', changedPaths: ['src/app.ts'], addedPaths: [], diffLines: 12 };
     },
-    readFile: async () => null,
+    readFile: async ({ path }) => (path in files ? { text: files[path]!, sha: 'blob1' } : null),
     openPullRequest: async (input) => {
       calls.push(`openPullRequest ${input.title}`);
+      bodies.push(input.body);
       if (failures-- > 0) throw new Error('GitHub 502 on /pulls');
       return { number: 7, url: 'https://github.com/ViciApp/vici-app/pull/7' };
     },
@@ -40,7 +53,7 @@ const fakeGitHub = (openFails = 0, failed: string[] = []) => {
     commentOnIssue: async () => undefined,
     failedChecks: async () => failed
   });
-  return { port, calls };
+  return { port, calls, bodies };
 };
 
 describe.skipIf(!url)('a developer hands in a build', () => {
@@ -119,7 +132,7 @@ describe.skipIf(!url)('a developer hands in a build', () => {
       { pool, github: github.port, publicUrl: PUBLIC_URL },
       { taskId, memberId: dev.memberId, prTitle: 'Port the design', verified: [], notVerified: [] }
     );
-    expect(result).toMatchObject({ ok: false, error: 'bad_title' });
+    expect(result).toMatchObject({ ok: false, error: 'bad_pull_request' });
     expect(github.calls).toEqual([]);
     expect((await loadTask(pool, taskId))?.task.stage).toBe('building');
   });
@@ -165,6 +178,59 @@ describe.skipIf(!url)('a developer hands in a build', () => {
     expect(github.calls.filter((call) => call.startsWith('openPullRequest'))).toEqual([
       'openPullRequest feat(room): port the design'
     ]);
+    // A project that names no pull request template keeps Officina's own body.
+    expect(github.bodies[0]).toContain(
+      'Verified:\n- bun test\n\nNot verified:\n- nothing reported'
+    );
+  });
+
+  test("a project's pull request template shapes the hand-in's body, and a body that leaves it out is refused", async () => {
+    await pool.query(
+      `update projects set config = jsonb_set(config, '{docs,pr_template}', $1::jsonb) where id = $2`,
+      [JSON.stringify(TEMPLATE_PATH), seeded.projectId]
+    );
+    const taskId = await waitingForDeveloper();
+    const dev = await developer('dev@example.com', 'Dev');
+    await applyOrThrow(pool, taskId, { type: 'claim' }, dev);
+    const github = fakeGitHub(0, [], { [TEMPLATE_PATH]: TEMPLATE });
+    const deps = { pool, github: github.port, publicUrl: PUBLIC_URL };
+    const input = {
+      taskId,
+      memberId: dev.memberId,
+      prTitle: 'feat(room): port the design',
+      verified: ['bun test'],
+      notVerified: []
+    };
+
+    expect(await handInBuild(deps, input)).toEqual({
+      ok: false,
+      error: 'bad_pull_request',
+      problems: [`prBody is required: write it in the pull request template at ${TEMPLATE_PATH}`]
+    });
+    expect(
+      await handInBuild(deps, { ...input, prBody: '# Motivation\n\nThe new design.' })
+    ).toEqual({
+      ok: false,
+      error: 'bad_pull_request',
+      problems: [
+        `prBody misses the heading "Changes" of ${TEMPLATE_PATH}`,
+        `prBody misses the heading "Tests" of ${TEMPLATE_PATH}`
+      ]
+    });
+    expect(github.calls).toEqual([]);
+    expect((await loadTask(pool, taskId))?.task.stage).toBe('building');
+
+    const prBody =
+      '# Motivation\n\nThe new design.\n\n## changes\n\n- Ported it.\n\n# Tests\n\n- bun test';
+    expect(await handInBuild(deps, { ...input, prBody })).toMatchObject({
+      ok: true,
+      pullRequest: 7
+    });
+    expect(github.bodies).toHaveLength(1);
+    expect(github.bodies[0]).toStartWith(
+      `${prBody}\n\n---\n\nImplements the approved spec of [Officina task`
+    );
+    expect(github.bodies[0]).not.toContain('Verified:');
   });
 
   test('a hand-in whose checks were already red goes back to the build with what failed, its pull request open', async () => {

@@ -2,7 +2,7 @@
   import { Plus, Search } from '@lucide/svelte';
   import { page } from '$app/state';
   import { BOARD_HEADING_ID } from '$lib/drawer';
-  import { COLUMNS, CLOSED } from '$lib/stages';
+  import { COLUMNS, CLOSED, isOpen } from '$lib/stages';
   import { board } from '$lib/state/board.svelte';
   import { clock } from '$lib/state/clock.svelte';
   import { session } from '$lib/state/session.svelte';
@@ -47,6 +47,7 @@
   ]);
 
   const closedCount = $derived(board.tasks.filter((card) => CLOSED.includes(card.stage)).length);
+  const openCount = $derived(board.tasks.filter((card) => isOpen(card.stage)).length);
 
   const toggleLane = (lane: Lane) =>
     (lanes = lanes.includes(lane) ? lanes.filter((item) => item !== lane) : [...lanes, lane]);
@@ -60,7 +61,7 @@
     <div class="stats">
       <div class="stat">
         <span class="caps muted">Open</span>
-        <span class="figure num">{board.tasks.length - closedCount}</span>
+        <span class="figure num">{openCount}</span>
       </div>
       <div class="stat">
         <span class="caps muted">Waiting on you</span>
@@ -110,13 +111,6 @@
       </button>
     {/if}
   </header>
-  {#if board.error}
-    <p class="load-error" role="alert">
-      The board could not load: {board.error}
-      <button class="btn ghost sm" onclick={() => void board.refresh()}>Try again</button>
-    </p>
-  {/if}
-
   <div class="columns">
     {#each columns as column, index (column.id)}
       <section class="column" aria-label={column.title}>
@@ -155,14 +149,6 @@
   /* The heading takes focus only when a drawer closes on a card the board does not show. */
   h1:focus-visible {
     outline: none;
-  }
-
-  .load-error {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin: 0 0 12px;
-    color: var(--danger);
   }
 
   .board {
