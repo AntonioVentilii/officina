@@ -595,7 +595,7 @@ describe.skipIf(!url)('connector for Claude', () => {
     const token = (await connect()).tokens.access_token as string;
     const taskId = await taskInSpecReview(token);
     const link = `${PUBLIC_URL}/tasks/1?project=${seeded.projectId}`;
-    const proposed = `Approval proposed: it counts once you confirm it on the task's page on the board, with the approve button in the yellow box, where you can also discard it. Task 1: ${link}`;
+    const proposed = `Approval proposed: it counts once you confirm it on the task's page on the board, with the approve button where it says it is your turn, and where you can also discard it. Task 1: ${link}`;
 
     const approved = await tool(token, 'review', { number: 1, decision: 'approve' });
     expect(approved.isError).toBe(false);
