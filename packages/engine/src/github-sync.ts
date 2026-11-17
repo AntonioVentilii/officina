@@ -285,6 +285,7 @@ export type SyncGitHubPort = Pick<
   | 'pushFacts'
   | 'commitChanges'
   | 'commentOnIssue'
+  | 'editComment'
   | 'mergeWhenReady'
   | 'cancelAutoMerge'
   | 'pullRequest'
@@ -604,54 +605,6 @@ export const syncSpecStatus = async (
     if (!(error instanceof GitHubError) || error.status !== 409) throw error;
     return writeSpecStatus(pool, github, input);
   }
-};
-
-interface ChooserResult {
-  readonly checklist?: readonly string[];
-  readonly beforeAfter?: readonly { key: string; locale: string; before: string; after: string }[];
-}
-
-const cell = (value: string) => value.replaceAll('|', '\\|').replaceAll('\n', ' ');
-
-/** The verification checklist as markdown, for the pull request and for people reading it there. */
-export const checklistMarkdown = (result: unknown, taskLink: string): string | null => {
-  const chosen = result as ChooserResult | null;
-  if (!chosen?.checklist?.length) return null;
-  const lines = [
-    `### Verification checklist for ${taskLink}`,
-    '',
-    ...chosen.checklist.map((item) => `- [ ] ${item}`)
-  ];
-  if (chosen.beforeAfter?.length) {
-    lines.push('', '| Key | Locale | Before | After |', '| --- | --- | --- | --- |');
-    for (const row of chosen.beforeAfter) {
-      lines.push(
-        `| \`${cell(row.key)}\` | ${cell(row.locale)} | ${cell(row.before)} | ${cell(row.after)} |`
-      );
-    }
-  }
-  return lines.join('\n');
-};
-
-/** Posts the chooser's checklist on the pull request, once. */
-export const postChecklist = async (
-  pool: Pool,
-  github: SyncGitHubPort,
-  input: { taskId: string; ref: RepoRef; pullRequest: number; taskLink: string; result: unknown }
-) => {
-  if (
-    await hasTaskEvent(pool, input.taskId, 'checklist_posted', { pullRequest: input.pullRequest })
-  )
-    return;
-  const body = checklistMarkdown(input.result, input.taskLink);
-  if (!body) return;
-  await github.commentOnIssue({ ...input.ref, issueNumber: input.pullRequest, body });
-  await appendTaskEvent(pool, {
-    taskId: input.taskId,
-    actor: ENGINE,
-    type: 'checklist_posted',
-    payload: { pullRequest: input.pullRequest }
-  });
 };
 
 /**

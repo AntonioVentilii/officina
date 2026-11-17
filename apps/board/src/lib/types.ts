@@ -1,3 +1,5 @@
+import type { ChecklistView } from './checklist';
+
 export type Stage =
   | 'request'
   | 'triage'
@@ -254,11 +256,7 @@ export interface TaskDetail extends Card {
     readonly waived: readonly string[];
     readonly approvedBy: readonly string[];
   } | null;
-  readonly checklist: {
-    readonly checklist: readonly string[];
-    readonly beforeAfter?: readonly BeforeAfter[];
-    readonly userVisible: boolean;
-  } | null;
+  readonly checklist: ChecklistView | null;
   readonly actions: readonly BoardAction[];
 }
 
