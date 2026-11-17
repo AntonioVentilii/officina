@@ -64,7 +64,9 @@ push, and hand it in from the board ("Hand in the build"), from Claude (`hand_in
 `task hand-in --number <n> --title "<pull request title>"`, adding `--body "<pull request body>"`
 written in the project's pull request template when its config names one; it then
 goes to the same review as an agent's build. A developer who will not build it after all gives it
-back from Claude with `hand_back_build`, and the task returns to `ready`.
+back from the board ("Hand the build back"), from Claude (`hand_back_build`) or with
+`task hand-back --number <n>`, and the task returns to `ready`; a maintainer or an owner can hand
+back another person's build the same way.
 
 ## Step by step
 

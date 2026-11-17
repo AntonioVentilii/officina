@@ -130,6 +130,7 @@ const actionSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('submit') }),
   z.strictObject({ type: z.literal('accept') }),
   z.strictObject({ type: z.literal('claim') }),
+  z.strictObject({ type: z.literal('release') }),
   z.strictObject({ type: z.literal('approve') }),
   z.strictObject({
     type: z.literal('changes'),

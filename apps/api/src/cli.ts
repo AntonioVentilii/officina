@@ -37,6 +37,8 @@ const USAGE = `usage (on your machine, prefix with scripts/officina; on the serv
                                                after pushing ${branchForTask('<n>')}: send your build to review;
                                                --body only when the project names a pull request
                                                template, and then required, in its sections
+    task hand-back --number <n>                give back a build you claimed, so it waits to be built
+                                               again; with steer, also another person's build
     task approve  --number <n>
     task changes  --number <n> --note "<what to change>"
     task answer   --number <n> --text "<answer to the open question>"
@@ -187,6 +189,7 @@ const main = async () => {
         case 'submit':
         case 'accept':
         case 'claim':
+        case 'hand-back':
         case 'approve':
         case 'changes':
         case 'answer':
@@ -199,7 +202,7 @@ const main = async () => {
                 ? { type: 'answer', text: need(values.text, 'text') }
                 : subcommand === 'decline' || subcommand === 'cancel'
                   ? { type: subcommand, reason: need(values.reason, 'reason') }
-                  : { type: subcommand };
+                  : { type: subcommand === 'hand-back' ? 'release' : subcommand };
           const result = await actOnTask(pool, { ...target, number: number(), action });
           const approval =
             result.satisfied === false
