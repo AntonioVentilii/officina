@@ -1,6 +1,8 @@
-import type { AgentOutput } from '@officina/core';
+import { parseProjectConfig, type AgentOutput } from '@officina/core';
+import { loadTaskContext } from '@officina/db';
 import type { GitHubClient, RepoRef } from '@officina/github';
 import type { RunnerRole } from '@officina/runner';
+import type { Pool } from 'pg';
 
 /** The project's pull request template (`docs.pr_template`), as read from its default branch. */
 export interface PrTemplate {
@@ -62,6 +64,26 @@ export const readPrTemplate = async (
   if (!path) return null;
   const file = await github.readFile({ ...ref, path, branch: input.branch }).catch(() => null);
   return file ? { path, headings: headingsOf(file.text) } : null;
+};
+
+/**
+ * The template a task's build is held to, read as `handInBuild` reads it, for whoever tells a
+ * developer what to hand in: `null` exactly when a hand-in takes no body.
+ */
+export const taskPrTemplate = async (
+  pool: Pool,
+  github: Pick<GitHubClient, 'readFile'>,
+  taskId: string
+): Promise<PrTemplate | null> => {
+  const context = await loadTaskContext(pool, taskId);
+  if (!context || context.installationId === null) return null;
+  const config = parseProjectConfig(context.rawConfig);
+  if (!config.ok) return null;
+  return readPrTemplate(
+    github,
+    { installationId: context.installationId, repo: context.repo },
+    { path: config.config.docs.prTemplate, branch: context.defaultBranch }
+  );
 };
 
 const key = (heading: string) => heading.toLowerCase();

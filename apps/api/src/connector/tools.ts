@@ -15,7 +15,7 @@ import {
   type Preview
 } from '@officina/core';
 import { loadBoardTask, type MemberProject } from '@officina/db';
-import { fence, type HandInPort } from '@officina/engine';
+import { fence, taskPrTemplate, type HandInPort } from '@officina/engine';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import { boardView, taskView, type BoardViewer, type CardView, type TaskView } from '../board';
@@ -185,6 +185,26 @@ const WHAT_TO_DO: Record<string, string> = {
   hand_back: 'hand the build back, so it waits to be built again (hand_back_build)',
   submit: 'send it on as it is, on the board',
   cancel: 'cancel it on the board'
+};
+
+/**
+ * For whoever may claim or hand in the build: the template the pull request body is written in,
+ * read as `hand_in_build` reads it, so it is named exactly when a hand-in takes a body.
+ */
+const templateLines = async (
+  context: ToolContext,
+  task: { readonly projectId: string; readonly number: number; readonly actions: readonly string[] }
+): Promise<string[]> => {
+  const { github } = context;
+  if (!github || (!task.actions.includes('claim') && !task.actions.includes('hand_in'))) return [];
+  const row = await loadBoardTask(context.pool, task.projectId, task.number);
+  const template = row ? await taskPrTemplate(context.pool, github, row.id) : null;
+  return template
+    ? [
+        '',
+        `Pull request template: \`${template.path}\` on the default branch. Write hand_in_build's pr_body in it, keeping every heading.`
+      ]
+    : [];
 };
 
 /** What happens next to a request just opened, in words for the person who opened it. */
@@ -393,6 +413,13 @@ After it is opened, tell the person the task link and what happens next, as the 
         for (const comment of task.comments.slice(-20))
           lines.push(`- ${comment.author}:`, fence(clip(comment.body, 1_500)));
       }
+      lines.push(
+        ...(await templateLines(context, {
+          projectId: project.id,
+          number: task.number,
+          actions: task.actions
+        }))
+      );
       const actions = task.actions.map((action) => WHAT_TO_DO[action]).filter(Boolean);
       if (actions.length) lines.push('', `You can: ${actions.join('; ')}.`);
       return lines.join('\n');
@@ -515,7 +542,7 @@ After it is opened, tell the person the task link and what happens next, as the 
         .max(INPUT_LIMITS.prBody)
         .optional()
         .describe(
-          'The pull request body, in Markdown, only when the project names a pull request template (`docs.pr_template` in `.github/officina.yml`), and then required: write it in that template, keeping every heading. Officina adds the link to the task after it.'
+          'The pull request body, in Markdown, only when the project names a pull request template (`docs.pr_template` in `.github/officina.yml`, which show_task names), and then required: write it in that template, keeping every heading. Officina adds the link to the task after it.'
         ),
       verified: checksSchema
         .optional()

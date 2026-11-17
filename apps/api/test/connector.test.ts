@@ -29,10 +29,16 @@ const PUBLIC_URL = 'https://officina.example';
 const CALLBACK = 'https://claude.ai/api/mcp/auth_callback';
 const COPY = 'src/lib/constants/messages/en.ts';
 
-/** A GitHub that reads one pushed copy change and opens pull request 9 for it. */
+const PR_TEMPLATE = '.github/pull_request_template.md';
+
+/**
+ * A GitHub that reads one pushed copy change and opens pull request 9 for it; its default branch
+ * holds a pull request template and no other file.
+ */
 const builds = gitHubWith({
   pushFacts: async () => ({ headSha: 'dev1', changedPaths: [COPY], addedPaths: [], diffLines: 2 }),
-  readFile: async () => null,
+  readFile: async ({ path }) =>
+    path === PR_TEMPLATE ? { text: '# Motivation\n\n# Tests\n', sha: 'blob1' } : null,
   openPullRequest: async () => ({ number: 9, url: 'https://github.com/ViciApp/vici-app/pull/9' }),
   failedChecks: async () => []
 });
@@ -739,8 +745,25 @@ describe.skipIf(!url)('connector for Claude', () => {
     const taskId = await taskInSpecReview(owner);
     await applyOrThrow(pool, taskId, { type: 'approve' }, seeded.owner);
     const dev = await contributor('Dev', ['developer']);
+    const beforeTemplate = (await tool(dev, 'show_task', { number: 1 })).content[0]!.text;
+    expect(beforeTemplate).toContain('claim the build, to build it yourself (claim_build)');
+    // A project that names no pull request template, or one that cannot be read, says nothing about one.
+    expect(beforeTemplate).not.toContain('Pull request template');
+    await pool.query('update projects set github_installation_id = 99 where id = $1', [
+      seeded.projectId
+    ]);
+    const nameTemplate = (path: string) =>
+      pool.query(
+        `update projects set config = jsonb_set(config, '{docs,pr_template}', $1::jsonb) where id = $2`,
+        [JSON.stringify(path), seeded.projectId]
+      );
+    await nameTemplate('.github/missing.md');
+    expect((await tool(dev, 'show_task', { number: 1 })).content[0]!.text).not.toContain(
+      'Pull request template'
+    );
+    await nameTemplate(PR_TEMPLATE);
     expect((await tool(dev, 'show_task', { number: 1 })).content[0]!.text).toContain(
-      'claim the build, to build it yourself (claim_build)'
+      `Pull request template: \`${PR_TEMPLATE}\` on the default branch. Write hand_in_build's pr_body in it, keeping every heading.`
     );
 
     const claimed = await tool(dev, 'claim_build', { number: 1 });
