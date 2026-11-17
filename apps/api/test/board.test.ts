@@ -199,6 +199,8 @@ describe.skipIf(!url)('board api', () => {
 
     const refused = await call(cookie, `${path}/checks`, { item: 1, outcome: 'maybe' });
     expect(refused.status).toBe(400);
+    const bare = await call(cookie, `${path}/checks`, { item: 1, outcome: 'ok', evidence: ' ' });
+    expect(bare.status).toBe(400);
     const sent = await call(cookie, `${path}/checks`, {
       item: 2,
       outcome: 'problem',
@@ -682,7 +684,10 @@ describe.skipIf(!url)('board api', () => {
       label: 'A question for an owner',
       me: false
     });
-    // Neither the requester nor a maintainer's accept can move it on before the owner decides.
+    // Neither the requester nor a maintainer's accept can move it on before the owner decides,
+    // and the board does not offer to send it on as it is.
+    expect(secrets.actions).not.toContain('submit');
+    expect((await json(await call(owner, `${project}/tasks/1`))).actions).not.toContain('submit');
     expect((await call(gio, `${project}/tasks/1/actions`, { type: 'submit' })).status).toBe(409);
     expect((await call(owner, `${project}/tasks/1/actions`, { type: 'accept' })).status).toBe(409);
     expect((await json(await call(owner, `${project}/tasks/1`))).waitingOn.me).toBe(true);

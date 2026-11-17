@@ -88,11 +88,12 @@
               class="field"
               bind:value={evidence}
               maxlength="300"
+              required
               placeholder="How you checked it, and what is still open"
             />
             <div class="buttons">
               <button type="button" class="btn ghost" onclick={() => (open = null)}>Back</button>
-              <button class="btn primary" disabled={busy}>Record</button>
+              <button class="btn primary" disabled={busy || !evidence.trim()}>Record</button>
             </div>
           </form>
         {/if}

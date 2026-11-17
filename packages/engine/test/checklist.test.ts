@@ -277,11 +277,15 @@ describe.skipIf(!url)('checklist comment on the pull request', () => {
     expect(github.posted).toHaveLength(1);
   });
 
-  test('the same check sent twice is recorded once; a new finding on the item is added', async () => {
+  test('the same check sent twice is recorded once, a new finding is added, and a task that moved on takes none', async () => {
     const taskId = await taskAtVerification();
-    expect(await tick(taskId, 1, 'problem')).toEqual({ recorded: true });
-    expect(await tick(taskId, 1, 'problem')).toEqual({ recorded: false });
-    expect(await tick(taskId, 1, 'ok')).toEqual({ recorded: true });
+    expect(await tick(taskId, 1, 'problem')).toBe('recorded');
+    expect(await tick(taskId, 1, 'problem')).toBe('repeat');
+    expect(await tick(taskId, 1, 'ok')).toBe('recorded');
+    // A check sent for another head, or once the verification is decided, lands nowhere.
+    expect(await tick(taskId, 1, 'ok', 'def')).toBe('moved');
+    await applyOrThrow(pool, taskId, { type: 'approve' }, seeded.owner);
+    expect(await tick(taskId, 0, 'ok')).toBe('moved');
     expect((await listChecks(pool, taskId, 'abc')).map((entry) => entry.outcome)).toEqual([
       'problem',
       'ok'

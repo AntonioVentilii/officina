@@ -18,11 +18,13 @@ import { z } from 'zod';
 import type { ProjectActor } from './tasks';
 import { TaskCommandError } from './tasks';
 
+const NOT_CHECKING = 'the task is not waiting for its result to be checked';
+
 /** One check as the board and the connector send it: the item by its number, from 1. */
 export const checklistCheckSchema = z.object({
   item: z.number().int().min(1),
   outcome: z.enum(CHECK_OUTCOMES),
-  evidence: evidenceSchema
+  evidence: evidenceSchema.pipe(z.string().min(1, 'say how it was checked'))
 });
 
 export type CheckRequest = {
@@ -48,7 +50,7 @@ const checkableTask = async (pool: Pool, input: ProjectActor & { readonly number
     throw new TaskCommandError('you do not have the role needed to check results', 403);
   const headSha = checklistHead(task);
   if (task.stage !== 'verifying' || !headSha || headSha !== task.headSha)
-    throw new TaskCommandError('the task is not waiting for its result to be checked');
+    throw new TaskCommandError(NOT_CHECKING);
   const chosen = (await latestChooserResult(pool, taskId)) as { checklist?: string[] } | null;
   return { taskId, headSha, items: chosen?.checklist?.length ?? 0 };
 };
@@ -65,7 +67,7 @@ export const recordCheckAs = async (
   const { taskId, headSha, items } = await checkableTask(pool, input);
   if (input.item > items)
     throw new TaskCommandError(`the checklist has ${items} items; there is no item ${input.item}`);
-  return recordCheck(pool, {
+  const recording = await recordCheck(pool, {
     taskId,
     headSha,
     item: input.item - 1,
@@ -76,4 +78,6 @@ export const recordCheckAs = async (
     channel: input.via ? 'claude' : 'board',
     via: input.via
   });
+  if (recording === 'moved') throw new TaskCommandError(NOT_CHECKING);
+  return { recorded: recording === 'recorded' };
 };

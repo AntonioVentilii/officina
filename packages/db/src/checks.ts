@@ -45,15 +45,27 @@ export const listChecks = async (
     )
   ).rows;
 
+/** What recording a check did: added it, found it already the item's latest, or found the task moved on. */
+export type CheckRecording = 'recorded' | 'repeat' | 'moved';
+
 /**
- * Records a check and its line on the task's timeline, in one transaction. The same member sending
- * the same finding again (a retried request, a second click) records nothing new: a check is added
- * only when it changes what the item's latest check says.
+ * Records a check and its line on the task's timeline, in one transaction. The task is read again
+ * under its row lock: a check lands only while it is still at `verifying` on the head the checks
+ * are for, so an approval, a send-back or a new push that won the race leaves it out (`moved`). The
+ * same member sending the same finding again (a retried request, a second click) records nothing
+ * new (`repeat`): a check is added only when it changes what the item's latest check says.
  */
-export const recordCheck = (pool: Pool, input: CheckInput): Promise<{ recorded: boolean }> =>
+export const recordCheck = (pool: Pool, input: CheckInput): Promise<CheckRecording> =>
   inTransaction(pool, async (client) => {
-    // Two copies of one request arriving together would both find no repeat without it.
-    await client.query('select 1 from tasks where id = $1 for update', [input.taskId]);
+    const task = (
+      await client.query<{ current: boolean }>(
+        `select stage = 'verifying' and head_sha = $2
+                and approval_plans->'verifying'->>'subject' = 'sha:' || $2 as current
+         from tasks where id = $1 for update`,
+        [input.taskId, input.headSha]
+      )
+    ).rows[0];
+    if (!task?.current) return 'moved';
     const latest = (
       await client.query<ChecklistCheck>(
         `select ${CHECK_COLUMNS} from checklist_checks
@@ -66,7 +78,7 @@ export const recordCheck = (pool: Pool, input: CheckInput): Promise<{ recorded: 
       latest.outcome === input.outcome &&
       latest.evidence === input.evidence
     )
-      return { recorded: false };
+      return 'repeat';
     await client.query(
       `insert into checklist_checks (task_id, head_sha, item, outcome, evidence, member_id, channel)
        values ($1, $2, $3, $4, $5, $6, $7)`,
@@ -91,7 +103,7 @@ export const recordCheck = (pool: Pool, input: CheckInput): Promise<{ recorded: 
         headSha: input.headSha
       }
     });
-    return { recorded: true };
+    return 'recorded';
   });
 
 /** One person's decision at the verification of one head: approved, or sent back with a note. */

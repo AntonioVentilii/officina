@@ -2,7 +2,6 @@ import {
   ACTION_LABELS,
   CHECK_OUTCOME_LABELS,
   CHECK_OUTCOMES,
-  evidenceSchema,
   INPUT_LIMITS,
   TERMINAL_STAGES,
   allowedActions,
@@ -20,7 +19,7 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import { boardView, taskView, type BoardViewer, type CardView, type TaskView } from '../board';
 import { checklistLines } from '../checklist-view';
-import { recordCheckAs } from '../checks';
+import { checklistCheckSchema, recordCheckAs } from '../checks';
 import { TaskCommandError, actOnTaskAs, commentAs, createRequestAs, handInAs } from '../tasks';
 
 /**
@@ -559,7 +558,7 @@ Call it once an item was really checked, by the person or by you for them, never
         .min(1)
         .describe("The item's number in the list show_task gives, from 1."),
       outcome: z.enum(CHECK_OUTCOMES),
-      evidence: evidenceSchema.pipe(z.string().min(1, 'say how it was checked'))
+      evidence: checklistCheckSchema.shape.evidence
     }),
     readOnly: false,
     run: async (context, input) => {
