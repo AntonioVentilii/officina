@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.11.0](https://github.com/AntonioVentilii/officina/compare/v1.10.0...v1.11.0) (2026-11-17)
+
+
+### Features
+
+* **api,board:** name the connection of the app that proposed an approval ([#268](https://github.com/AntonioVentilii/officina/issues/268)) ([597708b](https://github.com/AntonioVentilii/officina/commit/597708b118ba330d44d43f4f0ab43fa55931321f))
+
 ## [1.10.0](https://github.com/AntonioVentilii/officina/compare/v1.9.0...v1.10.0) (2026-11-17)
 
 
