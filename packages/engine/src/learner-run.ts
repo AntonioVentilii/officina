@@ -1,4 +1,4 @@
-import type { AgentOutput } from '@officina/core';
+import { errorText, type AgentOutput } from '@officina/core';
 import { appendRunEvent, finishRun, setRunExternalId } from '@officina/db';
 import { executeRun, type RunReport, type RunnerRole } from '@officina/runner';
 import type { ClaimedStep } from './claim';
@@ -82,7 +82,7 @@ export const learnerRun = async (
     await finishRun(pool, runId, {
       status: 'failed',
       costCents: null,
-      result: { error: (error as Error).message }
+      result: { error: errorText(error) }
     });
     throw error;
   }
