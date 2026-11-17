@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { look as current } from '$lib/state/look.svelte';
-  import type { Look } from '$lib/types';
+  import { look as current } from '#lib/state/look.svelte.ts';
+  import type { Look } from '#lib/types.ts';
   import favicon from '../../../static/favicon.svg?raw';
 
   interface Props {

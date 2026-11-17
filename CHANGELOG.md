@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.9.0](https://github.com/AntonioVentilii/officina/compare/v1.8.0...v1.9.0) (2026-11-17)
+
+
+### Features
+
+* **core,db,engine,github,api,board:** record each checklist check with its evidence, shown on the pull request ([#258](https://github.com/AntonioVentilii/officina/issues/258)) ([41d0c62](https://github.com/AntonioVentilii/officina/commit/41d0c62a22e38b6f97d770c27b49e5034c9adfa5))
+
+
+### Bug Fixes
+
+* **api,board:** show a passed gate's approvers as they were when it passed ([#259](https://github.com/AntonioVentilii/officina/issues/259)) ([e245327](https://github.com/AntonioVentilii/officina/commit/e245327c03af8e017c6ec661aeec1f75f301ac7f))
+
+
+### Miscellaneous Chores
+
+* **deps-dev:** bump @sveltejs/kit from 2.70.4 to 3.2.0 in /apps/board in the npm_and_yarn group across 1 directory ([#256](https://github.com/AntonioVentilii/officina/issues/256)) ([3a72b98](https://github.com/AntonioVentilii/officina/commit/3a72b988f984befdc39fec65d4409e5378c92d42))
+
 ## [1.8.0](https://github.com/AntonioVentilii/officina/compare/v1.7.7...v1.8.0) (2026-11-17)
 
 

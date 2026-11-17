@@ -1,5 +1,5 @@
 import { flushSync } from 'svelte';
-import type { Look } from '$lib/types';
+import type { Look } from '#lib/types.ts';
 import { session } from './session.svelte';
 
 /** Read before first paint by the script in app.html too, so keep the key in step with it. */

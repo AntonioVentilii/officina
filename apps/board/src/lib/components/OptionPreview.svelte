@@ -1,7 +1,7 @@
 <script lang="ts">
   import DOMPurify from 'dompurify';
   import { ExternalLink } from '@lucide/svelte';
-  import type { OptionPreview } from '$lib/types';
+  import type { OptionPreview } from '#lib/types.ts';
   import Markdown from './Markdown.svelte';
 
   interface Props {

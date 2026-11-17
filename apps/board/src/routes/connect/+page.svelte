@@ -1,10 +1,10 @@
 <script lang="ts">
   import { PlugZap } from '@lucide/svelte';
-  import { get, post } from '$lib/api';
-  import { ago, wordsFor } from '$lib/format';
-  import { clock } from '$lib/state/clock.svelte';
-  import { toasts } from '$lib/state/toasts.svelte';
-  import type { AuthorizationProblem, ConnectedApp, ConnectedAppProblem } from '$lib/types';
+  import { get, post } from '#lib/api.ts';
+  import { ago, wordsFor } from '#lib/format.ts';
+  import { clock } from '#lib/state/clock.svelte.ts';
+  import { toasts } from '#lib/state/toasts.svelte.ts';
+  import type { AuthorizationProblem, ConnectedApp, ConnectedAppProblem } from '#lib/types.ts';
 
   const PROBLEMS: Record<AuthorizationProblem, string> = {
     unknown_client: 'This connector is not registered with Officina; remove it and add it again.',

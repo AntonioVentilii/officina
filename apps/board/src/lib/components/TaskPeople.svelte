@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Check, GitMerge } from '@lucide/svelte';
-  import type { TaskDetail } from '$lib/types';
+  import type { TaskDetail } from '#lib/types.ts';
   import MemberAvatar from './MemberAvatar.svelte';
 
   interface Props {
