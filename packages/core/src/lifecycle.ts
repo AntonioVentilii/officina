@@ -113,6 +113,12 @@ export type Actor =
   | { readonly kind: 'agent'; readonly role: AgentRole; readonly version: number }
   | { readonly kind: 'engine' };
 
+/**
+ * How a connected app is told apart from another with the same name: the start of its grant's id,
+ * shown on `/connect` and next to everything it did, so the two can be matched.
+ */
+export const connectionRef = (grantId: string): string => grantId.slice(0, 6).toUpperCase();
+
 /** Officina itself acting: dispatching, recording GitHub events, blocking a failed step. */
 export const ENGINE: Actor = { kind: 'engine' };
 

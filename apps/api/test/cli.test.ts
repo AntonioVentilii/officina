@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { decodeArgs } from '../src/cli';
+import { decodeArgs, taskActionFor } from '../src/cli';
 
 describe('cli arguments', () => {
   test('base64-encoded arguments arrive exactly as typed, spaces, quotes and accents included', () => {
@@ -33,5 +33,17 @@ describe('cli arguments', () => {
     expect(usage).toStartWith('usage');
     expect(usage).toContain('one-time sign-in link to the board, valid 30 minutes');
     expect(usage).toContain('the link is valid 7 days');
+  });
+
+  test('each task subcommand applies its decision, and hand-back is the lifecycle release', () => {
+    expect(taskActionFor('hand-back', {})).toEqual({ type: 'release' });
+    expect(taskActionFor('claim', {})).toEqual({ type: 'claim' });
+    expect(taskActionFor('cancel', { reason: 'Not now.' })).toEqual({
+      type: 'cancel',
+      reason: 'Not now.'
+    });
+    expect(() => taskActionFor('changes', {})).toThrow('missing --note');
+    expect(taskActionFor('release', {})).toBeNull();
+    expect(taskActionFor('list', {})).toBeNull();
   });
 });
