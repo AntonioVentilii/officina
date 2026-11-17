@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { initials } from '$lib/format';
+  import { initials } from '#lib/format.ts';
 
   interface Props {
     name: string;

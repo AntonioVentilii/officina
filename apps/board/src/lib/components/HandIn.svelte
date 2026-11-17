@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { post } from '$lib/api';
-  import { session } from '$lib/state/session.svelte';
-  import { toasts } from '$lib/state/toasts.svelte';
+  import { post } from '#lib/api.ts';
+  import { session } from '#lib/state/session.svelte.ts';
+  import { toasts } from '#lib/state/toasts.svelte.ts';
 
   interface Props {
     number: number;

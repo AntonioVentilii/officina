@@ -11,13 +11,13 @@
     Sparkles,
     X
   } from '@lucide/svelte';
-  import LaneChip from '$lib/components/LaneChip.svelte';
-  import MemberAvatar from '$lib/components/MemberAvatar.svelte';
-  import { since } from '$lib/format';
-  import { board } from '$lib/state/board.svelte';
-  import { clock } from '$lib/state/clock.svelte';
-  import { toasts } from '$lib/state/toasts.svelte';
-  import { inboxGroups, type InboxGroupId } from '$lib/inbox';
+  import LaneChip from '#lib/components/LaneChip.svelte';
+  import MemberAvatar from '#lib/components/MemberAvatar.svelte';
+  import { since } from '#lib/format.ts';
+  import { board } from '#lib/state/board.svelte.ts';
+  import { clock } from '#lib/state/clock.svelte.ts';
+  import { toasts } from '#lib/state/toasts.svelte.ts';
+  import { inboxGroups, type InboxGroupId } from '#lib/inbox.ts';
 
   const ICONS: Record<InboxGroupId, typeof Inbox> = {
     questions: CircleHelp,

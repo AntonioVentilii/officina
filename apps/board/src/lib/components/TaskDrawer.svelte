@@ -1,18 +1,18 @@
 <script lang="ts">
-  import { isActive } from '$lib/runs';
+  import { isActive } from '#lib/runs.ts';
   import { ExternalLink, GitPullRequest, X } from '@lucide/svelte';
   import { goto } from '$app/navigation';
-  import { ApiError, get, post } from '$lib/api';
-  import { closesDrawer, focusAfterDrawer } from '$lib/drawer';
-  import { ago, dateTime, money } from '$lib/format';
-  import { inertAround } from '$lib/inert';
-  import { STAGE_LABELS } from '$lib/stages';
-  import { board } from '$lib/state/board.svelte';
-  import { clock } from '$lib/state/clock.svelte';
-  import { coalesce, live, refreshesAll } from '$lib/state/live.svelte';
-  import { session } from '$lib/state/session.svelte';
-  import { toasts } from '$lib/state/toasts.svelte';
-  import type { TaskDetail } from '$lib/types';
+  import { ApiError, get, post } from '#lib/api.ts';
+  import { closesDrawer, focusAfterDrawer } from '#lib/drawer.ts';
+  import { ago, dateTime, money } from '#lib/format.ts';
+  import { inertAround } from '#lib/inert.ts';
+  import { STAGE_LABELS } from '#lib/stages.ts';
+  import { board } from '#lib/state/board.svelte.ts';
+  import { clock } from '#lib/state/clock.svelte.ts';
+  import { coalesce, live, refreshesAll } from '#lib/state/live.svelte.ts';
+  import { session } from '#lib/state/session.svelte.ts';
+  import { toasts } from '#lib/state/toasts.svelte.ts';
+  import type { TaskDetail } from '#lib/types.ts';
   import ActionPanel from './ActionPanel.svelte';
   import ApprovalPlan from './ApprovalPlan.svelte';
   import LearningCard from './LearningCard.svelte';
@@ -67,9 +67,7 @@
 
   // The board is drawn again on the way back, so focus is found there again, not kept from before.
   const close = () =>
-    void goto('/', { noScroll: true, keepFocus: true }).then(() =>
-      focusAfterDrawer(document, number)?.focus()
-    );
+    void goto('/', { reset: false }).then(() => focusAfterDrawer(document, number)?.focus());
 
   let layer: HTMLDivElement | undefined = $state();
   let dialog: HTMLDivElement | undefined = $state();

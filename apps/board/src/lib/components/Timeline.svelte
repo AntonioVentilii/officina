@@ -1,11 +1,11 @@
 <script lang="ts">
-  import { ago, dateTime } from '$lib/format';
-  import { STAGE_LABELS } from '$lib/stages';
-  import type { Comment, Stage, TaskEvent } from '$lib/types';
+  import { ago, dateTime } from '#lib/format.ts';
+  import { STAGE_LABELS } from '#lib/stages.ts';
+  import type { Comment, Stage, TaskEvent } from '#lib/types.ts';
   import AgentAvatar from './AgentAvatar.svelte';
   import Markdown from './Markdown.svelte';
   import MemberAvatar from './MemberAvatar.svelte';
-  import { clock } from '$lib/state/clock.svelte';
+  import { clock } from '#lib/state/clock.svelte.ts';
 
   interface Props {
     events: readonly TaskEvent[];

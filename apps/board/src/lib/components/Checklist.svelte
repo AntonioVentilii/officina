@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { BeforeAfter } from '$lib/types';
+  import type { BeforeAfter } from '#lib/types.ts';
 
   interface Props {
     items: readonly string[];

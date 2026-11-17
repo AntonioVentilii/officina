@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { CLOSED, TRACK, trackIndex } from '$lib/stages';
-  import type { Stage } from '$lib/types';
+  import { CLOSED, TRACK, trackIndex } from '#lib/stages.ts';
+  import type { Stage } from '#lib/types.ts';
 
   interface Props {
     stage: Stage;

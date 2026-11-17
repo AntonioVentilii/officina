@@ -1,15 +1,15 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { Copy, Link, Plug } from '@lucide/svelte';
-  import { get, post } from '$lib/api';
-  import MemberAvatar from '$lib/components/MemberAvatar.svelte';
-  import { ago, dateTime } from '$lib/format';
-  import { latestOnly } from '$lib/latest';
-  import { board } from '$lib/state/board.svelte';
-  import { clock } from '$lib/state/clock.svelte';
-  import { session } from '$lib/state/session.svelte';
-  import { toasts } from '$lib/state/toasts.svelte';
-  import type { AccessEvent, MemberActivity } from '$lib/types';
+  import { get, post } from '#lib/api.ts';
+  import MemberAvatar from '#lib/components/MemberAvatar.svelte';
+  import { ago, dateTime } from '#lib/format.ts';
+  import { latestOnly } from '#lib/latest.ts';
+  import { board } from '#lib/state/board.svelte.ts';
+  import { clock } from '#lib/state/clock.svelte.ts';
+  import { session } from '#lib/state/session.svelte.ts';
+  import { toasts } from '#lib/state/toasts.svelte.ts';
+  import type { AccessEvent, MemberActivity } from '#lib/types.ts';
 
   /** Fresh links by member id, shown until the page is left: the server keeps only their hash. */
   let links = $state<Record<string, { readonly url: string; readonly validDays: number }>>({});
@@ -67,7 +67,7 @@
 
   // Maintainers' page: the API refuses its data to anyone else.
   $effect(() => {
-    if (session.project && !session.technical) void goto('/', { replaceState: true });
+    if (session.project && !session.technical) void goto('/', { replace: true });
   });
 </script>
 

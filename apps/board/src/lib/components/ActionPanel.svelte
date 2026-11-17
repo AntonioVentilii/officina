@@ -1,10 +1,10 @@
 <script lang="ts">
   import { CircleCheck, CircleHelp, GitMerge, Radio, UserRound } from '@lucide/svelte';
-  import { post } from '$lib/api';
-  import { look } from '$lib/state/look.svelte';
-  import { session } from '$lib/state/session.svelte';
-  import { toasts } from '$lib/state/toasts.svelte';
-  import type { TaskDetail } from '$lib/types';
+  import { post } from '#lib/api.ts';
+  import { look } from '#lib/state/look.svelte.ts';
+  import { session } from '#lib/state/session.svelte.ts';
+  import { toasts } from '#lib/state/toasts.svelte.ts';
+  import type { TaskDetail } from '#lib/types.ts';
   import AgentAvatar from './AgentAvatar.svelte';
   import HandIn from './HandIn.svelte';
   import Markdown from './Markdown.svelte';
