@@ -2589,8 +2589,12 @@ describe.skipIf(!url)('engine', () => {
     await linkPullRequest(pool, taskId, 42);
     await pool.query(
       `insert into task_events (task_id, actor, type, payload, created_at)
-       values ($1, '{"kind":"engine"}', 'github_comment_seen', $2, now() - interval '5 minutes')`,
-      [taskId, JSON.stringify({ commentId: 31, by: 'claude[bot]', body: 'One finding.' })]
+       values ($1, '{"kind":"engine"}', 'github_comment_seen', $2, now() - make_interval(secs => $3))`,
+      [
+        taskId,
+        JSON.stringify({ commentId: 31, by: 'claude[bot]', body: 'One finding.' }),
+        COMMENT_SETTLE_SECONDS + 60
+      ]
     );
     // An id the database refuses fails that task's share of the pass, as a lost connection would.
     const failures = await forwardSettledComments(pool, fakeGitHub().port, ['not-a-task', taskId]);

@@ -33,7 +33,7 @@ Roles are per project and live in Officina, never in repository permissions. A m
 | `verify_result`    | check a result when its approval policy names them                                                                | no      | yes         | yes        | yes   |
 | `triage`           | accept or decline requests, and send anyone's request on                                                          | no      | no          | yes        | yes   |
 | `build`            | claim a build and hand it in, built by hand or with their own agents (also anyone with the `developer` domain)    | no      | no          | yes        | yes   |
-| `steer`            | pause, resume, review by hand or cancel any task, and hand a claimed build back                                   | no      | no          | yes        | yes   |
+| `steer`            | cancel any task, and take over a build another member claimed                                                     | no      | no          | yes        | yes   |
 | `see_runs`         | see agent runs, their logs and costs                                                                              | no      | no          | yes        | yes   |
 | `decide_learnings` | accept or reject learnings                                                                                        | no      | no          | yes        | yes   |
 | `merge`            | merge results on GitHub                                                                                           | no      | no          | yes        | yes   |
@@ -50,14 +50,14 @@ A domain can grant one action below its least role (`DOMAIN_GRANTS`): the `confi
 
 **At a glance.** The matrix above is the rule; this is the same thing by person, with the approver and builder roles most projects name. "Named" means the gate's policy asks for them: by role, by domain, or as the requester.
 
-| Who                | How a project sets it                              | Sees every task | Requests, comments, answers | Approves the plan | Checks the result | Triage | Claims a build and hands it in | Pauses or cancels any task | Sees runs and costs | Merges | Manages members |
-| ------------------ | -------------------------------------------------- | --------------- | --------------------------- | ----------------- | ----------------- | ------ | ------------------------------ | -------------------------- | ------------------- | ------ | --------------- |
-| Watcher            | role `watcher`                                     | yes             | no                          | no                | no                | no     | no                             | no                         | no                  | no     | no              |
-| Contributor        | role `contributor`                                 | yes             | yes                         | when named        | when named        | no     | no                             | no                         | no                  | no     | no              |
-| Product approver   | any contributor or above with the `product` domain | yes             | yes                         | when named        | when named        | no     | no                             | no                         | no                  | no     | no              |
-| Developer          | any contributor with the `developer` domain        | yes             | yes                         | when named        | when named        | no     | yes                            | no                         | no                  | no     | no              |
-| Technical reviewer | role `maintainer` (the floor every gate needs)     | yes             | yes                         | yes               | yes               | yes    | yes                            | yes                        | yes                 | yes    | no              |
-| Owner              | role `owner`                                       | yes             | yes                         | yes               | yes               | yes    | yes                            | yes                        | yes                 | yes    | yes             |
+| Who                | How a project sets it                              | Sees every task | Requests, comments, answers | Approves the plan | Checks the result | Triage | Claims a build and hands it in | Cancels any task | Sees runs and costs | Merges | Manages members |
+| ------------------ | -------------------------------------------------- | --------------- | --------------------------- | ----------------- | ----------------- | ------ | ------------------------------ | ---------------- | ------------------- | ------ | --------------- |
+| Watcher            | role `watcher`                                     | yes             | no                          | no                | no                | no     | no                             | no               | no                  | no     | no              |
+| Contributor        | role `contributor`                                 | yes             | yes                         | when named        | when named        | no     | no                             | no               | no                  | no     | no              |
+| Product approver   | any contributor or above with the `product` domain | yes             | yes                         | when named        | when named        | no     | no                             | no               | no                  | no     | no              |
+| Developer          | any contributor with the `developer` domain        | yes             | yes                         | when named        | when named        | no     | yes                            | no               | no                  | no     | no              |
+| Technical reviewer | role `maintainer` (the floor every gate needs)     | yes             | yes                         | yes               | yes               | yes    | yes                            | yes              | yes                 | yes    | no              |
+| Owner              | role `owner`                                       | yes             | yes                         | yes               | yes               | yes    | yes                            | yes              | yes                 | yes    | yes             |
 
 Who does what in one task's life, where the requester, the approvers and the person who merges can all be different people:
 
@@ -259,6 +259,8 @@ approvals:
 verify: ['npm ci', 'npm run lint', 'npm run check'] # run by the builder before pushing
 release:
   on_merge: staging # what merging into the default branch deploys: production (the default), staging or nothing
+runtime:
+  allowed_hosts: ['registry.example.com'] # hosts the agents' sandbox may reach besides package registries, set on its environment when add-project runs (section 7)
 board:
   look: tecnica # the board's look until a member picks their own: modernista (the default) or tecnica
 lanes:
@@ -272,6 +274,7 @@ lanes:
     wip: 3
     diff_lines: 800
     budget_usd: 25
+    fix_rounds: 2 # times the work goes back to building (the default); past it the task waits in ready, unassigned, for a maintainer (section 5)
     approvals:
       spec_review: [{ role: maintainer }]
       verifying: [{ domain: product, when: user_visible }, { role: maintainer }]
@@ -331,12 +334,12 @@ lanes:
 
 ## 14. Phases
 
-| Phase | Scope                                                                                                                                                                                                                                              |
-| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **0** | Engine and state machine, GitHub App, Managed Agents runner, spec / builder / two reviewers / chooser / learner roles, board with columns, task page, threads, approvals, inbox; email sign-in; one project dry run with three tasks, one per lane |
-| **1** | Interviewer and request flow, spec inline comments and suggestions, live agent log, notifications (email, push), healer, per-PR preview links, metrics                                                                                             |
-| **2** | Multiple projects per workspace, triage voting, learner PRs and weekly synthesis, fallback runner, Google sign-in, chat integrations                                                                                                               |
-| **3** | Public release: install docs, hosted option evaluation, self-hosted worker runner                                                                                                                                                                  |
+| Phase         | Scope                                                                                                                                                                                                                                                                                                                                                              |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **0** (built) | Engine and state machine, GitHub App, Managed Agents runner, the eight roles (section 6), board with columns, task page, threads, approvals, Inbox; sign-in links and Sign in with GitHub; the interviewer and request flow, the live agent log; several projects per workspace; learner pull requests (section 10); onboarding, hand-ins and the Claude connector |
+| **1**         | Emailed sign-in links, spec inline comments and suggestions, notifications by email and push, healer, per-PR preview links, metrics                                                                                                                                                                                                                                |
+| **2**         | Triage voting, weekly synthesis of learnings, fallback runner, Google sign-in, chat integrations                                                                                                                                                                                                                                                                   |
+| **3**         | Public release: install docs, hosted option evaluation, self-hosted worker runner                                                                                                                                                                                                                                                                                  |
 
 Planned, and described here so the design stays whole, but not built yet:
 
