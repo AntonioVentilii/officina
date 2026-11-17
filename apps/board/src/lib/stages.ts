@@ -49,6 +49,12 @@ export const COLUMNS: readonly Column[] = [
 
 export const CLOSED: readonly Stage[] = ['declined', 'cancelled'];
 
+/** The stages a task never leaves, shipped or closed: `TERMINAL_STAGES` in `packages/core`. */
+const TERMINAL: readonly Stage[] = ['done', ...CLOSED];
+
+/** Whether a task at this stage is still open: neither shipped nor closed. */
+export const isOpen = (stage: Stage) => !TERMINAL.includes(stage);
+
 /** The path every task walks; the task page draws it as a track. */
 export const TRACK: readonly { readonly label: string; readonly stages: readonly Stage[] }[] = [
   { label: 'Request', stages: INTAKE },
