@@ -79,6 +79,43 @@ export const decodeArgs = (argv: readonly string[]): string[] =>
     ? (JSON.parse(Buffer.from(argv[1], 'base64').toString('utf8')) as string[])
     : [...argv];
 
+const need = (value: string | undefined, flag: string): string => {
+  if (!value) throw new TaskCommandError(`missing --${flag}\n\n${USAGE}`);
+  return value;
+};
+
+/** The flags a task action may carry, as the command line gave them. */
+interface ActionFlags {
+  readonly note?: string | undefined;
+  readonly text?: string | undefined;
+  readonly reason?: string | undefined;
+}
+
+/** The decision a `task` subcommand applies, or null for a subcommand that applies none. */
+export const taskActionFor = (
+  subcommand: string | undefined,
+  flags: ActionFlags
+): TaskAction | null => {
+  switch (subcommand) {
+    case 'submit':
+    case 'accept':
+    case 'claim':
+    case 'approve':
+      return { type: subcommand };
+    case 'hand-back':
+      return { type: 'release' };
+    case 'changes':
+      return { type: 'changes', note: need(flags.note, 'note') };
+    case 'answer':
+      return { type: 'answer', text: need(flags.text, 'text') };
+    case 'decline':
+    case 'cancel':
+      return { type: subcommand, reason: need(flags.reason, 'reason') };
+    default:
+      return null;
+  }
+};
+
 const agentsPort = () => {
   const auth = anthropicAuthFrom(process.env);
   if (!auth) {
@@ -130,10 +167,6 @@ const main = async () => {
   }
   const [command, subcommand] = positionals;
   const pool = new Pool({ connectionString: required('DATABASE_URL') });
-  const need = (value: string | undefined, flag: string): string => {
-    if (!value) throw new TaskCommandError(`missing --${flag}\n\n${USAGE}`);
-    return value;
-  };
   const number = () => {
     const parsed = Number(need(values.number, 'number'));
     if (!Number.isInteger(parsed) || parsed < 1)
@@ -186,23 +219,9 @@ const main = async () => {
           );
           return;
         }
-        case 'submit':
-        case 'accept':
-        case 'claim':
-        case 'hand-back':
-        case 'approve':
-        case 'changes':
-        case 'answer':
-        case 'decline':
-        case 'cancel': {
-          const action: TaskAction =
-            subcommand === 'changes'
-              ? { type: 'changes', note: need(values.note, 'note') }
-              : subcommand === 'answer'
-                ? { type: 'answer', text: need(values.text, 'text') }
-                : subcommand === 'decline' || subcommand === 'cancel'
-                  ? { type: subcommand, reason: need(values.reason, 'reason') }
-                  : { type: subcommand === 'hand-back' ? 'release' : subcommand };
+        default: {
+          const action = taskActionFor(subcommand, values);
+          if (!action) throw new TaskCommandError(USAGE);
           const result = await actOnTask(pool, { ...target, number: number(), action });
           const approval =
             result.satisfied === false
@@ -213,8 +232,6 @@ const main = async () => {
           );
           return;
         }
-        default:
-          throw new TaskCommandError(USAGE);
       }
     }
 
