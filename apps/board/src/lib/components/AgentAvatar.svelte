@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { look } from '$lib/state/look.svelte';
+  import { look } from '#lib/state/look.svelte.ts';
   import { roleCode, roleShape } from './roles';
 
   interface Props {

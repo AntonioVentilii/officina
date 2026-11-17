@@ -1,10 +1,10 @@
 <script lang="ts">
   import { CircleHelp, Pause, UserRound } from '@lucide/svelte';
-  import { initials, money, since } from '$lib/format';
-  import { STAGE_LABELS } from '$lib/stages';
-  import { look } from '$lib/state/look.svelte';
-  import { session } from '$lib/state/session.svelte';
-  import type { Card } from '$lib/types';
+  import { initials, money, since } from '#lib/format.ts';
+  import { STAGE_LABELS } from '#lib/stages.ts';
+  import { look } from '#lib/state/look.svelte.ts';
+  import { session } from '#lib/state/session.svelte.ts';
+  import type { Card } from '#lib/types.ts';
   import AgentAvatar from './AgentAvatar.svelte';
   import LaneChip from './LaneChip.svelte';
 

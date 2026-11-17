@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { isActive } from '$lib/runs';
+  import { isActive } from '#lib/runs.ts';
   import { ChevronRight, CircleAlert, CircleCheck, GitPullRequest, Undo2 } from '@lucide/svelte';
   import { tick } from 'svelte';
-  import { get } from '$lib/api';
-  import { coalesce, live, refreshesAll } from '$lib/state/live.svelte';
-  import type { LogEntry, Run } from '$lib/types';
+  import { get } from '#lib/api.ts';
+  import { coalesce, live, refreshesAll } from '#lib/state/live.svelte.ts';
+  import type { LogEntry, Run } from '#lib/types.ts';
   import AgentAvatar from './AgentAvatar.svelte';
   import Markdown from './Markdown.svelte';
 

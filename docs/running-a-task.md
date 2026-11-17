@@ -115,7 +115,8 @@ back another person's build the same way.
    what you checked for each item on the task page (**Check**: ok, a problem, or partly checked,
    with one line on how), or ask Claude to record it with `check_item`. The checklist comment on
    the pull request follows: an item is ticked once its latest check is ok, and says who checked
-   it and how. "Looks good" does not tick anything; items left open show as not checked.
+   it and how. `task show` lists the same items with where each stands. "Looks good" does not tick
+   anything; items left open show as not checked.
 
    ```bash
    scripts/officina task approve --number 1

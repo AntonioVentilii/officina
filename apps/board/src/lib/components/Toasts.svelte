@@ -1,6 +1,6 @@
 <script lang="ts">
   import { CircleAlert, CircleCheck } from '@lucide/svelte';
-  import { toasts } from '$lib/state/toasts.svelte';
+  import { toasts } from '#lib/state/toasts.svelte.ts';
 </script>
 
 <div class="toasts" aria-live="polite">
