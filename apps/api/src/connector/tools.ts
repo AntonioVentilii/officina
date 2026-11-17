@@ -119,7 +119,7 @@ const peopleOf = (who: Requirement['who']) =>
 /** One requirement of a gate: who holds it, and who of them approved. */
 const requirementLine = (requirement: Requirement) =>
   requirement.waived
-    ? `${requirement.label} (nobody holds it, so it is waived)`
+    ? `${requirement.label} (waived: nobody could approve it)`
     : `${requirement.label} (${peopleOf(requirement.who) || 'nobody yet'})`;
 
 /** Who asked, who approves each gate and who merges, so nobody assumes the requester decides. */
