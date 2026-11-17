@@ -9,6 +9,7 @@
   import AgentAvatar from './AgentAvatar.svelte';
   import HandIn from './HandIn.svelte';
   import Markdown from './Markdown.svelte';
+  import ProposalNotice from './ProposalNotice.svelte';
   import QuestionOptions from './QuestionOptions.svelte';
 
   interface Props {
@@ -317,6 +318,9 @@
           >
         {/if}
         {#if can('approve') && gate}
+          {#if task.proposal}
+            <ProposalNotice number={task.number} proposal={task.proposal} {onchanged} />
+          {/if}
           {#if confirming}
             <span class="confirm">
               Still open: {open}. They show as such on the pull request.

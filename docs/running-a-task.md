@@ -35,7 +35,7 @@ Add Officina to Claude once and do everything below from a chat, in plain words.
 
 1. In claude.ai open **Customize > Connectors**, choose **Add > Add custom connector**, name it Officina and paste `<public URL>/mcp`. Press **Continue** and **Add**, keeping the sign-in it detects (OAuth, registered automatically), then **Connect**. The desktop app picks it up from the same account. In Claude Code: `claude mcp add --transport http officina <public URL>/mcp`, then `/mcp` to sign in.
 2. Claude opens the board's **Connect an app** page. Sign in if asked, check the name, and press **Allow**. The welcome guide waits until after this page.
-3. Ask things like "what is waiting on me in Officina?", "open a request: the Sign up button should say Join", or "show task 12 and help me check it". Claude asks what it needs, then calls Officina as you, with your role.
+3. Ask things like "what is waiting on me in Officina?", "open a request: the Sign up button should say Join", or "show task 12 and help me check it". Claude asks what it needs, then calls Officina as you, with your role. An approval you give in chat is only a proposal: it shows in yellow on the task's page and counts once you press Approve there, or Discard to drop it.
 
 To stop it, remove the connector in Claude.
 

@@ -85,7 +85,10 @@ const ERROR_TEXT: Record<StoreError, string> = {
   stale_head: 'that review is about an earlier version of the change',
   not_found: 'task not found',
   conflict: 'the task changed meanwhile; look at it again and retry',
-  invalid_config: "the project's config is invalid"
+  invalid_config: "the project's config is invalid",
+  confirm_on_board:
+    'an approval through a connected app is only a proposal; confirm it on the board',
+  no_proposal: 'no approval proposed for you is waiting on this task'
 };
 
 interface Target {
@@ -270,6 +273,8 @@ export type TaskAction =
   | { readonly type: 'claim' }
   | { readonly type: 'release' }
   | { readonly type: 'approve' }
+  | { readonly type: 'propose_approval' }
+  | { readonly type: 'discard_proposal' }
   | { readonly type: 'changes'; readonly note: string }
   /**
    * With `option`, the letter of an option the question offers, `version` the task version the
@@ -288,11 +293,6 @@ const toCommand = (action: TaskAction): Command => {
   switch (action.type) {
     case 'submit':
       return { type: 'submit_request' };
-    case 'accept':
-    case 'claim':
-    case 'release':
-    case 'approve':
-      return { type: action.type };
     case 'changes':
       return { type: 'request_changes', note: action.note };
     case 'answer':
@@ -300,6 +300,9 @@ const toCommand = (action: TaskAction): Command => {
     case 'cancel':
     case 'decline':
       return { type: action.type, reason: action.reason };
+    // The rest carry nothing but the command they name.
+    default:
+      return { type: action.type };
   }
 };
 

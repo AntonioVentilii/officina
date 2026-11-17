@@ -37,6 +37,10 @@
           : 'marked it as not user-visible';
       case 'approval_recorded':
         return `approved ${GATES[String(p.gate)] ?? p.gate}${p.satisfied ? '' : ', more approvals needed'}`;
+      case 'approval_proposed':
+        return `proposed approving ${GATES[String(p.gate)] ?? p.gate}, to confirm on the board`;
+      case 'approval_proposal_discarded':
+        return `discarded the approval proposed for ${GATES[String(p.gate)] ?? p.gate}`;
       case 'changes_requested':
         return 'asked for changes';
       case 'assigned':

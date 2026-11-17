@@ -131,6 +131,8 @@ const actionSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('accept') }),
   z.strictObject({ type: z.literal('claim') }),
   z.strictObject({ type: z.literal('approve') }),
+  // The member withdraws an approval Claude proposed for them; approving confirms it instead.
+  z.strictObject({ type: z.literal('discard_proposal') }),
   z.strictObject({
     type: z.literal('changes'),
     note: z.string().trim().min(1).max(INPUT_LIMITS.note)
