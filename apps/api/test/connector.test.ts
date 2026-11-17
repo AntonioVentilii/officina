@@ -15,6 +15,7 @@ import { Pool } from 'pg';
 import {
   PLAN,
   applyOrThrow,
+  createAutoVerifiedTask,
   createTaskInVerifying,
   recordChooserChecklist,
   resetAndSeed,
@@ -627,6 +628,17 @@ describe.skipIf(!url)('connector for Claude', () => {
       [taskId]
     );
     expect(requested.rows).toEqual([{ note: 'Cover Italian too.' }]);
+  });
+
+  test('show_task says a result was auto-verified instead of naming approvers for it', async () => {
+    const token = (await connect()).tokens.access_token as string;
+    await createAutoVerifiedTask(pool, seeded);
+
+    const shown = (await tool(token, 'show_task', { number: 1 })).content[0]!.text;
+    expect(shown).toContain(
+      "Check the result: skipped: a low-risk change the agents and GitHub's checks reviewed."
+    );
+    expect(shown).toContain('Approve the plan: the requester');
   });
 
   test('Claude records what was checked for an item, as the member via Claude, and show_task reads it back', async () => {

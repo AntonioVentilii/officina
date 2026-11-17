@@ -11,11 +11,8 @@ import {
 } from '@officina/db';
 import { parseProjectConfig } from '@officina/core';
 import { Pool } from 'pg';
-import { CONFIG_YAML } from '../../../packages/core/test/fixtures';
 import {
-  PLAN,
-  applyOrThrow,
-  createTaskInChoosing,
+  createAutoVerifiedTask,
   createTaskInMerging,
   createTaskInVerifying,
   recordChooserChecklist,
@@ -479,21 +476,7 @@ describe.skipIf(!url)('board api', () => {
 
   test('a result the lifecycle let skip the people check names no approvers', async () => {
     const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
-    const autoVerifying = CONFIG_YAML.replace(
-      'version: 1',
-      'version: 1\nrelease: { on_merge: staging }'
-    ).replace('  green:\n', '  green:\n    auto_verify: true\n');
-    await pool.query('update projects set config = $2 where id = $1', [
-      seeded.projectId,
-      JSON.stringify(Bun.YAML.parse(autoVerifying))
-    ]);
-    const taskId = await createTaskInChoosing(pool, seeded);
-    await applyOrThrow(
-      pool,
-      taskId,
-      { type: 'choose', userVisible: true, plan: { ...PLAN, depth: 'glance' } },
-      { kind: 'agent', role: 'chooser', version: 1 }
-    );
+    await createAutoVerifiedTask(pool, seeded);
 
     const task = await json(await call(owner, `/api/projects/${seeded.projectId}/tasks/1`));
     expect(task.stage).toBe('merging');
