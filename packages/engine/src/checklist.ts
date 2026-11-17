@@ -51,19 +51,6 @@ const beforeAfterTable = (rows: NonNullable<ChooserResult['beforeAfter']>): stri
       ]
     : [];
 
-/** The verification checklist as markdown with every box empty, for a person reading it whole. */
-export const checklistMarkdown = (result: unknown, link: string): string | null => {
-  const chosen = result as ChooserResult | null;
-  if (!chosen?.checklist?.length) return null;
-  const table = beforeAfterTable(chosen.beforeAfter ?? []);
-  return [
-    `### Verification checklist for ${link}`,
-    '',
-    ...chosen.checklist.map((item) => `- [ ] ${item}`),
-    ...(table.length ? ['', ...table] : [])
-  ].join('\n');
-};
-
 /** Where the verification of one head stands, as the comment says it under the items. */
 export type Verdict =
   | { readonly kind: 'waiting'; readonly approvedBy: readonly string[] }

@@ -228,6 +228,11 @@ describe.skipIf(!url)('board api', () => {
         evidence: 'the page answers 404'
       }
     ]);
+    // `task show` reads the same checks.
+    const cli = await describeTask(pool, { number: 1 });
+    expect(cli).toContain(
+      'Checklist:\n1. Read the title [not checked]\n2. Open the page [problem, Antonio on the board: the page answers 404]'
+    );
   });
 
   test('a sign-in link works once and opens a session', async () => {
