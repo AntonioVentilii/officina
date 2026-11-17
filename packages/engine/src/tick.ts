@@ -13,7 +13,7 @@ import {
   listTasksAwaitingRewrite,
   loadTaskContext
 } from '@officina/db';
-import { RUNNER_ROLES, type RunnerRole } from '@officina/runner';
+import { isRunnerRole, type RunnerRole } from '@officina/runner';
 import { runAgentStep, type EngineDependencies, type StepResult } from './step';
 
 export interface DueStep {
@@ -27,9 +27,6 @@ export interface TickReport {
     readonly result: StepResult | { readonly status: 'error'; readonly message: string };
   })[];
 }
-
-const isRunnerRole = (role: string): role is RunnerRole =>
-  (RUNNER_ROLES as readonly string[]).includes(role);
 
 /**
  * Hands ready tasks to the builder agent within lane limits and lists every agent step now due.
