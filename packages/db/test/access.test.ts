@@ -44,8 +44,8 @@ describe.skipIf(!url)('access log', () => {
 
   test('two apps with the same name are each logged once a day, by their client id', async () => {
     const redirectUris = ['https://claude.ai/api/mcp/auth_callback'];
-    const first = await registerConnectorClient(pool, { name: 'Claude', redirectUris });
-    const second = await registerConnectorClient(pool, { name: 'Claude', redirectUris });
+    const first = (await registerConnectorClient(pool, { name: 'Claude', redirectUris }))!;
+    const second = (await registerConnectorClient(pool, { name: 'Claude', redirectUris }))!;
     await use(first.id);
     await use(first.id);
     await use(second.id);
@@ -56,7 +56,7 @@ describe.skipIf(!url)('access log', () => {
   });
 
   test('two refreshes at the same moment still log one use for the day', async () => {
-    const app = await registerConnectorClient(pool, { name: 'Claude', redirectUris: [] });
+    const app = (await registerConnectorClient(pool, { name: 'Claude', redirectUris: [] }))!;
     const used = { memberId: seeded.ownerId, clientId: app.id, clientName: app.name };
     const one = await pool.connect();
     const other = await pool.connect();
@@ -80,7 +80,7 @@ describe.skipIf(!url)('access log', () => {
   });
 
   test('a revoke waits for a rotation in flight and deletes the tokens it issued too', async () => {
-    const app = await registerConnectorClient(pool, { name: 'Claude', redirectUris: [] });
+    const app = (await registerConnectorClient(pool, { name: 'Claude', redirectUris: [] }))!;
     await use(app.id);
     const grantId = (
       await pool.query<{ grant_id: string }>('select grant_id from connector_tokens limit 1')

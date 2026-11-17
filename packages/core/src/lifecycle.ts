@@ -19,7 +19,15 @@ import {
 } from './guards';
 import type { HandoffNeed } from './handoffs';
 import { computeLane, redPaths, stricterLane, type Lane } from './lanes';
-import { GATE_ACTIONS, PERMISSIONS, can, canAnswer, readsTask, type Action } from './permissions';
+import {
+  GATE_ACTIONS,
+  PERMISSIONS,
+  buildsTask,
+  can,
+  canAnswer,
+  readsTask,
+  type Action
+} from './permissions';
 import {
   applicableRequirements,
   distinctRequirements,
@@ -983,13 +991,7 @@ export const decide = (
 
     case 'claim': {
       const builder = memberFor(actor, context);
-      // Nobody builds what they may not read.
-      if (
-        actor.kind !== 'member' ||
-        !builder ||
-        !can(builder, 'build') ||
-        !readsTask(builder, task)
-      )
+      if (actor.kind !== 'member' || !builder || !buildsTask(builder, task))
         return fail('not_allowed');
       const assignee: Assignee = { kind: 'member', memberId: actor.memberId };
       if (task.stage === 'ready') {
@@ -1021,6 +1023,11 @@ export const decide = (
       if (task.stage !== 'building') return fail('wrong_stage');
       const assignee = task.assignee;
       if (assignee === null || !isAssignee(assignee, actor)) return fail('not_allowed');
+      // A person hands in only while they may still build the task they claimed.
+      if (actor.kind === 'member') {
+        const builder = memberFor(actor, context);
+        if (!builder || !buildsTask(builder, task)) return fail('not_allowed');
+      }
 
       return landPush(task, command, context, pushedEvent(command));
     }

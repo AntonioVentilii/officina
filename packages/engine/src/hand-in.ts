@@ -1,5 +1,6 @@
 import {
   branchForTask,
+  buildsTask,
   memberActor,
   parseProjectConfig,
   type ConnectedApp,
@@ -10,9 +11,11 @@ import {
   appendTaskEvent,
   applyCommand,
   HAND_IN_EVENT,
+  loadProjectMember,
   loadTask,
   loadTaskContext,
-  type StoreError
+  type StoreError,
+  type StoredTaskContext
 } from '@officina/db';
 import type { GitHubClient } from '@officina/github';
 import type { Pool } from 'pg';
@@ -142,6 +145,28 @@ const pullRequestProblems = async (
 };
 
 /**
+ * A hand-in repeated once its push was applied: it opens the pull request a failed first call left
+ * and reads the checks again. No lifecycle command runs here, so whoever may no longer build the
+ * task, as `push` requires, opens nothing.
+ */
+const handInAgain = async (
+  deps: { readonly pool: Pool; readonly github: HandInPort },
+  input: {
+    readonly context: Pick<StoredTaskContext, 'projectId' | 'task' | 'pullRequest'>;
+    readonly memberId: string;
+    readonly checks: ChecksInput;
+    readonly open: () => ReturnType<typeof openTaskPullRequest>;
+  }
+): Promise<HandInResult> => {
+  const { context } = input;
+  const builder = await loadProjectMember(deps.pool, context.projectId, input.memberId);
+  if (!builder || !buildsTask(builder, context.task)) return { ok: false, error: 'not_allowed' };
+  const pr = await input.open();
+  const stage = await stageAfterChecks(deps, input.checks, context.task);
+  return { ok: true, stage, pullRequest: pr?.number ?? context.pullRequest };
+};
+
+/**
  * A developer who claimed a build hands in what they pushed to the task branch, built by hand or
  * with their own agents. Officina reads the push from GitHub, applies it as theirs through the
  * same `push` command an agent's build uses (lanes, guardrails, the catalog check), opens the
@@ -168,11 +193,8 @@ export const handInBuild = async (
       built
     });
   const checks = { taskId: input.taskId, ref: { installationId, repo: context.repo }, branch };
-  if (handedIn(context.task, input.memberId)) {
-    const pr = await open();
-    const stage = await stageAfterChecks(deps, checks, context.task);
-    return { ok: true, stage, pullRequest: pr?.number ?? context.pullRequest };
-  }
+  if (handedIn(context.task, input.memberId))
+    return handInAgain(deps, { context, memberId: input.memberId, checks, open });
   const facts = await readPush(deps.github, checks.ref, {
     base: context.defaultBranch,
     branch,

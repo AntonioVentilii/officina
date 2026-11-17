@@ -141,6 +141,15 @@ export const readsTask = (
 ): boolean => !task.guards.includes('confidential') || can(member, 'see_confidential');
 
 /**
+ * Whether a member may build a task: claim it, and hand in what they built for as long as they hold
+ * it. Nobody builds what they may not read.
+ */
+export const buildsTask = (
+  member: Pick<Member, 'role'> & Partial<Pick<Member, 'domains'>>,
+  task: { readonly guards: readonly Guard[] }
+): boolean => can(member, 'build') && readsTask(member, task);
+
+/**
  * Whether someone may manage a member everywhere that member belongs, given their own role in each
  * of the member's projects (`null` where they have none). A sign-in link signs in as the member in
  * every one of those projects, so making one needs `manage_members` in all of them.
