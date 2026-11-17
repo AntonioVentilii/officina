@@ -303,6 +303,15 @@
         {#if can('hand_in')}
           <HandIn number={task.number} branch={task.branch} {onchanged} />
         {/if}
+        {#if can('hand_back')}
+          <button
+            class="btn ghost"
+            disabled={busy}
+            onclick={() => act({ type: 'release' }, 'Handed back; it waits to be built again')}
+          >
+            Hand the build back
+          </button>
+        {/if}
         {#if can('claim')}
           <button
             class="btn primary"

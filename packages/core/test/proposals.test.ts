@@ -72,6 +72,18 @@ describe('approvals through a connected app', () => {
     expect(driver.attempt(task, { type: 'approve' }, asMember(owner))).toMatchObject({ ok: true });
   });
 
+  test('a member who already approved what the gate holds gets no proposal on top of it', () => {
+    const task = inSpecReview(driver);
+    const proposed = decide(task, { type: 'propose_approval' }, throughClaude, {
+      config: driver.config,
+      members: [owner, watcher],
+      approvals: [{ memberId: owner.id, subject: 'spec:1' }],
+      onboardingOpen: false,
+      proposals: []
+    });
+    expect(proposed).toEqual({ ok: true, task, events: [] });
+  });
+
   test('a proposal asks what an approval asks: on the board, or from someone who may not approve, it is refused', () => {
     const task = inSpecReview(driver);
     expect(decideWith(task, [], 'propose_approval', asMember(owner))).toEqual({

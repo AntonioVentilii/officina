@@ -42,7 +42,7 @@ import {
   resolveProjectMember,
   type StoreError
 } from '@officina/db';
-import { checklistMarkdown, handInBuild, type HandInPort } from '@officina/engine';
+import { handInBuild, type HandInPort } from '@officina/engine';
 import { GitHubError } from '@officina/github';
 import {
   approvalState,
@@ -53,6 +53,7 @@ import {
   questionFor,
   type ApprovalState
 } from './board';
+import { checklistLines, checklistView, type ChosenChecklist } from './checklist-view';
 import type { Pool, PoolClient } from 'pg';
 
 /** A refused task command, with the HTTP status the API answers it with. */
@@ -546,11 +547,17 @@ export const describeTask = async (
 
   if (context.pullRequest && reads)
     lines.push('', `Pull request: https://github.com/${context.repo}/pull/${context.pullRequest}`);
-  const checklist = checklistMarkdown(
-    await latestChooserResult(pool, taskId),
-    `task ${context.number}`
-  );
-  if (checklist) lines.push('', shown(checklist));
+  const checklist = await checklistView(pool, {
+    taskId,
+    task,
+    viewer,
+    chosen: (await latestChooserResult(pool, taskId)) as ChosenChecklist | null
+  });
+  if (checklist?.checklist.length)
+    lines.push(
+      '',
+      ...(reads ? checklistLines(checklist, 'Checklist:') : ['Checklist:', CONFIDENTIAL])
+    );
   if (context.latestSpec)
     lines.push('', `Spec, version ${task.specVersion}:`, '', shown(context.latestSpec));
 

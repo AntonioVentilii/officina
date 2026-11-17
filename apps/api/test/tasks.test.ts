@@ -3,6 +3,7 @@ import { findTaskIdByNumber } from '@officina/db';
 import type { HandInPort } from '@officina/engine';
 import { GitHubError } from '@officina/github';
 import { Pool } from 'pg';
+import { taskActionFor } from '../src/cli';
 import { invite } from '../src/people';
 import { PLAN, applyOrThrow, resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
 import { gitHubWith } from '../../../packages/engine/test/fake-github';
@@ -297,6 +298,15 @@ describe.skipIf(!url)('task commands', () => {
     await applyOrThrow(pool, taskId, { type: 'claim' }, seeded.owner);
     return taskId;
   };
+
+  test('task hand-back gives the claimed build back, and the task waits in ready again', async () => {
+    const taskId = await claimedBuild();
+    const action = taskActionFor('hand-back', {});
+    if (!action) throw new Error('hand-back applies no action');
+    expect(await actOnTask(pool, { number: 1, action })).toEqual({ stage: 'ready' });
+    const task = await pool.query('select stage, assignee from tasks where id = $1', [taskId]);
+    expect(task.rows[0]).toEqual({ stage: 'ready', assignee: null });
+  });
 
   const handInInput = {
     number: 1,

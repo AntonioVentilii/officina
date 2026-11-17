@@ -113,6 +113,12 @@ export type Actor =
   | { readonly kind: 'agent'; readonly role: AgentRole; readonly version: number }
   | { readonly kind: 'engine' };
 
+/**
+ * How a connected app is told apart from another with the same name: the start of its grant's id,
+ * shown on `/connect` and next to everything it did, so the two can be matched.
+ */
+export const connectionRef = (grantId: string): string => grantId.slice(0, 6).toUpperCase();
+
 /** Officina itself acting: dispatching, recording GitHub events, blocking a failed step. */
 export const ENGINE: Actor = { kind: 'engine' };
 
@@ -1051,9 +1057,14 @@ export const decide = (
       const allowed = approvalFor(task, actor, context);
       if (!allowed.ok) return fail(allowed.error);
       const proposal = { gate: allowed.gate, subject: allowed.subject, memberId: actor.memberId };
-      // Proposed again, it is the same proposal: nothing new to record.
+      // Proposed again, or already approved by the member, there is nothing to wait for: nothing new
+      // to record.
       const open = (context.proposals ?? []).some((other) => sameProposal(other, proposal));
-      return ok(task, open ? [] : [{ type: 'approval_proposed', ...proposal }]);
+      const approved = context.approvals.some(
+        (approval) =>
+          approval.memberId === proposal.memberId && approval.subject === proposal.subject
+      );
+      return ok(task, open || approved ? [] : [{ type: 'approval_proposed', ...proposal }]);
     }
 
     case 'discard_proposal': {
