@@ -1,17 +1,18 @@
 <script lang="ts">
+  import type { Via } from '$lib/types';
+
   interface Props {
-    /** The name the app gave itself when it connected; Officina cannot check it. */
-    name: string | null;
+    via: Via | null;
   }
 
-  let { name }: Props = $props();
+  let { via }: Props = $props();
 </script>
 
-{#if name}
+{#if via}
   <span
     class="via"
-    title={`Done through the Claude connector, by an app this member allowed to act for them. "${name}" is the name the app gave itself; Officina does not verify it.`}
-    >via Claude (app named "{name}")</span
+    title={`Done through the Claude connector, by an app this member allowed to act for them: connection ${via.connection} under Connected apps. "${via.client}" is the name the app gave itself; Officina does not verify it.`}
+    >{via.label} (app named "{via.client}", connection {via.connection})</span
   >
 {/if}
 

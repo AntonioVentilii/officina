@@ -102,7 +102,9 @@
               <div>
                 <strong>{app.returnsTo.join(', ')}</strong>
                 <span class="muted">calls itself “{app.client}”</span>
-                <div class="faint small">Last renewed {ago(app.renewedAt, clock.now)}</div>
+                <div class="faint small">
+                  Connection {app.connection}, last renewed {ago(app.renewedAt, clock.now)}
+                </div>
               </div>
               <button class="btn ghost" onclick={() => revoke(app)}>Revoke</button>
             </li>
