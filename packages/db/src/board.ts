@@ -1,6 +1,7 @@
 import type { Actor, DomainEvent, Task } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
 import { autoMergeIsOn, wasAutoVerified } from './github';
+import { learningPullRequestsOf, type LearningPullRequest } from './learnings';
 import { RUN_IS_ACTIVE } from './run-status';
 
 type Queryable = Pool | PoolClient;
@@ -36,6 +37,8 @@ export interface BoardTaskRow {
   readonly autoVerified: boolean;
   /** GitHub may merge the pull request on its own, as the engine reads it (`handedToGitHub`). */
   readonly autoMergeOn: boolean;
+  /** The pull requests opened for the task's learnings, which outlive its own merge. */
+  readonly learningPullRequests: readonly LearningPullRequest[];
 }
 
 const BOARD_COLUMNS = `
@@ -57,7 +60,8 @@ const BOARD_COLUMNS = `
     t.created_at
   ) as "stageSince",
   ${wasAutoVerified('t.id')} as "autoVerified",
-  ${autoMergeIsOn('t.id')} as "autoMergeOn"`;
+  ${autoMergeIsOn('t.id')} as "autoMergeOn",
+  ${learningPullRequestsOf('t.id')} as "learningPullRequests"`;
 
 export const listBoardTasks = async (db: Queryable, projectId: string): Promise<BoardTaskRow[]> =>
   (

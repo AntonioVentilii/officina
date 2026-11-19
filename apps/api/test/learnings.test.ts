@@ -392,6 +392,38 @@ describe.skipIf(!url)('learning decisions', () => {
     expect(reads).toEqual([77, 77]);
   });
 
+  test('a learning pull request closed while its webhook was missed is closed on the next pass', async () => {
+    const learning = await propose('docs');
+    await decide(pool, fakeGitHub().port, owner(), {
+      id: learning.id,
+      decision: 'accept',
+      rewrittenAt: null
+    });
+    const reads: number[] = [];
+    const github = {
+      pullRequest: async ({ pullRequest }: { pullRequest: number }) => {
+        reads.push(pullRequest);
+        return { node_id: 'PR', head: { sha: 'learn1' }, state: 'closed', merged: false };
+      }
+    };
+
+    expect(await catchUpLearningPullRequests(pool, github, seeded.projectId)).toEqual([]);
+    expect((await listLearnings(pool, seeded.projectId))[0]).toMatchObject({
+      status: 'accepted',
+      prState: 'closed'
+    });
+    // Closed, it is not read again, and a second close changes nothing.
+    await catchUpLearningPullRequests(pool, github, seeded.projectId);
+    expect(reads).toEqual([77]);
+    const closedAt = await pool.query('select pr_closed_at from learnings');
+    await handleWebhookAction(pool, {
+      kind: 'pull_request_closed',
+      repo: 'ViciApp/vici-app',
+      prNumber: 77
+    });
+    expect((await pool.query('select pr_closed_at from learnings')).rows).toEqual(closedAt.rows);
+  });
+
   test('a merged learning pull request is applied whatever the case of the repository name', async () => {
     const learning = await propose('docs');
     await decide(pool, fakeGitHub().port, owner(), {

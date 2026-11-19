@@ -8,6 +8,33 @@ type Queryable = Pool | PoolClient;
 
 export type LearningStatus = 'proposed' | 'accepted' | 'rejected' | 'applied';
 
+/**
+ * Where a learning's pull request stands on GitHub, as the webhooks and the catch-up last read it:
+ * a merge makes the learning applied, a close without merging records when it was closed.
+ */
+export type LearningPullRequestState = 'open' | 'merged' | 'closed';
+
+/** A pull request Officina opened for a learning of a task. */
+export interface LearningPullRequest {
+  readonly number: number;
+  readonly url: string;
+  readonly state: LearningPullRequestState;
+}
+
+/** The `LearningPullRequestState` of learning `l`, the one place it is derived. */
+const PR_STATE = `case when l.status = 'applied' then 'merged'
+  when l.pr_closed_at is not null then 'closed' else 'open' end`;
+
+/**
+ * The pull requests opened for the learnings of the task with id `taskId` (a column of the outer
+ * query), oldest first, as a JSON list of `LearningPullRequest`.
+ */
+export const learningPullRequestsOf = (taskId: string) => `coalesce(
+  (select json_agg(json_build_object('number', l.pr_number, 'url', l.pr_url, 'state', ${PR_STATE})
+     order by l.pr_number)
+   from learnings l where l.task_id = ${taskId} and l.pr_number is not null),
+  '[]'::json)`;
+
 /** Where the learner is with rewriting an edit that no longer applies; null when none was asked. */
 export type LearningRewrite = 'requested' | 'failed';
 
@@ -30,6 +57,8 @@ export interface LearningRow {
   readonly decisionNote: string | null;
   readonly prNumber: number | null;
   readonly prUrl: string | null;
+  /** Null until an accept opened its pull request. */
+  readonly prState: LearningPullRequestState | null;
   readonly rewrite: LearningRewrite | null;
   readonly rewrittenAt: Date | null;
   readonly createdAt: Date;
@@ -40,7 +69,8 @@ const COLUMNS = `
   t.title as "taskTitle", l.title, l.text as lesson, l.evidence->>'text' as evidence, l.target,
   l.file, l.find, l.proposed_change as text, l.status, l.decided_by as "decidedBy",
   l.decided_at as "decidedAt", l.decision_note as "decisionNote", l.pr_number as "prNumber",
-  l.pr_url as "prUrl", l.rewrite, l.rewritten_at as "rewrittenAt", l.created_at as "createdAt"`;
+  l.pr_url as "prUrl", case when l.pr_number is null then null else ${PR_STATE} end as "prState",
+  l.rewrite, l.rewritten_at as "rewrittenAt", l.created_at as "createdAt"`;
 
 export interface NewLearning {
   readonly title: string;
@@ -210,8 +240,8 @@ export const failLearningRewrite = async (db: Queryable, id: string) => {
 };
 
 /**
- * The pull requests of a project's accepted learnings, still waiting to merge as far as Officina
- * knows, for the catch-up of a merge whose webhook was missed.
+ * The pull requests of a project's accepted learnings, still open as far as Officina knows, for
+ * the catch-up of a merge or a close whose webhook was missed.
  */
 export const listLearningPullRequests = async (
   db: Queryable,
@@ -223,7 +253,7 @@ export const listLearningPullRequests = async (
          l.pr_number
        from learnings l join projects p on p.id = l.project_id
        where l.project_id = $1 and l.status = 'accepted' and l.pr_number is not null
-         and p.github_installation_id is not null
+         and l.pr_closed_at is null and p.github_installation_id is not null
        order by l.pr_number`,
       [projectId]
     )
@@ -241,6 +271,26 @@ export const markLearningsApplied = async (db: Queryable, repo: string, prNumber
        from projects p
        where p.id = l.project_id and lower(p.github_repo) = lower($1) and l.pr_number = $2
          and l.status = 'accepted'
+       returning l.id`,
+      [repo, prNumber]
+    )
+  ).rows.map((row) => row.id);
+
+/**
+ * A learning pull request closed without merging is recorded as closed, once: the task it came
+ * from no longer waits on it. GitHub reopens it only as a new pull request.
+ */
+export const markLearningPullRequestsClosed = async (
+  db: Queryable,
+  repo: string,
+  prNumber: number
+) =>
+  (
+    await db.query<{ id: string }>(
+      `update learnings l set pr_closed_at = now()
+       from projects p
+       where p.id = l.project_id and lower(p.github_repo) = lower($1) and l.pr_number = $2
+         and l.status = 'accepted' and l.pr_closed_at is null
        returning l.id`,
       [repo, prNumber]
     )

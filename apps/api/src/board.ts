@@ -389,6 +389,28 @@ export const approvalState = async (
 const handoffNeeds = (blocked: Blocked): string[] =>
   (blocked.handoff?.needs ?? []).map((need) => HANDOFF_NEEDS[need].label);
 
+/**
+ * The pull requests of the task's learnings, for those who see learnings (`see_runs`) and read the
+ * task; everyone else sees none, as they see no learnings.
+ */
+const learningPullRequestsFor = (row: BoardTaskRow, viewer: BoardViewer) =>
+  seesTechnical(viewer) && readsTask(viewer, row) ? row.learningPullRequests : [];
+
+/**
+ * A finished task waits on nobody, unless a learning pull request it gave is still open: then it
+ * waits on whoever merges in the project, as a result ready to merge does. Its stage stays as it is.
+ */
+const afterTheTask = (row: BoardTaskRow, viewer: BoardViewer): WaitingOn => {
+  const open = learningPullRequestsFor(row, viewer).filter((pr) => pr.state === 'open');
+  if (!open.length) return { kind: 'nobody', label: row.stage, me: false };
+  const numbers = open.map((pr) => `#${pr.number}`).join(', ');
+  return {
+    kind: 'github',
+    label: `Merge the learning pull request${open.length > 1 ? 's' : ''} ${numbers} on GitHub`,
+    me: can(viewerMember(viewer), 'merge')
+  };
+};
+
 const waitingOn = (
   row: BoardTaskRow,
   viewer: BoardViewer,
@@ -396,7 +418,7 @@ const waitingOn = (
   facts: Pick<ProjectFacts, 'config' | 'onboarding' | 'names'>
 ): WaitingOn => {
   const member = viewerMember(viewer);
-  if (TERMINAL_STAGES.has(row.stage)) return { kind: 'nobody', label: row.stage, me: false };
+  if (TERMINAL_STAGES.has(row.stage)) return afterTheTask(row, viewer);
   if (row.blocked) {
     const who = askedOfLabel(row.blocked.askedOf, facts.names);
     const needs = handoffNeeds(row.blocked);
@@ -609,6 +631,7 @@ const cardView = (
   stageSince: row.stageSince,
   autoVerified: row.autoVerified,
   autoMergeOn: row.autoMergeOn,
+  learningPullRequests: learningPullRequestsFor(row, viewer),
   waitingOn: waitingOn(row, viewer, approval, facts)
 });
 
@@ -1104,6 +1127,7 @@ export const learningsView = async (pool: Pool, viewer: BoardViewer) => {
     decisionNote: row.decisionNote,
     prNumber: row.prNumber,
     prUrl: row.prUrl,
+    prState: row.prState,
     rewrite: row.rewrite,
     rewrittenAt: row.rewrittenAt,
     createdAt: row.createdAt,

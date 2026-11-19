@@ -109,6 +109,18 @@ const cardLine = (context: ToolContext, project: MemberProject, card: CardView) 
 
 type TaskDetail = NonNullable<Awaited<ReturnType<typeof taskView>>>;
 
+/**
+ * The pull requests Officina opened for the task's learnings, each with its state: they outlive
+ * the task's own merge, so a done task may still have one open, waiting for someone to merge it.
+ */
+const learningPullRequestLines = (task: TaskDetail) =>
+  task.learningPullRequests.length
+    ? [
+        'Learning pull requests from this task:',
+        ...task.learningPullRequests.map((pr) => `- #${pr.number} (${pr.state}): ${pr.url}`)
+      ]
+    : [];
+
 type Requirement = TaskDetail['people']['gates'][number]['requirements'][number];
 
 /**
@@ -351,7 +363,7 @@ After it is opened, tell the person the task link and what happens next, as the 
     name: 'whats_waiting_on_me',
     title: 'What is waiting on me',
     description:
-      'Lists every task where it is the person\'s turn: questions from agents to answer, plans to approve, results to check, and merges. This is the yellow "waiting on you" block on the board. Call it when the person asks what they need to do, or after a while to see if an agent asked something.',
+      'Lists every task where it is the person\'s turn: questions from agents to answer, plans to approve, results to check, and merges, including a learning pull request a finished task left open. This is the yellow "waiting on you" block on the board. Call it when the person asks what they need to do, or after a while to see if an agent asked something.',
     input: z.object({
       project: PROJECT.describe('Only this project; leave it out to look at all of them.')
     }),
@@ -413,6 +425,7 @@ After it is opened, tell the person the task link and what happens next, as the 
         ...peopleLines(task)
       ];
       if (task.pullRequestUrl) lines.push(`Pull request: ${task.pullRequestUrl}`);
+      lines.push(...learningPullRequestLines(task));
       if (task.blocked) lines.push(...questionLines(task.blocked));
       lines.push(...allowanceLines(task));
       if (task.request)

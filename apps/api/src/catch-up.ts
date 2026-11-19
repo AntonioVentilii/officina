@@ -1,5 +1,10 @@
 import { WITH_PULL_REQUEST } from '@officina/core';
-import { listLearningPullRequests, loadTaskContext, markLearningsApplied } from '@officina/db';
+import {
+  listLearningPullRequests,
+  loadTaskContext,
+  markLearningPullRequestsClosed,
+  markLearningsApplied
+} from '@officina/db';
 import { eachTaskOnItsOwn, type TaskFailure } from '@officina/engine';
 import type { GitHubClient } from '@officina/github';
 import type { Pool } from 'pg';
@@ -44,7 +49,8 @@ export const catchUpPullRequests = async (
 
 /**
  * Marks applied the accepted learnings of a project whose pull request merged while its webhook
- * was missed, as the webhook would have (`markLearningsApplied`). Each pull request is tried on its
+ * was missed, and closed those whose pull request was closed without merging, as the webhook would
+ * have (`markLearningsApplied`, `markLearningPullRequestsClosed`). Each pull request is tried on its
  * own; the failures are returned for the log and tried again on the next pass.
  */
 export const catchUpLearningPullRequests = async (
@@ -57,6 +63,8 @@ export const catchUpLearningPullRequests = async (
     try {
       const pr = await github.pullRequest(learning);
       if (pr.merged) await markLearningsApplied(pool, learning.repo, learning.pullRequest);
+      else if (pr.state === 'closed')
+        await markLearningPullRequestsClosed(pool, learning.repo, learning.pullRequest);
     } catch (error) {
       failures.push({ pullRequest: learning.pullRequest, error: (error as Error).message });
     }

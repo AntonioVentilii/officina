@@ -5,6 +5,7 @@ import {
   findTasksByCommit,
   findTasksByPullRequest,
   loadTaskContext,
+  markLearningPullRequestsClosed,
   markLearningsApplied,
   recordBotComment,
   reviewedHead,
@@ -257,12 +258,14 @@ const handleChecksFailed = async (
 /**
  * A pull request closed without merging sends its tasks back to the start of the build, held for
  * a maintainer, and forgets the pull request so a rebuild opens a new one. Nothing on GitHub tells
- * Officina otherwise, so without this an onboarding task would hold its project forever.
+ * Officina otherwise, so without this an onboarding task would hold its project forever. A closed
+ * learning pull request is not a task; it is recorded closed, so its task stops waiting on it.
  */
 const handleClosed = async (
   pool: Pool,
   action: Extract<WebhookAction, { kind: 'pull_request_closed' }>
 ): Promise<WebhookOutcome[]> => {
+  await markLearningPullRequestsClosed(pool, action.repo, action.prNumber);
   const outcomes: WebhookOutcome[] = [];
   for (const taskId of await findTasksByPullRequest(pool, action.repo, action.prNumber)) {
     // The link is cleared in the same transaction as the move, so a crash between the two can

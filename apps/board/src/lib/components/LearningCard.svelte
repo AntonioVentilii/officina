@@ -154,6 +154,7 @@
         <a class="pr" href={learning.prUrl} target="_blank" rel="noopener noreferrer">
           <GitPullRequest size={12} />#{learning.prNumber}<ExternalLink size={11} />
         </a>
+        {#if learning.prState}{learning.prState}{/if}
       {:else if learning.status === 'accepted' && learning.target === 'agent'}
         · to apply in Officina's <span class="mono">{learning.file}</span>
       {/if}

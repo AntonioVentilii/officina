@@ -1,4 +1,7 @@
 import type { ChecklistView } from './checklist';
+import type { LearningPullRequest } from './learning-types';
+
+export type * from './learning-types';
 
 export type Stage =
   | 'request'
@@ -121,6 +124,8 @@ export interface Card {
   readonly autoVerified: boolean;
   /** GitHub's auto-merge is on: it merges once checks pass, no person needs to press merge. */
   readonly autoMergeOn: boolean;
+  /** Pull requests opened for the task's learnings; empty for those who do not see learnings. */
+  readonly learningPullRequests: readonly LearningPullRequest[];
   readonly waitingOn: WaitingOn;
   /** What the task touches that only the owner may let through, in words. */
   readonly guards: readonly string[];
@@ -276,30 +281,6 @@ export type LogEntry = { readonly id: string; readonly at: string } & (
   | { readonly kind: 'status'; readonly status: string }
   | { readonly kind: 'officina'; readonly type: string; readonly payload: unknown }
 );
-
-export interface Learning {
-  readonly id: string;
-  readonly title: string;
-  readonly lesson: string;
-  readonly evidence: string;
-  readonly target: 'docs' | 'project' | 'agent';
-  readonly file: string;
-  readonly find: string | null;
-  readonly text: string;
-  readonly status: 'proposed' | 'accepted' | 'rejected' | 'applied';
-  readonly taskNumber: number | null;
-  readonly taskTitle: string | null;
-  readonly decidedBy: string | null;
-  readonly decidedAt: string | null;
-  readonly decisionNote: string | null;
-  readonly prNumber: number | null;
-  readonly prUrl: string | null;
-  /** The learner is rewriting an edit the default branch moved past, or could not. */
-  readonly rewrite: 'requested' | 'failed' | null;
-  readonly rewrittenAt: string | null;
-  readonly createdAt: string;
-  readonly canDecide: boolean;
-}
 
 export interface MemberActivity {
   readonly id: string;

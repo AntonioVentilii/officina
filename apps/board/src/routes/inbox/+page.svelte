@@ -28,6 +28,7 @@
     'hand-in': Hand,
     verify: ListChecks,
     merge: GitMerge,
+    learning: GitMerge,
     other: Inbox
   };
 

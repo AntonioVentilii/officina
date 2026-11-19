@@ -1,7 +1,7 @@
-import type { Actor, Command } from '@officina/core';
+import { ENGINE, type Actor, type Command } from '@officina/core';
 import type { Pool } from 'pg';
 import { CONFIG_YAML } from '../../core/test/fixtures';
-import { applyCommand, createTask, migrate } from '../src';
+import { applyCommand, createTask, insertLearnings, migrate } from '../src';
 
 export interface Seeded {
   readonly projectId: string;
@@ -162,4 +162,43 @@ export const recordChooserChecklist = async (
      values ($1, 'choosing', 'managed_agents', 'chooser', 1, 'succeeded', $2)`,
     [taskId, JSON.stringify({ userVisible: true, checklist, beforeAfter: [] })]
   );
+};
+
+/**
+ * Creates a task, merges its own pull request so it is done, and records a learning from it that
+ * people accepted, whose pull request `prNumber` Officina opened and nobody merged yet.
+ */
+export const createDoneTaskWithLearningPullRequest = async (
+  pool: Pool,
+  seeded: Seeded,
+  prNumber: number
+): Promise<string> => {
+  const taskId = await createTaskInMerging(pool, seeded);
+  await applyOrThrow(pool, taskId, { type: 'merged' }, ENGINE);
+  const run = await pool.query<{ id: string }>(
+    `insert into runs (task_id, stage, runner, agent_role, agent_version, status)
+     values ($1, 'done', 'managed_agents', 'learner', 1, 'succeeded') returning id`,
+    [taskId]
+  );
+  await insertLearnings(pool, {
+    projectId: seeded.projectId,
+    taskId,
+    runId: run.rows[0]!.id,
+    learnings: [
+      {
+        title: 'Update every live locale',
+        lesson: 'Copy changes cover every live locale.',
+        evidence: 'Italian was missing in round one.',
+        target: 'docs',
+        edit: { file: 'AGENTS.md', text: 'Update every live locale.' }
+      }
+    ]
+  });
+  await pool.query(
+    `update learnings set status = 'accepted', decided_by = $2, decided_at = now(), pr_number = $3,
+       pr_url = $4
+     where task_id = $1`,
+    [taskId, seeded.ownerId, prNumber, `https://github.com/ViciApp/vici-app/pull/${prNumber}`]
+  );
+  return taskId;
 };
