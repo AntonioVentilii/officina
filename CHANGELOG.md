@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.12.0](https://github.com/AntonioVentilii/officina/compare/v1.11.1...v1.12.0) (2026-11-19)
+
+
+### Features
+
+* **core,api:** show the reviewers' findings in show_task and task show ([#273](https://github.com/AntonioVentilii/officina/issues/273)) ([cb3b314](https://github.com/AntonioVentilii/officina/commit/cb3b31452dcb95a52a7e61a22daacae418d80ad4))
+* **core,db,api,board:** allow one task a larger change than its lane's size limit ([#272](https://github.com/AntonioVentilii/officina/issues/272)) ([caf1b8f](https://github.com/AntonioVentilii/officina/commit/caf1b8f13a458605556c5831407181c93b63ab3a))
+
 ## [1.11.1](https://github.com/AntonioVentilii/officina/compare/v1.11.0...v1.11.1) (2026-11-17)
 
 
