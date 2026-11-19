@@ -338,6 +338,22 @@ describe.skipIf(!url)('task commands', () => {
     expect((await pool.query('select stage from tasks where id = $1', [taskId])).rows[0]).toEqual({
       stage: 'reviewing'
     });
+
+    // A head that turns the task stricter leaves the green allowance out of force, and says so.
+    await applyOrThrow(
+      pool,
+      taskId,
+      {
+        type: 'outside_push',
+        headSha: 'wider',
+        changedPaths: [COPY, 'src/routes/+page.svelte'],
+        addedPaths: [],
+        catalogPages: {},
+        diffLines: 700
+      },
+      { kind: 'engine' }
+    );
+    expect(await describeTask(pool, { number: 1 })).not.toContain('Size allowed');
   });
 
   test('task hand-back gives the claimed build back, and the task waits in ready again', async () => {

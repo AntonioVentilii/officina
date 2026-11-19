@@ -826,16 +826,17 @@ const confidentialView = (row: BoardTaskRow, viewer: BoardViewer) => {
 };
 
 /**
- * The size allowed for this task over its lane's limit, who allowed it and when. It says how much the
- * task may change, not what, so everyone who sees the task sees it.
+ * The size allowed for this task over its lane's limit, who allowed it and when, while it is in force:
+ * only in the lane it was granted in, as the size check reads it. It says how much the task may
+ * change, not what, so everyone who sees the task sees it.
  */
 export const allowanceView = (
-  task: Pick<Task, 'diffAllowance'>,
+  task: Pick<Task, 'diffAllowance' | 'lane'>,
   events: readonly TaskEventRow[],
   names: ReadonlyMap<string, string>
 ) => {
   const allowance = task.diffAllowance;
-  if (!allowance) return null;
+  if (!allowance || allowance.lane !== task.lane) return null;
   const granted = events.filter((event) => event.type === 'diff_allowed').at(-1);
   return {
     lines: allowance.lines,
