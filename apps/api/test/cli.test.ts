@@ -46,4 +46,20 @@ describe('cli arguments', () => {
     expect(taskActionFor('release', {})).toBeNull();
     expect(taskActionFor('list', {})).toBeNull();
   });
+
+  test('an answer is words, or an option picked with the version it was read at', () => {
+    expect(taskActionFor('answer', { text: 'Split it.' })).toEqual({
+      type: 'answer',
+      text: 'Split it.'
+    });
+    expect(taskActionFor('answer', { option: 'c', version: '7' })).toEqual({
+      type: 'answer',
+      text: '',
+      option: 'c',
+      version: 7
+    });
+    expect(() => taskActionFor('answer', { option: 'c' })).toThrow('missing --version');
+    expect(() => taskActionFor('answer', { option: 'c', version: 'seven' })).toThrow('--version');
+    expect(() => taskActionFor('answer', {})).toThrow('missing --text');
+  });
 });

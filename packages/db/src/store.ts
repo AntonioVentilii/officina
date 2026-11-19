@@ -19,56 +19,16 @@ import {
 } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
 import { appendTaskEvent, saveSpecVersion } from './task-history';
+import { toStored, type StoredTask, type TaskRow } from './task-row';
 import { addComment, listApprovedSubjects, listProjectMembers, proposalsFor } from './tasks';
 
 export type StoreError = DecisionError | 'not_found' | 'conflict' | 'invalid_config';
 
-export type StoredTask = { readonly task: Task; readonly version: number };
+export type { StoredTask } from './task-row';
 
 export type ApplyResult =
   | (StoredTask & { readonly ok: true; readonly events: readonly DomainEvent[] })
   | { readonly ok: false; readonly error: StoreError };
-
-interface TaskRow {
-  id: string;
-  kind: Task['kind'];
-  project_id: string;
-  requester_id: string;
-  stage: Task['stage'];
-  lane: Task['lane'];
-  spec_version: number;
-  head_sha: string | null;
-  user_visible: boolean;
-  assignee: Task['assignee'];
-  blocked: Task['blocked'];
-  paused: boolean;
-  fix_rounds: number;
-  reviews: Task['reviews'];
-  approval_plans: Task['approvalPlans'];
-  guards: Task['guards'];
-  version: number;
-}
-
-const toStored = (row: TaskRow): StoredTask => ({
-  version: row.version,
-  task: {
-    id: row.id,
-    kind: row.kind,
-    requesterId: row.requester_id,
-    stage: row.stage,
-    lane: row.lane,
-    specVersion: row.spec_version,
-    headSha: row.head_sha,
-    userVisible: row.user_visible,
-    assignee: row.assignee,
-    blocked: row.blocked,
-    paused: row.paused,
-    fixRounds: row.fix_rounds,
-    reviews: row.reviews,
-    approvalPlans: row.approval_plans,
-    guards: row.guards
-  }
-});
 
 /** Runs several writes as one: all of them land, or none. */
 export const inTransaction = async <T>(
@@ -310,7 +270,7 @@ export const applyCommandIn = async (
   const updated = await client.query<{ version: number }>(
     `update tasks set stage = $2, lane = $3, spec_version = $4, head_sha = $5, user_visible = $6,
          assignee = $7, blocked = $8, paused = $9, fix_rounds = $10, reviews = $11, approval_plans = $12,
-         guards = $13, version = version + 1, updated_at = now()
+         guards = $13, diff_allowance = $14, version = version + 1, updated_at = now()
        where id = $1 returning version`,
     [
       task.id,
@@ -325,7 +285,8 @@ export const applyCommandIn = async (
       task.fixRounds,
       json(task.reviews),
       json(task.approvalPlans),
-      task.guards
+      task.guards,
+      json(task.diffAllowance)
     ]
   );
 
