@@ -348,6 +348,69 @@ describe.skipIf(!url)('task commands', () => {
     expect(opened).toEqual(['fix(copy): prediction wording']);
   });
 
+  test('task show prints what the reviewers found on the build they sent back, for who may read it', async () => {
+    await pool.query('update projects set github_installation_id = 99 where id = $1', [
+      seeded.projectId
+    ]);
+    const taskId = await claimedBuild();
+    const github = gitHubWith({
+      pushFacts: async () => ({
+        headSha: 'dev1',
+        changedPaths: [COPY],
+        addedPaths: [],
+        diffLines: 2
+      }),
+      readFile: async () => null,
+      openPullRequest: async () => ({
+        number: 9,
+        url: 'https://github.com/ViciApp/vici-app/pull/9'
+      }),
+      updateFile: async () => ({ commitSha: null, parentSha: null }),
+      commentOnIssue: async () => ({ id: 1 }),
+      failedChecks: async () => []
+    });
+    await handIn(pool, github, handInInput);
+    await pool.query(
+      `insert into runs (task_id, stage, runner, agent_role, agent_version, status, result)
+       values ($1, 'reviewing', 'managed_agents', 'reviewer_correctness', 1, 'succeeded', $2)`,
+      [
+        taskId,
+        JSON.stringify({
+          outcome: 'changes',
+          items: [{ file: COPY, line: 4, issue: 'Wager is still there.' }]
+        })
+      ]
+    );
+    await applyOrThrow(
+      pool,
+      taskId,
+      { type: 'review', verdict: 'changes', notes: 'one finding' },
+      { kind: 'agent', role: 'reviewer_correctness', version: 1 }
+    );
+    await invite(pool, {
+      publicUrl: 'https://officina.example',
+      email: 'visitor@example.com',
+      name: 'Visitor',
+      role: 'watcher',
+      domains: []
+    });
+
+    const shown = await describeTask(pool, { number: 1 });
+    expect(shown).toContain(
+      [
+        'Reviews of build 1, the most recent first:',
+        '- Code reviewer asked for changes (1 finding):',
+        `    1. ${COPY}:4 Wager is still there.`
+      ].join('\n')
+    );
+    expect(shown).toEndWith(
+      'Next: the reviewers sent the latest build back with changes; what to fix is under Reviews'
+    );
+    const asWatcher = await describeTask(pool, { number: 1, asEmail: 'visitor@example.com' });
+    expect(asWatcher).not.toContain('Reviews of build');
+    expect(asWatcher).not.toContain('Wager is still there.');
+  });
+
   test('a hand-in GitHub cannot read, or on a repository without the App, is refused with why', async () => {
     const taskId = await claimedBuild();
     const unreadable = gitHubWith({

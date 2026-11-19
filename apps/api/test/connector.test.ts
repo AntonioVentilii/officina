@@ -881,6 +881,94 @@ describe.skipIf(!url)('connector for Claude', () => {
     expect((await builderOf(taskId))!.stage).toBe('building');
   });
 
+  /** A reviewer's run as the engine records it, its result as the board's Agent runs tab reads it. */
+  const reviewerRun = (taskId: string, role: string, status: string, result: unknown) =>
+    pool.query(
+      `insert into runs (task_id, stage, runner, agent_role, agent_version, status, result)
+       values ($1, 'reviewing', 'managed_agents', $2, 1, $3, $4)`,
+      [taskId, role, status, JSON.stringify(result)]
+    );
+
+  const FINDINGS = [
+    {
+      file: 'src/lib/constants/messages/en.ts',
+      line: 12,
+      rule: 'rule 5',
+      issue: 'Wager is still written twice.'
+    },
+    { file: 'src/routes/battle/+page.svelte', issue: 'The label is hard-coded.' }
+  ];
+
+  test("the developer's Claude reads what the reviewers found on a handed-in build, and nobody else's does", async () => {
+    await pool.query('update projects set github_installation_id = 99 where id = $1', [
+      seeded.projectId
+    ]);
+    const owner = (await connect()).tokens.access_token as string;
+    const taskId = await taskInSpecReview(owner);
+    await applyOrThrow(pool, taskId, { type: 'approve' }, seeded.owner);
+    const dev = await contributor('Dev', ['developer']);
+    const tim = await contributor('Tim', ['product']);
+    expect((await tool(dev, 'claim_build', { number: 1 })).isError).toBe(false);
+    expect(
+      (
+        await tool(dev, 'hand_in_build', {
+          number: 1,
+          pr_title: 'fix(copy): prediction wording'
+        })
+      ).isError
+    ).toBe(false);
+
+    // The spec reviewer's result came in after the code reviewer had already sent the build back.
+    await reviewerRun(taskId, 'reviewer_correctness', 'succeeded', {
+      outcome: 'changes',
+      items: FINDINGS
+    });
+    await reviewerRun(taskId, 'reviewer_spec', 'failed', {
+      discarded: 'stale',
+      output: { outcome: 'approve', summary: 'Matches the plan.' }
+    });
+    await applyOrThrow(
+      pool,
+      taskId,
+      { type: 'review', verdict: 'changes', notes: 'two findings' },
+      { kind: 'agent', role: 'reviewer_correctness', version: 1 }
+    );
+    expect(await stageOf(taskId)).toBe('building');
+
+    const shown = (await tool(dev, 'show_task', { number: 1 })).content[0]!.text;
+    expect(shown).toContain(
+      '; the reviewers sent the latest build back with changes; what to fix is under Reviews.'
+    );
+    expect(shown).toContain(
+      [
+        'Reviews of build 1, the most recent first:',
+        '- Spec reviewer approved, not applied: the task had moved on (stale):',
+        '```text',
+        'Matches the plan.',
+        '```',
+        '- Code reviewer asked for changes (2 findings):',
+        '```text',
+        '1. src/lib/constants/messages/en.ts:12 [rule 5] Wager is still written twice.',
+        '2. src/routes/battle/+page.svelte The label is hard-coded.',
+        '```'
+      ].join('\n')
+    );
+    // The owner sees the runs anyway; a contributor who may not build reads neither the findings nor where to find them.
+    expect((await tool(owner, 'show_task', { number: 1 })).content[0]!.text).toContain(
+      'Reviews of build 1'
+    );
+    const asTim = (await tool(tim, 'show_task', { number: 1 })).content[0]!.text;
+    expect(asTim).not.toContain('Reviews of build');
+    expect(asTim).not.toContain('Wager is still written twice');
+    expect(asTim).not.toContain('sent the latest build back');
+
+    // Once the task is confidential, a developer who may not read it reads none of its findings.
+    await pool.query(`update tasks set guards = '{confidential}' where id = $1`, [taskId]);
+    const confidential = (await tool(dev, 'show_task', { number: 1 })).content[0]!.text;
+    expect(confidential).not.toContain('Reviews of build');
+    expect(confidential).not.toContain('Wager is still written twice');
+  });
+
   test("a build taken over from the agent is handed back only once the agent's run is stopped", async () => {
     const owner = (await connect()).tokens.access_token as string;
     const taskId = await taskInSpecReview(owner);
