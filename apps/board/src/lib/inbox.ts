@@ -21,6 +21,11 @@ const GROUPS = [
     title: 'Ready to merge on GitHub',
     match: (card: Card) => card.stage === 'merging'
   },
+  {
+    id: 'learning',
+    title: 'Learning pull requests to merge',
+    match: (card: Card) => card.stage === 'done'
+  },
   { id: 'other', title: 'Also waiting on you', match: () => true }
 ] as const;
 

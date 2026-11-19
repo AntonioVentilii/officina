@@ -22,6 +22,7 @@ const card = (number: number, stage: Stage, extra: Partial<Card> = {}): Card => 
   stageSince: '2026-01-01T00:00:00Z',
   autoVerified: false,
   autoMergeOn: false,
+  learningPullRequests: [],
   waitingOn: { kind: 'people', label: 'Waiting on you', me: true },
   guards: [],
   ...extra
@@ -38,7 +39,10 @@ describe('inboxGroups', () => {
       card(6, 'building'),
       card(7, 'verifying'),
       card(8, 'merging'),
-      card(9, 'reviewing')
+      card(9, 'reviewing'),
+      card(10, 'done', {
+        learningPullRequests: [{ number: 41, url: 'https://github.com/x/pull/41', state: 'open' }]
+      })
     ];
     expect(
       inboxGroups(cards).map((group) => [group.id, group.cards.map((item) => item.number)])
@@ -51,6 +55,7 @@ describe('inboxGroups', () => {
       ['hand-in', [6]],
       ['verify', [7]],
       ['merge', [8]],
+      ['learning', [10]],
       ['other', [9]]
     ]);
   });

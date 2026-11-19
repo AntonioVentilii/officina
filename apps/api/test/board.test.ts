@@ -13,6 +13,7 @@ import { parseProjectConfig } from '@officina/core';
 import { Pool } from 'pg';
 import {
   createAutoVerifiedTask,
+  createDoneTaskWithLearningPullRequest,
   createTaskInMerging,
   createTaskInVerifying,
   PLAN,
@@ -25,6 +26,7 @@ import { agentsView, logEntries, RUN_LOG_PAGE } from '../src/board';
 import { invite, loginLink } from '../src/people';
 import { startRealtime, type BoardEvent } from '../src/realtime';
 import { createRequest, createRequestAs, describeTask } from '../src/tasks';
+import { handleWebhookAction } from '../src/webhooks';
 
 const url = process.env.TEST_DATABASE_URL;
 const PUBLIC_URL = 'https://officina.example';
@@ -1483,6 +1485,62 @@ describe.skipIf(!url)('board api', () => {
         })
       ).status
     ).toBe(200);
+  });
+
+  test('a done task shows its open learning pull request and waits on whoever merges, until it closes', async () => {
+    const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    await createDoneTaskWithLearningPullRequest(pool, seeded, 1498);
+    const contributor = await signIn(
+      await invite(pool, {
+        publicUrl: PUBLIC_URL,
+        email: 'stakeholder@example.com',
+        name: 'Stakeholder',
+        role: 'contributor',
+        domains: ['product']
+      })
+    );
+    const project = `/api/projects/${seeded.projectId}`;
+    const pr = { number: 1498, url: 'https://github.com/ViciApp/vici-app/pull/1498' };
+
+    const task = await json(await call(owner, `${project}/tasks/1`));
+    expect(task.stage).toBe('done');
+    expect(task.learningPullRequests).toEqual([{ ...pr, state: 'open' }]);
+    expect(task.waitingOn).toEqual({
+      kind: 'github',
+      label: 'Merge the learning pull request #1498 on GitHub',
+      me: true
+    });
+    const board = await json(await call(owner, `${project}/board`));
+    expect(board.tasks[0].waitingOn.me).toBe(true);
+    // Contributors see no learnings, so neither the pull request nor a wait on it.
+    const seen = await json(await call(contributor, `${project}/tasks/1`));
+    expect(seen.learningPullRequests).toEqual([]);
+    expect(seen.waitingOn).toEqual({ kind: 'nobody', label: 'done', me: false });
+
+    await handleWebhookAction(pool, {
+      kind: 'pull_request_closed',
+      repo: 'ViciApp/vici-app',
+      prNumber: 1498
+    });
+    const closed = await json(await call(owner, `${project}/tasks/1`));
+    expect(closed.stage).toBe('done');
+    expect(closed.learningPullRequests).toEqual([{ ...pr, state: 'closed' }]);
+    expect(closed.waitingOn).toEqual({ kind: 'nobody', label: 'done', me: false });
+    const [learning] = (await json(await call(owner, `${project}/learnings`))).learnings;
+    expect(learning).toMatchObject({ status: 'accepted', prNumber: 1498, prState: 'closed' });
+  });
+
+  test('a merged learning pull request leaves its done task waiting on nobody', async () => {
+    const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    await createDoneTaskWithLearningPullRequest(pool, seeded, 1498);
+    await handleWebhookAction(pool, {
+      kind: 'pull_request_merged',
+      repo: 'ViciApp/vici-app',
+      prNumber: 1498
+    });
+    const task = await json(await call(owner, `/api/projects/${seeded.projectId}/tasks/1`));
+    expect(task.learningPullRequests).toMatchObject([{ number: 1498, state: 'merged' }]);
+    expect(task.waitingOn.kind).toBe('nobody');
   });
 
   test('contributors get the decisions and the trail, not agent runs, costs or learnings', async () => {

@@ -41,6 +41,10 @@
       .find((event) => event.type === 'awaiting_merge' || event.type === 'merge_held')?.type ===
       'merge_held'
   );
+  // A finished task waits only on the learning pull requests it left open.
+  const openLearning = $derived(
+    task.stage === 'done' ? task.learningPullRequests.filter((pr) => pr.state === 'open') : []
+  );
   const gate = $derived(
     task.stage === 'spec_review' ? 'spec' : task.stage === 'verifying' ? 'result' : null
   );
@@ -199,6 +203,21 @@
       {#if session.technical && task.running.length}
         <button class="btn" onclick={onwatch}>Watch live</button>
       {/if}
+    </div>
+  </section>
+{:else if task.waitingOn.kind === 'github' && openLearning.length}
+  <section class="next github" class:mine={task.waitingOn.me}>
+    <div class="head">
+      <GitMerge size={18} />
+      <div class="grow">
+        <div class="kicker caps">Done; a learning is left to merge</div>
+        <div class="label">{task.waitingOn.label}</div>
+      </div>
+      {#each openLearning as pr (pr.number)}
+        <a class="btn" href={pr.url} target="_blank" rel="noopener noreferrer">
+          Open #{pr.number}
+        </a>
+      {/each}
     </div>
   </section>
 {:else if task.waitingOn.kind === 'github'}

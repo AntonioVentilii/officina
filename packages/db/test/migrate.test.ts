@@ -60,7 +60,8 @@ describe.skipIf(!url)('migrations', () => {
       '0027_connector_code_grant.sql',
       '0028_run_refs_checked.sql',
       '0029_checklist_checks.sql',
-      '0030_task_diff_allowance.sql'
+      '0030_task_diff_allowance.sql',
+      '0031_learning_pr_closed.sql'
     ]);
     expect(await migrate(client)).toEqual([]);
   });

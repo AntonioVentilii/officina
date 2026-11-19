@@ -291,6 +291,16 @@
                     >
                   </dd>
                 {/if}
+                {#if task.learningPullRequests.length}
+                  <dt>Learning pull requests</dt>
+                  <dd>
+                    {#each task.learningPullRequests as pr, index (pr.number)}{#if index},
+                      {/if}<a class="link" href={pr.url} target="_blank" rel="noopener noreferrer"
+                        >#{pr.number}</a
+                      >
+                      {pr.state}{/each}
+                  </dd>
+                {/if}
                 {#if session.technical}
                   <dt>Agent cost</dt>
                   <dd class="num">{money(cost) || '$0.00'}</dd>

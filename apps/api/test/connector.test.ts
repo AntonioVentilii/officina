@@ -16,6 +16,7 @@ import {
   PLAN,
   applyOrThrow,
   createAutoVerifiedTask,
+  createDoneTaskWithLearningPullRequest,
   createTaskInVerifying,
   recordChooserChecklist,
   resetAndSeed,
@@ -669,6 +670,19 @@ describe.skipIf(!url)('connector for Claude', () => {
       [taskId]
     );
     expect(requested.rows).toEqual([{ note: 'Cover Italian too.' }]);
+  });
+
+  test('a done task with a learning pull request still open is named by show_task and waits on the owner', async () => {
+    const token = (await connect()).tokens.access_token as string;
+    await createDoneTaskWithLearningPullRequest(pool, seeded, 1498);
+
+    const shown = (await tool(token, 'show_task', { number: 1 })).content[0]!.text;
+    expect(shown).toContain('Now: Merge the learning pull request #1498 on GitHub (your turn).');
+    expect(shown).toContain(
+      'Learning pull requests from this task:\n- #1498 (open): https://github.com/ViciApp/vici-app/pull/1498'
+    );
+    const inbox = (await tool(token, 'whats_waiting_on_me')).content[0]!.text;
+    expect(inbox).toContain('Now: Merge the learning pull request #1498 on GitHub.');
   });
 
   test('show_task says a result was auto-verified instead of naming approvers for it', async () => {
