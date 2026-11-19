@@ -59,6 +59,7 @@ import {
   type ApprovalState
 } from './board';
 import { checklistLines, checklistView, type ChosenChecklist } from './checklist-view';
+import { reviewFindingsFor, reviewLines, SENT_BACK } from './review-findings';
 import type { Pool, PoolClient } from 'pg';
 
 /** A refused task command, with the HTTP status the API answers it with. */
@@ -469,6 +470,13 @@ export const handIn = async (
 ): Promise<{ stage: string; pullRequest: number | null }> =>
   handInAs(pool, github, { ...input, ...(await resolve(pool, input)) });
 
+/** What an agent wrote, set off from Officina's own words in the terminal. */
+const indent = (text: string) =>
+  text
+    .split('\n')
+    .map((line) => `    ${line}`)
+    .join('\n');
+
 const money = (cents: number | null) =>
   cents === null ? 'cost unknown' : `$${(cents / 100).toFixed(2)}`;
 
@@ -603,11 +611,16 @@ export const describeTask = async (
     }
   }
 
+  const reviews = await reviewFindingsFor(pool, viewer, { ...task, id: taskId });
+  if (reviews?.latest) lines.push('', ...reviewLines(reviews, indent));
+
   const next = task.blocked
     ? answerHint(task.blocked, context.version)
     : task.paused
       ? 'the task is paused'
-      : (NEXT_STEP[task.stage] ?? '');
+      : reviews?.sentBack
+        ? SENT_BACK
+        : (NEXT_STEP[task.stage] ?? '');
   lines.push('', `Next: ${next.replaceAll('{n}', String(context.number))}`);
   return lines.join('\n');
 };
