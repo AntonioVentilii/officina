@@ -10,9 +10,9 @@ import {
 import { applyCommand, finishRun } from '@officina/db';
 import { type GitHubClient } from '@officina/github';
 import {
+  describeOutcome,
   type ManagedAgentsPort,
   type RunnerRole,
-  type RunOutcome,
   type RunReport
 } from '@officina/runner';
 import type { Pool, PoolClient } from 'pg';
@@ -56,19 +56,6 @@ export type StepResult =
   | { readonly status: 'blocked'; readonly reason: string }
   | { readonly status: 'discarded'; readonly reason: string }
   | { readonly status: 'skipped'; readonly reason: SkipReason };
-
-const describeOutcome = (outcome: Exclude<RunOutcome, { kind: 'result' }>): string => {
-  switch (outcome.kind) {
-    case 'invalid_result':
-      return `its result did not match the contract: ${outcome.errors.join('; ')}`;
-    case 'no_result':
-      return 'it finished without submitting a result';
-    case 'budget_reached':
-      return 'it reached the spending limit for this step';
-    case 'failed':
-      return outcome.reason;
-  }
-};
 
 /** Asks a maintainer; with a `guard`, only while the task is still in the state it allows. */
 const blockTask = (

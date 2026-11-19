@@ -1,5 +1,6 @@
 export * from './definitions';
 export * from './models';
+export * from './outcome';
 export * from './port';
 export * from './run';
 export * from './standard';

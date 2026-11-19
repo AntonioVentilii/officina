@@ -29,6 +29,7 @@ import {
 } from '../board';
 import { checklistLines } from '../checklist-view';
 import { checklistCheckSchema, recordCheckAs } from '../checks';
+import { reviewFindingsFor, reviewLines, SENT_BACK } from '../review-findings';
 import { TaskCommandError, actOnTaskAs, commentAs, createRequestAs, handInAs } from '../tasks';
 
 /**
@@ -405,18 +406,22 @@ After it is opened, tell the person the task link and what happens next, as the 
     name: 'show_task',
     title: 'Show a task',
     description:
-      'Shows one task: where it is, whose turn it is, the request, any open question with the options it offers and a preview of each, the plan, what to check and the conversation. Use it before answering, approving or asking for changes, and summarise it for the person in plain words. When a question offers options, show the person what each one would look like (the wording side by side, the example or mock rendered as a visual, the link) before they choose.',
+      'Shows one task: where it is, whose turn it is, the request, any open question with the options it offers and a preview of each, the plan, what to check, what the reviewer agents found on the latest build (to whoever sees agent runs or may build the task) and the conversation. When the reviewers sent a build back, it says so where it says what the task waits for, and their findings, with file and line, are what to fix before handing it in again. Use it before answering, approving or asking for changes, and summarise it for the person in plain words. When a question offers options, show the person what each one would look like (the wording side by side, the example or mock rendered as a visual, the link) before they choose.',
     input: z.object({ project: PROJECT, number: NUMBER }),
     readOnly: true,
     run: async (context, input) => {
       const project = projectFor(context, input.project);
-      const task = await taskView(context.pool, viewerFor(context, project), input.number);
-      if (!task) throw new ToolError(`There is no task ${input.number} in ${project.name}.`);
+      const viewer = viewerFor(context, project);
+      const task = await taskView(context.pool, viewer, input.number);
+      const row = await loadBoardTask(context.pool, project.id, input.number);
+      if (!task || !row)
+        throw new ToolError(`There is no task ${input.number} in ${project.name}.`);
+      const reviews = await reviewFindingsFor(context.pool, viewer, row);
       const lines = [
         UNTRUSTED,
         `Task ${task.number} in ${project.name}: ${task.title}`,
         `Link: ${taskUrl(context.publicUrl, project.id, task.number)}`,
-        `Requested by ${task.requester}. Now: ${task.waitingOn.label}${task.waitingOn.me ? ' (your turn)' : ''}.`,
+        `Requested by ${task.requester}. Now: ${task.waitingOn.label}${task.waitingOn.me ? ' (your turn)' : ''}${reviews?.sentBack ? `; ${SENT_BACK}` : ''}.`,
         ...peopleLines(task)
       ];
       if (task.pullRequestUrl) lines.push(`Pull request: ${task.pullRequestUrl}`);
@@ -435,6 +440,7 @@ After it is opened, tell the person the task link and what happens next, as the 
           '',
           ...checklistLines(task.checklist, 'What to check (record each with check_item):')
         );
+      if (reviews?.latest) lines.push('', ...reviewLines(reviews, fence));
       if (task.comments.length) {
         lines.push('', 'Conversation:');
         for (const comment of task.comments.slice(-20))

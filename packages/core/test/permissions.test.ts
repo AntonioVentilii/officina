@@ -8,7 +8,8 @@ import {
   canAnswer,
   managesEverywhere,
   readsTask,
-  seesQuestion
+  seesQuestion,
+  seesReviewFindings
 } from '../src';
 
 describe('permission matrix', () => {
@@ -96,6 +97,25 @@ describe('permission matrix', () => {
     expect(readsTask({ role: 'contributor' }, confidential)).toBe(false);
     expect(readsTask({ role: 'contributor', domains: ['confidential'] }, confidential)).toBe(true);
     expect(readsTask({ role: 'maintainer' }, confidential)).toBe(true);
+  });
+
+  test("the reviewers' findings are read by who sees the runs and by who may build the task", () => {
+    const open = { guards: [] } as const;
+    const confidential = { guards: ['confidential'] } as const;
+    expect(seesReviewFindings({ role: 'maintainer' }, confidential)).toBe(true);
+    expect(seesReviewFindings({ role: 'contributor', domains: ['developer'] }, open)).toBe(true);
+    expect(seesReviewFindings({ role: 'contributor', domains: ['product'] }, open)).toBe(false);
+    expect(seesReviewFindings({ role: 'watcher', domains: ['developer'] }, open)).toBe(false);
+    // A developer who may not read a confidential task reads none of its findings either.
+    expect(seesReviewFindings({ role: 'contributor', domains: ['developer'] }, confidential)).toBe(
+      false
+    );
+    expect(
+      seesReviewFindings(
+        { role: 'contributor', domains: ['developer', 'confidential'] },
+        confidential
+      )
+    ).toBe(true);
   });
 
   test('managing a member everywhere needs the right in each of their projects', () => {

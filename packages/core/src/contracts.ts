@@ -120,6 +120,17 @@ export const reviewerOutputSchema = z.discriminatedUnion('outcome', [
   })
 ]);
 
+const findingText = (item: z.infer<typeof reviewItemSchema>) =>
+  `${item.file}${item.line ? `:${item.line}` : ''}${item.rule ? ` [${item.rule}]` : ''} ${item.issue}`;
+
+/**
+ * A reviewer's findings as people and the builder read them, one numbered line each with its file,
+ * line and rule: what the task records when a review sends the work back, and what `show_task` and
+ * `task show` print.
+ */
+export const reviewNotes = (items: readonly z.infer<typeof reviewItemSchema>[]): string =>
+  items.map((item, index) => `${index + 1}. ${findingText(item)}`).join('\n');
+
 const extraApprovalSchema = z.union([
   z.strictObject({
     domain: text.max(50).regex(/^[a-z][a-z0-9-]*$/, 'a lowercase domain name'),
@@ -334,12 +345,7 @@ export const commandForOutput = (task: Task, result: RoleOutput): CommandResult 
       if (output.outcome === 'approve') {
         return { ok: true, command: { type: 'review', verdict: 'approve', notes: output.summary } };
       }
-      const notes = output.items
-        .map(
-          (item, index) =>
-            `${index + 1}. ${item.file}${item.line ? `:${item.line}` : ''}${item.rule ? ` [${item.rule}]` : ''} ${item.issue}`
-        )
-        .join('\n');
+      const notes = reviewNotes(output.items);
       return { ok: true, command: { type: 'review', verdict: 'changes', notes } };
     }
     case 'chooser': {
