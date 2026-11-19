@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.13.0](https://github.com/AntonioVentilii/officina/compare/v1.12.0...v1.13.0) (2026-11-19)
+
+
+### Features
+
+* **db,api,board:** keep a done task's learning pull requests in view ([#275](https://github.com/AntonioVentilii/officina/issues/275)) ([5e8b0c5](https://github.com/AntonioVentilii/officina/commit/5e8b0c5eaef154d6881939ee7d9e310971b5147f))
+
 ## [1.12.0](https://github.com/AntonioVentilii/officina/compare/v1.11.1...v1.12.0) (2026-11-19)
 
 
