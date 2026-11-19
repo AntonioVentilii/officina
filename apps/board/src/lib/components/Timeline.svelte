@@ -70,6 +70,8 @@
         return 'asked a question';
       case 'unblocked':
         return 'answered the question';
+      case 'diff_allowed':
+        return `allowed this task up to ${p.lines} lines, over the ${p.lane} lane limit`;
       case 'paused':
         return 'paused it';
       case 'resumed':

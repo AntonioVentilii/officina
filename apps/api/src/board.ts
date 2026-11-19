@@ -41,7 +41,8 @@ import {
   type Policy,
   type ProjectConfig,
   type Requirement,
-  type Role
+  type Role,
+  type Task
 } from '@officina/core';
 import {
   domainEventOf,
@@ -227,6 +228,7 @@ const PUBLIC_FIELDS: Readonly<Record<string, readonly string[]>> = {
   guardrail_tripped: ['guardrail'],
   blocked: ['blocked'],
   unblocked: ['answer'],
+  diff_allowed: ['lines', 'lane', 'memberId'],
   closed: ['stage', 'reason'],
   pull_request_closed: ['pullRequest'],
   spec_status_set: ['status'],
@@ -259,10 +261,14 @@ export const askedOfLabel = (
   'memberId' in askedOf ? (names.get(askedOf.memberId) ?? 'a member') : article(askedOf.role);
 
 /** The options a question offers, by letter, to whoever may read the question itself. */
-const optionsFor = (member: Member, blocked: Blocked) =>
+export const optionsFor = (member: Member, blocked: Blocked) =>
   seesQuestion(member, blocked.askedOf)
     ? (blocked.options ?? []).map((option, index) => ({ key: optionKey(index), ...option }))
     : [];
+
+/** An option as plain text writes it, for the CLI and the Claude connector. */
+export const optionText = (option: ReturnType<typeof optionsFor>[number]): string =>
+  `(${option.key}) ${option.label}${option.detail ? `: ${option.detail}` : ''}`;
 
 export const CONFIDENTIAL =
   "Confidential: only members who may see the project's confidential content can read this.";
@@ -819,6 +825,30 @@ const confidentialView = (row: BoardTaskRow, viewer: BoardViewer) => {
   };
 };
 
+/**
+ * The size allowed for this task over its lane's limit, who allowed it and when. It says how much the
+ * task may change, not what, so everyone who sees the task sees it.
+ */
+export const allowanceView = (
+  task: Pick<Task, 'diffAllowance'>,
+  events: readonly TaskEventRow[],
+  names: ReadonlyMap<string, string>
+) => {
+  const allowance = task.diffAllowance;
+  if (!allowance) return null;
+  const granted = events.filter((event) => event.type === 'diff_allowed').at(-1);
+  return {
+    lines: allowance.lines,
+    lane: allowance.lane,
+    by: names.get(allowance.memberId) ?? 'a former member',
+    at: granted?.createdAt ?? null
+  };
+};
+
+/** The allowance in force, in the words the CLI and the Claude connector write it. */
+export const allowanceText = (allowance: NonNullable<ReturnType<typeof allowanceView>>): string =>
+  `Size allowed for this task: up to ${allowance.lines} lines in the ${allowance.lane} lane, by ${allowance.by}${allowance.at ? ` on ${allowance.at.toISOString().slice(0, 10)}` : ''}. Every other task keeps the lane's limit.`;
+
 export const taskView = async (
   pool: Pool,
   viewer: BoardViewer,
@@ -867,6 +897,7 @@ export const taskView = async (
         : null
     ),
     headSha: shown.value(row.headSha),
+    allowance: allowanceView(row, events, facts.names),
     request: request
       ? {
           author: label(request.author),

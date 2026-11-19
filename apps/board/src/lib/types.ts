@@ -209,6 +209,8 @@ export interface TaskDetail extends Card {
   readonly branch: string;
   readonly pullRequestUrl: string | null;
   readonly headSha: string | null;
+  /** More lines than its lane allows, granted for this task alone; `null` when none was. */
+  readonly allowance: Readonly<{ lines: number; lane: Lane; by: string; at: string | null }> | null;
   readonly request: Pick<Comment, 'author' | 'via' | 'body' | 'at'> | null;
   readonly comments: readonly Comment[];
   readonly specs: readonly (Pick<Comment, 'author' | 'body' | 'at'> & {

@@ -299,6 +299,47 @@ describe.skipIf(!url)('task commands', () => {
     return taskId;
   };
 
+  test('task show offers to allow an oversized change, and task answer grants it for the task', async () => {
+    const taskId = await claimedBuild();
+    const push = (headSha: string, diffLines: number) =>
+      applyOrThrow(
+        pool,
+        taskId,
+        {
+          type: 'push',
+          headSha,
+          changedPaths: [COPY],
+          addedPaths: [],
+          catalogPages: {},
+          diffLines
+        },
+        seeded.owner
+      );
+    await push('big', 700);
+    const held = await describeTask(pool, { number: 1 });
+    expect(held).toContain('(c) Allow 700 lines for this task');
+    const version = Number(/--version (\d+)/.exec(held)?.[1]);
+    expect(held).toContain(`Next: task answer --number 1 --option <letter> --version ${version}`);
+
+    const action = taskActionFor('answer', { option: 'c', version: String(version) });
+    if (!action) throw new Error('answer applies no action');
+    await actOnTask(pool, { number: 1, action });
+    const shown = await describeTask(pool, { number: 1 });
+    expect(shown).toContain(
+      'Size allowed for this task: up to 700 lines in the green lane, by Antonio on'
+    );
+    const comments = await pool.query<{ body: string }>(
+      'select body from comments where task_id = $1 order by created_at',
+      [taskId]
+    );
+    expect(comments.rows.at(-1)?.body).toBe('Option (c): Allow 700 lines for this task');
+
+    await push('fits', 700);
+    expect((await pool.query('select stage from tasks where id = $1', [taskId])).rows[0]).toEqual({
+      stage: 'reviewing'
+    });
+  });
+
   test('task hand-back gives the claimed build back, and the task waits in ready again', async () => {
     const taskId = await claimedBuild();
     const action = taskActionFor('hand-back', {});
