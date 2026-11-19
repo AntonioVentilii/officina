@@ -225,6 +225,20 @@
               <TaskPeople people={task.people} guards={task.guards} />
             </section>
 
+            {#if task.allowance}
+              {@const allowance = task.allowance}
+              <section>
+                <h3 class="caps">Size allowed</h3>
+                <p>
+                  Up to <strong class="num">{allowance.lines}</strong> lines in the {allowance.lane} lane
+                  for this task, allowed by {allowance.by}{#if allowance.at},
+                    <time class="faint" title={dateTime(allowance.at)}
+                      >{ago(allowance.at, clock.now)}</time
+                    >{/if}. Every other task keeps the lane's limit.
+                </p>
+              </section>
+            {/if}
+
             {#if task.checklist?.checklist?.length && (task.stage === 'verifying' || session.technical)}
               <section>
                 <h3 class="caps">What to check</h3>

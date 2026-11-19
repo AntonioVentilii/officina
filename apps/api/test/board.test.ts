@@ -15,6 +15,7 @@ import {
   createAutoVerifiedTask,
   createTaskInMerging,
   createTaskInVerifying,
+  PLAN,
   recordChooserChecklist,
   resetAndSeed,
   type Seeded
@@ -1073,6 +1074,69 @@ describe.skipIf(!url)('board api', () => {
     expect((await json(await call(maintainer, path))).actions).toContain('hand_back');
     expect(await json(await handBack(maintainer))).toEqual({ stage: 'ready' });
     expect((await handBack(maintainer)).status).toBe(409);
+  });
+
+  test('only the owner allows a red task more lines, and everyone sees who allowed it and when', async () => {
+    const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    const join = async (email: string, role: 'maintainer' | 'contributor') =>
+      signIn(await invite(pool, { publicUrl: PUBLIC_URL, email, name: email, role, domains: [] }));
+    const maintainer = await join('marta@example.com', 'maintainer');
+    const contributor = await join('gio@example.com', 'contributor');
+    await createRequest(pool, {
+      title: 'Port the room',
+      request: 'Bring the room up to V8.',
+      skipInterview: true
+    });
+    const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
+    const path = `/api/projects/${seeded.projectId}/tasks/1`;
+    const room = ['src/satellite/room.ts'];
+    const asOwner = { kind: 'member', memberId: seeded.ownerId } as const;
+    for (const [command, actor] of [
+      [{ type: 'accept' }, asOwner],
+      [
+        { type: 'post_spec', predictedPaths: room, userVisible: false },
+        { kind: 'agent', role: 'spec', version: 1 }
+      ],
+      [{ type: 'plan_approval', userVisible: false, plan: PLAN }, { kind: 'engine' }],
+      [{ type: 'approve' }, asOwner],
+      [{ type: 'claim' }, asOwner],
+      [
+        {
+          type: 'push',
+          headSha: 'port',
+          changedPaths: room,
+          addedPaths: [],
+          catalogPages: {},
+          diffLines: 2449
+        },
+        asOwner
+      ]
+    ] as const)
+      await applyCommand(pool, { taskId, command, actor });
+
+    const held = await json(await call(maintainer, path));
+    expect(held.blocked.options.map((option: { key: string }) => option.key)).toEqual([
+      'a',
+      'b',
+      'c'
+    ]);
+    expect(held.blocked.options[2].label).toBe('Allow 2449 lines for this task');
+    const pick = { type: 'answer', option: 'c', version: held.blocked.version };
+    const refused = await call(maintainer, `${path}/actions`, pick);
+    expect(refused.status).toBe(409);
+    expect(await json(refused)).toEqual({ error: 'you do not have the role needed for that' });
+    expect((await call(owner, `${path}/actions`, pick)).status).toBe(200);
+
+    const seen = await json(await call(contributor, path));
+    expect(seen.allowance).toMatchObject({ lines: 2449, lane: 'red', by: 'Antonio' });
+    expect(typeof seen.allowance.at).toBe('string');
+    expect(
+      seen.events.find((event: { type: string }) => event.type === 'diff_allowed').payload
+    ).toEqual({
+      lines: 2449,
+      lane: 'red',
+      memberId: seeded.ownerId
+    });
   });
 
   test('watchers read but cannot act, and other projects stay invisible', async () => {

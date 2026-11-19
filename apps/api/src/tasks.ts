@@ -31,6 +31,7 @@ import {
   listProjectMemberProfiles,
   listProjectMembers,
   listRuns,
+  listTaskEvents,
   listTaskSummaries,
   loadProjectConfig,
   loadProjectMember,
@@ -45,11 +46,15 @@ import {
 import { handInBuild, type HandInPort } from '@officina/engine';
 import { GitHubError } from '@officina/github';
 import {
+  allowanceText,
+  allowanceView,
   approvalState,
   askedOfLabel,
   CONFIDENTIAL,
   consoleUrl,
   describeRequirement,
+  optionsFor,
+  optionText,
   questionFor,
   type ApprovalState
 } from './board';
@@ -297,7 +302,11 @@ const toCommand = (action: TaskAction): Command => {
     case 'changes':
       return { type: 'request_changes', note: action.note };
     case 'answer':
-      return { type: 'answer', text: action.text };
+      return {
+        type: 'answer',
+        text: action.text,
+        ...(action.option === undefined ? {} : { option: action.option })
+      };
     case 'cancel':
     case 'decline':
       return { type: action.type, reason: action.reason };
@@ -346,7 +355,12 @@ const resolveAnswer = async (
   }
   const { option, version } = await pickedOption(pool, taskId, action.option, action.version);
   return {
-    action: { type: 'answer', text: optionAnswer(action.option, option, action.text) },
+    // The letter goes on with the answer: the size check's own option grants what it offers.
+    action: {
+      type: 'answer',
+      text: optionAnswer(action.option, option, action.text),
+      option: action.option
+    },
     expectedVersion: version
   };
 };
@@ -506,6 +520,25 @@ const approvalLines = (
   ];
 };
 
+/** The open question for `describeTask`: who it is for, its words, then each option by letter. */
+const blockedLines = (
+  blocked: Blocked,
+  viewer: Member,
+  names: ReadonlyMap<string, string>,
+  reads: boolean
+): string[] => [
+  '',
+  `BLOCKED, question for ${askedOfLabel(blocked.askedOf, names)}:`,
+  `  ${reads ? questionFor(viewer, blocked) : CONFIDENTIAL}`,
+  ...(reads ? optionsFor(viewer, blocked) : []).map((option) => `  ${optionText(option)}`)
+];
+
+/** How to answer the open question: in words, or by an option at the version it was read at. */
+const answerHint = (blocked: Blocked, version: number): string =>
+  blocked.options?.length
+    ? `task answer --number {n} --option <letter> --version ${version}   (or: task answer --number {n} --text "...")`
+    : 'task answer --number {n} --text "..."';
+
 /** A human-readable status of one task: where it is, what it waits for, and what to do next. */
 export const describeTask = async (
   pool: Pool,
@@ -529,13 +562,9 @@ export const describeTask = async (
   const names = new Map(
     (await listProjectMemberProfiles(pool, projectId)).map((member) => [member.id, member.name])
   );
-  if (task.blocked) {
-    lines.push(
-      '',
-      `BLOCKED, question for ${askedOfLabel(task.blocked.askedOf, names)}:`,
-      `  ${shown(questionFor(viewer, task.blocked))}`
-    );
-  }
+  if (task.blocked) lines.push(...blockedLines(task.blocked, viewer, names, reads));
+  const allowance = allowanceView(task, await listTaskEvents(pool, taskId), names);
+  if (allowance) lines.push('', allowanceText(allowance));
 
   const approval = await approvalState(pool, task, {
     members: await listProjectMembers(pool, projectId),
@@ -575,7 +604,7 @@ export const describeTask = async (
   }
 
   const next = task.blocked
-    ? 'task answer --number {n} --text "..."'
+    ? answerHint(task.blocked, context.version)
     : task.paused
       ? 'the task is paused'
       : (NEXT_STEP[task.stage] ?? '');

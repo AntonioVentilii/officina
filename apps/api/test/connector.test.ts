@@ -1059,6 +1059,56 @@ describe.skipIf(!url)('connector for Claude', () => {
     );
   });
 
+  test('Claude offers to allow an oversized change for its task, and show_task says it is in force', async () => {
+    const token = (await connect()).tokens.access_token as string;
+    await tool(token, 'open_request', {
+      title: 'Port the room',
+      request: 'V8.',
+      skip_interview: true
+    });
+    const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
+    const page = ['src/routes/room/+page.svelte'];
+    await applyOrThrow(pool, taskId, { type: 'accept' }, seeded.owner);
+    await applyOrThrow(
+      pool,
+      taskId,
+      { type: 'post_spec', predictedPaths: page, userVisible: false },
+      { kind: 'agent', role: 'spec', version: 1 }
+    );
+    await applyOrThrow(
+      pool,
+      taskId,
+      { type: 'plan_approval', userVisible: false, plan: PLAN },
+      {
+        kind: 'engine'
+      }
+    );
+    await applyOrThrow(pool, taskId, { type: 'approve' }, seeded.owner);
+    await applyOrThrow(pool, taskId, { type: 'claim' }, seeded.owner);
+    await applyOrThrow(
+      pool,
+      taskId,
+      {
+        type: 'push',
+        headSha: 'big',
+        changedPaths: page,
+        addedPaths: [],
+        catalogPages: {},
+        diffLines: 2449
+      },
+      seeded.owner
+    );
+
+    const held = (await tool(token, 'show_task', { number: 1 })).content[0]!.text;
+    expect(held).toContain('(c) Allow 2449 lines for this task: Later heads of this task pass');
+    const version = Number(/pass its letter as option and (\d+) as version/.exec(held)?.[1]);
+    const answered = await tool(token, 'answer_question', { number: 1, option: 'c', version });
+    expect(answered.isError).toBe(false);
+    expect((await tool(token, 'show_task', { number: 1 })).content[0]!.text).toContain(
+      'Size allowed for this task: up to 2449 lines in the standard lane, by Antonio on'
+    );
+  });
+
   test('owners read who signed in, who sent links and which apps act for whom', async () => {
     await invite(pool, {
       publicUrl: PUBLIC_URL,

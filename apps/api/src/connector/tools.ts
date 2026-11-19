@@ -18,7 +18,15 @@ import { loadBoardTask, type MemberProject } from '@officina/db';
 import { fence, taskPrTemplate, type HandInPort } from '@officina/engine';
 import type { Pool } from 'pg';
 import { z } from 'zod';
-import { boardView, taskView, type BoardViewer, type CardView, type TaskView } from '../board';
+import {
+  allowanceText,
+  boardView,
+  optionText,
+  taskView,
+  type BoardViewer,
+  type CardView,
+  type TaskView
+} from '../board';
 import { checklistLines } from '../checklist-view';
 import { checklistCheckSchema, recordCheckAs } from '../checks';
 import { TaskCommandError, actOnTaskAs, commentAs, createRequestAs, handInAs } from '../tasks';
@@ -168,11 +176,15 @@ const questionLines = (blocked: NonNullable<TaskView['blocked']>): string[] => {
     `Options (show each preview to the person before they choose; they may also answer in their own words). To choose one, pass its letter as option and ${blocked.version} as version:`
   );
   for (const option of blocked.options) {
-    lines.push(`(${option.key}) ${option.label}${option.detail ? `: ${option.detail}` : ''}`);
+    lines.push(optionText(option));
     if (option.preview) lines.push(`   ${previewText(option.preview)}`);
   }
   return lines;
 };
+
+/** The size allowed for the task over its lane's limit, when one is in force. */
+const allowanceLines = (task: TaskView): string[] =>
+  task.allowance ? ['', allowanceText(task.allowance)] : [];
 
 const WHAT_TO_DO: Record<string, string> = {
   answer: 'answer the open question (answer_question)',
@@ -397,6 +409,7 @@ After it is opened, tell the person the task link and what happens next, as the 
       ];
       if (task.pullRequestUrl) lines.push(`Pull request: ${task.pullRequestUrl}`);
       if (task.blocked) lines.push(...questionLines(task.blocked));
+      lines.push(...allowanceLines(task));
       if (task.request)
         lines.push('', `Request (${task.request.author}):`, fence(task.request.body));
       const spec = task.specs.at(-1);
