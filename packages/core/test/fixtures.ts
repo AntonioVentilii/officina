@@ -31,7 +31,8 @@ export const newTask = (id: string, requesterId: string, kind: TaskKind = 'reque
   fixRounds: 0,
   reviews: {},
   approvalPlans: {},
-  guards: []
+  guards: [],
+  diffAllowance: null
 });
 
 export const CONFIG_YAML = `

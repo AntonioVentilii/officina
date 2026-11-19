@@ -3,6 +3,7 @@ export * from './permissions';
 export * from './guards';
 export * from './handoffs';
 export * from './lanes';
+export * from './allowance';
 export * from './config';
 export * from './policies';
 export * from './lifecycle';

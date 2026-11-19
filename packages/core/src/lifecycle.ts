@@ -8,6 +8,13 @@ import {
   type Requirement
 } from './config';
 import {
+  allowsDiff,
+  diffHold,
+  pickedAllowance,
+  type AllowanceOffer,
+  type DiffAllowance
+} from './allowance';
+import {
   GUARD_LABELS,
   OWNER_GUARDS,
   guardsForHandoff,
@@ -188,6 +195,8 @@ export interface Blocked {
   readonly handoff?: { readonly needs: readonly HandoffNeed[] };
   /** Choices an agent offered, each with an optional preview; people may still answer freely. */
   readonly options?: readonly QuestionOption[];
+  /** Set on the size check's question: the size its own option allows for this task. */
+  readonly allowance?: AllowanceOffer;
 }
 
 export interface Task {
@@ -209,6 +218,8 @@ export interface Task {
   readonly approvalPlans: Readonly<Partial<Record<Gate, ApprovalPlan>>>;
   /** What the task touches that no agent may handle alone (`GUARDS`); set by rule, only grows. */
   readonly guards: readonly Guard[];
+  /** More lines than its lane allows, granted for this task alone; `null` when none was. */
+  readonly diffAllowance: DiffAllowance | null;
 }
 
 /** How closely people should check: a read, a hands-on test, or a test on a real device. */
@@ -330,7 +341,11 @@ export type Command =
       readonly question: string;
       readonly askedOf: { readonly role: Role };
     }
-  | { readonly type: 'answer'; readonly text: string }
+  /**
+   * `option` is the letter of the option picked from the question, when one was: the size check's
+   * own option grants its allowance as well as answering.
+   */
+  | { readonly type: 'answer'; readonly text: string; readonly option?: string }
   /** A person's words on the task after its request, a comment: they guard it as the request's would. */
   | { readonly type: 'guard_words'; readonly text: string }
   | { readonly type: 'pause' }
@@ -390,6 +405,7 @@ export type DomainEvent =
   | { readonly type: 'pull_request_closed'; readonly pullRequest: number }
   | { readonly type: 'blocked'; readonly blocked: Blocked }
   | { readonly type: 'unblocked'; readonly answer: string }
+  | ({ readonly type: 'diff_allowed' } & DiffAllowance)
   | { readonly type: 'paused' }
   | { readonly type: 'resumed' }
   | { readonly type: 'closed'; readonly stage: 'declined' | 'cancelled'; readonly reason: string }
@@ -864,19 +880,12 @@ const landPush = (
     ]);
   }
 
-  const maxLines = context.config.lanes[lane].diffLines;
-  if (head.diffLines > maxLines) {
-    const blocked: Blocked = {
-      question: `The change has ${head.diffLines} lines, over the ${lane} lane limit of ${maxLines}. Split the spec or reduce the change.`,
-      askedOf: { role: 'maintainer' }
-    };
+  const tooLarge = diffHold(context.config, task, lane, head.diffLines);
+  if (tooLarge) {
+    const { blocked, details } = tooLarge;
     return ok({ ...task, lane, blocked }, [
       ...pushed,
-      {
-        type: 'guardrail_tripped',
-        guardrail: 'diff_too_large',
-        details: `${head.diffLines} > ${maxLines}`
-      },
+      { type: 'guardrail_tripped', guardrail: 'diff_too_large', details },
       { type: 'blocked', blocked }
     ]);
   }
@@ -916,6 +925,38 @@ export const GITHUB_REVIEWABLE: ReadonlySet<Stage> = new Set([
 
 /** Stages where the task's pull request may exist: from the first push until it is merged. */
 export const WITH_PULL_REQUEST: ReadonlySet<Stage> = new Set(['building', ...GITHUB_REVIEWABLE]);
+
+/**
+ * Answers the task's question. Picking the size check's option to allow more lines also grants that
+ * allowance, which only whoever may allow it in the lane can pick.
+ */
+const answered = (
+  task: Task,
+  command: Extract<Command, { type: 'answer' }>,
+  member: Member | undefined,
+  context: DecideContext
+): Decision => {
+  if (!task.blocked) return fail('not_blocked');
+  if (member === undefined || !canAnswer(member, task.blocked.askedOf)) return fail('not_allowed');
+  // An answer is written in the thread, and nobody writes where they may not read.
+  if (!readsTask(member, task)) return fail('not_allowed');
+  const offer = pickedAllowance(task.blocked, command.option);
+  if (offer && !allowsDiff(member, offer.lane)) return fail('not_allowed');
+  const allowance: DiffAllowance | null = offer
+    ? { lines: offer.lines, lane: offer.lane, memberId: member.id }
+    : null;
+  const [unblocked, guardEvents] = guardedByWords(
+    { ...task, blocked: null, ...(allowance ? { diffAllowance: allowance } : {}) },
+    context,
+    member,
+    command.text
+  );
+  return ok(unblocked, [
+    { type: 'unblocked', answer: command.text },
+    ...(allowance ? [{ type: 'diff_allowed' as const, ...allowance }] : []),
+    ...guardEvents
+  ]);
+};
 
 const ALLOWED_WHILE_HELD: ReadonlySet<Command['type']> = new Set([
   'submit_request',
@@ -1332,21 +1373,8 @@ export const decide = (
       return ok({ ...task, blocked }, [{ type: 'blocked', blocked }]);
     }
 
-    case 'answer': {
-      if (!task.blocked) return fail('not_blocked');
-      const member = memberFor(actor, context);
-      if (member === undefined || !canAnswer(member, task.blocked.askedOf))
-        return fail('not_allowed');
-      // An answer is written in the thread, and nobody writes where they may not read.
-      if (!readsTask(member, task)) return fail('not_allowed');
-      const [answered, guardEvents] = guardedByWords(
-        { ...task, blocked: null },
-        context,
-        member,
-        command.text
-      );
-      return ok(answered, [{ type: 'unblocked', answer: command.text }, ...guardEvents]);
-    }
+    case 'answer':
+      return answered(task, command, memberFor(actor, context), context);
 
     case 'guard_words': {
       const member = memberFor(actor, context);

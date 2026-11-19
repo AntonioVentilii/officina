@@ -7,6 +7,7 @@ import {
   humanBuildReason,
   nextAgentRoles,
   ownerHold,
+  type Command,
   type Member,
   type PlanInput,
   type Task
@@ -312,6 +313,145 @@ describe('guardrails', () => {
     );
     expect(task).toMatchObject({ stage: 'ready', assignee: null, fixRounds: 0 });
     expect(task.blocked?.askedOf).toEqual({ role: 'maintainer' });
+  });
+});
+
+describe('a size allowed for one task', () => {
+  const maintainer: Member = { id: 'marta', role: 'maintainer', domains: [] };
+  const RED = ['src/satellite/room.ts'];
+
+  const pushOf = (
+    headSha: string,
+    changedPaths: readonly string[],
+    diffLines: number
+  ): Command => ({
+    type: 'push',
+    headSha,
+    changedPaths,
+    addedPaths: [],
+    catalogPages: {},
+    diffLines
+  });
+
+  /** A task whose first head, of `lines` lines, the size check held: built by the agent, or in red by the owner. */
+  const held = (driver: Driver, paths: readonly string[], lines: number): Task => {
+    const ready = toReady(driver, paths);
+    if (ready.lane === 'red') {
+      const claimed = driver.step(ready, { type: 'claim' }, asMember(owner));
+      return driver.step(claimed, pushOf('big', paths, lines), asMember(owner));
+    }
+    return driver.step(
+      dispatchAgent(driver, ready),
+      pushOf('big', paths, lines),
+      asAgent('builder')
+    );
+  };
+
+  const pick = (option: string): Command => ({
+    type: 'answer',
+    text: `Option (${option})`,
+    option
+  });
+
+  test('the size check offers to allow the size for this task alongside splitting or reducing', () => {
+    const driver = createDriver([owner, maintainer]);
+    const task = held(driver, PAGE_PATHS, 2449);
+    expect(task.stage).toBe('building');
+    expect(task.blocked).toMatchObject({
+      askedOf: { role: 'maintainer' },
+      allowance: { lines: 2449, lane: 'standard', option: 'c' }
+    });
+    expect(task.blocked?.options?.map((option) => option.label)).toEqual([
+      'Split the spec into smaller tasks',
+      'Reduce the change',
+      'Allow 2449 lines for this task'
+    ]);
+    expect(driver.events()).toContainEqual({
+      type: 'guardrail_tripped',
+      guardrail: 'diff_too_large',
+      details: '2449 > 800'
+    });
+  });
+
+  test('a maintainer allows it outside red, and a later head up to that size passes', () => {
+    const driver = createDriver([owner, maintainer]);
+    let task = driver.step(held(driver, PAGE_PATHS, 2449), pick('c'), asMember(maintainer));
+    expect(task.blocked).toBeNull();
+    expect(task.diffAllowance).toEqual({ lines: 2449, lane: 'standard', memberId: maintainer.id });
+    expect(driver.events()).toContainEqual({
+      type: 'diff_allowed',
+      lines: 2449,
+      lane: 'standard',
+      memberId: maintainer.id
+    });
+    task = driver.step(task, pushOf('fits', PAGE_PATHS, 2449), asAgent('builder'));
+    expect(task).toMatchObject({ stage: 'reviewing', headSha: 'fits' });
+  });
+
+  test('a head over the allowance is held again with the same question', () => {
+    const driver = createDriver([owner, maintainer]);
+    let task = driver.step(held(driver, PAGE_PATHS, 2449), pick('c'), asMember(maintainer));
+    task = driver.step(task, pushOf('bigger', PAGE_PATHS, 2600), asAgent('builder'));
+    expect(task.stage).toBe('building');
+    expect(task.blocked?.question).toContain('and the 2449 lines allowed for this task');
+    expect(task.blocked?.allowance).toEqual({ lines: 2600, lane: 'standard', option: 'c' });
+    expect(task.diffAllowance?.lines).toBe(2449);
+    task = driver.step(task, pick('c'), asMember(owner));
+    expect(task.diffAllowance).toEqual({ lines: 2600, lane: 'standard', memberId: owner.id });
+  });
+
+  test('in the red lane only the owner allows more lines', () => {
+    const driver = createDriver([owner, maintainer]);
+    const task = held(driver, RED, 2449);
+    expect(task.blocked?.options?.[2]?.detail).toContain('Only the owner may choose this.');
+    expect(driver.attempt(task, pick('c'), asMember(maintainer))).toEqual({
+      ok: false,
+      error: 'not_allowed'
+    });
+    // The maintainer may still answer the question another way, which allows nothing.
+    const reduced = driver.step(task, pick('b'), asMember(maintainer));
+    expect(reduced).toMatchObject({ blocked: null, diffAllowance: null });
+    expect(driver.events().some((event) => event.type === 'diff_allowed')).toBe(false);
+    const allowed = driver.step(task, pick('c'), asMember(owner));
+    expect(allowed.diffAllowance).toEqual({ lines: 2449, lane: 'red', memberId: owner.id });
+    const passed = driver.step(allowed, pushOf('port', RED, 2000), asMember(owner));
+    expect(passed).toMatchObject({ stage: 'reviewing', headSha: 'port' });
+  });
+
+  test('every other task keeps the lane limit', () => {
+    const driver = createDriver([owner, maintainer]);
+    driver.step(held(driver, PAGE_PATHS, 2449), pick('c'), asMember(maintainer));
+    const other = held(driver, PAGE_PATHS, 900);
+    expect(other.diffAllowance).toBeNull();
+    expect(other.blocked?.allowance?.lines).toBe(900);
+  });
+
+  test('an allowance holds only in the lane it was granted in', () => {
+    const driver = createDriver([owner, maintainer]);
+    let task = driver.step(toReady(driver, PAGE_PATHS), { type: 'claim' }, asMember(owner));
+    task = driver.step(task, pushOf('big', PAGE_PATHS, 2449), asMember(owner));
+    task = driver.step(task, pick('c'), asMember(maintainer));
+    task = driver.step(task, pushOf('red', [...PAGE_PATHS, ...RED], 2000), asMember(owner));
+    expect(task).toMatchObject({ stage: 'building', lane: 'red' });
+    expect(task.blocked?.allowance).toEqual({ lines: 2000, lane: 'red', option: 'c' });
+    expect(task.blocked?.question).not.toContain('allowed for this task');
+  });
+
+  test('another question that offers options grants nothing through them', () => {
+    const driver = createDriver([owner, maintainer]);
+    let task = dispatchAgent(driver, toReady(driver, PAGE_PATHS));
+    task = driver.step(
+      task,
+      {
+        type: 'block',
+        question: 'Which layout?',
+        askedOf: { role: 'maintainer' },
+        options: [{ label: 'One' }, { label: 'Two' }, { label: 'Three' }]
+      },
+      asAgent('builder')
+    );
+    task = driver.step(task, pick('c'), asMember(maintainer));
+    expect(task.diffAllowance).toBeNull();
   });
 });
 
