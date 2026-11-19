@@ -919,7 +919,7 @@ describe.skipIf(!url)('connector for Claude', () => {
     ).toBe(false);
 
     // A first spec review failed; why is the run's own detail, for whoever sees the runs.
-    await reviewerRun(taskId, 'reviewer_spec', 'failed', { error: 'session timed out' });
+    await reviewerRun(taskId, 'reviewer_spec', 'failed', { kind: 'no_result' });
     // The spec reviewer's result came in after the code reviewer had already sent the build back.
     await reviewerRun(taskId, 'reviewer_correctness', 'succeeded', {
       outcome: 'changes',
@@ -956,10 +956,10 @@ describe.skipIf(!url)('connector for Claude', () => {
       ].join('\n')
     );
     expect(shown).toContain('- Spec reviewer failed:\n\nYou can:');
-    expect(shown).not.toContain('session timed out');
+    expect(shown).not.toContain('it finished without submitting a result');
     // The owner sees the runs anyway; a contributor who may not build reads neither the findings nor where to find them.
     expect((await tool(owner, 'show_task', { number: 1 })).content[0]!.text).toContain(
-      '- Spec reviewer failed:\n```text\nsession timed out\n```'
+      '- Spec reviewer failed:\n```text\nit finished without submitting a result\n```'
     );
     const asTim = (await tool(tim, 'show_task', { number: 1 })).content[0]!.text;
     expect(asTim).not.toContain('Reviews of build');

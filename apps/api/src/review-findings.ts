@@ -9,6 +9,7 @@ import {
   type Member
 } from '@officina/core';
 import { listTaskEvents, listTaskRuns, type RunRow, type TaskEventRow } from '@officina/db';
+import { describeOutcome, unfinishedOutcomeSchema } from '@officina/runner';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import { roleLabel } from './board';
@@ -35,6 +36,21 @@ const REVIEWERS: ReadonlySet<string> = new Set(REVIEWER_ROLES);
 /** A result the task did not take, because it had moved on by the time it came in. */
 const discardedSchema = z.object({ discarded: z.string(), output: reviewerOutputSchema });
 const errorSchema = z.object({ error: z.string() });
+/** What a run that a guard on the refs stopped records: the outcome under `outcome`. */
+const wrappedOutcomeSchema = z.object({ outcome: unfinishedOutcomeSchema });
+
+/**
+ * Why a run failed, from each shape the engine records: an error it threw or a recovery wrote, or
+ * the outcome the run left, as is or under `outcome`.
+ */
+const failureText = (result: unknown): string | null => {
+  const error = errorSchema.safeParse(result);
+  if (error.success) return error.data.error;
+  const outcome = unfinishedOutcomeSchema.safeParse(result);
+  if (outcome.success) return describeOutcome(outcome.data);
+  const wrapped = wrappedOutcomeSchema.safeParse(result);
+  return wrapped.success ? describeOutcome(wrapped.data.outcome) : null;
+};
 
 type Verdict = 'approve' | 'changes' | 'running' | 'failed' | 'cancelled';
 
@@ -68,7 +84,7 @@ interface ReviewFindings {
   readonly latest: Round | null;
   /** The builds before it, the most recent first. */
   readonly earlier: readonly Round[];
-  /** The latest build reviewed was sent back and nothing was built since: what to fix now. */
+  /** A review of the latest build sent it back and nothing was built since: what to fix now. */
   readonly sentBack: boolean;
 }
 
@@ -94,7 +110,6 @@ const reviewOf = (run: ReviewRun): Review => {
   const discarded = discardedSchema.safeParse(run.result);
   if (discarded.success)
     return { label, ...written(discarded.data.output, discarded.data.discarded) };
-  const failed = errorSchema.safeParse(run.result);
   const verdict: Verdict =
     run.status === 'running' || run.status === 'cancelled' ? run.status : 'failed';
   return {
@@ -102,7 +117,7 @@ const reviewOf = (run: ReviewRun): Review => {
     verdict,
     findings: 0,
     discarded: null,
-    text: failed.success ? failed.data.error : null
+    text: failureText(run.result)
   };
 };
 
@@ -134,7 +149,8 @@ export const reviewRounds = (
     sentBack:
       stage === 'building' &&
       latest?.build === builds.length &&
-      latest.reviews.some((review) => review.verdict === 'changes')
+      // A result the task had moved past did not send it back, whatever it said.
+      latest.reviews.some((review) => review.verdict === 'changes' && review.discarded === null)
   };
 };
 

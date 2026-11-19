@@ -46,6 +46,13 @@ describe('reviewer findings', () => {
     expect(reviewRounds(runs, [pushed(1)], 'reviewing').sentBack).toBe(false);
     expect(reviewRounds(runs, [pushed(1), pushed(5)], 'building').sentBack).toBe(false);
     expect(reviewRounds([approved(2)], [pushed(1)], 'building').sentBack).toBe(false);
+    // A changes result the task had already moved past did not send this build back.
+    const discarded = {
+      ...changes(3),
+      status: 'failed',
+      result: { discarded: 'stale', output: changes(3).result }
+    };
+    expect(reviewRounds([approved(2), discarded], [pushed(1)], 'building').sentBack).toBe(false);
     expect(reviewRounds([], [pushed(1)], 'building')).toEqual({
       latest: null,
       earlier: [],
@@ -80,6 +87,31 @@ describe('reviewer findings', () => {
       '> timed out',
       '- Code reviewer asked for changes (2 findings), not applied: the task had moved on (stale):',
       '> 1. src/lib/copy.ts:12 [rule 5] The button still says Wager.\n2. src/routes/+page.svelte The label is written twice.'
+    ]);
+  });
+
+  test('a failed run says why, in each shape the engine records it', () => {
+    const failed = (minute: number, result: unknown) => ({
+      role: 'reviewer_correctness',
+      status: 'failed',
+      createdAt: at(minute),
+      result
+    });
+    const findings = reviewRounds(
+      [
+        failed(2, { kind: 'no_result' }),
+        failed(3, { kind: 'invalid_result', errors: ['items: too short'] }),
+        failed(4, { outcome: { kind: 'budget_reached' } }),
+        failed(5, { error: 'the engine restarted while this run was in progress' })
+      ],
+      [pushed(1)],
+      'reviewing'
+    );
+    expect(reviewLines(findings, quote).filter((line) => line.startsWith('>'))).toEqual([
+      '> the engine restarted while this run was in progress',
+      '> it reached the spending limit for this step',
+      '> its result did not match the contract: items: too short',
+      '> it finished without submitting a result'
     ]);
   });
 
