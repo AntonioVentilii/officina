@@ -160,7 +160,8 @@ export const managesEverywhere = (rolesOverMember: readonly (Role | null)[]): bo
 /**
  * Whether a member reads what the reviewer agents found on a task's builds: members who see the
  * runs, and whoever may build it, since the findings are what a person building it has to fix.
- * Both already read the task, so a confidential task's findings stay with who may read it.
+ * Both already read the task, so a confidential task's findings stay with who may read it. A builder
+ * without `see_runs` reads the verdicts and findings only, never a run's cost, link or error.
  */
 export const seesReviewFindings = (
   member: Pick<Member, 'role'> & Partial<Pick<Member, 'domains'>>,

@@ -1,5 +1,6 @@
 import {
   REVIEWER_ROLES,
+  can,
   clip,
   reviewNotes,
   reviewerOutputSchema,
@@ -137,7 +138,28 @@ export const reviewRounds = (
   };
 };
 
-/** A task's reviews, or null for a member who may not read them (`seesReviewFindings`). */
+/**
+ * The reviews as a builder without `see_runs` reads them: the verdicts and what the reviewers wrote,
+ * not why a run failed, which is the run's own detail and can quote what only maintainers see.
+ */
+const verdictsAndFindings = (findings: ReviewFindings): ReviewFindings => {
+  const round = (each: Round): Round => ({
+    ...each,
+    reviews: each.reviews.map((review) =>
+      review.verdict === 'failed' ? { ...review, text: null } : review
+    )
+  });
+  return {
+    ...findings,
+    latest: findings.latest && round(findings.latest),
+    earlier: findings.earlier.map(round)
+  };
+};
+
+/**
+ * A task's reviews, or null for a member who may not read them (`seesReviewFindings`). Run costs
+ * and session links are never part of them; a builder without `see_runs` also reads no run's error.
+ */
 export const reviewFindingsFor = async (
   pool: Pool,
   member: Pick<Member, 'role'> & Partial<Pick<Member, 'domains'>>,
@@ -148,7 +170,8 @@ export const reviewFindingsFor = async (
     listTaskRuns(pool, task.id),
     listTaskEvents(pool, task.id)
   ]);
-  return reviewRounds(runs, events, task.stage);
+  const findings = reviewRounds(runs, events, task.stage);
+  return can(member, 'see_runs') ? findings : verdictsAndFindings(findings);
 };
 
 const headline = (review: Review) =>
