@@ -28,7 +28,7 @@ A change that adds or changes one of these updates the matching page in the same
 | You changed                                                      | Update                                                         |
 | ---------------------------------------------------------------- | -------------------------------------------------------------- |
 | A stage, command, guardrail, role, lane, policy or security rule | `docs/architecture.md`, and the README when people see it      |
-| The project config (`.github/officina.yml`)                      | `docs/architecture.md` section 11                              |
+| A project config key (`packages/core/src/config.ts`)             | `docs/architecture.md` section 11                              |
 | A package, a module, or the direction of an import               | [structure.md](./structure.md) and the layout in `AGENTS.md`   |
 | A new way of doing something the code does more than once        | [patterns.md](./patterns.md)                                   |
 | A shared helper, type, constant, component, store or test fake   | [reusability.md](./reusability.md)                             |

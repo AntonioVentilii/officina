@@ -26,9 +26,10 @@ verify:
   - 'bun run typecheck'
   - 'bun run test'
   - 'bun run check:board'
+  - 'bun run build:board'
 
-# Files that deploy this instance or decide who gets in: the owner approves both gates, and no result
-# auto-merges or skips a person's check.
+# Files that deploy this instance or decide who gets in (sign-ins, invites, connected apps, tokens):
+# the owner approves both gates, and no result auto-merges or skips a person's check.
 guards:
   publishing:
     - 'Dockerfile'
@@ -45,6 +46,7 @@ guards:
     - 'packages/github/src/webhooks.ts'
     - 'apps/api/src/connector/oauth.ts'
     - 'apps/api/src/github-accounts.ts'
+    - 'apps/api/src/people.ts'
     - 'apps/api/src/token-box.ts'
 
 lanes:
@@ -86,6 +88,7 @@ lanes:
       - 'packages/github/src/webhooks.ts'
       - 'apps/api/src/connector/oauth.ts'
       - 'apps/api/src/github-accounts.ts'
+      - 'apps/api/src/people.ts'
       - 'apps/api/src/token-box.ts'
       # Tool layers
       - 'CLAUDE.md'
