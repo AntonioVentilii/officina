@@ -51,9 +51,10 @@ export const dateTime = (iso: string) =>
   });
 
 /**
- * A person's initials: the first and the last word of their name, so several given names still give
- * the surname's ("Maria Grazia Rossi" is MR). A name is one string, so a double surname gives its
- * last part ("Gabriel García Márquez" is GM), and a one-word name one letter.
+ * A person's initials: the first letter of the first word and of the last word of their name, so
+ * the second letter is the surname's initial even after several given names ("Maria Grazia Rossi"
+ * is MR). A name is one string, so for a double surname it is the initial of its last part
+ * ("Gabriel García Márquez" is GM), and a one-word name gives a single letter ("Antonio" is A).
  */
 export const initials = (name: string) => {
   const words = name.split(/\s+/).filter(Boolean);
