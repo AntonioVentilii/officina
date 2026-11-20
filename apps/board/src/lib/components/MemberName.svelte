@@ -4,28 +4,33 @@
   import { board } from '#lib/state/board.svelte.ts';
   import { session } from '#lib/state/session.svelte.ts';
   import { toasts } from '#lib/state/toasts.svelte.ts';
-  import type { MemberActivity } from '#lib/types.ts';
 
   interface Props {
-    member: MemberActivity;
+    id: string;
+    name: string;
+    /** Whether the viewer may change it: their own, or one they manage in every project. */
+    renamable: boolean;
+    size?: number;
+    /** Whether the name is being edited, for a parent that makes room for the field meanwhile. */
+    editing?: boolean;
   }
 
-  let { member }: Props = $props();
+  let { id, name, renamable, size = 15, editing = $bindable(false) }: Props = $props();
 
   /** The name as typed so far, while it is being edited. */
-  let draft = $state<string | null>(null);
+  let draft = $state('');
   let saving = $state(false);
 
   const save = async () => {
-    if (!session.projectId || draft === null) return;
+    if (!session.projectId || !editing) return;
     saving = true;
     try {
-      await post(`/api/projects/${session.projectId}/members/${member.id}/name`, { name: draft });
-      draft = null;
+      await post(`/api/projects/${session.projectId}/members/${id}/name`, { name: draft });
+      editing = false;
       // Your own name is also in the sidebar, which reads it from the session.
       await Promise.all([
         board.refresh(),
-        member.id === session.me?.member.id ? session.load() : undefined
+        id === session.me?.member.id ? session.load() : undefined
       ]);
     } catch (error) {
       toasts.show('error', (error as Error).message);
@@ -34,13 +39,19 @@
     }
   };
 
+  /** Opens the editor on the current name, from the pencil here or from a parent's own button. */
+  export const edit = () => {
+    draft = name;
+    editing = true;
+  };
+
   const keys = (event: KeyboardEvent) => {
     if (event.key === 'Enter') void save();
-    if (event.key === 'Escape') draft = null;
+    if (event.key === 'Escape') editing = false;
   };
 </script>
 
-{#if draft !== null}
+{#if editing}
   <span class="rename">
     <input
       class="field"
@@ -57,33 +68,41 @@
       disabled={saving || !draft.trim()}
       onclick={save}><Check size={14} /></button
     >
-    <button class="btn sm icon" title="Cancel" aria-label="Cancel" onclick={() => (draft = null)}
+    <button class="btn sm icon" title="Cancel" aria-label="Cancel" onclick={() => (editing = false)}
       ><X size={14} /></button
     >
   </span>
 {:else}
-  <span class="name"
-    >{member.name}{#if member.renamable}
-      <button
-        class="edit"
-        title="Change name"
-        aria-label="Change {member.name}'s name"
-        onclick={() => (draft = member.name)}><Pencil size={12} /></button
+  <span class="name" style:font-size="{size}px">
+    <span class="text" title={name}>{name}</span>
+    {#if renamable && session.projectId}
+      <button class="edit" title="Change name" aria-label="Change {name}'s name" onclick={edit}
+        ><Pencil size={12} /></button
       >
-    {/if}</span
-  >
+    {/if}
+  </span>
 {/if}
 
 <style>
   .name {
-    font-size: 15px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
     font-weight: 600;
+  }
+
+  .text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .rename {
     display: flex;
     align-items: center;
     gap: 6px;
+    min-width: 0;
   }
 
   .rename .field {
@@ -92,17 +111,26 @@
     font-size: 14px;
   }
 
+  /* Takes the colour of the text around it, so it sits as well in the sidebar as on a page. */
   .edit {
-    margin-left: 6px;
+    flex: none;
+    display: inline-flex;
     padding: 2px;
     border: 0;
     background: none;
-    color: var(--text-2);
+    color: inherit;
+    opacity: 0.6;
     cursor: pointer;
-    vertical-align: middle;
   }
 
   .edit:hover {
-    color: var(--text);
+    opacity: 1;
+  }
+
+  /* Phones zoom into a field whose text is under 16px; this keeps the page where it is. */
+  @media (max-width: 720px) {
+    .rename .field {
+      font-size: 16px;
+    }
   }
 </style>

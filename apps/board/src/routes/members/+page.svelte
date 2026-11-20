@@ -98,7 +98,7 @@
         <div class="row">
           <MemberAvatar name={member.name} size={26} />
           <div class="who">
-            <MemberName {member} />
+            <MemberName id={member.id} name={member.name} renamable={member.renamable} />
             <span class="role caps"
               >{member.role}{#if member.domains.length}, {member.domains.join(', ')}{/if}</span
             >
