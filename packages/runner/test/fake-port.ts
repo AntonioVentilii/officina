@@ -25,6 +25,11 @@ export const idle = (reason: string): SessionEvent => ({
   id: nextId(),
   stop_reason: { type: reason }
 });
+export const sessionError = (type: string, message: string, retry = 'exhausted'): SessionEvent => ({
+  type: 'session.error',
+  id: nextId(),
+  error: { type, message, retry_status: { type: retry } }
+});
 export const terminated = (): SessionEvent => ({ type: 'session.status_terminated', id: nextId() });
 
 export interface FakePort extends ManagedAgentsPort {

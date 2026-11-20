@@ -1,4 +1,4 @@
-import { parseAgentOutput, type AgentOutput } from '@officina/core';
+import { clip, ERROR_TEXT_MAX, parseAgentOutput, type AgentOutput } from '@officina/core';
 import { RESULT_TOOL, type RunnerRole } from './definitions';
 import type { ManagedAgentsPort, SessionEvent, SessionRequest } from './port';
 
@@ -13,12 +13,21 @@ export const SESSION_DEADLINE_MS = 2 * 60 * 60 * 1000;
 /** The runner every run records: Managed Agents is the only one. */
 export const RUNNER = 'managed_agents';
 
+/**
+ * The last error a session reported before it stopped, such as the workspace's spend limit: its
+ * type and its message, clipped as every run result records an error.
+ */
+export interface SessionError {
+  readonly type: string;
+  readonly message: string;
+}
+
 export type RunOutcome =
   | { readonly kind: 'result'; readonly output: AgentOutput<RunnerRole> }
   | { readonly kind: 'invalid_result'; readonly errors: readonly string[] }
   | { readonly kind: 'no_result' }
   | { readonly kind: 'budget_reached' }
-  | { readonly kind: 'failed'; readonly reason: string };
+  | { readonly kind: 'failed'; readonly reason: string; readonly error?: SessionError };
 
 export interface RunReport {
   readonly sessionId: string;
@@ -28,6 +37,33 @@ export interface RunReport {
 
 const stopReason = (event: SessionEvent): string | undefined =>
   (event.stop_reason as { type?: string } | undefined)?.type;
+
+const sessionErrorOf = (event: SessionEvent): SessionError => {
+  const error = event.error as { type?: unknown; message?: unknown } | undefined;
+  const message =
+    typeof error?.message === 'string' ? error.message : JSON.stringify(event.error ?? null);
+  return {
+    type: typeof error?.type === 'string' ? error.type : 'unknown_error',
+    message: clip(message, ERROR_TEXT_MAX)
+  };
+};
+
+const failure = (reason: string, error: SessionError | null): RunOutcome =>
+  error ? { kind: 'failed', reason, error } : { kind: 'failed', reason };
+
+/**
+ * Why a session that stopped without a result left none, carrying the error it reported last, or
+ * `null` when its stop says nothing more than that it finished.
+ */
+const stopOutcome = (event: SessionEvent, error: SessionError | null): RunOutcome | null => {
+  if (event.type === 'session.status_terminated') {
+    return error ? failure('the session was terminated', error) : null;
+  }
+  const reason = stopReason(event);
+  if (reason === 'budget_reached') return { kind: 'budget_reached' };
+  if (reason === 'retries_exhausted') return failure('the session exhausted its retries', error);
+  return null;
+};
 
 /**
  * The stream's events until `deadlineMs` passes, then none: `passed()` says whether the deadline
@@ -66,7 +102,8 @@ const untilDeadline = (stream: AsyncIterable<SessionEvent>, deadlineMs: number) 
  * event is missed, validates every `submit_result` call against the role's contract, returns the
  * problems to the agent when a result is invalid, and stops only when the session is truly done, or
  * when it runs past its deadline (`SESSION_DEADLINE_MS` unless `deadlineMs` says otherwise), which
- * interrupts it and fails the run unless a result was already accepted.
+ * interrupts it and fails the run unless a result was already accepted. A run that fails because
+ * the session gave up carries the last error the session reported, so its cause is not lost.
  */
 export const executeRun = async (
   port: ManagedAgentsPort,
@@ -92,6 +129,7 @@ export const executeRun = async (
   let attempts = 0;
   let lastErrors: readonly string[] = [];
   let outcome: RunOutcome | null = null;
+  let sessionError: SessionError | null = null;
   const bounded = untilDeadline(stream, input.deadlineMs ?? SESSION_DEADLINE_MS);
 
   for await (const event of bounded.events) {
@@ -156,14 +194,13 @@ export const executeRun = async (
       continue;
     }
 
-    if (event.type === 'session.status_terminated') break;
-    if (event.type === 'session.status_idle') {
-      const reason = stopReason(event);
-      if (reason === 'requires_action') continue;
-      if (reason === 'budget_reached' && result === null) outcome ??= { kind: 'budget_reached' };
-      if (reason === 'retries_exhausted' && result === null) {
-        outcome ??= { kind: 'failed', reason: 'the session exhausted its retries' };
-      }
+    if (event.type === 'session.error') {
+      sessionError = sessionErrorOf(event);
+      continue;
+    }
+    if (event.type === 'session.status_terminated' || event.type === 'session.status_idle') {
+      if (stopReason(event) === 'requires_action') continue;
+      if (result === null) outcome ??= stopOutcome(event, sessionError);
       break;
     }
   }
