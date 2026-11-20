@@ -10,10 +10,12 @@ import {
 import {
   appendTaskEvent,
   applyCommand,
+  claimHandIn,
   HAND_IN_EVENT,
   loadProjectMember,
   loadTask,
   loadTaskContext,
+  releaseHandIn,
   type StoreError,
   type StoredTaskContext
 } from '@officina/db';
@@ -46,7 +48,8 @@ export interface HandIn {
 
 export type HandInResult =
   | { readonly ok: true; readonly stage: string; readonly pullRequest: number | null }
-  | { readonly ok: false; readonly error: StoreError | 'not_installed' }
+  /** `handing_in`: another hand-in of the task is under way, on a board or from the CLI. */
+  | { readonly ok: false; readonly error: StoreError | 'not_installed' | 'handing_in' }
   /**
    * The title breaks the project's `pull_request.title_pattern`, or the body leaves its pull request
    * template out, as an agent's would.
@@ -166,16 +169,8 @@ const handInAgain = async (
   return { ok: true, stage, pullRequest: pr?.number ?? context.pullRequest };
 };
 
-/**
- * A developer who claimed a build hands in what they pushed to the task branch, built by hand or
- * with their own agents. Officina reads the push from GitHub, applies it as theirs through the
- * same `push` command an agent's build uses (lanes, guardrails, the catalog check), opens the
- * pull request, and sends it back to them when its checks were red before it was handed in. Safe
- * to repeat: once the push is applied, a second call only opens the pull request a failed first
- * call left and reads the checks again, and a head already sent back for red checks is not taken
- * in again while they stay red.
- */
-export const handInBuild = async (
+/** A hand-in under its claim, as `handInBuild` describes. */
+const handInClaimed = async (
   deps: { readonly pool: Pool; readonly github: HandInPort; readonly publicUrl: string },
   input: HandIn
 ): Promise<HandInResult> => {
@@ -218,4 +213,27 @@ export const handInBuild = async (
   const pr = await open();
   const stage = await stageAfterChecks(deps, checks, applied.task);
   return { ok: true, stage, pullRequest: pr?.number ?? null };
+};
+
+/**
+ * A developer who claimed a build hands in what they pushed to the task branch, built by hand or
+ * with their own agents. Officina reads the push from GitHub, applies it as theirs through the
+ * same `push` command an agent's build uses (lanes, guardrails, the catalog check), opens the
+ * pull request, and sends it back to them when its checks were red before it was handed in. Safe
+ * to repeat: once the push is applied, a second call only opens the pull request a failed first
+ * call left and reads the checks again, and a head already sent back for red checks is not taken
+ * in again while they stay red.
+ */
+export const handInBuild = async (
+  deps: { readonly pool: Pool; readonly github: HandInPort; readonly publicUrl: string },
+  input: HandIn
+): Promise<HandInResult> => {
+  // One hand-in at a time: the second is refused plainly, and every board shows the first at work.
+  const claim = await claimHandIn(deps.pool, input.taskId, input.memberId);
+  if (!claim) return { ok: false, error: 'handing_in' };
+  try {
+    return await handInClaimed(deps, input);
+  } finally {
+    await releaseHandIn(deps.pool, input.taskId, claim);
+  }
 };

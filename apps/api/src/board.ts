@@ -487,6 +487,13 @@ const waitingOn = (
         : { kind: 'agent', label: 'Waiting for a build slot', me: false };
     }
     case 'building':
+      // A hand-in under way waits on nobody: it is at work, on every board.
+      if (row.handingInSince)
+        return {
+          kind: 'people',
+          label: `${row.handingInBy ? (facts.names.get(row.handingInBy) ?? 'A former member') : 'Someone'} is handing the build in`,
+          me: false
+        };
       return row.assignee?.kind === 'member'
         ? {
             kind: 'people',
@@ -599,6 +606,24 @@ const projectFacts = async (pool: Pool, viewer: BoardViewer): Promise<ProjectFac
   };
 };
 
+/**
+ * The hand-in under way on a task's build, while its claim is live: who is handing it in, whether it
+ * is the viewer, and since when. Every board that shows the task shows it at work, so nobody hands
+ * the build in twice.
+ */
+const handingInView = (
+  row: BoardTaskRow,
+  viewer: BoardViewer,
+  names: ReadonlyMap<string, string>
+) =>
+  row.handingInSince
+    ? {
+        by: row.handingInBy ? (names.get(row.handingInBy) ?? 'a former member') : null,
+        you: row.handingInBy === viewer.memberId,
+        since: row.handingInSince
+      }
+    : null;
+
 const cardView = (
   row: BoardTaskRow,
   viewer: BoardViewer,
@@ -633,6 +658,7 @@ const cardView = (
   autoVerified: row.autoVerified,
   autoMergeOn: row.autoMergeOn,
   learningPullRequests: learningPullRequestsFor(row, viewer),
+  handingIn: handingInView(row, viewer, facts.names),
   waitingOn: waitingOn(row, viewer, approval, facts)
 });
 

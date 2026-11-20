@@ -451,7 +451,9 @@ export const handInAs = async (
         ? result.problems.join('; ')
         : result.error === 'not_installed'
           ? 'the GitHub App is not installed on this repository'
-          : ERROR_TEXT[result.error]
+          : result.error === 'handing_in'
+            ? 'this build is being handed in already; wait for it to finish'
+            : ERROR_TEXT[result.error]
     );
   } catch (error) {
     if (error instanceof GitHubError)

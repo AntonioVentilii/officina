@@ -126,6 +126,13 @@ export interface Card {
   readonly autoMergeOn: boolean;
   /** Pull requests opened for the task's learnings; empty for those who do not see learnings. */
   readonly learningPullRequests: readonly LearningPullRequest[];
+  /** A hand-in of the build under way, on any board or from the CLI, while its claim holds. */
+  readonly handingIn: {
+    /** Who is handing it in; null for a claim that names nobody. */
+    readonly by: string | null;
+    readonly you: boolean;
+    readonly since: string;
+  } | null;
   readonly waitingOn: WaitingOn;
   /** What the task touches that only the owner may let through, in words. */
   readonly guards: readonly string[];

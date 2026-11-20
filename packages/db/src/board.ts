@@ -1,6 +1,7 @@
 import type { Actor, DomainEvent, Task } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
 import { autoMergeIsOn, wasAutoVerified } from './github';
+import { HAND_IN_CLAIM_LIVE } from './hand-in-claims';
 import { learningPullRequestsOf, type LearningPullRequest } from './learnings';
 import { RUN_IS_ACTIVE } from './run-status';
 
@@ -39,6 +40,10 @@ export interface BoardTaskRow {
   readonly autoMergeOn: boolean;
   /** The pull requests opened for the task's learnings, which outlive its own merge. */
   readonly learningPullRequests: readonly LearningPullRequest[];
+  /** Since when a build is being handed in, while its claim is live (`claimHandIn`). */
+  readonly handingInSince: Date | null;
+  /** Who is handing it in, while the claim is live. */
+  readonly handingInBy: string | null;
 }
 
 const BOARD_COLUMNS = `
@@ -61,7 +66,9 @@ const BOARD_COLUMNS = `
   ) as "stageSince",
   ${wasAutoVerified('t.id')} as "autoVerified",
   ${autoMergeIsOn('t.id')} as "autoMergeOn",
-  ${learningPullRequestsOf('t.id')} as "learningPullRequests"`;
+  ${learningPullRequestsOf('t.id')} as "learningPullRequests",
+  case when ${HAND_IN_CLAIM_LIVE} then t.hand_in_claimed_at end as "handingInSince",
+  case when ${HAND_IN_CLAIM_LIVE} then t.hand_in_claimed_by end as "handingInBy"`;
 
 export const listBoardTasks = async (db: Queryable, projectId: string): Promise<BoardTaskRow[]> =>
   (

@@ -2,7 +2,7 @@
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
 import type { Learning } from '../src/lib/learning-types';
-import { learningWork } from '../src/lib/working';
+import { learningWork, taskWork } from '../src/lib/working';
 
 const learning = (overrides: Partial<Learning> = {}): Learning => ({
   id: 'l1',
@@ -68,5 +68,34 @@ describe('the work under way on a learning', () => {
         null
       )
     ).toEqual({ label: 'Deciding', detail: '', who: null, since: SINCE });
+  });
+});
+
+describe('the work under way on a task', () => {
+  test('nothing is under way until an action is sent or a build is handed in', () => {
+    expect(taskWork({ handingIn: null }, null)).toBeNull();
+  });
+
+  test('a hand-in the API reports is shown with who makes it, on every board', () => {
+    expect(
+      taskWork({ handingIn: { by: 'Giulia Conti', you: false, since: SINCE } }, null)
+    ).toMatchObject({ label: 'Handing in', who: 'Giulia Conti', since: SINCE });
+  });
+
+  test('an action this board sent is shown as its own until the reload lands', () => {
+    expect(taskWork({ handingIn: null }, { action: 'claim', since: SINCE })).toMatchObject({
+      label: 'Claiming',
+      who: 'You',
+      since: SINCE
+    });
+  });
+
+  test('a hand-in under way wins over the action this board sent', () => {
+    expect(
+      taskWork(
+        { handingIn: { by: 'Giulia Conti', you: true, since: SINCE } },
+        { action: 'hand_in', since: '2026-11-20T09:00:05Z' }
+      )
+    ).toMatchObject({ label: 'Handing in', who: 'You', since: SINCE });
   });
 });

@@ -2,6 +2,8 @@ import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import {
   createTask,
   finishRun,
+  HAND_IN_LEASE,
+  loadBoardTask,
   loadTask,
   setProjectRole,
   startRun,
@@ -182,6 +184,72 @@ describe.skipIf(!url)('a developer hands in a build', () => {
     expect(github.bodies[0]).toContain(
       'Verified:\n- bun test\n\nNot verified:\n- nothing reported'
     );
+  });
+
+  test('one hand-in runs at a time, and every board shows it while it does', async () => {
+    const taskId = await waitingForDeveloper();
+    const dev = await developer('dev@example.com', 'Dev');
+    await applyOrThrow(pool, taskId, { type: 'claim' }, dev);
+    const github = fakeGitHub();
+    // GitHub holds the first hand-in's read of the push until the test lets it go.
+    let letGo = () => {};
+    const held = new Promise<void>((resolve) => (letGo = resolve));
+    const reading = Promise.withResolvers<void>();
+    const pushFacts = github.port.pushFacts;
+    github.port.pushFacts = async (...args) => {
+      reading.resolve();
+      await held;
+      return pushFacts(...args);
+    };
+    const deps = { pool, github: github.port, publicUrl: PUBLIC_URL };
+    const input = {
+      taskId,
+      memberId: dev.memberId,
+      prTitle: 'feat(room): port the design',
+      verified: [],
+      notVerified: []
+    };
+    const { rows } = await pool.query<{ number: number }>(
+      'select number from tasks where id = $1',
+      [taskId]
+    );
+    const shown = () => loadBoardTask(pool, seeded.projectId, rows[0]!.number);
+
+    const first = handInBuild(deps, input);
+    await reading.promise;
+    expect(await shown()).toMatchObject({ handingInBy: dev.memberId });
+    expect((await shown())?.handingInSince).toBeInstanceOf(Date);
+    expect(await handInBuild(deps, input)).toEqual({ ok: false, error: 'handing_in' });
+
+    letGo();
+    expect(await first).toMatchObject({ ok: true, stage: 'reviewing' });
+    expect(await shown()).toMatchObject({ handingInBy: null, handingInSince: null });
+  });
+
+  test('a hand-in left behind by a stopped process is taken over once its lease ran out', async () => {
+    const taskId = await waitingForDeveloper();
+    const dev = await developer('dev@example.com', 'Dev');
+    await applyOrThrow(pool, taskId, { type: 'claim' }, dev);
+    await pool.query(
+      `update tasks set hand_in_claim = gen_random_uuid(),
+         hand_in_claimed_at = clock_timestamp() - $3::interval - interval '1 second',
+         hand_in_claimed_by = $2
+       where id = $1`,
+      [taskId, dev.memberId, HAND_IN_LEASE]
+    );
+    const github = fakeGitHub();
+    expect(
+      await handInBuild(
+        { pool, github: github.port, publicUrl: PUBLIC_URL },
+        {
+          taskId,
+          memberId: dev.memberId,
+          prTitle: 'feat(room): port the design',
+          verified: [],
+          notVerified: []
+        }
+      )
+    ).toMatchObject({ ok: true, stage: 'reviewing' });
   });
 
   test("a project's pull request template shapes the hand-in's body, and a body that leaves it out is refused", async () => {

@@ -5,6 +5,7 @@ import {
   applyCommand,
   createOnboardingTask,
   findTaskIdByNumber,
+  HAND_IN_LEASE,
   insertLearnings,
   listLearnings,
   startRun
@@ -986,6 +987,32 @@ describe.skipIf(!url)('board api', () => {
       me: true
     });
     expect((await json(await call(owner, path))).actions).not.toContain('hand_in');
+
+    // While their hand-in runs, every board shows it at work and nothing waits on them.
+    await pool.query(
+      `update tasks set hand_in_claim = gen_random_uuid(), hand_in_claimed_at = clock_timestamp(),
+         hand_in_claimed_by = (select id from members where display_name = 'Dev')
+       where id = $1`,
+      [taskId]
+    );
+    const handingIn = await json(await call(developer, path));
+    expect(handingIn.handingIn).toMatchObject({ by: 'Dev', you: true });
+    expect(handingIn.waitingOn).toEqual({
+      kind: 'people',
+      label: 'Dev is handing the build in',
+      me: false
+    });
+    expect((await json(await call(owner, path))).handingIn).toMatchObject({
+      by: 'Dev',
+      you: false
+    });
+    await pool.query(
+      `update tasks set hand_in_claimed_at = clock_timestamp() - $2::interval - interval '1 second'
+       where id = $1`,
+      [taskId, HAND_IN_LEASE]
+    );
+    expect((await json(await call(developer, path))).handingIn).toBeNull();
+
     const handIn = await call(developer, `${path}/hand-in`, { prTitle: 'feat(deck): publish it' });
     expect(handIn.status).toBe(503);
     expect(await json(handIn)).toEqual({ error: 'the GitHub App is not configured' });
