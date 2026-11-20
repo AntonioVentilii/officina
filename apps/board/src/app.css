@@ -384,6 +384,26 @@ textarea.field {
   line-height: 1.5;
 }
 
+/* A tab: one of a row of choices, the chosen one ruled underneath. A component sets its size. */
+.tab {
+  padding: 4px 0;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: none;
+  color: var(--text-2);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.tab:hover:not(:disabled),
+.tab.on {
+  color: var(--text);
+}
+
+.tab.on {
+  border-bottom-color: var(--rule);
+}
+
 /* Status words: narrow capitals, never a coloured lozenge. */
 .pill {
   display: inline-flex;

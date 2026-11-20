@@ -196,6 +196,7 @@
         <nav class="tabs" aria-label="Task sections">
           {#each tabs as [id, label, badge] (id)}
             <button
+              class="tab"
               class:on={tab === id}
               onclick={() => (tab = id)}
               aria-current={tab === id ? 'page' : undefined}
@@ -335,6 +336,7 @@
                   <div class="versions">
                     {#each task.specs as item (item.version)}
                       <button
+                        class="tab"
                         class:on={item.version === spec.version}
                         onclick={() => (specVersion = item.version)}
                       >
@@ -482,22 +484,7 @@
     align-items: baseline;
     gap: 6px;
     padding: 6px 0 8px;
-    border: 0;
-    border-bottom: 3px solid transparent;
     margin-bottom: -1px;
-    background: none;
-    color: var(--text-2);
-    font-weight: 600;
-    font-size: 14px;
-  }
-
-  .tabs button:hover {
-    color: var(--text);
-  }
-
-  .tabs button.on {
-    color: var(--text);
-    border-bottom-color: var(--rule);
   }
 
   .count {
@@ -593,17 +580,7 @@
 
   .versions button {
     padding: 2px 0 4px;
-    border: 0;
-    border-bottom: 3px solid transparent;
-    background: none;
-    color: var(--text-2);
-    font-weight: 600;
     font-size: 13px;
-  }
-
-  .versions button.on {
-    color: var(--text);
-    border-bottom-color: var(--rule);
   }
 
   .spec {
