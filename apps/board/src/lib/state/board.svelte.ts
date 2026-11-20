@@ -1,9 +1,10 @@
 import { ApiError, get, post } from '#lib/api.ts';
 import { coalesce } from '#lib/coalesce.ts';
 import { latestOnly } from '#lib/latest.ts';
+import { refreshesBoard } from '#lib/live-events.ts';
 import { isActive } from '#lib/runs.ts';
 import type { AgentRoleInfo, Card, Learning, MemberActivity, Notice, Run } from '#lib/types.ts';
-import { live, refreshesAll } from './live.svelte';
+import { live } from './live.svelte';
 import { session } from './session.svelte';
 
 class Board {
@@ -45,7 +46,7 @@ class Board {
     this.error = null;
     this.#unsubscribe?.();
     this.#unsubscribe = live.subscribe((event) => {
-      if (refreshesAll(event) || event.projectId === this.#projectId) this.#refreshSoon();
+      if (refreshesBoard(event, this.#projectId)) this.#refreshSoon();
     });
     void this.refresh();
   }
