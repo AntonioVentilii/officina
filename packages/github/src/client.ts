@@ -482,6 +482,14 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     }
   };
 
+  /** The pull request open from a branch to a base, or null when there is none. */
+  const openPullRequestFrom = async (
+    ref: RepoRef & { readonly branch: string; readonly base: string }
+  ): Promise<{ number: number; url: string } | null> => {
+    const [open] = await openFromBranch(ref, await installationToken(ref));
+    return open ? { number: open.number, url: open.html_url } : null;
+  };
+
   /** Closes every pull request still open from a branch; none open is not an error. */
   const closePullRequestsFrom = async (ref: RepoRef & { readonly branch: string }) => {
     const token = await installationToken(ref);
@@ -693,6 +701,7 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     isOnBranch,
     commitChanges,
     openPullRequest,
+    openPullRequestFrom,
     closePullRequestsFrom,
     commentOnIssue,
     editComment,

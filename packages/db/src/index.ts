@@ -13,6 +13,7 @@ export * from './auth';
 export * from './board';
 export * from './hand-in-claims';
 export * from './learning-decisions';
+export * from './learning-pull-requests';
 export * from './learnings';
 export * from './github-accounts';
 export * from './connector';

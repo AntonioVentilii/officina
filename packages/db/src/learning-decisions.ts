@@ -1,4 +1,4 @@
-import type { LearningDecision } from '@officina/core';
+import type { LearningDecision, LearningTarget } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
 
 type Queryable = Pool | PoolClient;
@@ -23,7 +23,9 @@ export const DECISION_LEASE = '10 minutes';
 /**
  * Marks a proposed learning as being decided by `decider`, unless a live claim holds it already,
  * and returns the claim that records or releases the decision. The GitHub calls of an accept run
- * under this claim rather than under a row lock, so no transaction stays open across them.
+ * under this claim rather than under a row lock, so no transaction stays open across them. An
+ * accept also marks the learning with a new attempt, and who made it, so a pull request it opened
+ * without recording is found afterwards (`listAcceptsToCheck`).
  */
 export const claimLearningDecision = async (
   db: Queryable,
@@ -35,7 +37,9 @@ export const claimLearningDecision = async (
     await db.query<{ claim: string }>(
       `update learnings
        set decision_claim = gen_random_uuid(), decision_claimed_at = clock_timestamp(),
-         decision_claimed_by = $4, decision_claimed_for = $5
+         decision_claimed_by = $4, decision_claimed_for = $5,
+         accept_attempt = case when $5 = 'accept' then gen_random_uuid() else accept_attempt end,
+         accept_attempted_by = case when $5 = 'accept' then $4 else accept_attempted_by end
        where project_id = $1 and id = $2 and status = 'proposed'
          and (decision_claim is null or decision_claimed_at < clock_timestamp() - $3::interval)
        returning decision_claim as claim`,
@@ -129,3 +133,70 @@ export const requestLearningRewrite = async (
       [id, claim]
     )
   ).rowCount ?? 0) === 1;
+
+/** A proposed learning an accept marked, to look for the pull request that accept may have left. */
+export interface AcceptToCheck {
+  readonly id: string;
+  readonly target: LearningTarget;
+  readonly rewrittenAt: Date | null;
+  /** The `accept_attempt` read, so only that attempt is recorded or cleared. */
+  readonly attempt: string;
+  readonly repo: string;
+  readonly installationId: number;
+  readonly defaultBranch: string;
+}
+
+/**
+ * The proposed learnings of a project an accept marked and no decision holds now, in a project with
+ * the GitHub App installed: an accept that opened its pull request and then lost its record left
+ * one of them proposed with that pull request open.
+ */
+export const listAcceptsToCheck = async (
+  db: Queryable,
+  projectId: string
+): Promise<AcceptToCheck[]> =>
+  (
+    await db.query<Omit<AcceptToCheck, 'installationId'> & { installationId: string }>(
+      `select l.id, l.target, l.rewritten_at as "rewrittenAt", l.accept_attempt as attempt,
+         p.github_repo as repo, p.github_installation_id::text as "installationId",
+         p.default_branch as "defaultBranch"
+       from learnings l join projects p on p.id = l.project_id
+       where l.project_id = $1 and l.status = 'proposed' and l.accept_attempt is not null
+         and not ${DECISION_CLAIM_LIVE} and p.github_installation_id is not null
+       order by l.created_at`,
+      [projectId]
+    )
+  ).rows.map((row) => ({ ...row, installationId: Number(row.installationId) }));
+
+/**
+ * Records as accepted, by whoever tried the accept, a learning whose accept opened its pull request
+ * and lost its record. Only the attempt that was checked, while no decision holds the learning, so
+ * an accept or a reject made meanwhile is never overwritten. Says whether it recorded. The commit
+ * on the branch is unknown, so none is recorded.
+ */
+export const recordLeftAccept = async (
+  db: Queryable,
+  input: { id: string; attempt: string; prNumber: number; prUrl: string }
+): Promise<boolean> =>
+  ((
+    await db.query(
+      `update learnings l set status = 'accepted', decided_by = l.accept_attempted_by,
+         decided_at = clock_timestamp(), pr_number = $3, pr_url = $4, ${CLAIM_CLEARED}
+       where l.id = $1 and l.status = 'proposed' and l.accept_attempt = $2
+         and not ${DECISION_CLAIM_LIVE}`,
+      [input.id, input.attempt, input.prNumber, input.prUrl]
+    )
+  ).rowCount ?? 0) === 1;
+
+/**
+ * Clears the mark of an accept that left no pull request, so the learning is not looked at again.
+ * Only that attempt: one a newer accept made meanwhile stays for the next check.
+ */
+export const clearAcceptAttempt = async (db: Queryable, id: string, attempt: string) => {
+  await db.query(
+    `update learnings l set accept_attempt = null, accept_attempted_by = null
+     where l.id = $1 and l.accept_attempt = $2 and l.status = 'proposed'
+       and not ${DECISION_CLAIM_LIVE}`,
+    [id, attempt]
+  );
+};

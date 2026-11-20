@@ -13,6 +13,7 @@ import {
   loadProject,
   releaseLearningDecision,
   requestLearningRewrite,
+  type LearningDuplicate,
   type LearningRow
 } from '@officina/db';
 import type { Pool } from 'pg';
@@ -37,6 +38,10 @@ const REWRITE_BLOCKS = {
     'the learner is rewriting this edit against the current file; decide it once it is back',
   failed: 'the edit no longer applies and the learner could not rewrite it; reject it instead'
 } as const;
+
+/** Why a learning repeating one already accepted with its pull request cannot be accepted. */
+const repeats = ({ title, prNumber }: LearningDuplicate) =>
+  `this learning repeats "${title}", already accepted with pull request #${prNumber}; reject it instead`;
 
 /** Said when the claim of a decision was taken over, after its lease ran out, by another one. */
 const TAKEN_OVER = 'someone else decided this learning meanwhile; look at it again';
@@ -129,12 +134,15 @@ interface DecisionInput {
 
 /**
  * The learning a decision is about, if it can still be decided as asked: still proposed, and for an
- * accept, the edit the person read, never one rewritten since.
+ * accept, not a repeat of an edit already accepted with its pull request, and the edit the person
+ * read, never one rewritten since.
  */
 const decidable = (learning: LearningRow | null, input: DecisionInput): LearningRow => {
   if (!learning) throw new TaskCommandError('learning not found');
   if (learning.status !== 'proposed')
     throw new TaskCommandError('this learning was already decided');
+  if (input.decision === 'accept' && learning.duplicateOf)
+    throw new TaskCommandError(repeats(learning.duplicateOf));
   const read = learning.rewrittenAt?.toISOString() ?? null;
   if (input.decision === 'accept' && read !== input.rewrittenAt)
     throw new TaskCommandError('the edit was rewritten since you read it; read it again first');

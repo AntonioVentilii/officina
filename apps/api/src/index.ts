@@ -18,6 +18,7 @@ export {
 } from './setup';
 export {
   catchUpLearningPullRequests,
+  catchUpLeftAccepts,
   catchUpPullRequests,
   type PullRequestReader
 } from './catch-up';

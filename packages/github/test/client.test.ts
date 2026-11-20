@@ -511,6 +511,28 @@ describe('GitHub client', () => {
     await expect(opening).rejects.toThrow('GitHub 422');
   });
 
+  test('finds the pull request open from a branch to a base, or none', async () => {
+    let open = [{ number: 50, html_url: 'https://github.com/ViciApp/vici-app/pull/50' }];
+    const { fetchImpl, calls } = fakeGitHub({
+      'POST /app/installations/99/access_tokens': tokenRoute('2099-01-01T00:00:00Z'),
+      'GET /repos/ViciApp/vici-app/pulls': () => json(open)
+    });
+    const client = createGitHubClient({ appId: '1', privateKeyPem, fetch: fetchImpl });
+    const input = { ...ref, branch: 'officina/learning-1', base: 'main' };
+    expect(await client.openPullRequestFrom(input)).toEqual({
+      number: 50,
+      url: 'https://github.com/ViciApp/vici-app/pull/50'
+    });
+    const listed = new URLSearchParams(calls.at(-1)!.query);
+    expect(calls.at(-1)!.url).toBe('/repos/ViciApp/vici-app/pulls');
+    expect(listed.get('state')).toBe('open');
+    expect(listed.get('head')).toBe('ViciApp:officina/learning-1');
+    expect(listed.get('base')).toBe('main');
+
+    open = [];
+    expect(await client.openPullRequestFrom(input)).toBeNull();
+  });
+
   test('closes every pull request still open from a branch, and none open is not an error', async () => {
     let open = [
       { number: 7, html_url: 'https://github.com/ViciApp/vici-app/pull/7' },
