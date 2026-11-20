@@ -1288,7 +1288,10 @@ describe.skipIf(!url)('engine', () => {
       afterBuild: async () => {
         await decideLearning(pool, {
           id: learning!.id,
-          claim: (await claimLearningDecision(pool, seeded.projectId, learning!.id))!,
+          claim: (await claimLearningDecision(pool, seeded.projectId, learning!.id, {
+            memberId: seeded.ownerId,
+            decision: 'accept'
+          }))!,
           status: 'accepted',
           memberId: seeded.ownerId,
           note: null,

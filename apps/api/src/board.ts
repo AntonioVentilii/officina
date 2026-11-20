@@ -64,6 +64,7 @@ import {
   memberNames,
   stillRunning,
   type BoardTaskRow,
+  type LearningRow,
   type RunEventRow,
   type RunRow,
   type TaskEventRow,
@@ -1104,6 +1105,21 @@ export const runLog = async (pool: Pool, runId: string, afterId: number) => {
 };
 
 /** Learnings of the project, newest first, with who decided them. */
+/**
+ * The decision under way on a learning, while its claim is live: which one, who made it (null for a
+ * claim from before claims named anyone), whether it is the viewer, and since when. Every board that
+ * shows the learning shows it at work, so nobody decides it twice.
+ */
+const decidingView = (row: LearningRow, viewer: BoardViewer, names: ReadonlyMap<string, string>) =>
+  row.decidingSince
+    ? {
+        decision: row.decidingFor,
+        by: row.decidingBy ? (names.get(row.decidingBy) ?? 'a former member') : null,
+        you: row.decidingBy === viewer.memberId,
+        since: row.decidingSince
+      }
+    : null;
+
 export const learningsView = async (pool: Pool, viewer: BoardViewer) => {
   const [rows, names] = await Promise.all([
     listLearnings(pool, viewer.projectId),
@@ -1131,6 +1147,7 @@ export const learningsView = async (pool: Pool, viewer: BoardViewer) => {
     rewrite: row.rewrite,
     rewrittenAt: row.rewrittenAt,
     createdAt: row.createdAt,
-    canDecide: canDecide && row.status === 'proposed'
+    canDecide: canDecide && row.status === 'proposed',
+    deciding: decidingView(row, viewer, names)
   }));
 };

@@ -1,6 +1,17 @@
+import type { LearningDecision } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
 
 type Queryable = Pool | PoolClient;
+
+/** Who claimed a learning's decision, and which decision it is, so open boards can show it. */
+export interface Decider {
+  readonly memberId: string;
+  readonly decision: LearningDecision;
+}
+
+/** The columns a claim sets, cleared together whenever it ends. */
+const CLAIM_CLEARED = `decision_claim = null, decision_claimed_at = null,
+  decision_claimed_by = null, decision_claimed_for = null`;
 
 /**
  * How long a claim to decide a learning holds. A claim older than this was left by a process that
@@ -10,25 +21,31 @@ type Queryable = Pool | PoolClient;
 export const DECISION_LEASE = '10 minutes';
 
 /**
- * Marks a proposed learning as being decided, unless a live claim holds it already, and returns
- * the claim that records or releases the decision. The GitHub calls of an accept run under this
- * claim rather than under a row lock, so no transaction stays open across them.
+ * Marks a proposed learning as being decided by `decider`, unless a live claim holds it already,
+ * and returns the claim that records or releases the decision. The GitHub calls of an accept run
+ * under this claim rather than under a row lock, so no transaction stays open across them.
  */
 export const claimLearningDecision = async (
   db: Queryable,
   projectId: string,
-  id: string
+  id: string,
+  decider: Decider
 ): Promise<string | null> =>
   (
     await db.query<{ claim: string }>(
       `update learnings
-       set decision_claim = gen_random_uuid(), decision_claimed_at = clock_timestamp()
+       set decision_claim = gen_random_uuid(), decision_claimed_at = clock_timestamp(),
+         decision_claimed_by = $4, decision_claimed_for = $5
        where project_id = $1 and id = $2 and status = 'proposed'
          and (decision_claim is null or decision_claimed_at < clock_timestamp() - $3::interval)
        returning decision_claim as claim`,
-      [projectId, id, DECISION_LEASE]
+      [projectId, id, DECISION_LEASE, decider.memberId, decider.decision]
     )
   ).rows[0]?.claim ?? null;
+
+/** Whether learning `l` has a claim still within its lease, the one place that is decided. */
+export const DECISION_CLAIM_LIVE = `(l.decision_claim is not null
+  and l.decision_claimed_at >= clock_timestamp() - '${DECISION_LEASE}'::interval)`;
 
 /**
  * Renews a claim still held, right before a GitHub write, so its lease runs from there. Says
@@ -50,7 +67,7 @@ export const holdLearningDecision = async (
 /** Lets go of a claim that recorded nothing, so the learning can be decided again at once. */
 export const releaseLearningDecision = async (db: Queryable, id: string, claim: string) => {
   await db.query(
-    `update learnings set decision_claim = null, decision_claimed_at = null
+    `update learnings set ${CLAIM_CLEARED}
      where id = $1 and decision_claim = $2`,
     [id, claim]
   );
@@ -79,7 +96,7 @@ export const decideLearning = async (
     await db.query(
       `update learnings set status = $2, decided_by = $3, decided_at = clock_timestamp(),
          decision_note = $4, pr_number = $5, pr_url = $6, branch_sha = $7, branch_parent_sha = $8,
-         decision_claim = null, decision_claimed_at = null
+         ${CLAIM_CLEARED}
        where id = $1 and status = 'proposed' and decision_claim = $9`,
       [
         input.id,
@@ -107,7 +124,7 @@ export const requestLearningRewrite = async (
 ): Promise<boolean> =>
   ((
     await db.query(
-      `update learnings set rewrite = 'requested', decision_claim = null, decision_claimed_at = null
+      `update learnings set rewrite = 'requested', ${CLAIM_CLEARED}
        where id = $1 and status = 'proposed' and rewrite is null and decision_claim = $2`,
       [id, claim]
     )
