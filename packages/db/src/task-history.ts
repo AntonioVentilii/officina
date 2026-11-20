@@ -22,7 +22,7 @@ export const saveSpecVersion = async (
     version: number;
     body: string;
     createdBy: Actor;
-    /** The paths the spec predicted, which hold a sub-task back while a sibling changes them. */
+    /** The paths the spec predicts the change touches, for the order of sub-tasks. */
     predictedPaths?: readonly string[];
   }
 ) => {

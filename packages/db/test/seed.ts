@@ -55,37 +55,48 @@ const agent = (
   version: 1
 });
 
-/** Creates a task and takes it to `ready`, its spec stored with the paths it predicts as the engine does. */
+/**
+ * Creates a task and takes it to `ready`, its spec predicting `paths` and stored as the spec agent's
+ * is, so the order of sub-tasks reads them.
+ */
 export const createReadyTask = async (
   pool: Pool,
   seeded: Seeded,
+  title: string,
   paths: readonly string[]
-): Promise<string> => {
+): Promise<{ id: string; number: number }> => {
   const { task } = await createTask(pool, {
     projectId: seeded.projectId,
-    title: 'Split work',
+    title,
     requesterId: seeded.ownerId
   });
-  const id = task.id;
-  await applyOrThrow(pool, id, { type: 'submit_request' }, seeded.owner);
-  await applyOrThrow(pool, id, { type: 'accept' }, seeded.owner);
+  await applyOrThrow(pool, task.id, { type: 'submit_request' }, seeded.owner);
+  await applyOrThrow(pool, task.id, { type: 'accept' }, seeded.owner);
   const specced = await applyCommand(pool, {
-    taskId: id,
+    taskId: task.id,
     command: { type: 'post_spec', predictedPaths: paths, userVisible: false },
     actor: agent('spec'),
-    onApplied: (client, applied) =>
+    onApplied: (client, after) =>
       saveSpecVersion(client, {
-        taskId: id,
-        version: applied.specVersion,
-        body: 'The spec.',
+        taskId: task.id,
+        version: after.specVersion,
+        body: `# ${title}`,
         createdBy: agent('spec'),
         predictedPaths: paths
       })
   });
   if (!specced.ok) throw new Error(`post_spec: ${specced.error}`);
-  await applyOrThrow(pool, id, { type: 'plan_approval', userVisible: false, plan: PLAN }, ENGINE);
-  await applyOrThrow(pool, id, { type: 'approve' }, seeded.owner);
-  return id;
+  await applyOrThrow(
+    pool,
+    task.id,
+    { type: 'plan_approval', userVisible: false, plan: PLAN },
+    agent('chooser')
+  );
+  await applyOrThrow(pool, task.id, { type: 'approve' }, seeded.owner);
+  const { rows } = await pool.query<{ number: number }>('select number from tasks where id = $1', [
+    task.id
+  ]);
+  return { id: task.id, number: rows[0]!.number };
 };
 
 /** Creates a copy-change task and takes it to `choosing`, built at `abc` and reviewed. */

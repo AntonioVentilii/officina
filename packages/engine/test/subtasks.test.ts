@@ -1,18 +1,12 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
-import { ENGINE, type Actor, type Command } from '@officina/core';
-import { createTask, inTransaction, loadTask, setTaskLinks } from '@officina/db';
+import { ENGINE, type Actor } from '@officina/core';
+import { inTransaction, loadTask, setTaskLinks } from '@officina/db';
 import { Pool } from 'pg';
-import {
-  PLAN,
-  applyOrThrow,
-  createReadyTask,
-  createTaskInMerging,
-  resetAndSeed,
-  type Seeded
-} from '../../db/test/seed';
+import { PLAN, applyOrThrow, createReadyTask, resetAndSeed, type Seeded } from '../../db/test/seed';
 import { collectDueSteps } from '../src';
 
 const url = process.env.TEST_DATABASE_URL;
+const SHARED = 'src/routes/settings/+page.svelte';
 
 const agent = (role: 'builder' | 'reviewer_spec' | 'reviewer_correctness' | 'chooser'): Actor => ({
   kind: 'agent',
@@ -45,103 +39,101 @@ describe.skipIf(!url)('sub-tasks and their order', () => {
       })
     );
 
-  /** Takes a task the builder agent holds through review and verification to `done`. */
+  const stageOf = async (taskId: string) => (await loadTask(pool, taskId))?.task.stage;
+
+  /** Takes a task the builder agent holds through review, verification and the merge. */
   const merge = async (taskId: string, paths: readonly string[]) => {
-    const steps: [Command, Actor][] = [
-      [
-        {
-          type: 'push',
-          headSha: 'abc',
-          changedPaths: paths,
-          addedPaths: [],
-          catalogPages: {},
-          diffLines: 10
-        },
-        agent('builder')
-      ],
-      [{ type: 'review', verdict: 'approve', notes: 'ok' }, agent('reviewer_spec')],
-      [{ type: 'review', verdict: 'approve', notes: 'ok' }, agent('reviewer_correctness')],
-      [{ type: 'choose', userVisible: false, plan: PLAN }, agent('chooser')],
-      [{ type: 'approve' }, seeded.owner],
-      [{ type: 'merged' }, ENGINE]
-    ];
-    for (const [command, actor] of steps) await applyOrThrow(pool, taskId, command, actor);
+    const push = {
+      type: 'push' as const,
+      headSha: `sha-${taskId}`,
+      changedPaths: paths,
+      addedPaths: [],
+      catalogPages: {},
+      diffLines: 10
+    };
+    await applyOrThrow(pool, taskId, push, agent('builder'));
+    const review = { type: 'review' as const, verdict: 'approve' as const, notes: 'ok' };
+    await applyOrThrow(pool, taskId, review, agent('reviewer_spec'));
+    await applyOrThrow(pool, taskId, review, agent('reviewer_correctness'));
+    await applyOrThrow(
+      pool,
+      taskId,
+      { type: 'choose', userVisible: false, plan: PLAN },
+      agent('chooser')
+    );
+    await applyOrThrow(pool, taskId, { type: 'approve' }, seeded.owner);
+    await applyOrThrow(pool, taskId, { type: 'merged' }, ENGINE);
   };
 
-  const stageOf = async (taskId: string) => (await loadTask(pool, taskId))!.task.stage;
-
-  test('a task waiting for another is dispatched on the pass after that one merges', async () => {
-    const merging = await createTaskInMerging(pool, seeded);
-    const waiting = await createReadyTask(pool, seeded, ['src/routes/a.svelte']);
-    await link(waiting, { after: [merging] });
-
-    expect(await pass()).toEqual([]);
-    await applyOrThrow(pool, merging, { type: 'merged' }, ENGINE);
-    expect(await pass()).toEqual([waiting]);
-  });
-
-  test('of two sub-tasks that change the same file, the first is built, then the other', async () => {
-    const parent = await createReadyTask(pool, seeded, ['src/routes/a.svelte']);
-    const first = await createReadyTask(pool, seeded, ['src/routes/a.svelte']);
-    const second = await createReadyTask(pool, seeded, ['src/routes/a.svelte', 'src/b.ts']);
-    await link(first, { parent });
-    await link(second, { parent });
-
-    expect(await pass()).toEqual([first]);
-    expect(await pass()).toEqual([]);
-    await merge(first, ['src/routes/a.svelte']);
-    expect(await pass()).toEqual([second]);
-  });
-
-  test('sub-tasks that change different files are built side by side', async () => {
-    const parent = await createReadyTask(pool, seeded, ['src/routes/a.svelte']);
-    const first = await createReadyTask(pool, seeded, ['src/routes/a.svelte']);
-    const second = await createReadyTask(pool, seeded, ['src/b.ts']);
-    await link(first, { parent });
-    await link(second, { parent });
-
-    expect(await pass()).toEqual([first, second]);
-  });
-
   test('a ready task with no links is dispatched as before', async () => {
-    const plain = await createReadyTask(pool, seeded, ['src/routes/a.svelte']);
-    expect(await pass()).toEqual([plain]);
-    expect(await stageOf(plain)).toBe('building');
+    const task = await createReadyTask(pool, seeded, 'Title', [SHARED]);
+    expect(await pass()).toEqual([task.id]);
+    expect(await stageOf(task.id)).toBe('building');
   });
 
-  test('a parent is never built and closes itself once its last sub-task merges, once', async () => {
-    const parent = await createReadyTask(pool, seeded, ['src/routes/a.svelte']);
-    const sub = await createReadyTask(pool, seeded, ['src/routes/a.svelte']);
-    const dropped = (
-      await createTask(pool, {
-        projectId: seeded.projectId,
-        title: 'Dropped part',
-        requesterId: seeded.ownerId
-      })
-    ).task.id;
-    await link(sub, { parent });
-    await link(dropped, { parent });
-    await applyOrThrow(pool, dropped, { type: 'cancel', reason: 'Not needed.' }, seeded.owner);
+  test('a task waiting for another is dispatched on the pass after that one is merged', async () => {
+    const first = await createReadyTask(pool, seeded, 'Title', ['src/a.ts']);
+    const then = await createReadyTask(pool, seeded, 'Copy', ['src/b.ts']);
+    await link(then.id, { after: [first.id] });
 
-    expect(await pass()).toEqual([sub]);
-    expect(await stageOf(parent)).toBe('ready');
-    await merge(sub, ['src/routes/a.svelte']);
+    expect(await pass()).toEqual([first.id]);
+    expect(await stageOf(then.id)).toBe('ready');
+    await merge(first.id, ['src/a.ts']);
+    expect(await pass()).toEqual([then.id]);
+  });
+
+  test('siblings that change the same file are built one after the other, in order', async () => {
+    const parent = await createReadyTask(pool, seeded, 'Settings', [SHARED]);
+    const first = await createReadyTask(pool, seeded, 'Title', [SHARED, 'src/a.ts']);
+    const second = await createReadyTask(pool, seeded, 'Copy', [SHARED]);
+    await link(first.id, { parent: parent.id });
+    await link(second.id, { parent: parent.id });
+
+    expect(await pass()).toEqual([first.id]);
+    expect(await pass()).toEqual([]);
+    await merge(first.id, [SHARED]);
+    expect(await pass()).toEqual([second.id]);
+  });
+
+  test('siblings with disjoint files are built side by side', async () => {
+    const parent = await createReadyTask(pool, seeded, 'Settings', [SHARED]);
+    const first = await createReadyTask(pool, seeded, 'Title', ['src/a.ts']);
+    const second = await createReadyTask(pool, seeded, 'Copy', ['src/b.ts']);
+    await link(first.id, { parent: parent.id });
+    await link(second.id, { parent: parent.id });
+
+    expect(await pass()).toEqual([first.id, second.id]);
+  });
+
+  test('a parent is never built, and closes on the pass after its last sub-task merged', async () => {
+    const parent = await createReadyTask(pool, seeded, 'Settings', [SHARED]);
+    const first = await createReadyTask(pool, seeded, 'Title', ['src/a.ts']);
+    const second = await createReadyTask(pool, seeded, 'Copy', ['src/b.ts']);
+    await link(first.id, { parent: parent.id });
+    await link(second.id, { parent: parent.id });
+
+    expect(await pass()).toEqual([first.id, second.id]);
+    await merge(first.id, ['src/a.ts']);
+    expect(await pass()).toEqual([]);
+    expect(await stageOf(parent.id)).toBe('ready');
+    await merge(second.id, ['src/b.ts']);
 
     expect(await pass()).toEqual([]);
-    expect(await stageOf(parent)).toBe('done');
+    expect(await stageOf(parent.id)).toBe('done');
     const events = async () =>
       (
         await pool.query<{ type: string; payload: unknown }>(
           'select type, payload from task_events where task_id = $1 order by id',
-          [parent]
+          [parent.id]
         )
-      ).rows;
-    const closed = await events();
-    expect(closed.slice(-2)).toEqual([
-      { type: 'subtasks_merged', payload: { subtasks: [2] } },
+      ).rows.slice(-2);
+    expect(await events()).toEqual([
+      { type: 'subtasks_merged', payload: { subtasks: [first.number, second.number] } },
       { type: 'stage_changed', payload: { from: 'ready', to: 'done' } }
     ]);
+    const count = await pool.query('select 1 from task_events where task_id = $1', [parent.id]);
     await pass();
-    expect(await events()).toEqual(closed);
+    const again = await pool.query('select 1 from task_events where task_id = $1', [parent.id]);
+    expect(again.rowCount).toBe(count.rowCount);
   });
 });

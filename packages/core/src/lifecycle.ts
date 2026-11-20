@@ -352,7 +352,7 @@ export type Command =
   | { readonly type: 'pause' }
   | { readonly type: 'resume' }
   | { readonly type: 'cancel'; readonly reason: string }
-  /** The engine closes a parent whose sub-tasks have merged; `subtasks` are the merged ones. */
+  /** Every sub-task of the task is closed and these merged: the parent closes with them. */
   | { readonly type: 'close_parent'; readonly subtasks: readonly number[] };
 
 /** `unlisted_files` sends the work back to its builder; the others hold it for a person. */
@@ -412,6 +412,7 @@ export type DomainEvent =
   | { readonly type: 'paused' }
   | { readonly type: 'resumed' }
   | { readonly type: 'closed'; readonly stage: 'declined' | 'cancelled'; readonly reason: string }
+  /** A parent closed because its sub-tasks merged; `subtasks` are the merged ones' numbers. */
   | { readonly type: 'subtasks_merged'; readonly subtasks: readonly number[] }
   /** The result went to merge without a person's check; `subject` is the head it covers. */
   | { readonly type: 'auto_verified'; readonly subject: string }
@@ -466,8 +467,9 @@ export interface DecideContext {
    */
   readonly proposals?: readonly ApprovalProposal[];
   /**
-   * What the task waits for before its build may start (`buildWait`). Only dispatching or claiming
-   * a ready task reads it, so the store loads it for those alone, under the parent's lock.
+   * What the task waits for before it may be built (`buildWait`): the tasks it waits for, its own
+   * open sub-tasks, or a sibling in flight that changes the same files. Only a dispatch or a claim
+   * of a `ready` task reads it, so the store loads it for those alone.
    */
   readonly buildWait?: BuildWait | null;
 }
@@ -1172,6 +1174,7 @@ export const decide = (
         return fail('not_allowed');
       const assignee: Assignee = { kind: 'member', memberId: actor.memberId };
       if (task.stage === 'ready') {
+        // Order holds for work people build too: a waiting task is claimed once it waits for nothing.
         if (context.buildWait) return fail('awaiting_tasks');
         const [moved, stageEvent] = moveTo(task, 'building', { assignee });
         return ok(moved, [stageEvent, { type: 'assigned', assignee }]);
@@ -1423,10 +1426,10 @@ export const decide = (
     }
 
     case 'close_parent': {
-      // Its work has merged through its sub-tasks, so it closes even when held.
+      // Its work merged through its sub-tasks, so it closes even while held or paused.
       if (actor.kind !== 'engine') return fail('not_allowed');
-      const [moved, event] = moveTo(task, 'done', { assignee: null, blocked: null });
-      return ok(moved, [{ type: 'subtasks_merged', subtasks: command.subtasks }, event]);
+      const [moved, stageEvent] = moveTo(task, 'done', { assignee: null, blocked: null });
+      return ok(moved, [{ type: 'subtasks_merged', subtasks: command.subtasks }, stageEvent]);
     }
   }
 };

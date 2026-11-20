@@ -5,7 +5,13 @@ import { GitHubError } from '@officina/github';
 import { Pool } from 'pg';
 import { taskActionFor } from '../src/cli';
 import { invite } from '../src/people';
-import { PLAN, applyOrThrow, resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
+import {
+  PLAN,
+  applyOrThrow,
+  createReadyTask,
+  resetAndSeed,
+  type Seeded
+} from '../../../packages/db/test/seed';
 import { gitHubWith } from '../../../packages/engine/test/fake-github';
 import {
   TaskCommandError,
@@ -205,6 +211,50 @@ describe.skipIf(!url)('task commands', () => {
       stage: 'ready',
       satisfied: true
     });
+  });
+
+  test('a maintainer links tasks once, and a contributor may not link them', async () => {
+    await createReadyTask(pool, seeded, 'Title', ['src/a.ts']);
+    await createReadyTask(pool, seeded, 'Copy', ['src/b.ts']);
+    const task = await createReadyTask(pool, seeded, 'Icon', ['src/c.ts']);
+    for (const [email, role] of [
+      ['mara@example.com', 'maintainer'],
+      ['gio@example.com', 'contributor']
+    ] as const)
+      await invite(pool, { publicUrl: 'x', email, name: role, role, domains: [] });
+    const links = { number: task.number, parent: 1, after: [2], asEmail: 'mara@example.com' };
+
+    expect(await linkTask(pool, links)).toBe('Task #3: parent task 1, waits for task 2.');
+    expect(await linkTask(pool, links)).toBe('Task #3: parent task 1, waits for task 2.');
+    const events = await pool.query(
+      "select 1 from task_events where task_id = $1 and type = 'links_changed'",
+      [task.id]
+    );
+    expect(events.rowCount).toBe(1);
+
+    await expect(
+      linkTask(pool, { number: task.number, after: [], asEmail: 'gio@example.com' })
+    ).rejects.toMatchObject({ status: 403 });
+    expect(await linkTask(pool, { number: task.number, after: [] })).toBe('Task #3: no links.');
+  });
+
+  test('a task linked to itself or into a cycle is refused with why', async () => {
+    await createReadyTask(pool, seeded, 'Title', ['src/a.ts']);
+    await createReadyTask(pool, seeded, 'Copy', ['src/b.ts']);
+    await expect(linkTask(pool, { number: 1, after: [1] })).rejects.toThrow(
+      'a task cannot be its own parent or wait for itself'
+    );
+    await linkTask(pool, { number: 2, after: [1] });
+    await expect(linkTask(pool, { number: 1, after: [2] })).rejects.toThrow(
+      'these links would make the tasks wait for each other forever'
+    );
+  });
+
+  test('task show says what a ready task waits for before it is built', async () => {
+    await createReadyTask(pool, seeded, 'Title', ['src/a.ts']);
+    await createReadyTask(pool, seeded, 'Copy', ['src/b.ts']);
+    await linkTask(pool, { number: 2, after: [1] });
+    expect(await describeTask(pool, { number: 2 })).toEndWith('Next: Builds once task 1 is merged');
   });
 
   test('mistakes come back as readable errors', async () => {
@@ -504,37 +554,5 @@ describe.skipIf(!url)('task commands', () => {
       taskId
     ]);
     expect(stage.rows[0]!.stage).toBe('building');
-  });
-  test("task link sets a task's parent and what it waits for, for maintainers alone, and says why not", async () => {
-    for (const title of ['Split it', 'Header', 'Footer'])
-      await createRequest(pool, { ...request, title });
-    for (const [email, role] of [
-      ['mia@example.com', 'maintainer'],
-      ['gio@example.com', 'contributor']
-    ] as const)
-      await invite(pool, { publicUrl: 'x', email, name: email, role, domains: [] });
-    const link = { asEmail: 'mia@example.com', number: 3, parent: 1, after: [2] };
-    expect(await linkTask(pool, link)).toBe('Task #3: parent task 1, waits for task 2.');
-    expect(await linkTask(pool, link)).toBe('Task #3: parent task 1, waits for task 2.');
-    const events = await pool.query("select id from task_events where type = 'links_changed'");
-    expect(events.rows).toHaveLength(1);
-
-    await expect(
-      linkTask(pool, { asEmail: 'gio@example.com', number: 3, after: [] })
-    ).rejects.toMatchObject({ status: 403 });
-    await expect(linkTask(pool, { number: 2, after: [2] })).rejects.toThrow(
-      'a task can be neither its own parent nor wait for itself'
-    );
-    await expect(linkTask(pool, { number: 2, after: [3] })).rejects.toThrow(
-      'those links would make tasks wait for each other in a loop'
-    );
-    expect(await linkTask(pool, { number: 3, after: [] })).toBe('Task #3: no links.');
-  });
-
-  test('task show says what a ready task waits for as its next step', async () => {
-    for (const title of ['Header', 'Footer']) await createRequest(pool, { ...request, title });
-    await linkTask(pool, { number: 1, after: [2] });
-    await pool.query("update tasks set stage = 'ready', lane = 'standard' where number = 1");
-    expect(await describeTask(pool, { number: 1 })).toContain('Next: Builds once task 2 is merged');
   });
 });

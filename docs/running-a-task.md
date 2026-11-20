@@ -72,14 +72,6 @@ back from the board ("Hand the build back"), from Claude (`hand_back_build`) or 
 `task hand-back --number <n>`, and the task returns to `ready`; a maintainer or an owner can hand
 back another person's build the same way.
 
-A large request can be built as ordered sub-tasks. A maintainer or an owner links them with
-`task link --number <n> [--parent <p>] [--after <m> ...]`, which replaces the task's earlier links
-(with neither option, it removes them), while the task and its parent are at `ready` or earlier.
-A task then waits in `ready` until every task it waits for is merged, and a sub-task also waits
-while a sibling in flight changes one of its files; the parent itself is never built, only its
-sub-tasks. The board and `task show` say what the task waits for. The parent closes by itself once
-its sub-tasks are merged.
-
 ## Step by step
 
 1. **See what exists.**
@@ -138,6 +130,14 @@ its sub-tasks are merged.
 8. **Merge on GitHub.** Approve and merge the pull request as usual; the webhook closes the task.
 
 To stop a task at any time: `scripts/officina task cancel --number 1 --reason "Why"`.
+
+To build a large request in order, a maintainer or an owner links its parts:
+`scripts/officina task link --number 4 --parent 2 --after 3` makes task 4 a sub-task of task 2
+that waits for task 3, replacing its earlier links (with neither option, it removes them). Links
+change only until a task is built. A task is built only once every task it waits for has merged,
+and a sub-task also waits while a sibling being built or reviewed changes the same files;
+`task show` says what it waits for. The parent is never built itself: it closes on its own once its
+sub-tasks have merged.
 
 ## Reviews on GitHub and low-risk changes
 

@@ -8,6 +8,7 @@ export interface TaskRow {
   id: string;
   kind: Task['kind'];
   project_id: string;
+  /** The task this one is a sub-task of, if any. */
   parent_id: string | null;
   requester_id: string;
   stage: Task['stage'];

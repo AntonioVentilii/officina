@@ -1,6 +1,5 @@
 import {
   TERMINAL_STAGES,
-  buildWait,
   can,
   guardsAddedBy,
   guardsInRequest,
@@ -24,7 +23,6 @@ import {
   addComment,
   applyCommand,
   applyCommandIn,
-  buildLinksOf,
   buildRunInProgress,
   findRequestedTask,
   findTaskIdByNumber,
@@ -62,6 +60,7 @@ import {
   optionsFor,
   optionText,
   questionFor,
+  readyWait,
   type ApprovalState
 } from './board';
 import { checklistLines, checklistView, type ChosenChecklist } from './checklist-view';
@@ -106,14 +105,13 @@ const ERROR_TEXT: Record<StoreError, string> = {
 };
 
 const LINK_PROBLEM_TEXT: Record<LinkProblem, string> = {
-  self: 'a task can be neither its own parent nor wait for itself',
-  task_started:
-    'links change only until the task is ready to build, not once it is built or closed',
-  parent_started: 'the parent is already being built or is closed; pick one not built yet',
-  nested:
-    'sub-tasks go one level deep: a parent has no parent, and a task with sub-tasks is no sub-task',
+  self: 'a task cannot be its own parent or wait for itself',
+  task_started: 'links change only until the task is ready; this one is already past it',
+  parent_started:
+    'the parent is already past ready; a task is linked to a parent before it is built',
+  nested: 'sub-tasks go one level deep: the parent has a parent, or the task has sub-tasks itself',
   dependency_closed: 'a task cannot wait for a task that was cancelled or declined',
-  cycle: 'those links would make tasks wait for each other in a loop'
+  cycle: 'these links would make the tasks wait for each other forever'
 };
 
 interface Target {
@@ -497,13 +495,21 @@ export const handIn = async (
 ): Promise<{ stage: string; pullRequest: number | null }> =>
   handInAs(pool, github, { ...input, ...(await resolve(pool, input)) });
 
-/** Task numbers in words: "task 3" for one, "tasks 3, 5" for several. */
-const tasksText = (numbers: readonly number[]) =>
-  `${numbers.length > 1 ? 'tasks' : 'task'} ${numbers.join(', ')}`;
+/** A task's links in one line, as `task link` prints them. */
+const linkSummary = (number: number, parent: number | undefined, after: readonly number[]) => {
+  const waited = [...new Set(after)].sort((a, b) => a - b);
+  const parts = [
+    ...(parent === undefined ? [] : [`parent task ${parent}`]),
+    ...(waited.length
+      ? [`waits for ${waited.length > 1 ? 'tasks' : 'task'} ${waited.join(', ')}`]
+      : [])
+  ];
+  return `Task #${number}: ${parts.join(', ') || 'no links'}.`;
+};
 
 /**
- * Sets a task's parent and the tasks it waits for, replacing earlier links, as a maintainer or owner;
- * with neither, it removes them. Says the links the task has now.
+ * Sets a task's parent and the tasks it waits for, replacing its earlier links; with neither, it
+ * removes them. Only who may triage links tasks, and only before they are built.
  */
 export const linkTask = async (
   pool: Pool,
@@ -529,12 +535,7 @@ export const linkTask = async (
     setTaskLinks(client, { projectId, taskId, parentId, after, actor })
   );
   if (problem) throw new TaskCommandError(LINK_PROBLEM_TEXT[problem]);
-  const waits = [...new Set(input.after)].sort((a, b) => a - b);
-  const links = [
-    ...(input.parent === undefined ? [] : [`parent task ${input.parent}`]),
-    ...(waits.length ? [`waits for ${tasksText(waits)}`] : [])
-  ];
-  return `Task #${input.number}: ${links.join(', ') || 'no links'}.`;
+  return linkSummary(input.number, input.parent, input.after);
 };
 
 /** What an agent wrote, set off from Officina's own words in the terminal. */
@@ -681,10 +682,7 @@ export const describeTask = async (
   const reviews = await reviewFindingsFor(pool, viewer, { ...task, id: taskId });
   if (reviews?.latest) lines.push('', ...reviewLines(reviews, indent));
 
-  const wait =
-    task.stage === 'ready' && !task.blocked && !task.paused
-      ? buildWait(await buildLinksOf(pool, taskId))
-      : null;
+  const wait = await readyWait(pool, { id: taskId, stage: task.stage });
   const next = task.blocked
     ? answerHint(task.blocked, context.version)
     : task.paused

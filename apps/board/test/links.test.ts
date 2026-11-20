@@ -1,17 +1,20 @@
+/// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
-import { linkSentence } from '../src/lib/links';
+import { LINK_SENTENCES } from '../src/lib/links';
 
-describe('linkSentence', () => {
-  test("says a task's links, their removal, and its sub-tasks merging", () => {
-    expect(linkSentence({ type: 'links_changed', payload: { parent: 2, after: [3, 5] } })).toBe(
+describe('LINK_SENTENCES', () => {
+  test('a change of links names the parent and the tasks waited for, or says they were removed', () => {
+    const linked = LINK_SENTENCES.links_changed!;
+    expect(linked({ parent: 2, after: [3, 5] })).toBe(
       'linked it: parent task 2, waits for tasks 3, 5'
     );
-    expect(linkSentence({ type: 'links_changed', payload: { parent: null, after: [] } })).toBe(
-      'removed its links'
-    );
-    expect(linkSentence({ type: 'subtasks_merged', payload: { subtasks: [3, 4] } })).toBe(
+    expect(linked({ parent: null, after: [3] })).toBe('linked it: waits for task 3');
+    expect(linked({ parent: null, after: [] })).toBe('removed its links');
+  });
+
+  test('a parent closed by its sub-tasks names the ones that merged', () => {
+    expect(LINK_SENTENCES.subtasks_merged!({ subtasks: [3, 4] })).toBe(
       'closed it: every sub-task merged (tasks 3, 4)'
     );
-    expect(linkSentence({ type: 'paused', payload: {} })).toBeNull();
   });
 });

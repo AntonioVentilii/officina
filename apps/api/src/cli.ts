@@ -37,13 +37,6 @@ const need = (value: string | undefined, flag: string): string => {
   return value;
 };
 
-const taskNumber = (value: string, flag: string): number => {
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 1)
-    throw new TaskCommandError(`--${flag} must be a task number`);
-  return parsed;
-};
-
 /** The flags a task action may carry, as the command line gave them. */
 interface ActionFlags {
   readonly note?: string | undefined;
@@ -85,6 +78,14 @@ export const taskActionFor = (
     default:
       return null;
   }
+};
+
+/** A task number a flag names, refused unless it is a positive integer. */
+const taskNumber = (value: string, flag: string): number => {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1)
+    throw new TaskCommandError(`--${flag} must be a task number`);
+  return parsed;
 };
 
 const agentsPort = () => {
@@ -180,7 +181,7 @@ const main = async () => {
               ...target,
               number: number(),
               parent: values.parent === undefined ? undefined : taskNumber(values.parent, 'parent'),
-              after: (values.after ?? []).map((after) => taskNumber(after, 'after'))
+              after: (values.after ?? []).map((value) => taskNumber(value, 'after'))
             })
           );
           return;

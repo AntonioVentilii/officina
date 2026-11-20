@@ -17,6 +17,7 @@ import {
   loadTaskContext
 } from '@officina/db';
 import { isRunnerRole, type RunnerRole } from '@officina/runner';
+import type { Pool } from 'pg';
 import { runAgentStep, type EngineDependencies, type StepResult } from './step';
 
 export interface DueStep {
@@ -32,18 +33,17 @@ export interface TickReport {
 }
 
 /**
- * Closes each open parent whose sub-tasks have all closed with at least one merged, rechecked under
- * the parent's lock. A parent already closed is no longer listed, so a second pass does nothing.
+ * Closes every open parent whose sub-tasks are all closed with at least one merged
+ * (`parentCloses`), read again under the parent's lock. One that no longer closes is skipped, as
+ * a refused dispatch is.
  */
-const closeMergedParents = async (pool: EngineDependencies['pool'], projectId: string) => {
+const closeMergedParents = async (pool: Pool, projectId: string) => {
   for (const parent of await listOpenParents(pool, projectId)) {
     if (!parentCloses(parent.subtasks)) continue;
+    const merged = parent.subtasks.filter((task) => task.stage === 'done');
     await applyCommand(pool, {
       taskId: parent.id,
-      command: {
-        type: 'close_parent',
-        subtasks: parent.subtasks.filter((task) => task.stage === 'done').map((task) => task.number)
-      },
+      command: { type: 'close_parent', subtasks: merged.map((task) => task.number) },
       actor: ENGINE,
       guard: async (_task, client) => parentCloses((await buildLinksOf(client, parent.id)).subtasks)
     });
@@ -51,8 +51,9 @@ const closeMergedParents = async (pool: EngineDependencies['pool'], projectId: s
 };
 
 /**
- * Hands ready tasks to the builder agent within lane limits and lists every agent step now due.
- * Starting the steps is left to the caller, so a scheduler can run long sessions without blocking.
+ * Closes parents whose sub-tasks have merged, then hands ready tasks to the builder agent within
+ * lane limits and lists every agent step now due. Starting the steps is left to the caller, so a
+ * scheduler can run long sessions without blocking.
  */
 export const collectDueSteps = async (
   deps: Pick<EngineDependencies, 'pool'>,
@@ -64,6 +65,7 @@ export const collectDueSteps = async (
     due.push(...roles.filter(isRunnerRole).map((role) => ({ taskId, role })));
 
   await closeMergedParents(deps.pool, projectId);
+
   for (const taskId of await listActiveTaskIds(deps.pool, projectId)) {
     const context = await loadTaskContext(deps.pool, taskId);
     if (!context) continue;

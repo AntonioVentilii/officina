@@ -1,6 +1,6 @@
 import { STAGES, TERMINAL_STAGES, WITH_PULL_REQUEST, type Stage } from './lifecycle';
 
-/** A task another one is linked to, by its number and where it stands. */
+/** A task another one is linked to: its parent, one of its sub-tasks, or a task it waits for. */
 export interface LinkedTask {
   readonly number: number;
   readonly stage: Stage;
@@ -9,19 +9,19 @@ export interface LinkedTask {
 /** A linked task with the files it changes. */
 export type PathsOf = LinkedTask & { readonly paths: readonly string[] };
 
-/** What decides whether a task may start its build: everything it is linked to. */
+/** What decides whether a task may be built now, as the store reads it. */
 export interface BuildLinks {
   /** The tasks whose parent this is. */
   readonly subtasks: readonly LinkedTask[];
   /** The tasks it waits for. */
   readonly after: readonly LinkedTask[];
-  /** The other sub-tasks of its parent. */
+  /** The other sub-tasks of its parent, each with its files. */
   readonly siblings: readonly PathsOf[];
-  /** Its own files. */
+  /** Its own files: the paths its current spec predicted. */
   readonly paths: readonly string[];
 }
 
-/** What a ready task waits for before it is built, by the numbers of the tasks it waits on. */
+/** Why a task may not be built yet, with the numbers of the tasks it waits on, ascending. */
 export interface BuildWait {
   readonly kind: 'subtasks' | 'after' | 'shared_paths';
   readonly numbers: readonly number[];
@@ -31,9 +31,9 @@ const numbersOf = (tasks: readonly LinkedTask[]): number[] =>
   tasks.map((task) => task.number).sort((a, b) => a - b);
 
 /**
- * Why a task may not start its build yet, or `null` when it waits for nothing. A parent is built
- * through its sub-tasks; a task waits until every task it waits for has merged; a sub-task waits
- * while a sibling in flight changes one of its files, so the two never conflict.
+ * What the task waits for before it may be built, or `null` when nothing holds it: a parent is built
+ * through its open sub-tasks, a task waits for every task it names until that one is done, and a
+ * sub-task waits for a sibling in flight that changes one of its files.
  */
 export const buildWait = (links: BuildLinks): BuildWait | null => {
   const own = new Set(links.paths);
@@ -57,9 +57,8 @@ export const buildWait = (links: BuildLinks): BuildWait | null => {
 };
 
 /**
- * Whether a parent closes by itself: every sub-task is closed and at least one merged. Sub-tasks
- * people cancelled or declined count as dropped; a parent whose sub-tasks were all dropped stays
- * open for a person to cancel.
+ * Whether a parent closes: every sub-task is closed and at least one merged. Sub-tasks people
+ * cancelled or declined count as dropped; a parent whose sub-tasks were all dropped stays open.
  */
 export const parentCloses = (subtasks: readonly Pick<LinkedTask, 'stage'>[]): boolean =>
   subtasks.every((task) => TERMINAL_STAGES.has(task.stage)) &&
@@ -68,7 +67,7 @@ export const parentCloses = (subtasks: readonly Pick<LinkedTask, 'stage'>[]): bo
 export type LinkProblem =
   'self' | 'task_started' | 'parent_started' | 'nested' | 'dependency_closed' | 'cycle';
 
-/** The links a maintainer asks a task to have, with what the project already holds. */
+/** The links a person asks for, with what deciding them needs to know. */
 export interface LinkPlan {
   readonly task: { readonly number: number; readonly stage: Stage; readonly hasSubtasks: boolean };
   readonly parent: {
@@ -81,45 +80,52 @@ export interface LinkPlan {
   readonly edges: readonly (readonly [number, number])[];
 }
 
-/** Links change only before a build starts, so nothing already built is reordered. */
-const notStarted = (stage: Stage): boolean =>
-  !TERMINAL_STAGES.has(stage) && STAGES.indexOf(stage) <= STAGES.indexOf('ready');
+const READY = STAGES.indexOf('ready');
 
-/** Whether `target` is reachable from any of `from` along the wait links. */
+/** At or before `ready`, and still open: nothing has been built yet. */
+const notStarted = (stage: Stage): boolean =>
+  !TERMINAL_STAGES.has(stage) && STAGES.indexOf(stage) <= READY;
+
+/** Whether `target` can be reached from any of `from` along the edges. */
 const reaches = (
   edges: readonly (readonly [number, number])[],
   from: readonly number[],
   target: number
 ): boolean => {
+  const next = new Map<number, number[]>();
+  for (const [task, waited] of edges) next.set(task, [...(next.get(task) ?? []), waited]);
   const seen = new Set<number>();
-  const pending = [...from];
-  while (pending.length) {
-    const current = pending.pop()!;
+  const stack = [...from];
+  for (let current = stack.pop(); current !== undefined; current = stack.pop()) {
     if (current === target) return true;
     if (seen.has(current)) continue;
     seen.add(current);
-    for (const [task, waited] of edges) if (task === current) pending.push(waited);
+    stack.push(...(next.get(current) ?? []));
   }
   return false;
 };
 
-const isSelfLink = ({ task, parent, after }: LinkPlan): boolean =>
-  parent?.number === task.number || after.some((other) => other.number === task.number);
-
-/** Whether the task, or the parent it is given, is already past `ready`. */
-const startedProblem = ({ task, parent }: LinkPlan): LinkProblem | null => {
-  if (!notStarted(task.stage)) return 'task_started';
-  return parent && !notStarted(parent.stage) ? 'parent_started' : null;
+/** Why the task may not get this parent: it is past `ready`, or it would nest a level deeper. */
+const problemWithParent = (
+  task: LinkPlan['task'],
+  parent: NonNullable<LinkPlan['parent']>
+): LinkProblem | null => {
+  if (!notStarted(parent.stage)) return 'parent_started';
+  return parent.hasParent || task.hasSubtasks ? 'nested' : null;
 };
 
-/** Why the planned links may not be set, or `null` when they may. */
+/**
+ * Why the links asked for may not be set, or `null` when they may. Links change only before a
+ * build starts, on one level (a parent has no parent), never towards a task already dropped, and
+ * never into a cycle, which would wait forever.
+ */
 export const linkProblem = (plan: LinkPlan): LinkProblem | null => {
-  if (isSelfLink(plan)) return 'self';
-  const started = startedProblem(plan);
-  if (started) return started;
   const { task, parent, after } = plan;
-  // One level only: a parent has no parent, and a task with sub-tasks is no sub-task.
-  if (parent && (parent.hasParent || task.hasSubtasks)) return 'nested';
+  if (parent?.number === task.number || after.some((other) => other.number === task.number))
+    return 'self';
+  if (!notStarted(task.stage)) return 'task_started';
+  const parentProblem = parent && problemWithParent(task, parent);
+  if (parentProblem) return parentProblem;
   if (after.some((other) => other.stage === 'declined' || other.stage === 'cancelled'))
     return 'dependency_closed';
   const waited = after.map((other) => other.number);

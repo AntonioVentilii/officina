@@ -13,7 +13,6 @@ import {
   type Command,
   type DecisionError,
   type Blocked,
-  type BuildWait,
   type DomainEvent,
   type Guard,
   type ProjectConfig,
@@ -252,9 +251,6 @@ export interface ApplyInput {
   readonly onApplied?: (client: PoolClient, task: Task) => Promise<void>;
 }
 
-/** The commands that start a ready task's build, the only ones that read what it waits for. */
-const STARTS_BUILD: ReadonlySet<Command['type']> = new Set(['dispatch', 'claim']);
-
 /** `applyCommand` inside the caller's transaction, so the command lands with the caller's writes. */
 export const applyCommandIn = async (
   client: PoolClient,
@@ -286,21 +282,20 @@ export const applyCommandIn = async (
     await client.query('select id from projects where id = $1 for share', [row.project_id]);
     onboardingOpen = (await openOnboardingTask(client, row.project_id)) !== null;
   }
-  // Starting a build reads what it waits for under its parent's lock (after the task row and the
-  // project), so two sub-tasks that change the same files never both start.
-  let waits: BuildWait | null = null;
-  if (STARTS_BUILD.has(input.command.type) && before.stage === 'ready') {
-    if (row.parent_id)
-      await client.query('select id from tasks where id = $1 for update', [row.parent_id]);
-    waits = buildWait(await buildLinksOf(client, input.taskId));
-  }
+  // A build starts only once the task waits for nothing. Siblings take their parent's row lock in
+  // turn, so two never both pass the check of shared files; locks go task, project, then parent.
+  const startsBuild =
+    (input.command.type === 'dispatch' || input.command.type === 'claim') &&
+    before.stage === 'ready';
+  if (startsBuild && row.parent_id)
+    await client.query('select id from tasks where id = $1 for update', [row.parent_id]);
   const decision = decide(before, input.command, input.actor, {
     config: parsedConfig.config,
     members,
     approvals,
     onboardingOpen,
     proposals,
-    buildWait: waits
+    ...(startsBuild ? { buildWait: buildWait(await buildLinksOf(client, input.taskId)) } : {})
   });
   if (!decision.ok) return decision;
 

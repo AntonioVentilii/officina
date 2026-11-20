@@ -26,9 +26,7 @@ export const USAGE = `usage (on your machine, prefix with scripts/officina; on t
                                                and version task show gives, with --text as a note
     task decline  --number <n> --reason "<why>"
     task cancel   --number <n> --reason "<why>"
-    task link     --number <n> [--parent <p>] [--after <m> ...]
-                                               sets the task's parent and the tasks it waits for,
-                                               replacing earlier links; with neither, it removes them
+    task link     --number <n> [--parent <p>] [--after <m> ...]   sets the task's parent and the tasks it waits for, replacing earlier links; with neither, it removes them
 
     Every task command also takes --repo <owner/name> (optional with a single project)
     and --as <email> (defaults to the project owner).

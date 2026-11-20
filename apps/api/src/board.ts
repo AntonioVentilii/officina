@@ -234,8 +234,6 @@ const PUBLIC_FIELDS: Readonly<Record<string, readonly string[]>> = {
   unblocked: ['answer'],
   diff_allowed: ['lines', 'lane', 'memberId'],
   closed: ['stage', 'reason'],
-  links_changed: ['parent', 'after'],
-  subtasks_merged: ['subtasks'],
   pull_request_closed: ['pullRequest'],
   spec_status_set: ['status'],
   github_approved: ['login', 'merge'],
@@ -249,7 +247,9 @@ const PUBLIC_FIELDS: Readonly<Record<string, readonly string[]>> = {
   merge_held: ['pullRequest'],
   head_carried: ['headSha'],
   checklist_posted: ['pullRequest'],
-  checklist_checked: ['item', 'outcome', 'channel']
+  checklist_checked: ['item', 'outcome', 'channel'],
+  links_changed: ['parent', 'after'],
+  subtasks_merged: ['subtasks']
 };
 
 const HIDDEN_QUESTION =
@@ -424,31 +424,36 @@ const handingInWait = (row: BoardTaskRow, names: ReadonlyMap<string, string>): W
   me: false
 });
 
-/** Several tasks in words: "task 3", "task 3 and task 4", "task 3, task 4 and task 5". */
-const tasksInWords = (numbers: readonly number[]) => {
-  const tasks = numbers.map((number) => `task ${number}`);
-  return tasks.length > 1 ? `${tasks.slice(0, -1).join(', ')} and ${tasks.at(-1)}` : tasks.join('');
+/** Tasks by number in words: "task 3", "task 3 and task 4", "task 3, task 4 and task 5". */
+const tasksInWords = (numbers: readonly number[]): string => {
+  const named = numbers.map((number) => `task ${number}`);
+  return named.length < 2 ? named.join('') : `${named.slice(0, -1).join(', ')} and ${named.at(-1)}`;
 };
 
-/** What a ready task waits for before it is built, in the words the board, CLI and Claude show. */
+const mergedFirst = (numbers: readonly number[]): string =>
+  `Builds once ${tasksInWords(numbers)} ${numbers.length > 1 ? 'are' : 'is'} merged`;
+
+/** What a ready task waits for before it is built, in words, for the board, the CLI and Claude. */
 export const buildWaitLabel = (wait: BuildWait): string => {
-  const verb = wait.numbers.length > 1 ? 'are' : 'is';
   switch (wait.kind) {
     case 'subtasks':
       return `Built through its sub-tasks: ${wait.numbers.map((number) => `task ${number}`).join(', ')}`;
     case 'after':
-      return `Builds once ${tasksInWords(wait.numbers)} ${verb} merged`;
+      return mergedFirst(wait.numbers);
     case 'shared_paths':
-      return `Builds once ${tasksInWords(wait.numbers)} ${verb} merged: they change the same files`;
+      return `${mergedFirst(wait.numbers)}: they change the same files`;
   }
 };
 
-/** What a task waits for before its build, read only at `ready`, where it decides anything. */
-const buildWaitOf = async (pool: Pool, row: BoardTaskRow): Promise<BuildWait | null> =>
-  row.stage === 'ready' ? buildWait(await buildLinksOf(pool, row.id)) : null;
+/** What a task waits for before it is built, read only for a task at `ready`. */
+export const readyWait = async (
+  pool: Pool,
+  task: { readonly id: string; readonly stage: Task['stage'] }
+): Promise<BuildWait | null> =>
+  task.stage === 'ready' ? buildWait(await buildLinksOf(pool, task.id)) : null;
 
-/** What a row's view reads besides the row: its gate's approvals, and what its build waits for. */
-interface RowState {
+/** What was read about one task for its view: where its gate stands and what it waits for. */
+interface TaskFacts {
   readonly approval: ApprovalState | null;
   readonly wait: BuildWait | null;
 }
@@ -456,7 +461,7 @@ interface RowState {
 const waitingOn = (
   row: BoardTaskRow,
   viewer: BoardViewer,
-  { approval, wait }: RowState,
+  { approval, wait }: TaskFacts,
   facts: Pick<ProjectFacts, 'config' | 'onboarding' | 'names'>
 ): WaitingOn => {
   const member = viewerMember(viewer);
@@ -571,6 +576,7 @@ const buildActions = (
   wait: BuildWait | null
 ): BoardAction[] => {
   if (!buildsTask(viewer, row)) return [];
+  // A task that waits for other tasks is claimed once it waits for nothing, as it is dispatched.
   if (row.stage === 'ready') return wait ? [] : ['claim'];
   if (row.stage === 'building' && row.assignee?.kind === 'agent') return ['claim'];
   return row.stage === 'building' && row.assignee?.kind === 'member'
@@ -672,7 +678,7 @@ const handingInView = (
 const cardView = (
   row: BoardTaskRow,
   viewer: BoardViewer,
-  state: RowState,
+  task: TaskFacts,
   facts: ProjectFacts
 ) => ({
   number: row.number,
@@ -704,7 +710,7 @@ const cardView = (
   autoMergeOn: row.autoMergeOn,
   learningPullRequests: learningPullRequestsFor(row, viewer),
   handingIn: handingInView(row, viewer, facts.names),
-  waitingOn: waitingOn(row, viewer, state, facts)
+  waitingOn: waitingOn(row, viewer, task, facts)
 });
 
 const DEPTH_LABELS = {
@@ -875,7 +881,7 @@ export const boardView = async (pool: Pool, viewer: BoardViewer) => {
       cardView(
         row,
         viewer,
-        { approval: await approvalState(pool, row, facts), wait: await buildWaitOf(pool, row) },
+        { approval: await approvalState(pool, row, facts), wait: await readyWait(pool, row) },
         facts
       )
     )
@@ -972,7 +978,7 @@ export const taskView = async (
       latestChooserResult(pool, row.id),
       listApprovedSubjects(pool, row.id),
       listProposalHistory(pool, row.id),
-      buildWaitOf(pool, row)
+      readyWait(pool, row)
     ]);
   const label = (actor: Actor) => actorLabel(actor, facts.names);
   // The viewer's own approval that Claude proposed, waiting for them to confirm or discard it.

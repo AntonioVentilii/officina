@@ -1,19 +1,23 @@
-import type { TaskEvent } from './types';
+type Payload = Readonly<Record<string, unknown>>;
 
-const numbers = (value: unknown) => (Array.isArray(value) ? value.join(', ') : '');
+/** "task 3" or "tasks 3, 5", from the task numbers an event's payload holds. */
+const tasks = (numbers: unknown): string => {
+  const list: unknown[] = Array.isArray(numbers) ? numbers : [];
+  return `${list.length === 1 ? 'task' : 'tasks'} ${list.join(', ')}`;
+};
 
-/** What the timeline says about a task's links to other tasks; `null` for any other event. */
-export const linkSentence = ({
-  type,
-  payload
-}: Pick<TaskEvent, 'type' | 'payload'>): string | null => {
-  if (type === 'subtasks_merged')
-    return `closed it: every sub-task merged (tasks ${numbers(payload.subtasks)})`;
-  if (type !== 'links_changed') return null;
-  const after = numbers(payload.after);
-  const links = [
-    ...(typeof payload.parent === 'number' ? [`parent task ${payload.parent}`] : []),
-    ...(after ? [`waits for tasks ${after}`] : [])
+const linked = (payload: Payload): string => {
+  const parts = [
+    ...(payload.parent ? [`parent task ${String(payload.parent)}`] : []),
+    ...(Array.isArray(payload.after) && payload.after.length
+      ? [`waits for ${tasks(payload.after)}`]
+      : [])
   ];
-  return links.length ? `linked it: ${links.join(', ')}` : 'removed its links';
+  return parts.length ? `linked it: ${parts.join(', ')}` : 'removed its links';
+};
+
+/** The timeline's sentence for a change to a task's links, and for a parent its sub-tasks closed. */
+export const LINK_SENTENCES: Readonly<Record<string, (payload: Payload) => string>> = {
+  links_changed: linked,
+  subtasks_merged: (payload) => `closed it: every sub-task merged (${tasks(payload.subtasks)})`
 };
