@@ -11,7 +11,8 @@ import {
   inTransaction,
   recordFirstSignIn,
   redeemLoginLink,
-  registerConnectorClient
+  registerConnectorClient,
+  renameMember
 } from '../src';
 import { backendPid, untilWaitingOn } from './locks';
 import { resetAndSeed, type Seeded } from './seed';
@@ -283,5 +284,68 @@ describe.skipIf(!url)('member activity', () => {
     expect(members.Ada!.firstSignedInAt).toBeNull();
     expect(await redeemLoginLink(pool, timLink)).toBeNull();
     expect(await redeemLoginLink(pool, adaLink)).toMatchObject({ memberId: ada });
+  });
+  test('a member renames themselves, and only someone who manages them everywhere renames them', async () => {
+    const tim = await addMember('Tim', 'contributor');
+    const gio = await addMember('Gio', 'contributor');
+    const rename = (memberId: string, viewerId: string, name: string) =>
+      renameMember(pool, { projectId: seeded.projectId, memberId, viewerId, name });
+    const renamedEvents = async () =>
+      (
+        await pool.query<{ member_id: string; actor_member_id: string | null; detail: object }>(
+          "select member_id, actor_member_id, detail from access_events where type = 'renamed' order by id"
+        )
+      ).rows;
+
+    expect(await rename(tim, tim, '  Tim  Rossi ')).toEqual({
+      ok: true,
+      name: 'Tim  Rossi',
+      changed: true
+    });
+    // Running it again leaves the name and records nothing new.
+    expect(await rename(tim, tim, 'Tim  Rossi')).toEqual({
+      ok: true,
+      name: 'Tim  Rossi',
+      changed: false
+    });
+    expect(await rename(tim, seeded.ownerId, 'Tim Rossi')).toMatchObject({
+      ok: true,
+      changed: true
+    });
+    expect(await rename(tim, seeded.ownerId, 'Tim Rossi')).toMatchObject({ changed: false });
+    expect(await renamedEvents()).toEqual([
+      { member_id: tim, actor_member_id: null, detail: { from: 'Tim', to: 'Tim  Rossi' } },
+      {
+        member_id: tim,
+        actor_member_id: seeded.ownerId,
+        detail: { from: 'Tim  Rossi', to: 'Tim Rossi' }
+      }
+    ]);
+
+    expect(await rename(gio, tim, 'Giovanni')).toEqual({
+      ok: false,
+      error: 'not_allowed',
+      name: 'Gio'
+    });
+    expect(await rename(tim, tim, '   ')).toEqual({ ok: false, error: 'empty' });
+    expect(await rename(crypto.randomUUID(), seeded.ownerId, 'Nobody')).toEqual({
+      ok: false,
+      error: 'not_member'
+    });
+
+    // A member also in a project the owner has no say in keeps their name from the owner.
+    await pool.query(
+      `with p as (insert into projects (workspace_id, name, github_repo)
+                  select workspace_id, 'gios-app', 'Gio/gios-app' from projects where id = $1
+                  returning id)
+       insert into project_roles (project_id, member_id, role) select id, $2, 'owner' from p`,
+      [seeded.projectId, gio]
+    );
+    expect(await rename(gio, seeded.ownerId, 'Giovanni')).toMatchObject({
+      ok: false,
+      error: 'not_allowed'
+    });
+    expect(await rename(gio, gio, 'Giovanni Bianchi')).toMatchObject({ ok: true, changed: true });
+    expect((await byName())['Giovanni Bianchi']).toBeDefined();
   });
 });

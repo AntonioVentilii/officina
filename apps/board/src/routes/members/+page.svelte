@@ -3,6 +3,7 @@
   import { Copy, Link, Plug } from '@lucide/svelte';
   import { get, post } from '#lib/api.ts';
   import MemberAvatar from '#lib/components/MemberAvatar.svelte';
+  import MemberName from '#lib/components/MemberName.svelte';
   import { ago, dateTime } from '#lib/format.ts';
   import { latestOnly } from '#lib/latest.ts';
   import { board } from '#lib/state/board.svelte.ts';
@@ -77,7 +78,8 @@
     <p class="muted">
       Who is in this project and how far each person got: whether they used their invite, when they
       last opened the board and whether they added Officina to Claude. Owners can send a fresh link
-      to someone who has not signed in yet; send it to them yourself, it works once.
+      to someone who has not signed in yet; send it to them yourself, it works once. Change a name
+      written as one word to name and surname, so cards and avatars show both initials.
     </p>
   </header>
 
@@ -87,7 +89,7 @@
         <div class="row">
           <MemberAvatar name={member.name} size={26} />
           <div class="who">
-            <span class="name">{member.name}</span>
+            <MemberName {member} />
             <span class="role caps"
               >{member.role}{#if member.domains.length}, {member.domains.join(', ')}{/if}</span
             >
@@ -196,11 +198,6 @@
     gap: 2px;
     min-width: 0;
     font-size: 13.5px;
-  }
-
-  .name {
-    font-size: 15px;
-    font-weight: 600;
   }
 
   .role,
