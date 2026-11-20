@@ -283,6 +283,8 @@ export type TaskAction =
   | { readonly type: 'approve' }
   | { readonly type: 'propose_approval' }
   | { readonly type: 'discard_proposal' }
+  | { readonly type: 'pause' }
+  | { readonly type: 'resume' }
   | { readonly type: 'changes'; readonly note: string }
   /**
    * With `option`, the letter of an option the question offers, `version` the task version the

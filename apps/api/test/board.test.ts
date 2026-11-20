@@ -1417,6 +1417,54 @@ describe.skipIf(!url)('board api', () => {
     );
   });
 
+  test('a paused task with an open question reads Paused and waits only on whoever may steer', async () => {
+    const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    const contributor = await signIn(
+      await invite(pool, {
+        publicUrl: PUBLIC_URL,
+        email: 'gio@example.com',
+        name: 'Gio',
+        role: 'contributor',
+        domains: []
+      })
+    );
+    const gioId = (
+      await pool.query<{ id: string }>("select id from members where email = 'gio@example.com'")
+    ).rows[0]!.id;
+    await createRequest(pool, { title: 'Rename the Wager button', request: 'Say Prediction.' });
+    const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
+    await applyCommand(pool, {
+      taskId,
+      actor: { kind: 'agent', role: 'interviewer', version: 1 },
+      command: { type: 'block', question: 'Which name?', askedOf: { memberId: gioId } }
+    });
+    const project = `/api/projects/${seeded.projectId}`;
+    const views = async (cookie: string) => {
+      const task = await json(await call(cookie, `${project}/tasks/1`));
+      const card = (await json(await call(cookie, `${project}/board`))).tasks.find(
+        (item: { number: number }) => item.number === 1
+      );
+      return [task, card];
+    };
+    const paused = (me: boolean) => ({ kind: 'people', label: 'Paused', me });
+
+    await applyCommand(pool, { taskId, actor: seeded.owner, command: { type: 'pause' } });
+    for (const view of await views(owner)) {
+      expect(view.waitingOn).toEqual(paused(true));
+      expect(view.paused).toBe(true);
+      expect(view.blocked.question).toBe('Which name?');
+    }
+    for (const view of await views(contributor)) {
+      expect(view.waitingOn).toEqual(paused(false));
+      expect(view.paused).toBe(true);
+      expect(view.blocked.question).toBe('Which name?');
+    }
+
+    await applyCommand(pool, { taskId, actor: seeded.owner, command: { type: 'resume' } });
+    for (const view of await views(contributor))
+      expect(view.waitingOn).toEqual({ kind: 'people', label: 'A question for Gio', me: true });
+  });
+
   test("an owner of one project cannot read, act on or decide another project's work", async () => {
     const cookie = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
     // A real second project in the same workspace, owned by someone else, with a task, a run and a learning.

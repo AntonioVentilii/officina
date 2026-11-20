@@ -168,14 +168,14 @@
 </script>
 
 {#if task.blocked}
-  <section class="next blocked" class:mine={task.waitingOn.me && !busy}>
+  <section class="next blocked" class:mine={task.waitingOn.me && !task.paused && !busy}>
     <div class="head">
-      {#if task.waitingOn.me && !busy && look.current === 'tecnica'}<strong class="you-word"
-          >Question</strong
+      {#if task.waitingOn.me && !task.paused && !busy && look.current === 'tecnica'}<strong
+          class="you-word">Question</strong
         >{:else}<CircleHelp size={18} />{/if}
       <div>
         <div class="kicker caps">
-          {task.blocked.needs.length
+          {task.paused ? 'Paused. ' : ''}{task.blocked.needs.length
             ? `Agents cannot go on: for ${task.blocked.askedOf}`
             : `A question for ${task.blocked.askedOf}`}
         </div>
