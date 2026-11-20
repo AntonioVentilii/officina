@@ -2967,7 +2967,7 @@ describe.skipIf(!url)('engine', () => {
     for (const review of reviews) {
       const taskId = await createTaskInMerging(pool, seeded);
       await linkPullRequest(pool, taskId, 42);
-      const github = fakeGitHub({ branchHead: 'abc' });
+      const github = fakeGitHub();
       await applyOrThrow(pool, taskId, { type: 'pause' }, seeded.owner);
       expect(await reviewOnGitHub(github, taskId, { ...review, overviewOnly: false })).toEqual({
         ok: false,
@@ -3001,20 +3001,6 @@ describe.skipIf(!url)('engine', () => {
       overviewOnly: false
     });
     await answer(taskId);
-    const handled = async () =>
-      (
-        await pool.query<{ outcome: string }>(
-          `select payload->>'outcome' as outcome from task_events
-           where task_id = $1 and type = 'github_review_handled'`,
-          [taskId]
-        )
-      ).rows;
-
-    // The new head is not taken in yet: the review waits rather than send the old head back.
-    await forwardHeldReviews(pool, github.port, [taskId]);
-    expect((await loadTask(pool, taskId))?.task.stage).toBe('merging');
-    expect(await handled()).toEqual([]);
-
     await adoptOutsidePushes(pool, github.port, [taskId]);
     expect((await loadTask(pool, taskId))?.task).toMatchObject({
       stage: 'reviewing',
@@ -3023,14 +3009,19 @@ describe.skipIf(!url)('engine', () => {
 
     await forwardHeldReviews(pool, github.port, [taskId]);
     expect((await loadTask(pool, taskId))?.task.stage).toBe('reviewing');
-    expect(await handled()).toEqual([{ outcome: 'stale_head' }]);
+    const handled = await pool.query<{ outcome: string }>(
+      `select payload->>'outcome' as outcome from task_events
+       where task_id = $1 and type = 'github_review_handled'`,
+      [taskId]
+    );
+    expect(handled.rows).toEqual([{ outcome: 'stale_head' }]);
     expect(await githubReviewCount(taskId)).toBe(0);
   });
 
   test("a held overview that repeats the bot's last answered overview is not sent back", async () => {
     const taskId = await createTaskInMerging(pool, seeded);
     await linkPullRequest(pool, taskId, 42);
-    const github = fakeGitHub({ branchHead: 'abc' });
+    const github = fakeGitHub();
     const overview = { by: 'copilot-pull-request-reviewer[bot]', overviewOnly: true };
     await reviewOnGitHub(github, taskId, { ...overview, reviewId: 24, notes: 'Check the index.' });
     await applyOrThrow(
@@ -3049,29 +3040,27 @@ describe.skipIf(!url)('engine', () => {
     expect(await githubReviewCount(taskId)).toBe(1);
   });
 
-  test('a held review reaches the builder once, not on a later hold, delivery or pass', async () => {
+  test('a held review reaches the builder once, not on a later hold or pass', async () => {
     const taskId = await createTaskInMerging(pool, seeded);
     await linkPullRequest(pool, taskId, 42);
-    const github = fakeGitHub({ branchHead: 'abc' });
-    const review = { reviewId: 26, by: 'alice', notes: 'Rename the flag.', overviewOnly: false };
+    const github = fakeGitHub();
     await block(taskId);
-    await reviewOnGitHub(github, taskId, review);
+    await reviewOnGitHub(github, taskId, {
+      reviewId: 26,
+      by: 'alice',
+      notes: 'Rename the flag.',
+      overviewOnly: false
+    });
     await answer(taskId);
     await forwardHeldReviews(pool, github.port, [taskId]);
     expect((await loadTask(pool, taskId))?.task.stage).toBe('building');
     expect(await githubReviewCount(taskId)).toBe(1);
 
     await block(taskId);
-    expect(await reviewOnGitHub(github, taskId, review)).toEqual({ ok: false, error: 'blocked' });
     await answer(taskId);
     await forwardHeldReviews(pool, github.port, [taskId]);
     await forwardHeldReviews(pool, github.port, [taskId]);
     expect(await githubReviewCount(taskId)).toBe(1);
-    const held = await pool.query(
-      `select 1 from task_events where task_id = $1 and type = 'github_review_held'`,
-      [taskId]
-    );
-    expect(held.rowCount).toBe(1);
   });
 
   test('a review while the task is not held records no hold', async () => {

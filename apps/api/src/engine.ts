@@ -149,9 +149,8 @@ export const startEngine = async (input: {
     for (const failure of await adoptOutsidePushes(input.pool, input.github, active)) {
       input.log('outside push check failed', { projectId, ...failure });
     }
-    // After the outside pushes, so a review of a head taken in is dropped (one not taken in yet
-    // makes the reviews wait), and before the due steps and the merge work, so nothing starts or
-    // merges on a head the review sends back.
+    // After the outside pushes, so a review of a head that moved is dropped, and before the due
+    // steps and the merge work, so nothing starts or merges on a head the review sends back.
     for (const failure of await forwardHeldReviews(input.pool, input.github, active)) {
       input.log('held review forwarding failed', { projectId, ...failure });
     }
