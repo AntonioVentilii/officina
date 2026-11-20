@@ -8,6 +8,7 @@ import {
   HAND_IN_LEASE,
   insertLearnings,
   listLearnings,
+  renameMember,
   startRun
 } from '@officina/db';
 import { parseProjectConfig } from '@officina/core';
@@ -1822,6 +1823,75 @@ describe.skipIf(!url)('board api', () => {
     expect((await json(refused)).error).toContain('also in a project you do not own');
   });
 
+  test('a member renames themselves; an owner renames the members they manage everywhere', async () => {
+    const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    const invited = (name: string, role: string) =>
+      invite(pool, {
+        publicUrl: PUBLIC_URL,
+        email: `${name.toLowerCase()}@example.com`,
+        name,
+        role,
+        domains: []
+      });
+    const maintainer = await signIn(await invited('Mia', 'maintainer'));
+    const contributor = await signIn(await invited('Carla', 'contributor'));
+    const project = `/api/projects/${seeded.projectId}`;
+    interface Listed {
+      name: string;
+      renamable: boolean;
+    }
+    const ids = Object.fromEntries(
+      (
+        await pool.query<{ id: string; display_name: string }>(
+          'select id, display_name from members'
+        )
+      ).rows.map((row) => [row.display_name, row.id])
+    );
+    const nameOf = (id: string) => `${project}/members/${id}/name`;
+
+    const listed = async (cookie: string) =>
+      ((await json(await call(cookie, `${project}/members`))).members as Listed[]).map((member) => [
+        member.name,
+        member.renamable
+      ]);
+    expect(await listed(owner)).toEqual([
+      ['Antonio', true],
+      ['Mia', true],
+      ['Carla', true]
+    ]);
+    expect(await listed(maintainer)).toEqual([
+      ['Antonio', false],
+      ['Mia', true],
+      ['Carla', false]
+    ]);
+
+    // A contributor has no Members page, but their own name is still theirs to change.
+    const self = await call(contributor, nameOf(ids.Carla!), { name: ' Carla Bianchi ' });
+    expect(self.status).toBe(200);
+    expect(await json(self)).toEqual({ name: 'Carla Bianchi' });
+    expect((await call(contributor, nameOf(ids.Mia!), { name: 'Mia Verdi' })).status).toBe(403);
+    expect((await call(maintainer, nameOf(ids.Carla!), { name: 'Carla Verdi' })).status).toBe(403);
+    expect((await call(owner, nameOf(ids.Mia!), { name: 'Mia Verdi' }, false)).status).toBe(403);
+    expect((await call(owner, nameOf(ids.Mia!), { name: '  ' })).status).toBe(400);
+    expect((await call(owner, nameOf(ids.Mia!), { name: 'M'.repeat(101) })).status).toBe(400);
+    expect((await call(owner, nameOf('not-a-uuid'), { name: 'Mia Verdi' })).status).toBe(404);
+    // The same rename sent twice records it once.
+    expect((await call(owner, nameOf(ids.Mia!), { name: 'Mia Verdi' })).status).toBe(200);
+    expect((await call(owner, nameOf(ids.Mia!), { name: 'Mia Verdi' })).status).toBe(200);
+
+    const me = await json(await call(maintainer, '/api/me'));
+    expect(me.member.name).toBe('Mia Verdi');
+    const log = (await json(await call(owner, `${project}/access-log`))).events.filter(
+      (event: { text: string }) => event.text.startsWith('was renamed')
+    );
+    expect(
+      log.map((event: { member: string; text: string }) => [event.member, event.text])
+    ).toEqual([
+      ['Mia Verdi', 'was renamed from Mia to Mia Verdi by Antonio'],
+      ['Carla Bianchi', 'was renamed from Carla to Carla Bianchi']
+    ]);
+  });
+
   test('an accepted invite reaches the owner Inbox and leaves it once read', async () => {
     const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
     const project = `/api/projects/${seeded.projectId}`;
@@ -1976,6 +2046,24 @@ describe.skipIf(!url)('board api', () => {
     try {
       await openRequest();
       expect(await next.event).toEqual({ kind: 'task', projectId: seeded.projectId, number: 1 });
+    } finally {
+      next.unsubscribe();
+      await hub.close();
+    }
+  });
+
+  test("a member's new name reaches the boards open on their project", async () => {
+    const hub = await startRealtime({ connectionString: url!, pool, log: () => {} });
+    const next = nextEvent(hub);
+    try {
+      const rename = {
+        projectId: seeded.projectId,
+        memberId: seeded.ownerId,
+        viewerId: seeded.ownerId,
+        name: 'Antonio Ventilii'
+      };
+      await renameMember(pool, rename);
+      expect(await next.event).toEqual({ kind: 'members', projectId: seeded.projectId });
     } finally {
       next.unsubscribe();
       await hub.close();

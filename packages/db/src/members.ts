@@ -1,6 +1,10 @@
-import { ROLES, type Role } from '@officina/core';
+import { ROLES, managesEverywhere, type Role } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
+import { recordAccessEvent } from './access';
+import { announceMemberChange } from './changes';
 import { notifyInviteAccepted } from './notifications';
+import { viewerRolesOver } from './projects';
+import { inTransaction } from './store';
 
 type Queryable = Pool | PoolClient;
 
@@ -108,3 +112,52 @@ export const recordFirstSignIn = async (client: PoolClient, memberId: string): P
   const first = rows[0];
   return first ? notifyInviteAccepted(client, { id: memberId, name: first.display_name }) : 0;
 };
+
+export type RenameMemberResult =
+  | { readonly ok: true; readonly name: string; readonly changed: boolean }
+  | { readonly ok: false; readonly error: 'empty' | 'not_member' }
+  | { readonly ok: false; readonly error: 'not_allowed'; readonly name: string };
+
+/**
+ * Changes a member's display name, trimmed. A name belongs to the member in every project of the
+ * workspace, so anyone may change their own, and someone else's only if they may manage that member
+ * in every project the member is in, as for a fresh invite link. The member must be in `projectId`,
+ * the project the request comes from. Renaming to the name already held changes nothing and records
+ * nothing, so a repeated request leaves one `renamed` access event. A change is announced to the
+ * boards open on each of the member's projects, where the name shows on cards and avatars.
+ */
+export const renameMember = (
+  pool: Pool,
+  input: { projectId: string; memberId: string; viewerId: string; name: string }
+): Promise<RenameMemberResult> =>
+  inTransaction(pool, async (client) => {
+    const name = input.name.trim();
+    if (!name) return { ok: false, error: 'empty' };
+    const { rows } = await client.query<{ name: string }>(
+      `select m.display_name as name
+       from members m join project_roles r on r.member_id = m.id and r.project_id = $2
+       where m.id = $1 for update of m`,
+      [input.memberId, input.projectId]
+    );
+    const member = rows[0];
+    if (!member) return { ok: false, error: 'not_member' };
+    const self = input.viewerId === input.memberId;
+    if (!self) {
+      const roles = await viewerRolesOver(client, input.viewerId, [input.memberId]);
+      if (!managesEverywhere(roles.get(input.memberId) ?? []))
+        return { ok: false, error: 'not_allowed', name: member.name };
+    }
+    if (member.name === name) return { ok: true, name, changed: false };
+    await client.query('update members set display_name = $2 where id = $1', [
+      input.memberId,
+      name
+    ]);
+    await recordAccessEvent(client, {
+      memberId: input.memberId,
+      type: 'renamed',
+      detail: { from: member.name, to: name },
+      actor: self ? null : { memberId: input.viewerId }
+    });
+    await announceMemberChange(client, input.memberId);
+    return { ok: true, name, changed: true };
+  });

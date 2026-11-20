@@ -49,7 +49,7 @@ import type { GitHubAccounts, GitHubSignInProblem } from './github-accounts';
 import type { LearningGitHub } from './learning-pull-request';
 import { decide as decideLearning } from './learnings';
 import { notificationsView } from './notifications';
-import { INVITE_TTL_DAYS, accessLogView, inviteAgain, membersView } from './people';
+import { INVITE_TTL_DAYS, accessLogView, inviteAgain, membersView, rename } from './people';
 import type { BoardEvent, RealtimeHub } from './realtime';
 import {
   TaskCommandError,
@@ -172,6 +172,10 @@ const requestSchema = z.strictObject({
 });
 
 const commentSchema = z.strictObject({ body: z.string().trim().min(1).max(INPUT_LIMITS.comment) });
+
+const renameSchema = z.strictObject({
+  name: z.string().trim().min(1).max(INPUT_LIMITS.memberName)
+});
 
 /** Stands for this site when a path is resolved; never used as an address. */
 const HERE = 'http://officina.invalid';
@@ -644,6 +648,24 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
           validDays: INVITE_TTL_DAYS
         };
       })
+      .post(
+        '/api/projects/:projectId/members/:memberId/name',
+        async ({ request, params, body }) => {
+          mutation(request);
+          const viewer = viewerFor(await signedIn(request), params.projectId);
+          if (!z.uuid().safeParse(params.memberId).success)
+            throw new HttpError(404, 'member not found');
+          const { name } = parse(renameSchema, body);
+          return {
+            name: await rename(pool, {
+              projectId: viewer.projectId,
+              viewerId: viewer.memberId,
+              memberId: params.memberId,
+              name
+            })
+          };
+        }
+      )
       .get('/api/projects/:projectId/access-log', async ({ request, params }) => {
         const viewer = viewerFor(await signedIn(request), params.projectId);
         if (!can(viewer, 'see_access_log'))

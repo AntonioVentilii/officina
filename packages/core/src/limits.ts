@@ -9,6 +9,8 @@ import { TASK_BRANCH_PREFIX } from './steps';
 export const INPUT_LIMITS = {
   /** A task's title. */
   title: { min: 3, max: 200 },
+  /** A member's display name, as cards, avatars and the Members page show it. */
+  memberName: 100,
   /** What a person asks for when they open a request. */
   request: 20_000,
   /** The name a client gives one request it sends, so sending it again opens nothing new. */

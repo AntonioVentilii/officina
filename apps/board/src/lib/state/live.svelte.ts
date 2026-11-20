@@ -5,7 +5,9 @@ export type LiveEvent =
       readonly projectId: string;
       readonly number: number;
       readonly runId: string;
-    };
+    }
+  /** Something about the project's members changed, such as a name, which any view may show. */
+  | { readonly kind: 'members'; readonly projectId: string };
 
 type Listener = (event: LiveEvent) => void;
 
@@ -14,6 +16,10 @@ const EVERY_PROJECT = '*';
 
 /** Whether the event asks every view to refresh, whatever it shows: the stream reconnected. */
 export const refreshesAll = (event: LiveEvent) => event.projectId === EVERY_PROJECT;
+
+/** Whether the event asks every view of one project to refresh: a member's name, say, changed. */
+export const refreshesProject = (event: LiveEvent, projectId: string | null) =>
+  refreshesAll(event) || (event.kind === 'members' && event.projectId === projectId);
 
 /** How long to wait before opening the stream again after the server closed it. */
 const RECONNECT_MS = 5000;
@@ -53,7 +59,7 @@ class Live {
         this.connect();
       }, RECONNECT_MS);
     };
-    for (const kind of ['task', 'run'] as const) {
+    for (const kind of ['task', 'run', 'members'] as const) {
       source.addEventListener(kind, (message) => {
         const event = JSON.parse((message as MessageEvent<string>).data) as LiveEvent;
         for (const listener of this.#listeners) listener(event);
