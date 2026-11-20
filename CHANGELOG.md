@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.15.0](https://github.com/AntonioVentilii/officina/compare/v1.14.0...v1.15.0) (2026-11-20)
+
+
+### Features
+
+* **board:** let every member change their own name from the sidebar ([#292](https://github.com/AntonioVentilii/officina/issues/292)) ([a162419](https://github.com/AntonioVentilii/officina/commit/a1624197da0b496a9df9744377b33ed51332e74c))
+* **db,api,board:** let a member's display name be changed after they join ([#290](https://github.com/AntonioVentilii/officina/issues/290)) ([74d28e5](https://github.com/AntonioVentilii/officina/commit/74d28e568fbeede58b382a2119ecfb9d13903ca6))
+
+
+### Bug Fixes
+
+* **board:** fit the phone tab bar to the screen for every role ([#293](https://github.com/AntonioVentilii/officina/issues/293)) ([fef401e](https://github.com/AntonioVentilii/officina/commit/fef401ec64c71ebadb98c9e07ab793dacda54d7f))
+* **board:** give the line under a card's title room and inset in the Tecnica look ([#286](https://github.com/AntonioVentilii/officina/issues/286)) ([751ef01](https://github.com/AntonioVentilii/officina/commit/751ef01d2f424e22364c855e08fd0c87a9cd3ba0))
+* **board:** leave a disabled button as it is under the pointer ([#294](https://github.com/AntonioVentilii/officina/issues/294)) ([fe7d003](https://github.com/AntonioVentilii/officina/commit/fe7d003d13bc39fe54a989612f2c5e050a66a8ba))
+* **board:** lock sign out while it runs, with the GitHub buttons ([#287](https://github.com/AntonioVentilii/officina/issues/287)) ([5bf906c](https://github.com/AntonioVentilii/officina/commit/5bf906c4b69373c4a71c1136d6b4570036318e9c))
+* **board:** show initials from the first and the last word of a name ([#291](https://github.com/AntonioVentilii/officina/issues/291)) ([db0d3a3](https://github.com/AntonioVentilii/officina/commit/db0d3a3b0f0872679b53a2427d1e949b11627d2f))
+* **runner:** say the session's error, and the spend limit plainly, when a run fails ([#288](https://github.com/AntonioVentilii/officina/issues/288)) ([8333ecf](https://github.com/AntonioVentilii/officina/commit/8333ecfcdd3d114b366c21c66e32c1d8de40a7a5))
+
 ## [1.14.0](https://github.com/AntonioVentilii/officina/compare/v1.13.1...v1.14.0) (2026-11-20)
 
 
