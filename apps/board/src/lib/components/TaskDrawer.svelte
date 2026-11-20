@@ -8,10 +8,11 @@
   import { ago, dateTime, money } from '#lib/format.ts';
   import { inertAround } from '#lib/inert.ts';
   import { latestOnly } from '#lib/latest.ts';
+  import { refreshesTask } from '#lib/live-events.ts';
   import { STAGE_LABELS } from '#lib/stages.ts';
   import { board } from '#lib/state/board.svelte.ts';
   import { clock } from '#lib/state/clock.svelte.ts';
-  import { live, refreshesProject } from '#lib/state/live.svelte.ts';
+  import { live } from '#lib/state/live.svelte.ts';
   import { session } from '#lib/state/session.svelte.ts';
   import { toasts } from '#lib/state/toasts.svelte.ts';
   import type { TaskDetail } from '#lib/types.ts';
@@ -73,9 +74,7 @@
   $effect(() => {
     void load();
     return live.subscribe((event) => {
-      const ofThisTask =
-        'number' in event && event.projectId === session.projectId && event.number === number;
-      if (ofThisTask || refreshesProject(event, session.projectId)) loadSoon();
+      if (refreshesTask(event, session.projectId, number)) loadSoon();
     });
   });
 
