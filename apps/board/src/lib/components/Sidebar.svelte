@@ -119,14 +119,14 @@
         <div class="github" title="Approvals you give here also approve on GitHub as you">
           <GitMerge size={13} />@{session.me.github.login}
           <button
-            class="connect"
+            class="link-button connect"
             disabled={session.changingAccount}
             onclick={() => session.disconnectGitHub()}>Disconnect</button
           >
         </div>
       {:else}
         <button
-          class="github connect"
+          class="link-button github connect"
           disabled={session.changingAccount}
           onclick={() => session.connectGitHub()}
         >
@@ -376,14 +376,10 @@
     letter-spacing: 0.02em;
   }
 
+  /* Connect GitHub is a .github row too: it keeps the sidebar's type, not the row's small capitals. */
   .connect {
-    border: 0;
-    background: none;
     font: inherit;
-    cursor: pointer;
     color: var(--nav-text);
-    text-decoration: underline;
-    text-underline-offset: 3px;
   }
 
   .looks {

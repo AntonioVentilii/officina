@@ -62,7 +62,7 @@
           <span class="num">{index + 1}.</span>
           <span class="text">{item}</span>
           {#if view.canCheck}
-            <button class="link" onclick={() => start(index)}
+            <button class="link-button link" onclick={() => start(index)}
               >{check ? 'Check again' : 'Check'}</button
             >
           {/if}
@@ -221,13 +221,8 @@
 
   .link {
     flex: none;
-    border: 0;
-    background: none;
-    padding: 0;
     font-size: 12.5px;
     color: var(--text-2);
-    text-decoration: underline;
-    text-underline-offset: 3px;
   }
 
   .compare {
