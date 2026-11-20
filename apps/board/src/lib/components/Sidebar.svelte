@@ -592,7 +592,8 @@
     }
 
     .nav a,
-    .nav button {
+    .nav button,
+    :global([data-look='tecnica']) .nav a {
       border-left: 0;
       border-top: 3px solid transparent;
     }
@@ -615,7 +616,8 @@
       white-space: nowrap;
     }
 
-    .nav a[aria-current='page'] {
+    .nav a[aria-current='page'],
+    :global([data-look='tecnica']) .nav a[aria-current='page'] {
       border-top-color: var(--nav-text);
     }
 
