@@ -50,13 +50,18 @@ export const dateTime = (iso: string) =>
     minute: '2-digit'
   });
 
-export const initials = (name: string) =>
-  name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]!.toUpperCase())
+/**
+ * A person's initials: the first and the last word of their name, so several given names still give
+ * the surname's ("Maria Grazia Rossi" is MR). A name is one string, so a double surname gives its
+ * last part ("Gabriel García Márquez" is GM), and a one-word name one letter.
+ */
+export const initials = (name: string) => {
+  const words = name.split(/\s+/).filter(Boolean);
+  return [words[0], words.length > 1 ? words.at(-1) : undefined]
+    .filter((word) => word !== undefined)
+    .map((word) => word[0]!.toUpperCase())
     .join('');
+};
 
 /**
  * The fixed words for a code that came from the address or the API; any other value gets the
