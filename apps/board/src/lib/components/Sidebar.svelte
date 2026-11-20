@@ -8,6 +8,7 @@
     LogOut,
     Monitor,
     Moon,
+    Pencil,
     PlugZap,
     SquareKanban,
     Sun,
@@ -39,11 +40,13 @@
 
   const LIVE_LABELS = { live: 'Live', connecting: 'Reconnecting', offline: 'Offline' } as const;
 
-  // While you change your name the field takes the row, in place of the theme and sign-out buttons.
+  // While you change your name the field takes the row, in place of the theme and sign-out buttons;
+  // on a phone it takes the whole tab bar, where the name is otherwise hidden.
   let renaming = $state(false);
+  let nameEditor = $state<ReturnType<typeof MemberName>>();
 </script>
 
-<nav class="sidebar" aria-label="Main">
+<nav class="sidebar" class:renaming aria-label="Main">
   <a class="brand" href="/">
     <Logo />
     <span>Officina</span>
@@ -157,10 +160,19 @@
             renamable
             size={14}
             bind:editing={renaming}
+            bind:this={nameEditor}
           />
           <span class="role caps">{session.project?.role ?? ''}</span>
         </div>
         {#if !renaming}
+          <button
+            class="btn ghost icon sm rename-me"
+            onclick={() => nameEditor?.edit()}
+            title="Change your name"
+            aria-label="Change your name"
+          >
+            <Pencil size={14} />
+          </button>
           <button
             class="btn ghost icon sm"
             onclick={oncycletheme}
@@ -438,6 +450,11 @@
     background: none;
   }
 
+  /* The name carries its own pencil; this one is for phones, where the name is hidden. */
+  .rename-me {
+    display: none;
+  }
+
   /* Tecnica: a light panel ruled off from the board, with a title-block brand row. */
   :global([data-look='tecnica']) .sidebar {
     padding: 0 0 14px;
@@ -590,6 +607,28 @@
       margin: 0;
       padding: 0;
       border: 0;
+    }
+
+    .me .rename-me {
+      display: inline-flex;
+    }
+
+    /* Changing your name: the field takes the tab bar until it is saved or cancelled. */
+    .renaming .nav {
+      display: none;
+    }
+
+    .renaming .bottom,
+    .renaming .me {
+      flex: 1;
+    }
+
+    .renaming .who {
+      display: flex;
+    }
+
+    .renaming .role {
+      display: none;
     }
   }
 </style>

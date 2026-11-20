@@ -39,6 +39,12 @@
     }
   };
 
+  /** Opens the editor on the current name, from the pencil here or from a parent's own button. */
+  export const edit = () => {
+    draft = name;
+    editing = true;
+  };
+
   const keys = (event: KeyboardEvent) => {
     if (event.key === 'Enter') void save();
     if (event.key === 'Escape') editing = false;
@@ -70,14 +76,8 @@
   <span class="name" style:font-size="{size}px">
     <span class="text" title={name}>{name}</span>
     {#if renamable && session.projectId}
-      <button
-        class="edit"
-        title="Change name"
-        aria-label="Change {name}'s name"
-        onclick={() => {
-          draft = name;
-          editing = true;
-        }}><Pencil size={12} /></button
+      <button class="edit" title="Change name" aria-label="Change {name}'s name" onclick={edit}
+        ><Pencil size={12} /></button
       >
     {/if}
   </span>
@@ -125,5 +125,12 @@
 
   .edit:hover {
     opacity: 1;
+  }
+
+  /* Phones zoom into a field whose text is under 16px; this keeps the page where it is. */
+  @media (max-width: 720px) {
+    .rename .field {
+      font-size: 16px;
+    }
   }
 </style>
