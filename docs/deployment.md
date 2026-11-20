@@ -83,7 +83,7 @@ Kept as the runbook for a second instance.
 2. Stage `GITHUB_WEBHOOK_SECRET`, then `fly deploy`; confirm `https://vici-officina.fly.dev/health`, a log line `api listening` with `engine: true`, and `anthropic credentials` with `mode: federation`.
 3. Sync the agents: `fly ssh console --app vici-officina -C "bun apps/api/src/cli.ts setup-agents"`. Since agents sync on every boot this is now only a manual override.
 4. Install the GitHub App on the projects' repositories only (selected repositories): today `ViciApp/vici-app`, `ViciApp/vici-dataroom` and `AntonioVentilii/officina`.
-5. Register the project: `fly ssh console --app vici-officina -C "bun apps/api/src/cli.ts add-project --workspace vici --repo ViciApp/vici-app --owner-email <email> --owner-name Antonio"`. Until `.github/officina.yml` is merged in vici-app, pass it with `--config-file`.
+5. Register each of those repositories, one command per repository (here `ViciApp/vici-app`): `fly ssh console --app vici-officina -C "bun apps/api/src/cli.ts add-project --workspace vici --repo ViciApp/vici-app --owner-email <email> --owner-name Antonio"`. Until a repository has `.github/officina.yml` on its default branch, pass it with `--config-file`.
 6. Activate the GitHub App webhook with the same `GITHUB_WEBHOOK_SECRET`.
 7. Set a monthly spend limit on the Officina Anthropic workspace.
 8. Check the federation rule's authentication log in the Console for a successful exchange.
