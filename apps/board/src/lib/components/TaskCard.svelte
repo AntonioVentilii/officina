@@ -257,8 +257,13 @@
     color: var(--text);
   }
 
+  /* The card has no gap here, so the line under the title carries its own room and inset. */
+  :global([data-look='tecnica']) .you,
   :global([data-look='tecnica']) .waiting {
-    margin: 8px 14px 0;
+    margin: 10px 14px 0;
+  }
+
+  :global([data-look='tecnica']) .waiting {
     font-size: 12.5px;
   }
 
