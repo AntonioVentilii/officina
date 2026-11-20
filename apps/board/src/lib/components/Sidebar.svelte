@@ -21,6 +21,7 @@
   import { session } from '#lib/state/session.svelte.ts';
   import Logo from './Logo.svelte';
   import MemberAvatar from './MemberAvatar.svelte';
+  import MemberName from './MemberName.svelte';
 
   interface Props {
     theme: 'system' | 'dark' | 'light';
@@ -37,6 +38,9 @@
   const inboxCount = $derived(board.waitingOnMe.length + board.notices.length);
 
   const LIVE_LABELS = { live: 'Live', connecting: 'Reconnecting', offline: 'Offline' } as const;
+
+  // While you change your name the field takes the row, in place of the theme and sign-out buttons.
+  let renaming = $state(false);
 </script>
 
 <nav class="sidebar" aria-label="Main">
@@ -146,28 +150,37 @@
       <div class="me">
         <MemberAvatar name={session.me.member.name} size={26} />
         <div class="who">
-          <span class="name">{session.me.member.name}</span>
+          <!-- Everyone may change their own name, whatever their role. -->
+          <MemberName
+            id={session.me.member.id}
+            name={session.me.member.name}
+            renamable
+            size={14}
+            bind:editing={renaming}
+          />
           <span class="role caps">{session.project?.role ?? ''}</span>
         </div>
-        <button
-          class="btn ghost icon sm"
-          onclick={oncycletheme}
-          title="Theme: {theme}"
-          aria-label="Theme: {theme}"
-        >
-          {#if theme === 'dark'}<Moon size={14} />{:else if theme === 'light'}<Sun
-              size={14}
-            />{:else}<Monitor size={14} />{/if}
-        </button>
-        <button
-          class="btn ghost icon sm"
-          disabled={session.changingAccount}
-          onclick={() => session.signOut()}
-          title="Sign out"
-          aria-label="Sign out"
-        >
-          <LogOut size={14} />
-        </button>
+        {#if !renaming}
+          <button
+            class="btn ghost icon sm"
+            onclick={oncycletheme}
+            title="Theme: {theme}"
+            aria-label="Theme: {theme}"
+          >
+            {#if theme === 'dark'}<Moon size={14} />{:else if theme === 'light'}<Sun
+                size={14}
+              />{:else}<Monitor size={14} />{/if}
+          </button>
+          <button
+            class="btn ghost icon sm"
+            disabled={session.changingAccount}
+            onclick={() => session.signOut()}
+            title="Sign out"
+            aria-label="Sign out"
+          >
+            <LogOut size={14} />
+          </button>
+        {/if}
       </div>
     {/if}
   </div>
@@ -409,14 +422,6 @@
     min-width: 0;
     gap: 2px;
     line-height: 1.2;
-  }
-
-  .name {
-    font-size: 14px;
-    font-weight: 600;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   .role {
