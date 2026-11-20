@@ -30,22 +30,45 @@ export type ApplyResult =
   | (StoredTask & { readonly ok: true; readonly events: readonly DomainEvent[] })
   | { readonly ok: false; readonly error: StoreError };
 
-/** Runs several writes as one: all of them land, or none. */
+/**
+ * What `pg` says when a query outlived `query_timeout`. It does not cancel the query: the client
+ * still waits on its answer, so anything sent after it, a rollback included, waits too.
+ */
+const QUERY_TIMED_OUT = 'Query read timeout';
+
+const timedOut = (error: unknown): error is Error =>
+  error instanceof Error && error.message === QUERY_TIMED_OUT;
+
+/** Rolls back, or says why the connection is broken: it could not even do that. */
+const rollBack = (client: PoolClient): Promise<Error | undefined> =>
+  client.query('rollback').then(
+    () => undefined,
+    (error: unknown) => (error instanceof Error ? error : new Error(String(error)))
+  );
+
+/**
+ * Runs several writes as one: all of them land, or none. A connection whose query timed out, or
+ * that cannot even roll back, is broken (dropped, or silent) and is discarded, not handed back to
+ * the pool for the next caller to hang on. One that timed out is discarded without a rollback, which
+ * would only wait behind the query; closing it rolls the transaction back on the server. The work's
+ * own error is the one thrown.
+ */
 export const inTransaction = async <T>(
   pool: Pool,
   work: (client: PoolClient) => Promise<T>
 ): Promise<T> => {
   const client = await pool.connect();
+  let broken: Error | undefined;
   try {
     await client.query('begin');
     const result = await work(client);
     await client.query('commit');
     return result;
   } catch (error) {
-    await client.query('rollback');
+    broken = timedOut(error) ? error : await rollBack(client);
     throw error;
   } finally {
-    client.release();
+    client.release(broken);
   }
 };
 

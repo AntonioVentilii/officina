@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { Client, Pool } from 'pg';
-import { createPool } from '../src/pool';
+import { CONNECTION_TIMEOUT_MS, createPool, QUERY_TIMEOUT_MS } from '../src/pool';
 
 const url = process.env.TEST_DATABASE_URL;
 const LOST = 'database connection lost';
@@ -41,6 +41,15 @@ describe('database pool', () => {
       pool.emit('error', new Error('Connection terminated unexpectedly'), client)
     ).not.toThrow();
     expect(entries).toContainEqual([LOST, { error: 'Connection terminated unexpectedly' }]);
+    await pool.end();
+  });
+
+  test('the pool limits how long a query and a checkout may wait, and keeps idle connections alive', async () => {
+    const { log } = recordingLog();
+    const pool = createPool({ connectionString: 'postgres://localhost:1/none', log });
+    expect(pool.options.query_timeout).toBe(QUERY_TIMEOUT_MS);
+    expect(pool.options.connectionTimeoutMillis).toBe(CONNECTION_TIMEOUT_MS);
+    expect(pool.options.keepAlive).toBe(true);
     await pool.end();
   });
 });
