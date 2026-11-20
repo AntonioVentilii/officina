@@ -8,6 +8,7 @@
     LogOut,
     Monitor,
     Moon,
+    Pencil,
     PlugZap,
     SquareKanban,
     Sun,
@@ -21,6 +22,7 @@
   import { session } from '#lib/state/session.svelte.ts';
   import Logo from './Logo.svelte';
   import MemberAvatar from './MemberAvatar.svelte';
+  import MemberName from './MemberName.svelte';
 
   interface Props {
     theme: 'system' | 'dark' | 'light';
@@ -37,9 +39,14 @@
   const inboxCount = $derived(board.waitingOnMe.length + board.notices.length);
 
   const LIVE_LABELS = { live: 'Live', connecting: 'Reconnecting', offline: 'Offline' } as const;
+
+  // While you change your name the field takes the row, in place of the theme and sign-out buttons;
+  // on a phone it takes the whole tab bar, where the name is otherwise hidden.
+  let renaming = $state(false);
+  let nameEditor = $state<ReturnType<typeof MemberName>>();
 </script>
 
-<nav class="sidebar" aria-label="Main">
+<nav class="sidebar" class:renaming aria-label="Main">
   <a class="brand" href="/">
     <Logo />
     <span>Officina</span>
@@ -146,28 +153,46 @@
       <div class="me">
         <MemberAvatar name={session.me.member.name} size={26} />
         <div class="who">
-          <span class="name">{session.me.member.name}</span>
+          <!-- Everyone may change their own name, whatever their role. -->
+          <MemberName
+            id={session.me.member.id}
+            name={session.me.member.name}
+            renamable
+            size={14}
+            bind:editing={renaming}
+            bind:this={nameEditor}
+          />
           <span class="role caps">{session.project?.role ?? ''}</span>
         </div>
-        <button
-          class="btn ghost icon sm"
-          onclick={oncycletheme}
-          title="Theme: {theme}"
-          aria-label="Theme: {theme}"
-        >
-          {#if theme === 'dark'}<Moon size={14} />{:else if theme === 'light'}<Sun
-              size={14}
-            />{:else}<Monitor size={14} />{/if}
-        </button>
-        <button
-          class="btn ghost icon sm"
-          disabled={session.changingAccount}
-          onclick={() => session.signOut()}
-          title="Sign out"
-          aria-label="Sign out"
-        >
-          <LogOut size={14} />
-        </button>
+        {#if !renaming}
+          <button
+            class="btn ghost icon sm rename-me"
+            onclick={() => nameEditor?.edit()}
+            title="Change your name"
+            aria-label="Change your name"
+          >
+            <Pencil size={14} />
+          </button>
+          <button
+            class="btn ghost icon sm"
+            onclick={oncycletheme}
+            title="Theme: {theme}"
+            aria-label="Theme: {theme}"
+          >
+            {#if theme === 'dark'}<Moon size={14} />{:else if theme === 'light'}<Sun
+                size={14}
+              />{:else}<Monitor size={14} />{/if}
+          </button>
+          <button
+            class="btn ghost icon sm"
+            disabled={session.changingAccount}
+            onclick={() => session.signOut()}
+            title="Sign out"
+            aria-label="Sign out"
+          >
+            <LogOut size={14} />
+          </button>
+        {/if}
       </div>
     {/if}
   </div>
@@ -411,14 +436,6 @@
     line-height: 1.2;
   }
 
-  .name {
-    font-size: 14px;
-    font-weight: 600;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
   .role {
     font-size: 11px;
     color: var(--nav-text-2);
@@ -431,6 +448,11 @@
   .me .btn:hover {
     color: var(--nav-text);
     background: none;
+  }
+
+  /* The name carries its own pencil; this one is for phones, where the name is hidden. */
+  .rename-me {
+    display: none;
   }
 
   /* Tecnica: a light panel ruled off from the board, with a title-block brand row. */
@@ -585,6 +607,28 @@
       margin: 0;
       padding: 0;
       border: 0;
+    }
+
+    .me .rename-me {
+      display: inline-flex;
+    }
+
+    /* Changing your name: the field takes the tab bar until it is saved or cancelled. */
+    .renaming .nav {
+      display: none;
+    }
+
+    .renaming .bottom,
+    .renaming .me {
+      flex: 1;
+    }
+
+    .renaming .who {
+      display: flex;
+    }
+
+    .renaming .role {
+      display: none;
     }
   }
 </style>

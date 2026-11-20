@@ -1,7 +1,7 @@
 // The board's own types are the browser's; its tests run under Bun.
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
-import { ago, duration, since } from '../src/lib/format';
+import { ago, duration, initials, since } from '../src/lib/format';
 
 const NOW = Date.parse('2026-11-13T12:00:00Z');
 const at = (offsetMs: number) => new Date(NOW + offsetMs).toISOString();
@@ -19,5 +19,21 @@ describe('relative times', () => {
     expect(ago(at(3 * 86_400_000), NOW)).toBe('just now');
     expect(since(at(2 * 60_000), NOW)).toBe('now');
     expect(duration(at(2 * 60_000), null, NOW)).toBe('0s');
+  });
+});
+
+describe('initials', () => {
+  test('are the first and the last word of a name', () => {
+    expect(initials('Antonio Ventilii')).toBe('AV');
+    expect(initials('Maria Grazia Rossi')).toBe('MR');
+    expect(initials('Gian Luca Bianchi')).toBe('GB');
+    expect(initials('Ana Maria dos Santos')).toBe('AS');
+    expect(initials('Gabriel García Márquez')).toBe('GM');
+    expect(initials('  antonio   de luca ')).toBe('AL');
+  });
+
+  test('a one-word name gives one letter, and no name none', () => {
+    expect(initials('Antonio')).toBe('A');
+    expect(initials('   ')).toBe('');
   });
 });

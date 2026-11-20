@@ -84,7 +84,7 @@ export interface Me {
 /** How long what a person types may be, the ceilings the API checks (`INPUT_LIMITS`). */
 export type InputLimits = Readonly<
   Record<'title' | 'prTitle', { readonly min: number; readonly max: number }>
-> & { readonly prBody: number };
+> & { readonly prBody: number; readonly memberName: number };
 
 export interface WaitingOn {
   readonly kind: 'agent' | 'people' | 'github' | 'nobody';
@@ -305,6 +305,8 @@ export interface MemberActivity {
   readonly claudeConnected: boolean;
   /** Whether you may send them a fresh invite link. */
   readonly invitable: boolean;
+  /** Whether you may change their name: your own, or one you manage in every project. */
+  readonly renamable: boolean;
 }
 
 export interface Notice {

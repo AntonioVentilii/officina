@@ -16,7 +16,8 @@ export const ACCESS_EVENT_TYPES = [
   'connector_allowed',
   'connector_refused',
   'connector_used',
-  'connector_revoked'
+  'connector_revoked',
+  'renamed'
 ] as const;
 export type AccessEventType = (typeof ACCESS_EVENT_TYPES)[number];
 

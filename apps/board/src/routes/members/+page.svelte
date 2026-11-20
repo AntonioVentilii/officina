@@ -3,8 +3,10 @@
   import { Copy, Link, Plug } from '@lucide/svelte';
   import { get, post } from '#lib/api.ts';
   import MemberAvatar from '#lib/components/MemberAvatar.svelte';
+  import MemberName from '#lib/components/MemberName.svelte';
   import { ago, dateTime } from '#lib/format.ts';
   import { latestOnly } from '#lib/latest.ts';
+  import { live, refreshesProject } from '#lib/state/live.svelte.ts';
   import { board } from '#lib/state/board.svelte.ts';
   import { clock } from '#lib/state/clock.svelte.ts';
   import { session } from '#lib/state/session.svelte.ts';
@@ -49,10 +51,18 @@
 
   // Owners only: who signed in, who sent links and which apps act for whom.
   let accessLog = $state<readonly AccessEvent[] | null>(null);
+  // Bumped when a member changes (a rename, which the log records), so it is read again.
+  let logVersion = $state(0);
+  $effect(() =>
+    live.subscribe((event) => {
+      if (refreshesProject(event, session.projectId)) logVersion++;
+    })
+  );
   // A slow answer for a project no longer selected must not replace the selected one's log.
   const latestLog = latestOnly();
   $effect(() => {
     const projectId = session.projectId;
+    void logVersion;
     const stale = latestLog();
     accessLog = null;
     if (!projectId || !session.can('see_access_log')) return;
@@ -77,7 +87,8 @@
     <p class="muted">
       Who is in this project and how far each person got: whether they used their invite, when they
       last opened the board and whether they added Officina to Claude. Owners can send a fresh link
-      to someone who has not signed in yet; send it to them yourself, it works once.
+      to someone who has not signed in yet; send it to them yourself, it works once. Change a name
+      written as one word to name and surname, so cards and avatars show both initials.
     </p>
   </header>
 
@@ -87,7 +98,7 @@
         <div class="row">
           <MemberAvatar name={member.name} size={26} />
           <div class="who">
-            <span class="name">{member.name}</span>
+            <MemberName id={member.id} name={member.name} renamable={member.renamable} />
             <span class="role caps"
               >{member.role}{#if member.domains.length}, {member.domains.join(', ')}{/if}</span
             >
@@ -196,11 +207,6 @@
     gap: 2px;
     min-width: 0;
     font-size: 13.5px;
-  }
-
-  .name {
-    font-size: 15px;
-    font-weight: 600;
   }
 
   .role,

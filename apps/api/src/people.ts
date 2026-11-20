@@ -12,6 +12,7 @@ import {
   upsertMember,
   viewerRolesOver,
   loadProject,
+  renameMember,
   type AccessEventRow,
   type AccessEventType,
   type MemberActivity
@@ -97,6 +98,8 @@ export const invite = async (
 export interface MemberView extends MemberActivity {
   /** Whether this viewer may send them a fresh invite link from the board. */
   readonly invitable: boolean;
+  /** Whether this viewer may change their name: their own, or one they manage everywhere. */
+  readonly renamable: boolean;
 }
 
 /**
@@ -121,8 +124,28 @@ export const membersView = async (
   );
   return members.map((member) => ({
     ...member,
-    invitable: mayInviteAgain(roles.get(member.id) ?? [], member)
+    invitable: mayInviteAgain(roles.get(member.id) ?? [], member),
+    renamable: member.id === viewerId || managesEverywhere(roles.get(member.id) ?? [])
   }));
+};
+
+/**
+ * Changes a member's display name, as the Members page asks: anyone their own, and an owner of
+ * every project the member is in someone else's (`renameMember`). Returns the name as stored.
+ */
+export const rename = async (
+  pool: Pool,
+  input: { projectId: string; viewerId: string; memberId: string; name: string }
+): Promise<string> => {
+  const result = await renameMember(pool, input);
+  if (result.ok) return result.name;
+  if (result.error === 'not_allowed')
+    throw new TaskCommandError(
+      `${result.name} is also in a project you do not own: they, or an owner of each of their projects, can change their name`,
+      403
+    );
+  if (result.error === 'empty') throw new TaskCommandError('a name cannot be empty', 400);
+  throw new TaskCommandError('member not found', 404);
 };
 
 /** A fresh invite link for a member who has not signed in yet, valid as long as a first invite. */
@@ -227,6 +250,7 @@ const ACCESS_SENTENCES: Readonly<Record<AccessEventType, (d: Detail, by: string)
   connector_allowed: (d) => `allowed ${d.client} to use Officina as them`,
   connector_refused: (d) => `refused ${d.client}`,
   connector_used: (d) => `used Officina from ${d.client}`,
+  renamed: (d, by) => `was renamed from ${d.from} to ${d.to}${by}`,
   connector_revoked: (d) =>
     d.reason === 'revoked'
       ? `revoked ${d.client}'s access`

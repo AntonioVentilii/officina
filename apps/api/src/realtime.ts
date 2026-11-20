@@ -8,14 +8,19 @@ export type BoardEvent =
       readonly projectId: string;
       readonly number: number;
       readonly runId: string;
-    };
+    }
+  /** Something about the project's members changed, such as a name, which every view may show. */
+  | { readonly kind: 'members'; readonly projectId: string };
 
 export interface RealtimeHub {
   subscribe(listener: (event: BoardEvent) => void): () => void;
   close(): Promise<void>;
 }
 
-type Notification = { kind: 'task'; taskId: string } | { kind: 'run'; runId: string };
+type Notification =
+  | { kind: 'task'; taskId: string }
+  | { kind: 'run'; runId: string }
+  | { kind: 'members'; projectId: string };
 
 const RECONNECT_MS = 2_000;
 // Something between the API and Fly Postgres drops a connection idle for 30 minutes, and a client
@@ -38,7 +43,7 @@ export const startRealtime = async (input: {
   let client: Client | null = null;
   let closed = false;
 
-  const place = async (notification: Notification) => {
+  const place = async (notification: Exclude<Notification, { kind: 'members' }>) => {
     if (notification.kind === 'task') {
       if (!taskPlaces.has(notification.taskId))
         taskPlaces.set(notification.taskId, await locateTask(input.pool, notification.taskId));
@@ -52,6 +57,11 @@ export const startRealtime = async (input: {
   const emit = async (raw: string | undefined) => {
     if (!raw || listeners.size === 0) return;
     const notification = JSON.parse(raw) as Notification;
+    if (notification.kind === 'members') {
+      for (const listener of listeners)
+        listener({ kind: 'members', projectId: notification.projectId });
+      return;
+    }
     const found = await place(notification);
     if (!found) return;
     const event: BoardEvent =

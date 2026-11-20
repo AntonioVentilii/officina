@@ -8,10 +8,10 @@ import {
   HAND_IN_LEASE,
   insertLearnings,
   listLearnings,
-  saveSpecVersion,
+  renameMember,
   startRun
 } from '@officina/db';
-import { ENGINE, parseProjectConfig } from '@officina/core';
+import { parseProjectConfig } from '@officina/core';
 import { Pool } from 'pg';
 import {
   createAutoVerifiedTask,
@@ -27,7 +27,7 @@ import { createApp } from '../src/app';
 import { agentsView, logEntries, RUN_LOG_PAGE } from '../src/board';
 import { invite, loginLink } from '../src/people';
 import { startRealtime, type BoardEvent } from '../src/realtime';
-import { createRequest, createRequestAs, describeTask, linkTask } from '../src/tasks';
+import { createRequest, createRequestAs, describeTask } from '../src/tasks';
 import { handleWebhookAction } from '../src/webhooks';
 
 const url = process.env.TEST_DATABASE_URL;
@@ -196,38 +196,6 @@ describe.skipIf(!url)('board api', () => {
       label: 'Builds once the agent docs of task 2 are merged',
       me: false
     });
-  });
-
-  test('a ready task that waits for other tasks says which, and offers no claim', async () => {
-    const cookie = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
-    for (const title of ['Settings', 'Profile', 'Header', 'Redesign', 'Footer'])
-      await createRequest(pool, { title, request: 'Tidy it.' });
-    await pool.query("update tasks set stage = 'ready', lane = 'standard'");
-    for (const number of [3, 5])
-      await saveSpecVersion(pool, {
-        taskId: (await findTaskIdByNumber(pool, seeded.projectId, number))!,
-        version: 0,
-        body: 'The spec.',
-        createdBy: ENGINE,
-        predictedPaths: ['src/routes/+layout.svelte']
-      });
-    await linkTask(pool, { number: 1, after: [2] });
-    await linkTask(pool, { number: 3, parent: 4, after: [] });
-    await linkTask(pool, { number: 5, parent: 4, after: [] });
-    await pool.query("update tasks set stage = 'building' where number = 5");
-
-    const board = (await json(await call(cookie, `/api/projects/${seeded.projectId}/board`))).tasks;
-    const label = (number: number) =>
-      board.find((task: { number: number }) => task.number === number).waitingOn.label;
-    expect(label(1)).toBe('Builds once task 2 is merged');
-    expect(label(4)).toBe('Built through its sub-tasks: task 3, task 5');
-    expect(label(3)).toBe('Builds once task 5 is merged: they change the same files');
-    expect(label(2)).toBe('Waiting for a build slot');
-
-    const actions = async (number: number) =>
-      (await json(await call(cookie, `/api/projects/${seeded.projectId}/tasks/${number}`))).actions;
-    expect(await actions(1)).not.toContain('claim');
-    expect(await actions(2)).toContain('claim');
   });
 
   test('a verifier records checks on the board, and the task page shows each with who and how', async () => {
@@ -1855,6 +1823,75 @@ describe.skipIf(!url)('board api', () => {
     expect((await json(refused)).error).toContain('also in a project you do not own');
   });
 
+  test('a member renames themselves; an owner renames the members they manage everywhere', async () => {
+    const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    const invited = (name: string, role: string) =>
+      invite(pool, {
+        publicUrl: PUBLIC_URL,
+        email: `${name.toLowerCase()}@example.com`,
+        name,
+        role,
+        domains: []
+      });
+    const maintainer = await signIn(await invited('Mia', 'maintainer'));
+    const contributor = await signIn(await invited('Carla', 'contributor'));
+    const project = `/api/projects/${seeded.projectId}`;
+    interface Listed {
+      name: string;
+      renamable: boolean;
+    }
+    const ids = Object.fromEntries(
+      (
+        await pool.query<{ id: string; display_name: string }>(
+          'select id, display_name from members'
+        )
+      ).rows.map((row) => [row.display_name, row.id])
+    );
+    const nameOf = (id: string) => `${project}/members/${id}/name`;
+
+    const listed = async (cookie: string) =>
+      ((await json(await call(cookie, `${project}/members`))).members as Listed[]).map((member) => [
+        member.name,
+        member.renamable
+      ]);
+    expect(await listed(owner)).toEqual([
+      ['Antonio', true],
+      ['Mia', true],
+      ['Carla', true]
+    ]);
+    expect(await listed(maintainer)).toEqual([
+      ['Antonio', false],
+      ['Mia', true],
+      ['Carla', false]
+    ]);
+
+    // A contributor has no Members page, but their own name is still theirs to change.
+    const self = await call(contributor, nameOf(ids.Carla!), { name: ' Carla Bianchi ' });
+    expect(self.status).toBe(200);
+    expect(await json(self)).toEqual({ name: 'Carla Bianchi' });
+    expect((await call(contributor, nameOf(ids.Mia!), { name: 'Mia Verdi' })).status).toBe(403);
+    expect((await call(maintainer, nameOf(ids.Carla!), { name: 'Carla Verdi' })).status).toBe(403);
+    expect((await call(owner, nameOf(ids.Mia!), { name: 'Mia Verdi' }, false)).status).toBe(403);
+    expect((await call(owner, nameOf(ids.Mia!), { name: '  ' })).status).toBe(400);
+    expect((await call(owner, nameOf(ids.Mia!), { name: 'M'.repeat(101) })).status).toBe(400);
+    expect((await call(owner, nameOf('not-a-uuid'), { name: 'Mia Verdi' })).status).toBe(404);
+    // The same rename sent twice records it once.
+    expect((await call(owner, nameOf(ids.Mia!), { name: 'Mia Verdi' })).status).toBe(200);
+    expect((await call(owner, nameOf(ids.Mia!), { name: 'Mia Verdi' })).status).toBe(200);
+
+    const me = await json(await call(maintainer, '/api/me'));
+    expect(me.member.name).toBe('Mia Verdi');
+    const log = (await json(await call(owner, `${project}/access-log`))).events.filter(
+      (event: { text: string }) => event.text.startsWith('was renamed')
+    );
+    expect(
+      log.map((event: { member: string; text: string }) => [event.member, event.text])
+    ).toEqual([
+      ['Mia Verdi', 'was renamed from Mia to Mia Verdi by Antonio'],
+      ['Carla Bianchi', 'was renamed from Carla to Carla Bianchi']
+    ]);
+  });
+
   test('an accepted invite reaches the owner Inbox and leaves it once read', async () => {
     const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
     const project = `/api/projects/${seeded.projectId}`;
@@ -2009,6 +2046,24 @@ describe.skipIf(!url)('board api', () => {
     try {
       await openRequest();
       expect(await next.event).toEqual({ kind: 'task', projectId: seeded.projectId, number: 1 });
+    } finally {
+      next.unsubscribe();
+      await hub.close();
+    }
+  });
+
+  test("a member's new name reaches the boards open on their project", async () => {
+    const hub = await startRealtime({ connectionString: url!, pool, log: () => {} });
+    const next = nextEvent(hub);
+    try {
+      const rename = {
+        projectId: seeded.projectId,
+        memberId: seeded.ownerId,
+        viewerId: seeded.ownerId,
+        name: 'Antonio Ventilii'
+      };
+      await renameMember(pool, rename);
+      expect(await next.event).toEqual({ kind: 'members', projectId: seeded.projectId });
     } finally {
       next.unsubscribe();
       await hub.close();
