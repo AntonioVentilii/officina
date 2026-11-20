@@ -37,21 +37,6 @@
   const inboxCount = $derived(board.waitingOnMe.length + board.notices.length);
 
   const LIVE_LABELS = { live: 'Live', connecting: 'Reconnecting', offline: 'Offline' } as const;
-
-  /**
-   * A change to who is signed in (connecting or disconnecting GitHub, signing out) under way, so a
-   * second click on any of them sends nothing.
-   */
-  let changing = $state(false);
-  const changeAccount = async (change: () => Promise<void>) => {
-    if (changing) return;
-    changing = true;
-    try {
-      await change();
-    } finally {
-      changing = false;
-    }
-  };
 </script>
 
 <nav class="sidebar" aria-label="Main">
@@ -128,15 +113,15 @@
           <GitMerge size={13} />@{session.me.github.login}
           <button
             class="connect"
-            disabled={changing}
-            onclick={() => changeAccount(() => session.disconnectGitHub())}>Disconnect</button
+            disabled={session.changingAccount}
+            onclick={() => session.disconnectGitHub()}>Disconnect</button
           >
         </div>
       {:else}
         <button
           class="github connect"
-          disabled={changing}
-          onclick={() => changeAccount(() => session.connectGitHub())}
+          disabled={session.changingAccount}
+          onclick={() => session.connectGitHub()}
         >
           <GitMerge size={13} />Connect GitHub
         </button>
@@ -176,8 +161,8 @@
         </button>
         <button
           class="btn ghost icon sm"
-          disabled={changing}
-          onclick={() => changeAccount(() => session.signOut())}
+          disabled={session.changingAccount}
+          onclick={() => session.signOut()}
           title="Sign out"
           aria-label="Sign out"
         >
