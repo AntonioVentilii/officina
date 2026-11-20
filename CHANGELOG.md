@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.13.1](https://github.com/AntonioVentilii/officina/compare/v1.13.0...v1.13.1) (2026-11-20)
+
+
+### Documentation
+
+* **repo:** record officina as a project of itself and the release-tags ruleset ([#279](https://github.com/AntonioVentilii/officina/issues/279)) ([c86202c](https://github.com/AntonioVentilii/officina/commit/c86202c3680b8f4e2ef33f8aa0fe2cb26529ec61))
+* **repo:** record that the officina workspace has a monthly spend limit ([#280](https://github.com/AntonioVentilii/officina/issues/280)) ([ad499cb](https://github.com/AntonioVentilii/officina/commit/ad499cb0bf6ae3d530e72258da26f39956fce275))
+
+
+### Miscellaneous Chores
+
+* **repo:** project config for running Officina on itself ([#277](https://github.com/AntonioVentilii/officina/issues/277)) ([42b679a](https://github.com/AntonioVentilii/officina/commit/42b679a7288d8ae0bd12ee173106b15351b7aeb3))
+
 ## [1.13.0](https://github.com/AntonioVentilii/officina/compare/v1.12.0...v1.13.0) (2026-11-19)
 
 
