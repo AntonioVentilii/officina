@@ -1,14 +1,16 @@
 <script lang="ts">
-  import { Bot, Check, ExternalLink, FileText, GitPullRequest, X } from '@lucide/svelte';
-  import { post } from '#lib/api.ts';
-  import { editLines } from '#lib/diff.ts';
+  import { ExternalLink, GitPullRequest } from '@lucide/svelte';
+  import { fade } from 'svelte/transition';
   import { ago } from '#lib/format.ts';
   import { board } from '#lib/state/board.svelte.ts';
   import { clock } from '#lib/state/clock.svelte.ts';
-  import { session } from '#lib/state/session.svelte.ts';
-  import { toasts } from '#lib/state/toasts.svelte.ts';
   import type { Learning } from '#lib/types.ts';
+  import { learningWork, type SentDecision } from '#lib/working.ts';
   import AgentAvatar from './AgentAvatar.svelte';
+  import LearningDecide from './LearningDecide.svelte';
+  import LearningEdit from './LearningEdit.svelte';
+  import Loader from './Loader.svelte';
+  import WorkingTrace from './WorkingTrace.svelte';
 
   interface Props {
     learning: Learning;
@@ -17,53 +19,14 @@
 
   let { learning, compact = false }: Props = $props();
 
-  const TARGET_LABELS = {
-    docs: 'agent docs',
-    project: 'project docs',
-    agent: 'Officina agent prompt'
-  } as const;
-
   // Only edits to Officina's own prompts stay on the board; the others land as a pull request.
   const opensPullRequest = $derived(learning.target !== 'agent');
 
-  let rejecting = $state(false);
-  let note = $state('');
-  let busy = $state(false);
+  /** The decision this board sent, shown as work until the API reports its claim or the outcome. */
+  let sent = $state<SentDecision | null>(null);
 
-  // The diff people approve is exactly what lands; lines the edit keeps show as context.
-  const lines = $derived(editLines(learning.find, learning.text));
-
-  const decide = async (decision: 'accept' | 'reject') => {
-    if (!session.projectId) return;
-    busy = true;
-    try {
-      const { rewriting } = await post<{ rewriting: boolean }>(
-        `/api/projects/${session.projectId}/learnings/${learning.id}`,
-        {
-          decision,
-          // The edit shown here: one rewritten since is never accepted unseen.
-          rewrittenAt: learning.rewrittenAt,
-          ...(note.trim() ? { note: note.trim() } : {})
-        }
-      );
-      toasts.show(
-        'ok',
-        decision === 'reject'
-          ? 'Learning rejected'
-          : rewriting
-            ? 'The file changed since: the learner is rewriting the edit, check it again when it is back'
-            : opensPullRequest
-              ? 'Accepted: pull request opened'
-              : 'Accepted for the Officina prompts'
-      );
-      rejecting = false;
-      await board.refresh();
-    } catch (error) {
-      toasts.show('error', (error as Error).message);
-    } finally {
-      busy = false;
-    }
-  };
+  // While a decision is at work, here or on anyone's board, the buttons give way to its status line.
+  const work = $derived(learning.status === 'proposed' ? learningWork(learning, sent) : null);
 
   const STATUS = {
     proposed: { label: 'Proposed', tone: 'accent' },
@@ -73,7 +36,8 @@
   } as const;
 </script>
 
-<article class="learning {learning.status}">
+<article class="learning {learning.status}" class:working={work}>
+  {#if work}<WorkingTrace />{/if}
   <header>
     <AgentAvatar role="learner" label={board.roleLabel('learner')} size={26} />
     <div class="grow">
@@ -88,7 +52,11 @@
         {/if}
       </div>
     </div>
-    <span class="pill {STATUS[learning.status].tone}">{STATUS[learning.status].label}</span>
+    {#if work}
+      <span class="pill at-work" in:fade={{ duration: 300 }}><Loader />Working</span>
+    {:else}
+      <span class="pill {STATUS[learning.status].tone}">{STATUS[learning.status].label}</span>
+    {/if}
   </header>
 
   <p class="lesson">{learning.lesson}</p>
@@ -98,19 +66,7 @@
     <p>{learning.evidence}</p>
   </details>
 
-  <div class="change">
-    <div class="file">
-      {#if opensPullRequest}<FileText size={13} />{:else}<Bot size={13} />{/if}
-      <span class="mono">{learning.file}</span>
-      <span class="caps faint">
-        {TARGET_LABELS[learning.target]} ·
-        {learning.find ? 'replace' : 'append at the end'}
-      </span>
-    </div>
-    <pre class="diff">{#each lines as line, index (index)}<span class={line.kind}
-          >{line.kind === 'added' ? '+ ' : line.kind === 'removed' ? '- ' : '  '}{line.text}
-</span>{/each}</pre>
-  </div>
+  <LearningEdit {learning} {opensPullRequest} />
 
   {#if learning.status === 'proposed' && learning.rewrite}
     <p class="rewrite faint">
@@ -120,33 +76,10 @@
     </p>
   {/if}
 
-  {#if learning.status === 'proposed' && learning.canDecide}
-    {#if rejecting}
-      <div class="reject">
-        <input
-          class="field"
-          bind:value={note}
-          placeholder="Why not? The learner avoids it from now on."
-        />
-        <button class="btn ghost" onclick={() => (rejecting = false)}>Back</button>
-        <button class="btn" disabled={busy} onclick={() => decide('reject')}
-          ><X size={14} />Reject</button
-        >
-      </div>
-    {:else}
-      <div class="actions">
-        <button class="btn ghost" disabled={busy} onclick={() => (rejecting = true)}>Reject</button>
-        <button
-          class="btn primary"
-          disabled={busy || learning.rewrite !== null}
-          onclick={() => decide('accept')}
-        >
-          <Check size={14} />{opensPullRequest ? 'Accept and open pull request' : 'Accept'}
-        </button>
-      </div>
-    {/if}
+  {#if work || (learning.status === 'proposed' && learning.canDecide)}
+    <LearningDecide {learning} {work} {opensPullRequest} bind:sent />
   {:else if learning.status !== 'proposed'}
-    <div class="decided faint">
+    <div class="decided faint" in:fade={{ duration: 350 }}>
       {learning.status === 'rejected' ? 'Rejected' : 'Accepted'} by {learning.decidedBy ??
         'someone'}
       {ago(learning.decidedAt, clock.now)}{#if learning.decisionNote}: “{learning.decisionNote}”{/if}
@@ -173,6 +106,35 @@
 
   .learning.rejected {
     opacity: 0.6;
+  }
+
+  /* At work: the sheet's frame dims, a stretch of ink runs round it and its text steps back.
+     Modernista draws no frame, so a working sheet gets one, outside its text so nothing moves. */
+  .learning.working {
+    --frame: 1px;
+    position: relative;
+    margin: 0 -16px;
+    padding: 20px 16px;
+    border: 1px solid color-mix(in srgb, var(--rule) 22%, var(--border));
+    animation: settle 0.35s ease both;
+  }
+
+  .learning.working .lesson,
+  .learning.working :global(.change) {
+    opacity: 0.6;
+    transition: opacity 0.25s;
+  }
+
+  @keyframes settle {
+    from {
+      border-color: var(--rule);
+    }
+  }
+
+  .pill.at-work {
+    --loader-size: 10px;
+    color: var(--text);
+    font-weight: 800;
   }
 
   header {
@@ -227,65 +189,23 @@
     line-height: 1.55;
   }
 
-  .change {
-    border-top: 1px solid var(--rule);
-  }
-
-  .file {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 7px 0;
-    font-size: 12px;
-  }
-
-  .file .caps {
-    font-size: 11px;
-  }
-
-  .diff {
-    margin: 0;
-    padding: 8px 0;
-    max-height: 260px;
-    overflow: auto;
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    line-height: 1.6;
-    background: var(--code-bg);
-  }
-
-  .diff span {
-    display: block;
-    padding: 0 10px;
-    border-left: 3px solid transparent;
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-
-  /* Ink for what lands, grey for what goes: a diff that still reads in greyscale. */
-  .diff .added {
-    color: var(--text);
-    font-weight: 600;
-    border-left-color: var(--rule);
-    background: var(--tint);
-  }
-
-  .diff .context {
-    color: var(--text-3);
-  }
-
-  .diff .removed {
-    color: var(--text-3);
-    text-decoration: line-through;
-    border-left-color: var(--border);
-  }
-
   /* Tecnica: each learning is a ruled sheet with its title set in Plex Sans. */
   :global([data-look='tecnica']) .learning {
     margin-top: 12px;
     padding: 16px 18px;
     border: 1.5px solid var(--rule);
     background: var(--panel);
+  }
+
+  :global([data-look='tecnica']) .learning.working {
+    --frame: 1.5px;
+    margin: 12px 0 0;
+    padding: 16px 18px;
+    border: 1.5px solid color-mix(in srgb, var(--rule) 30%, var(--border));
+  }
+
+  :global([data-look='tecnica']) .pill.at-work {
+    font-weight: 500;
   }
 
   :global([data-look='tecnica']) h3 {
@@ -298,19 +218,6 @@
     font-family: var(--font-num);
     font-stretch: normal;
     letter-spacing: 0;
-  }
-
-  .actions,
-  .reject {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
-  }
-
-  .reject .field {
-    flex: 1;
-    height: 34px;
-    padding: 0 10px;
   }
 
   .rewrite {

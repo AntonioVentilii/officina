@@ -34,6 +34,8 @@
   let failure = $state('');
   let busy = $state(false);
   let apps = $state<readonly ConnectedApp[] | null>(null);
+  /** The app being revoked, whose button stays off until the API answers and the list reloads. */
+  let revoking = $state<string | null>(null);
 
   // The app that asked (for example Claude) sent these through `/oauth/authorize`; the API checks
   // them again when the person decides. Without them this page lists the apps already connected.
@@ -60,6 +62,7 @@
   });
 
   const revoke = async (app: ConnectedApp) => {
+    revoking = app.id;
     try {
       await post(`/api/connector/grants/${app.id}/revoke`);
       toasts.show('ok', `${app.client} can no longer act for you.`);
@@ -68,6 +71,7 @@
       toasts.show('error', wordsFor(REVOKE_PROBLEMS, message, message));
     }
     await loadApps();
+    revoking = null;
   };
 
   const decide = async (allow: boolean) => {
@@ -106,7 +110,9 @@
                   Connection {app.connection}, last renewed {ago(app.renewedAt, clock.now)}
                 </div>
               </div>
-              <button class="btn ghost" onclick={() => revoke(app)}>Revoke</button>
+              <button class="btn ghost" disabled={revoking === app.id} onclick={() => revoke(app)}
+                >Revoke</button
+              >
             </li>
           {/each}
         </ul>

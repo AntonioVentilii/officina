@@ -12,6 +12,20 @@ export interface LearningPullRequest {
   readonly state: LearningPullRequestState;
 }
 
+/** What a maintainer decides about a learning (`LEARNING_DECISIONS` in `packages/core`). */
+export type LearningDecision = 'accept' | 'reject';
+
+/**
+ * A decision under way, while its claim holds: which one (null for a claim from before claims
+ * named it), who made it (null when nobody is named), whether that is the viewer, and since when.
+ */
+export interface LearningDeciding {
+  readonly decision: LearningDecision | null;
+  readonly by: string | null;
+  readonly you: boolean;
+  readonly since: string;
+}
+
 export interface Learning {
   readonly id: string;
   readonly title: string;
@@ -36,4 +50,6 @@ export interface Learning {
   readonly rewrittenAt: string | null;
   readonly createdAt: string;
   readonly canDecide: boolean;
+  /** A decision someone is making now; every board shows the learning at work until it lands. */
+  readonly deciding: LearningDeciding | null;
 }

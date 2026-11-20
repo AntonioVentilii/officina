@@ -1,5 +1,12 @@
 import { randomBytes } from 'node:crypto';
-import { INPUT_LIMITS, allowedActions, can, checksSchema, connectionRef } from '@officina/core';
+import {
+  INPUT_LIMITS,
+  LEARNING_DECISIONS,
+  allowedActions,
+  can,
+  checksSchema,
+  connectionRef
+} from '@officina/core';
 import type { HandInPort } from '@officina/engine';
 import {
   consumeOAuthState,
@@ -195,7 +202,7 @@ const consentSchema = z.strictObject({
 });
 
 const learningDecisionSchema = z.strictObject({
-  decision: z.enum(['accept', 'reject']),
+  decision: z.enum(LEARNING_DECISIONS),
   /** When the edit the person read was last rewritten (`null`: never), so an accept is of that edit. */
   rewrittenAt: z.iso.datetime().nullable(),
   note: z.string().trim().max(2_000).optional()

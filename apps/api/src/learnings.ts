@@ -1,4 +1,10 @@
-import { branchForLearning, can, editsProject, type Role } from '@officina/core';
+import {
+  branchForLearning,
+  can,
+  editsProject,
+  type LearningDecision,
+  type Role
+} from '@officina/core';
 import {
   claimLearningDecision,
   decideLearning,
@@ -45,7 +51,7 @@ interface Decision {
   readonly pool: Pool;
   readonly github: LearningGitHub | undefined;
   readonly target: Target;
-  readonly decision: 'accept' | 'reject';
+  readonly decision: LearningDecision;
   readonly note: string | undefined;
 }
 
@@ -115,7 +121,7 @@ const settled: Hold = async () => {};
 
 interface DecisionInput {
   readonly id: string;
-  readonly decision: 'accept' | 'reject';
+  readonly decision: LearningDecision;
   /** The `rewrittenAt` of the edit the person read, as the board received it. */
   readonly rewrittenAt: string | null;
   readonly note?: string | undefined;
@@ -141,10 +147,14 @@ const decidable = (learning: LearningRow | null, input: DecisionInput): Learning
  */
 const claimDecision = async (
   pool: Pool,
-  projectId: string,
+  target: Target,
   input: DecisionInput
 ): Promise<Claimed> => {
-  const claim = await claimLearningDecision(pool, projectId, input.id);
+  const { projectId, memberId } = target;
+  const claim = await claimLearningDecision(pool, projectId, input.id, {
+    memberId,
+    decision: input.decision
+  });
   const learning = await loadLearning(pool, projectId, input.id);
   if (!claim) {
     decidable(learning, input);
@@ -228,7 +238,7 @@ export const decide = async (
 ): Promise<LearningRow> => {
   if (!can(target, 'decide_learnings'))
     throw new TaskCommandError('only maintainers and owners decide on learnings');
-  const claimed = await claimDecision(pool, target.projectId, input);
+  const claimed = await claimDecision(pool, target, input);
   try {
     return await decideClaimed(
       { pool, github, target, decision: input.decision, note: input.note },
