@@ -69,18 +69,20 @@
 
   <ul class="nav">
     <li>
-      <a href="/" aria-current={current(onBoard)}><SquareKanban size={16} />Board</a>
+      <a href="/" aria-current={current(onBoard)}
+        ><SquareKanban size={16} /><span class="label">Board</span></a
+      >
     </li>
     <li>
       <a href="/inbox" aria-current={current(path === '/inbox')}>
-        <Inbox size={16} />Inbox
+        <Inbox size={16} /><span class="label">Inbox</span>
         {#if inboxCount}<span class="badge num">{inboxCount}</span>{/if}
       </a>
     </li>
     {#if session.technical}
       <li>
         <a href="/agents" aria-current={current(path === '/agents')}>
-          <Bot size={16} />Agents
+          <Bot size={16} /><span class="label">Agents</span>
           {#if board.running.length}<span class="running num"
               ><span class="pulse"></span>{board.running.length} at work</span
             >{/if}
@@ -88,7 +90,7 @@
       </li>
       <li>
         <a href="/learnings" aria-current={current(path === '/learnings')}>
-          <GraduationCap size={16} />Learnings
+          <GraduationCap size={16} /><span class="label">Learnings</span>
           {#if board.proposedLearnings.length}<span class="badge quiet num"
               >{board.proposedLearnings.length}</span
             >{/if}
@@ -96,17 +98,19 @@
       </li>
       <li>
         <a href="/members" aria-current={current(path === '/members')}>
-          <Users size={16} />Members
+          <Users size={16} /><span class="label">Members</span>
         </a>
       </li>
     {/if}
     <li>
       <a href="/connect" aria-current={current(path === '/connect')}>
-        <PlugZap size={16} />Connected apps
+        <PlugZap size={16} /><span class="label">Connected apps</span>
       </a>
     </li>
     <li>
-      <button onclick={() => (guide.open = true)}><BookOpen size={16} />Guide</button>
+      <button onclick={() => (guide.open = true)}
+        ><BookOpen size={16} /><span class="label">Guide</span></button
+      >
     </li>
   </ul>
 
@@ -535,9 +539,11 @@
     border-top-width: 1.5px;
   }
 
-  /* On phones the sidebar becomes a tab bar along the bottom edge. */
+  /* On phones the sidebar becomes a tab bar along the bottom edge, as narrow as the screen in either
+     look: the rules that size it also name Tecnica's, which would otherwise outrank them. */
   @media (max-width: 720px) {
-    .sidebar {
+    .sidebar,
+    :global([data-look='tecnica']) .sidebar {
       flex-direction: row;
       align-items: center;
       height: auto;
@@ -557,43 +563,81 @@
       display: none;
     }
 
-    .nav {
+    .nav,
+    :global([data-look='tecnica']) .nav {
       flex: 1;
       flex-direction: row;
-      justify-content: space-around;
+      min-width: 0;
+      padding: 0;
+    }
+
+    /* The tabs share the bar equally, so more of them never push the page wider than the screen. */
+    .nav li {
+      display: flex;
+      flex: 1 1 0;
+      min-width: 0;
+    }
+
+    .nav a,
+    .nav button,
+    :global([data-look='tecnica']) .nav a {
+      position: relative;
+      flex: 1;
+      flex-direction: column;
+      justify-content: flex-start;
+      min-width: 0;
+      gap: 2px;
+      padding: 6px 2px;
+      font-size: 11px;
     }
 
     .nav a,
     .nav button {
-      position: relative;
-      flex-direction: column;
-      gap: 2px;
-      padding: 6px 12px;
       border-left: 0;
       border-top: 3px solid transparent;
-      font-size: 11px;
+    }
+
+    .label {
+      max-width: 100%;
+      line-height: 1.15;
+      text-align: center;
+      overflow-wrap: anywhere;
+    }
+
+    /* Past four tabs (a maintainer's or an owner's) words no longer fit: the tabs show their icons,
+       and the label is still read aloud, hidden as app.css's .sr-only hides text. */
+    .nav:has(> li:nth-child(5)) .label {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
     }
 
     .nav a[aria-current='page'] {
       border-top-color: var(--nav-text);
     }
 
+    /* A tab's count sits on its icon's corner, which stays in place however narrow the tab is. */
     .badge,
     .running {
       position: absolute;
       top: 2px;
-      right: 2px;
+      left: calc(50% + 4px);
       margin: 0;
     }
 
-    .badge {
+    .badge,
+    :global([data-look='tecnica']) .badge {
       min-width: 16px;
       padding: 0 4px;
       font-size: 10px;
       line-height: 16px;
     }
 
-    .running {
+    .running,
+    :global([data-look='tecnica']) .running {
       font-size: 0;
     }
 
@@ -602,8 +646,9 @@
       padding: 0;
     }
 
-    .me {
-      gap: 2px;
+    .me,
+    :global([data-look='tecnica']) .me {
+      gap: 0;
       margin: 0;
       padding: 0;
       border: 0;
