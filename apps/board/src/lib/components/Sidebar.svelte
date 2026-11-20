@@ -38,15 +38,18 @@
 
   const LIVE_LABELS = { live: 'Live', connecting: 'Reconnecting', offline: 'Offline' } as const;
 
-  /** Connecting or disconnecting GitHub under way, so a second click sends nothing. */
-  let linking = $state(false);
-  const relink = async (change: () => Promise<void>) => {
-    if (linking) return;
-    linking = true;
+  /**
+   * A change to who is signed in (connecting or disconnecting GitHub, signing out) under way, so a
+   * second click on any of them sends nothing.
+   */
+  let changing = $state(false);
+  const changeAccount = async (change: () => Promise<void>) => {
+    if (changing) return;
+    changing = true;
     try {
       await change();
     } finally {
-      linking = false;
+      changing = false;
     }
   };
 </script>
@@ -125,15 +128,15 @@
           <GitMerge size={13} />@{session.me.github.login}
           <button
             class="connect"
-            disabled={linking}
-            onclick={() => relink(() => session.disconnectGitHub())}>Disconnect</button
+            disabled={changing}
+            onclick={() => changeAccount(() => session.disconnectGitHub())}>Disconnect</button
           >
         </div>
       {:else}
         <button
           class="github connect"
-          disabled={linking}
-          onclick={() => relink(() => session.connectGitHub())}
+          disabled={changing}
+          onclick={() => changeAccount(() => session.connectGitHub())}
         >
           <GitMerge size={13} />Connect GitHub
         </button>
@@ -173,7 +176,8 @@
         </button>
         <button
           class="btn ghost icon sm"
-          onclick={() => session.signOut()}
+          disabled={changing}
+          onclick={() => changeAccount(() => session.signOut())}
           title="Sign out"
           aria-label="Sign out"
         >

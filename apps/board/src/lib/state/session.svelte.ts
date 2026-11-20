@@ -81,9 +81,13 @@ class Session {
   }
 
   async signOut() {
-    await post('/auth/sign-out');
-    this.me = null;
-    this.status = 'signed-out';
+    try {
+      await post('/auth/sign-out');
+      this.me = null;
+      this.status = 'signed-out';
+    } catch (error) {
+      toasts.show('error', (error as Error).message);
+    }
   }
 }
 
