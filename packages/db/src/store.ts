@@ -30,22 +30,29 @@ export type ApplyResult =
   | (StoredTask & { readonly ok: true; readonly events: readonly DomainEvent[] })
   | { readonly ok: false; readonly error: StoreError };
 
-/** Runs several writes as one: all of them land, or none. */
+/**
+ * Runs several writes as one: all of them land, or none. A connection that cannot even roll back is
+ * broken (dropped, or silent past the query timeout) and is discarded, not handed back to the pool
+ * for the next caller to hang on; the work's own error is the one thrown.
+ */
 export const inTransaction = async <T>(
   pool: Pool,
   work: (client: PoolClient) => Promise<T>
 ): Promise<T> => {
   const client = await pool.connect();
+  let broken: Error | undefined;
   try {
     await client.query('begin');
     const result = await work(client);
     await client.query('commit');
     return result;
   } catch (error) {
-    await client.query('rollback');
+    await client.query('rollback').catch((rollbackError: unknown) => {
+      broken = rollbackError instanceof Error ? rollbackError : new Error(String(rollbackError));
+    });
     throw error;
   } finally {
-    client.release();
+    client.release(broken);
   }
 };
 
