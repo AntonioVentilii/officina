@@ -226,6 +226,47 @@ describe.skipIf(!url)('a developer hands in a build', () => {
     expect(await shown()).toMatchObject({ handingInBy: null, handingInSince: null });
   });
 
+  test('a hand-in whose lease ran out mid-way stops once another took it over', async () => {
+    const taskId = await waitingForDeveloper();
+    const dev = await developer('dev@example.com', 'Dev');
+    await applyOrThrow(pool, taskId, { type: 'claim' }, dev);
+    const github = fakeGitHub();
+    // The first hand-in's read of the push hangs past its lease; the second's goes through.
+    let letGo = () => {};
+    const held = new Promise<void>((resolve) => (letGo = resolve));
+    const reading = Promise.withResolvers<void>();
+    const pushFacts = github.port.pushFacts;
+    let reads = 0;
+    github.port.pushFacts = async (...args) => {
+      if (reads++ === 0) {
+        reading.resolve();
+        await held;
+      }
+      return pushFacts(...args);
+    };
+    const deps = { pool, github: github.port, publicUrl: PUBLIC_URL };
+    const input = {
+      taskId,
+      memberId: dev.memberId,
+      prTitle: 'feat(room): port the design',
+      verified: [],
+      notVerified: []
+    };
+
+    const first = handInBuild(deps, input);
+    await reading.promise;
+    await pool.query(
+      `update tasks set hand_in_claimed_at = clock_timestamp() - $2::interval - interval '1 second'
+       where id = $1`,
+      [taskId, HAND_IN_LEASE]
+    );
+    expect(await handInBuild(deps, input)).toMatchObject({ ok: true, stage: 'reviewing' });
+
+    letGo();
+    expect(await first).toEqual({ ok: false, error: 'handing_in' });
+    expect(github.calls.filter((call) => call.startsWith('openPullRequest'))).toHaveLength(1);
+  });
+
   test('a hand-in left behind by a stopped process is taken over once its lease ran out', async () => {
     const taskId = await waitingForDeveloper();
     const dev = await developer('dev@example.com', 'Dev');

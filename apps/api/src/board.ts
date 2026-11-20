@@ -412,6 +412,13 @@ const afterTheTask = (row: BoardTaskRow, viewer: BoardViewer): WaitingOn => {
   };
 };
 
+/** What a task waits on while its build is being handed in: nobody, it is at work. */
+const handingInWait = (row: BoardTaskRow, names: ReadonlyMap<string, string>): WaitingOn => ({
+  kind: 'people',
+  label: `${row.handingInBy ? (names.get(row.handingInBy) ?? 'A former member') : 'Someone'} is handing the build in`,
+  me: false
+});
+
 const waitingOn = (
   row: BoardTaskRow,
   viewer: BoardViewer,
@@ -432,6 +439,9 @@ const waitingOn = (
     };
   }
   if (row.paused) return { kind: 'people', label: 'Paused', me: can(member, 'steer') };
+  // A hand-in under way waits on nobody, from its first GitHub read to the pull request it opens
+  // once the task has moved on to review: it is at work, on every board.
+  if (row.handingInSince) return handingInWait(row, facts.names);
   const running = row.runningRoles.map(roleLabel);
   switch (row.stage) {
     case 'request':
@@ -487,13 +497,6 @@ const waitingOn = (
         : { kind: 'agent', label: 'Waiting for a build slot', me: false };
     }
     case 'building':
-      // A hand-in under way waits on nobody: it is at work, on every board.
-      if (row.handingInSince)
-        return {
-          kind: 'people',
-          label: `${row.handingInBy ? (facts.names.get(row.handingInBy) ?? 'A former member') : 'Someone'} is handing the build in`,
-          me: false
-        };
       return row.assignee?.kind === 'member'
         ? {
             kind: 'people',
@@ -574,7 +577,9 @@ const actionsFor = (
   const member = viewerMember(viewer);
   // Nobody writes on a task they may not read: no comment or answer.
   const writes = readsTask(viewer, row);
-  if (TERMINAL_STAGES.has(row.stage)) return writes && can(member, 'comment') ? ['comment'] : [];
+  // A finished task, or one whose build is being handed in, takes nothing but comments.
+  if (TERMINAL_STAGES.has(row.stage) || row.handingInSince)
+    return writes && can(member, 'comment') ? ['comment'] : [];
   const actions: BoardAction[] = [];
   const requester = row.requesterId === viewer.memberId;
   if (canSubmitRequest(row, member)) actions.push('submit');

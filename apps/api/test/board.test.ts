@@ -1006,6 +1006,14 @@ describe.skipIf(!url)('board api', () => {
       by: 'Dev',
       you: false
     });
+    // Nothing else changes the task meanwhile, from the board, the connector or the CLI.
+    expect(handingIn.actions).not.toContain('hand_back');
+    expect(handingIn.actions).not.toContain('hand_in');
+    const refused = await call(developer, `${path}/actions`, { type: 'release' });
+    expect(refused.status).toBe(409);
+    expect(await json(refused)).toEqual({
+      error: 'this build is being handed in; wait for it to finish'
+    });
     await pool.query(
       `update tasks set hand_in_claimed_at = clock_timestamp() - $2::interval - interval '1 second'
        where id = $1`,
