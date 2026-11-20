@@ -6,6 +6,7 @@ import {
   failLearningRewrite,
   insertLearnings,
   listLearnings,
+  markAcceptAttempt,
   releaseLearningDecision,
   requestLearningRewrite,
   rewriteLearningEdit
@@ -86,15 +87,17 @@ describe.skipIf(!url)('learning decisions', () => {
 
   /**
    * Remembers what each branch holds and which pull requests are open, so a second decision sees
-   * what the first one left. A failed opening has opened it, as when GitHub's answer is lost.
+   * what the first one left. A failed opening has opened it, as when GitHub's answer is lost. A
+   * test settles a branch's pull request as merged or closed unmerged in `settled`.
    */
   const fakeGitHub = (options: { failOpening?: number; base?: string } = {}) => {
     const calls: { method: string; args: Record<string, unknown> }[] = [];
     const written = new Map<string, string>();
     const open = new Set<string>();
+    const settled = new Map<string, 'merged' | 'closed'>();
     let failOpening = options.failOpening ?? 0;
     const note = (method: string, args: object) => calls.push({ method, args: { ...args } });
-    const port: LearningGitHub & Pick<GitHubClient, 'openPullRequestFrom'> = {
+    const port: LearningGitHub & Pick<GitHubClient, 'pullRequestFrom'> = {
       readFile: async (args) => {
         note('readFile', args);
         const text = written.get(args.branch);
@@ -120,12 +123,13 @@ describe.skipIf(!url)('learning decisions', () => {
         note('closePullRequestsFrom', args);
         open.delete(args.branch);
       },
-      openPullRequestFrom: async (args) => {
-        note('openPullRequestFrom', args);
-        return open.has(args.branch) ? { number: 77, url: 'https://github.com/x/pull/77' } : null;
+      pullRequestFrom: async (args) => {
+        note('pullRequestFrom', args);
+        const state = open.has(args.branch) ? 'open' : settled.get(args.branch);
+        return state ? { number: 77, url: 'https://github.com/x/pull/77', state } : null;
       }
     };
-    return { port, calls, open };
+    return { port, calls, open, settled };
   };
 
   const propose = async (
@@ -819,6 +823,25 @@ describe.skipIf(!url)('learning decisions', () => {
       )
     ).rows[0]!.attempt;
 
+  /** Claims an accept of a learning as the owner and marks it, as an accept about to open its pull request does. */
+  const markedAccept = async (id: string) => {
+    const claim = (await claimLearningDecision(pool, seeded.projectId, id, {
+      memberId: seeded.ownerId,
+      decision: 'accept'
+    }))!;
+    expect(await markAcceptAttempt(pool, { id, claim, memberId: seeded.ownerId })).toBe(true);
+    return claim;
+  };
+
+  /** A docs learning whose accept opened its pull request and failed before it recorded. */
+  const leftAccept = async (github: ReturnType<typeof fakeGitHub>) => {
+    const learning = await propose('docs');
+    await expect(
+      decide(pool, github.port, owner(), { id: learning.id, decision: 'accept', rewrittenAt: null })
+    ).rejects.toThrow('GitHub 502');
+    return learning;
+  };
+
   test('an accept that opened its pull request but lost its answer is recorded by the catch-up, once', async () => {
     const learning = await propose('docs');
     const github = fakeGitHub({ failOpening: 1 });
@@ -834,8 +857,8 @@ describe.skipIf(!url)('learning decisions', () => {
       prState: 'open',
       decidedBy: seeded.ownerId
     });
-    expect(callsOf(github, 'openPullRequestFrom')).toHaveLength(1);
-    expect(callsOf(github, 'openPullRequestFrom')[0]!.args).toEqual({
+    expect(callsOf(github, 'pullRequestFrom')).toHaveLength(1);
+    expect(callsOf(github, 'pullRequestFrom')[0]!.args).toEqual({
       installationId: 99,
       repo: 'ViciApp/vici-app',
       branch: branchForLearning(learning),
@@ -890,15 +913,11 @@ describe.skipIf(!url)('learning decisions', () => {
 
   test('an accept that opened nothing is looked at once and leaves the learning to decide', async () => {
     const learning = await propose('docs');
-    const claim = await claimLearningDecision(pool, seeded.projectId, learning.id, {
-      memberId: seeded.ownerId,
-      decision: 'accept'
-    });
-    await releaseLearningDecision(pool, learning.id, claim!);
+    await releaseLearningDecision(pool, learning.id, await markedAccept(learning.id));
     const github = fakeGitHub();
 
     expect(await catchUpLeftAccepts(pool, github.port, seeded.projectId)).toEqual([]);
-    expect(callsOf(github, 'openPullRequestFrom')).toHaveLength(1);
+    expect(callsOf(github, 'pullRequestFrom')).toHaveLength(1);
     expect((await ownerView()).find((item) => item.id === learning.id)).toMatchObject({
       status: 'proposed',
       canDecide: true,
@@ -908,18 +927,47 @@ describe.skipIf(!url)('learning decisions', () => {
     expect(github.calls).toHaveLength(1);
   });
 
+  test('a pull request a lost accept left that merged since is recorded applied, once', async () => {
+    const github = fakeGitHub({ failOpening: 1 });
+    const learning = await leftAccept(github);
+    github.open.delete(branchForLearning(learning));
+    github.settled.set(branchForLearning(learning), 'merged');
+
+    expect(await catchUpLeftAccepts(pool, github.port, seeded.projectId)).toEqual([]);
+    expect(await learningOf(learning.id)).toMatchObject({
+      status: 'applied',
+      prNumber: 77,
+      prState: 'merged',
+      decidedBy: seeded.ownerId
+    });
+    const calls = github.calls.length;
+    await catchUpLeftAccepts(pool, github.port, seeded.projectId);
+    expect(github.calls).toHaveLength(calls);
+  });
+
+  test('a pull request a lost accept left that was closed unmerged leaves the learning to decide', async () => {
+    const github = fakeGitHub({ failOpening: 1 });
+    const learning = await leftAccept(github);
+    github.open.delete(branchForLearning(learning));
+    github.settled.set(branchForLearning(learning), 'closed');
+
+    expect(await catchUpLeftAccepts(pool, github.port, seeded.projectId)).toEqual([]);
+    expect((await ownerView()).find((item) => item.id === learning.id)).toMatchObject({
+      status: 'proposed',
+      canDecide: true,
+      prUrl: null
+    });
+    expect(await acceptAttemptOf(learning.id)).toBeNull();
+    const calls = github.calls.length;
+    await catchUpLeftAccepts(pool, github.port, seeded.projectId);
+    expect(github.calls).toHaveLength(calls);
+  });
+
   test('the catch-up leaves a learning someone is deciding, and never reads GitHub for an agent one', async () => {
     const learning = await propose('docs');
-    await claimLearningDecision(pool, seeded.projectId, learning.id, {
-      memberId: seeded.ownerId,
-      decision: 'accept'
-    });
+    await markedAccept(learning.id);
     const agent = await propose('agent');
-    const claim = await claimLearningDecision(pool, seeded.projectId, agent.id, {
-      memberId: seeded.ownerId,
-      decision: 'accept'
-    });
-    await releaseLearningDecision(pool, agent.id, claim!);
+    await releaseLearningDecision(pool, agent.id, await markedAccept(agent.id));
     const github = fakeGitHub();
 
     expect(await catchUpLeftAccepts(pool, github.port, seeded.projectId)).toEqual([]);
@@ -965,6 +1013,7 @@ describe.skipIf(!url)('learning decisions', () => {
       'this learning repeats "Update every live locale", already accepted with pull request #77; reject it instead'
     );
     expect(github.calls).toHaveLength(calls);
+    expect(await acceptAttemptOf(second.id)).toBeNull();
     await catchUpLeftAccepts(pool, github.port, seeded.projectId);
     expect((await learningOf(second.id)).status).toBe('proposed');
 
@@ -975,6 +1024,33 @@ describe.skipIf(!url)('learning decisions', () => {
         rewrittenAt: null
       })
     ).toMatchObject({ status: 'rejected', duplicateOf: null });
+  });
+
+  test('a pull request a lost accept left is not recorded once another copy of its edit was accepted', async () => {
+    const github = fakeGitHub({ failOpening: 1 });
+    const second = await leftAccept(github);
+    const first = await propose('docs');
+    await decide(pool, github.port, owner(), {
+      id: first.id,
+      decision: 'accept',
+      rewrittenAt: null
+    });
+
+    expect(await catchUpLeftAccepts(pool, github.port, seeded.projectId)).toEqual([]);
+    expect(await learningOf(second.id)).toMatchObject({
+      status: 'proposed',
+      prNumber: null,
+      duplicateOf: { id: first.id, prNumber: 77 }
+    });
+    expect(await acceptAttemptOf(second.id)).toBeNull();
+
+    await decide(pool, github.port, owner(), {
+      id: second.id,
+      decision: 'reject',
+      rewrittenAt: null
+    });
+    expect(github.open.has(branchForLearning(second))).toBe(false);
+    expect(github.open.has(branchForLearning(first))).toBe(true);
   });
 
   test('a repeat of a merged learning stays a duplicate', async () => {

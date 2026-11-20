@@ -11,6 +11,7 @@ import {
   holdLearningDecision,
   loadLearning,
   loadProject,
+  markAcceptAttempt,
   releaseLearningDecision,
   requestLearningRewrite,
   type LearningDuplicate,
@@ -79,6 +80,12 @@ const acceptIntoPullRequest = async (
   const { learning } = claimed;
   if (learning.rewrite) throw new TaskCommandError(REWRITE_BLOCKS[learning.rewrite]);
   if (!github) throw new TaskCommandError('the GitHub App is not configured');
+  const marked = await markAcceptAttempt(pool, {
+    id: learning.id,
+    claim: claimed.claim,
+    memberId: target.memberId
+  });
+  if (!marked) throw new TaskCommandError(TAKEN_OVER);
   const project = (await loadProject(pool, target.projectId))!;
   const opened = await openLearningPullRequest(github, project, learning, {
     publicUrl: target.publicUrl,
@@ -141,6 +148,9 @@ const decidable = (learning: LearningRow | null, input: DecisionInput): Learning
   if (!learning) throw new TaskCommandError('learning not found');
   if (learning.status !== 'proposed')
     throw new TaskCommandError('this learning was already decided');
+  // Not serialized across learnings: two copies of one edit accepted at the same moment both pass
+  // this check and each opens its own pull request. That race is rare and left to a follow-up;
+  // rejecting either copy closes the pull request it opened.
   if (input.decision === 'accept' && learning.duplicateOf)
     throw new TaskCommandError(repeats(learning.duplicateOf));
   const read = learning.rewrittenAt?.toISOString() ?? null;

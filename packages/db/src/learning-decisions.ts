@@ -1,5 +1,6 @@
 import type { LearningDecision, LearningTarget } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
+import { DUPLICATE_OF } from './learning-pull-requests';
 
 type Queryable = Pool | PoolClient;
 
@@ -23,9 +24,7 @@ export const DECISION_LEASE = '10 minutes';
 /**
  * Marks a proposed learning as being decided by `decider`, unless a live claim holds it already,
  * and returns the claim that records or releases the decision. The GitHub calls of an accept run
- * under this claim rather than under a row lock, so no transaction stays open across them. An
- * accept also marks the learning with a new attempt, and who made it, so a pull request it opened
- * without recording is found afterwards (`listAcceptsToCheck`).
+ * under this claim rather than under a row lock, so no transaction stays open across them.
  */
 export const claimLearningDecision = async (
   db: Queryable,
@@ -37,9 +36,7 @@ export const claimLearningDecision = async (
     await db.query<{ claim: string }>(
       `update learnings
        set decision_claim = gen_random_uuid(), decision_claimed_at = clock_timestamp(),
-         decision_claimed_by = $4, decision_claimed_for = $5,
-         accept_attempt = case when $5 = 'accept' then gen_random_uuid() else accept_attempt end,
-         accept_attempted_by = case when $5 = 'accept' then $4 else accept_attempted_by end
+         decision_claimed_by = $4, decision_claimed_for = $5
        where project_id = $1 and id = $2 and status = 'proposed'
          and (decision_claim is null or decision_claimed_at < clock_timestamp() - $3::interval)
        returning decision_claim as claim`,
@@ -65,6 +62,24 @@ export const holdLearningDecision = async (
       `update learnings set decision_claimed_at = clock_timestamp()
        where id = $1 and status = 'proposed' and decision_claim = $2`,
       [id, claim]
+    )
+  ).rowCount ?? 0) === 1;
+
+/**
+ * Marks a learning with a new accept attempt, and who made it, under the claim of that accept, once
+ * it passed every check and right before its pull request is opened: a pull request it opens without
+ * recording is found afterwards (`listAcceptsToCheck`), and an accept refused before then leaves no
+ * mark. Says whether the claim is still held.
+ */
+export const markAcceptAttempt = async (
+  db: Queryable,
+  input: { id: string; claim: string; memberId: string }
+): Promise<boolean> =>
+  ((
+    await db.query(
+      `update learnings set accept_attempt = gen_random_uuid(), accept_attempted_by = $3
+       where id = $1 and status = 'proposed' and decision_claim = $2`,
+      [input.id, input.claim, input.memberId]
     )
   ).rowCount ?? 0) === 1;
 
@@ -169,27 +184,37 @@ export const listAcceptsToCheck = async (
   ).rows.map((row) => ({ ...row, installationId: Number(row.installationId) }));
 
 /**
- * Records as accepted, by whoever tried the accept, a learning whose accept opened its pull request
- * and lost its record. Only the attempt that was checked, while no decision holds the learning, so
- * an accept or a reject made meanwhile is never overwritten. Says whether it recorded. The commit
- * on the branch is unknown, so none is recorded.
+ * Records, by whoever tried the accept, a learning whose accept opened its pull request and lost its
+ * record: accepted while that pull request is open, applied once it merged. Only the attempt that
+ * was checked, while no decision holds the learning, so an accept or a reject made meanwhile is
+ * never overwritten. An open one whose edit another learning has since got accepted with its own
+ * pull request is not recorded: the learning stays a duplicate, and rejecting it closes the pull
+ * request it left. A merged one landed whatever else was accepted, so it is recorded as it is.
+ * Says whether it recorded. The commit on the branch is unknown, so none is recorded.
  */
 export const recordLeftAccept = async (
   db: Queryable,
-  input: { id: string; attempt: string; prNumber: number; prUrl: string }
+  input: {
+    id: string;
+    attempt: string;
+    status: 'accepted' | 'applied';
+    prNumber: number;
+    prUrl: string;
+  }
 ): Promise<boolean> =>
   ((
     await db.query(
-      `update learnings l set status = 'accepted', decided_by = l.accept_attempted_by,
-         decided_at = clock_timestamp(), pr_number = $3, pr_url = $4, ${CLAIM_CLEARED}
+      `update learnings l set status = $3::text, decided_by = l.accept_attempted_by,
+         decided_at = clock_timestamp(), pr_number = $4, pr_url = $5, ${CLAIM_CLEARED}
        where l.id = $1 and l.status = 'proposed' and l.accept_attempt = $2
-         and not ${DECISION_CLAIM_LIVE}`,
-      [input.id, input.attempt, input.prNumber, input.prUrl]
+         and not ${DECISION_CLAIM_LIVE} and ($3::text = 'applied' or (${DUPLICATE_OF}) is null)`,
+      [input.id, input.attempt, input.status, input.prNumber, input.prUrl]
     )
   ).rowCount ?? 0) === 1;
 
 /**
- * Clears the mark of an accept that left no pull request, so the learning is not looked at again.
+ * Clears the mark of an accept that left no pull request to record, so the learning is not looked
+ * at again.
  * Only that attempt: one a newer accept made meanwhile stays for the next check.
  */
 export const clearAcceptAttempt = async (db: Queryable, id: string, attempt: string) => {
