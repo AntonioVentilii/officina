@@ -2,13 +2,17 @@ import {
   ENGINE,
   GITHUB_REVIEWABLE,
   parseProjectConfig,
+  type DecisionError,
   type GitHubFeedbackSource
 } from '@officina/core';
 import {
   answeredOverviewLast,
   applyCommand,
+  heldGitHubReviews,
+  holdGitHubReview,
   loadTaskContext,
   markBotCommentsHandled,
+  markHeldReviewHandled,
   unhandledBotComments,
   type BotComment,
   type StoredTaskContext
@@ -27,6 +31,9 @@ export const COMMENT_SETTLE_SECONDS = 180;
 
 export type ReviewNotes = { readonly notes: string; readonly overviewOnly: boolean };
 
+/** The refusals that mean the task is held: a review refused this way is kept, not lost. */
+const HELD: ReadonlySet<string> = new Set<DecisionError>(['blocked', 'paused']);
+
 /** The bots a project lists as its own reviewers (`pull_request.review_bots`). */
 export const reviewBotsIn = (context: StoredTaskContext | null): ReadonlySet<string> => {
   const config = context ? parseProjectConfig(context.rawConfig) : null;
@@ -43,7 +50,8 @@ export const overviewNotes = (what: string, by: string, body: string): string =>
 /**
  * Sends a task back to its builder with feedback left on GitHub, once per answer: an overview by a
  * bot whose last overview the builder already answered is not sent back again, so a bot that
- * reviews every push cannot loop the task. Auto-merge goes off if the task leaves merging.
+ * reviews every push cannot loop the task. Auto-merge goes off if the task leaves merging. A review
+ * refused because the task is blocked or paused is kept for `forwardHeldReviews`.
  */
 export const forwardFeedback = async (
   pool: Pool,
@@ -73,6 +81,15 @@ export const forwardFeedback = async (
     },
     actor: ENGINE
   });
+  if (!result.ok && HELD.has(result.error) && 'reviewId' in input.source)
+    await holdGitHubReview(pool, taskId, {
+      reviewId: input.source.reviewId,
+      pullRequest: input.pullRequest,
+      headSha: input.headSha,
+      by: input.by,
+      notes: review.notes,
+      overviewOnly: review.overviewOnly
+    });
   if (github) await stopAutoMergeOnLeaving(pool, github, input, result);
   return result.ok ? { ok: true } : { ok: false, error: result.error };
 };
@@ -171,3 +188,46 @@ export const forwardSettledComments = async (
   taskIds: readonly string[]
 ): Promise<TaskFailure[]> =>
   eachTaskOnItsOwn(taskIds, (taskId) => forwardSettledCommentsOf(pool, github, taskId));
+
+/**
+ * Sends on the reviews kept while the task was held, oldest first, once it is neither blocked nor
+ * paused, as if each had just arrived: the same overview guard, window, head check and auto-merge
+ * stop. Each is then recorded as dealt with, sent or no longer applying, and never sent again; one
+ * that finds the task held again waits with the rest. As with reviews arriving together, once one
+ * sends the task to building the later ones meet the wrong stage and are dropped.
+ */
+const forwardHeldReviewsOf = async (
+  pool: Pool,
+  github: Pick<GitHubClient, 'cancelAutoMerge'>,
+  taskId: string
+) => {
+  const context = await loadTaskContext(pool, taskId);
+  if (!context || context.task.blocked || context.task.paused) return;
+  const { installationId, repo } = context;
+  if (installationId === null) return;
+  for (const held of await heldGitHubReviews(pool, taskId)) {
+    const forwarded = await forwardFeedback(pool, github, {
+      taskId,
+      ref: { installationId, repo },
+      pullRequest: held.pullRequest,
+      by: held.by,
+      headSha: held.headSha,
+      source: { reviewId: held.reviewId },
+      review: { notes: held.notes, overviewOnly: held.overviewOnly }
+    });
+    if (!forwarded.ok && HELD.has(forwarded.error)) return;
+    await markHeldReviewHandled(pool, taskId, {
+      reviewId: held.reviewId,
+      by: held.by,
+      outcome: forwarded.ok ? 'forwarded' : forwarded.error
+    });
+  }
+};
+
+/** Each task on its own; the failures are returned for the log and tried again on the next pass. */
+export const forwardHeldReviews = async (
+  pool: Pool,
+  github: Pick<GitHubClient, 'cancelAutoMerge'>,
+  taskIds: readonly string[]
+): Promise<TaskFailure[]> =>
+  eachTaskOnItsOwn(taskIds, (taskId) => forwardHeldReviewsOf(pool, github, taskId));

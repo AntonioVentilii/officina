@@ -243,6 +243,8 @@ const PUBLIC_FIELDS: Readonly<Record<string, readonly string[]>> = {
   awaiting_merge: ['pullRequest'],
   merge_held: ['pullRequest'],
   head_carried: ['headSha'],
+  github_review_held: ['by'],
+  github_review_handled: ['by', 'outcome'],
   checklist_posted: ['pullRequest'],
   checklist_checked: ['item', 'outcome', 'channel']
 };

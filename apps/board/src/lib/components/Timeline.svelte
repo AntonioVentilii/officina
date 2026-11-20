@@ -1,6 +1,7 @@
 <script lang="ts">
   import { ago, dateTime } from '#lib/format.ts';
   import { STAGE_LABELS } from '#lib/stages.ts';
+  import { eventDetail } from '#lib/timeline.ts';
   import type { Comment, Stage, TaskEvent } from '#lib/types.ts';
   import AgentAvatar from './AgentAvatar.svelte';
   import Markdown from './Markdown.svelte';
@@ -62,6 +63,13 @@
         return p.guardrail === 'unlisted_files'
           ? 'sent it back: new files its catalog does not list'
           : `stopped it: ${p.details ?? String(p.guardrail).replaceAll('_', ' ')}`;
+      case 'github_review_held':
+        return `kept @${p.by}'s review from GitHub for the builder until the task is no longer on hold`;
+      case 'github_review_handled':
+        // A review sent on already has its `review_recorded` line.
+        return p.outcome === 'forwarded'
+          ? null
+          : `did not send @${p.by}'s held review to the builder: it no longer applies`;
       case 'ci_failed':
         return 'reported failing checks';
       case 'pull_request_closed':
@@ -120,23 +128,6 @@
     }
   };
 
-  /** The payload field each event's text below its sentence comes from. */
-  const DETAIL_FIELDS: Readonly<Record<string, string>> = {
-    changes_requested: 'note',
-    review_recorded: 'notes',
-    build_unchanged: 'note',
-    ci_failed: 'details'
-  };
-
-  const detail = (event: TaskEvent): string | null => {
-    const p = event.payload;
-    if (event.type === 'blocked')
-      return String((p.blocked as { question?: string })?.question ?? '');
-    const field = DETAIL_FIELDS[event.type];
-    const value = field ? p[field] : undefined;
-    return value ? String(value) : null;
-  };
-
   type Item =
     | { kind: 'event'; at: string; event: TaskEvent; texts: string[]; details: string[] }
     | { kind: 'comment'; at: string; comment: Comment };
@@ -150,7 +141,7 @@
     const sorted: Item[] = [
       ...events.flatMap((event): Item[] => {
         const text = sentence(event);
-        const extra = detail(event);
+        const extra = eventDetail(event);
         return text
           ? [{ kind: 'event', at: event.at, event, texts: [text], details: extra ? [extra] : [] }]
           : [];
