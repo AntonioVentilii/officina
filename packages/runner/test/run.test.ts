@@ -1,6 +1,22 @@
 import { describe, expect, test } from 'bun:test';
-import { executeRun, type OutboundEvent, type SessionRequest } from '../src';
-import { createFakePort, idle, running, terminated, toolUse, type ScriptItem } from './fake-port';
+import { ERROR_TEXT_MAX } from '@officina/core';
+import {
+  describeOutcome,
+  executeRun,
+  unfinishedOutcomeSchema,
+  type OutboundEvent,
+  type RunOutcome,
+  type SessionRequest
+} from '../src';
+import {
+  createFakePort,
+  idle,
+  running,
+  sessionError,
+  terminated,
+  toolUse,
+  type ScriptItem
+} from './fake-port';
 
 const session: SessionRequest = {
   agentId: 'agent_1',
@@ -190,5 +206,100 @@ describe('executeRun', () => {
     const { port, report } = run([toolUse(approve), hang], { deadlineMs: 20 });
     expect((await report).outcome).toEqual({ kind: 'result', output: approve });
     expect(port.sent.at(-1)!.events).toEqual([{ type: 'user.interrupt' }]);
+  });
+});
+
+const unfinished = (outcome: RunOutcome) => {
+  if (outcome.kind === 'result') throw new Error('expected a run without a result');
+  return outcome;
+};
+
+describe('a session that reports an error before it stops', () => {
+  const spendLimit =
+    'You have reached your specified workspace API usage limits. You will regain access on 2026-12-01 at 00:00 UTC.';
+
+  test('the spend limit fails the run with its message, and says when access returns and where the limit is raised', async () => {
+    const { outcome } = await run([
+      running(),
+      sessionError('billing_error', spendLimit, 'retrying'),
+      sessionError('billing_error', spendLimit),
+      idle('retries_exhausted')
+    ]).report;
+    expect(outcome).toEqual({
+      kind: 'failed',
+      reason: 'the session exhausted its retries',
+      error: { type: 'billing_error', message: spendLimit }
+    });
+    expect(describeOutcome(unfinished(outcome))).toBe(
+      'the Anthropic workspace reached its API spend limit, so retrying will not help until access ' +
+        'returns on 2026-12-01 at 00:00 UTC or the limit is raised in the Anthropic Console; the ' +
+        `session exhausted its retries after this error (billing_error): "${spendLimit}"`
+    );
+  });
+
+  test('a spend limit without a date only says the limit must be raised', async () => {
+    const message = 'You have reached your specified workspace API usage limits.';
+    const { outcome } = await run([
+      sessionError('billing_error', message),
+      idle('retries_exhausted')
+    ]).report;
+    expect(describeOutcome(unfinished(outcome))).toStartWith(
+      'the Anthropic workspace reached its API spend limit, so retrying will not help until the ' +
+        'limit is raised in the Anthropic Console;'
+    );
+  });
+
+  test('any other error is carried in the words of the session', async () => {
+    const { outcome } = await run([
+      sessionError('model_overloaded_error', 'Overloaded'),
+      idle('retries_exhausted')
+    ]).report;
+    expect(describeOutcome(unfinished(outcome))).toBe(
+      'the session exhausted its retries after this error (model_overloaded_error): "Overloaded"'
+    );
+  });
+
+  test('the message is clipped to the length every run result keeps of an error', async () => {
+    const { outcome } = await run([
+      sessionError('unknown_error', 'x'.repeat(ERROR_TEXT_MAX + 40)),
+      idle('retries_exhausted')
+    ]).report;
+    expect(outcome).toMatchObject({
+      error: { message: `${'x'.repeat(ERROR_TEXT_MAX)} … (40 more characters)` }
+    });
+  });
+
+  test('a session terminated after an error fails with it instead of reporting no result', async () => {
+    const { outcome } = await run([sessionError('unknown_error', 'Sandbox lost'), terminated()])
+      .report;
+    expect(outcome).toEqual({
+      kind: 'failed',
+      reason: 'the session was terminated',
+      error: { type: 'unknown_error', message: 'Sandbox lost' }
+    });
+  });
+
+  test('an error the session recovered from does not fail a result or a finished turn', async () => {
+    const recovered = sessionError('model_overloaded_error', 'Overloaded', 'retrying');
+    expect((await run([recovered, toolUse(approve), idle('end_turn')]).report).outcome).toEqual({
+      kind: 'result',
+      output: approve
+    });
+    expect((await run([recovered, idle('end_turn')]).report).outcome).toEqual({
+      kind: 'no_result'
+    });
+  });
+
+  test('a recorded failure reads back with its error, and one recorded before errors were kept still reads', () => {
+    const error = { type: 'billing_error', message: spendLimit };
+    expect(unfinishedOutcomeSchema.parse({ kind: 'failed', reason: 'r', error })).toEqual({
+      kind: 'failed',
+      reason: 'r',
+      error
+    });
+    expect(unfinishedOutcomeSchema.parse({ kind: 'failed', reason: 'r' })).toEqual({
+      kind: 'failed',
+      reason: 'r'
+    });
   });
 });
