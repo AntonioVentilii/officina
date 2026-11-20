@@ -6,15 +6,18 @@
   import { session } from '#lib/state/session.svelte.ts';
   import { toasts } from '#lib/state/toasts.svelte.ts';
   import type { TaskDetail } from '#lib/types.ts';
+  import { taskWork, type SentAction, type TaskAction } from '#lib/working.ts';
   import AgentAvatar from './AgentAvatar.svelte';
   import HandIn from './HandIn.svelte';
   import Markdown from './Markdown.svelte';
   import ProposalNotice from './ProposalNotice.svelte';
   import QuestionOptions from './QuestionOptions.svelte';
+  import Working from './Working.svelte';
 
   interface Props {
     task: TaskDetail;
-    onchanged: () => void;
+    /** Reloads the task; says whether the reload landed. */
+    onchanged: () => Promise<boolean>;
     onwatch: () => void;
   }
 
@@ -23,7 +26,25 @@
   type Mode = 'changes' | 'decline' | 'cancel' | null;
   let mode = $state<Mode>(null);
   let text = $state('');
-  let busy = $state(false);
+
+  /** The action this board sent, shown at work until a reload says where the task is. */
+  let sent = $state<SentAction | null>(null);
+  /**
+   * The task as it stood when the reload after an answer failed to land. That proves nothing about
+   * where the task is, so the action stays shown until a later reload replaces the task.
+   */
+  let heldOver = $state.raw<TaskDetail | null>(null);
+
+  $effect(() => {
+    if (!heldOver || task === heldOver) return;
+    heldOver = null;
+    sent = null;
+  });
+
+  // While an action is at work, here or a hand-in on anyone's board, its status line takes the
+  // place of the buttons, so nothing is sent twice.
+  const work = $derived(taskWork(task, sent));
+  const busy = $derived(work !== null);
 
   const can = (action: TaskDetail['actions'][number]) => task.actions.includes(action);
   const lastEvent = (type: string) =>
@@ -75,27 +96,39 @@
     void act({ type: 'approve' }, gate === 'spec' ? 'Plan approved; it goes to build' : 'Checked');
   };
 
-  const act = async (body: Record<string, string | number>, done: string) => {
-    if (!session.projectId) return;
-    busy = true;
+  /**
+   * Sends one action and shows it at work until a reload lands: only that says whether it went
+   * through, so the buttons never come back on a task the server already moved. Says whether the
+   * action was taken.
+   */
+  const send = async (action: TaskAction, request: () => Promise<string>): Promise<boolean> => {
+    if (!session.projectId || work) return false;
+    sent = { action, since: new Date().toISOString() };
+    let taken = false;
     try {
+      toasts.show('ok', await request());
+      mode = null;
+      text = '';
+      taken = true;
+    } catch (error) {
+      toasts.show('error', (error as Error).message);
+    } finally {
+      if (await onchanged()) sent = null;
+      else heldOver = task;
+    }
+    return taken;
+  };
+
+  const act = (body: { type: TaskAction } & Record<string, string | number>, done: string) =>
+    send(body.type, async () => {
       const result = await post<{ stage: string; satisfied?: boolean }>(
         `/api/projects/${session.projectId}/tasks/${task.number}/actions`,
         body
       );
-      toasts.show(
-        'ok',
-        result.satisfied === false ? 'Approval recorded; more approvals are still needed' : done
-      );
-      mode = null;
-      text = '';
-      onchanged();
-    } catch (error) {
-      toasts.show('error', (error as Error).message);
-    } finally {
-      busy = false;
-    }
-  };
+      return result.satisfied === false
+        ? 'Approval recorded; more approvals are still needed'
+        : done;
+    });
 
   const submitMode = (event: SubmitEvent) => {
     event.preventDefault();
@@ -135,9 +168,10 @@
 </script>
 
 {#if task.blocked}
-  <section class="next blocked" class:mine={task.waitingOn.me}>
+  <section class="next blocked" class:mine={task.waitingOn.me && !busy}>
     <div class="head">
-      {#if task.waitingOn.me && look.current === 'tecnica'}<strong class="you-word">Question</strong
+      {#if task.waitingOn.me && !busy && look.current === 'tecnica'}<strong class="you-word"
+          >Question</strong
         >{:else}<CircleHelp size={18} />{/if}
       <div>
         <div class="kicker caps">
@@ -158,8 +192,9 @@
         {busy}
       />
     {/if}
+    {#if work && mode !== 'cancel'}<Working {work} />{/if}
     {#if can('answer')}
-      <form onsubmit={answer}>
+      <form onsubmit={answer} class:away={busy}>
         <textarea
           class="field"
           bind:value={text}
@@ -197,16 +232,17 @@
         <div class="kicker caps">Agents</div>
         <div class="label">{task.waitingOn.label}</div>
       </div>
-      {#if can('submit')}
-        <button class="btn ghost" disabled={busy} onclick={submitAsIs}>Submit as is</button>
+      {#if can('submit') && !busy}
+        <button class="btn ghost" onclick={submitAsIs}>Submit as is</button>
       {/if}
       {#if session.technical && task.running.length}
         <button class="btn" onclick={onwatch}>Watch live</button>
       {/if}
     </div>
+    {#if work && mode !== 'cancel'}<Working {work} />{/if}
   </section>
 {:else if task.waitingOn.kind === 'github' && openLearning.length}
-  <section class="next github" class:mine={task.waitingOn.me}>
+  <section class="next github" class:mine={task.waitingOn.me && !busy}>
     <div class="head">
       <GitMerge size={18} />
       <div class="grow">
@@ -284,9 +320,9 @@
     </div>
   </section>
 {:else if task.waitingOn.kind === 'people'}
-  <section class="next people" class:mine={task.waitingOn.me}>
+  <section class="next people" class:mine={task.waitingOn.me && !busy}>
     <div class="head">
-      {#if task.waitingOn.me}<strong class="you-word"
+      {#if task.waitingOn.me && !busy}<strong class="you-word"
           >{look.current === 'tecnica' ? 'Your turn' : 'You'}</strong
         >{:else}<UserRound size={18} />{/if}
       <div class="grow">
@@ -304,78 +340,78 @@
       </div>
     </div>
 
-    {#if mode === 'changes' || mode === 'decline'}
-      <form onsubmit={submitMode}>
-        <textarea class="field" bind:value={text} rows="4" placeholder={PLACEHOLDERS[mode]}
-        ></textarea>
+    {#if work && mode !== 'cancel'}<Working {work} />{/if}
+    <!-- Hidden, not removed, while at work: a hand-in that fails keeps what was written in it. -->
+    <div class="controls" class:away={busy}>
+      {#if mode === 'changes' || mode === 'decline'}
+        <form onsubmit={submitMode}>
+          <textarea class="field" bind:value={text} rows="4" placeholder={PLACEHOLDERS[mode]}
+          ></textarea>
+          <div class="buttons">
+            <button type="button" class="btn ghost" onclick={() => (mode = null)}>Back</button>
+            <button class="btn primary" disabled={!text.trim()}>
+              {mode === 'changes' ? 'Send back' : 'Decline'}
+            </button>
+          </div>
+        </form>
+      {:else}
         <div class="buttons">
-          <button type="button" class="btn ghost" onclick={() => (mode = null)}>Back</button>
-          <button class="btn primary" disabled={busy || !text.trim()}>
-            {mode === 'changes' ? 'Send back' : 'Decline'}
-          </button>
-        </div>
-      </form>
-    {:else}
-      <div class="buttons">
-        {#if can('accept')}
-          <button class="btn ghost" disabled={busy} onclick={() => (mode = 'decline')}
-            >Decline</button
-          >
-          <button
-            class="btn primary"
-            disabled={busy}
-            onclick={() => act({ type: 'accept' }, 'Accepted; an agent writes the plan next')}
-          >
-            Accept
-          </button>
-        {/if}
-        {#if can('hand_in')}
-          <HandIn number={task.number} branch={task.branch} {onchanged} />
-        {/if}
-        {#if can('hand_back')}
-          <button
-            class="btn ghost"
-            disabled={busy}
-            onclick={() => act({ type: 'release' }, 'Handed back; it waits to be built again')}
-          >
-            Hand the build back
-          </button>
-        {/if}
-        {#if can('claim')}
-          <button
-            class="btn primary"
-            disabled={busy}
-            onclick={() => act({ type: 'claim' }, 'Claimed; you build it')}
-          >
-            Claim the build
-          </button>
-        {/if}
-        {#if can('changes') && gate}
-          <button class="btn" disabled={busy} onclick={() => (mode = 'changes')}
-            >Ask for changes</button
-          >
-        {/if}
-        {#if can('approve') && gate}
-          {#if task.proposal}
-            <ProposalNotice
+          {#if can('accept')}
+            <button class="btn ghost" onclick={() => (mode = 'decline')}>Decline</button>
+            <button
+              class="btn primary"
+              onclick={() => act({ type: 'accept' }, 'Accepted; an agent writes the plan next')}
+            >
+              Accept
+            </button>
+          {/if}
+          {#if can('hand_in')}
+            <HandIn
               number={task.number}
-              proposal={task.proposal}
-              approve={approveLabel}
-              {onchanged}
+              branch={task.branch}
+              send={(request) => send('hand_in', request)}
             />
           {/if}
-          {#if confirming}
-            <span class="confirm">
-              Still open: {open}. They show as such on the pull request.
-              <button class="btn ghost" onclick={() => (confirming = false)}>Back</button>
-            </span>
+          {#if can('hand_back')}
+            <button
+              class="btn ghost"
+              onclick={() => act({ type: 'release' }, 'Handed back; it waits to be built again')}
+            >
+              Hand the build back
+            </button>
           {/if}
-          <button class="btn primary" disabled={busy} onclick={approve}>
-            <CircleCheck size={15} />{approveLabel}
-          </button>
-        {/if}
-      </div>
-    {/if}
+          {#if can('claim')}
+            <button
+              class="btn primary"
+              onclick={() => act({ type: 'claim' }, 'Claimed; you build it')}
+            >
+              Claim the build
+            </button>
+          {/if}
+          {#if can('changes') && gate}
+            <button class="btn" onclick={() => (mode = 'changes')}>Ask for changes</button>
+          {/if}
+          {#if can('approve') && gate}
+            {#if task.proposal}
+              <ProposalNotice
+                proposal={task.proposal}
+                approve={approveLabel}
+                ondiscard={() => act({ type: 'discard_proposal' }, 'Proposal discarded')}
+              />
+            {/if}
+            {#if confirming}
+              <span class="confirm">
+                Still open: {open}. They show as such on the pull request.
+                <button class="btn ghost" onclick={() => (confirming = false)}>Back</button>
+              </span>
+            {/if}
+            <button class="btn primary" onclick={approve}>
+              <CircleCheck size={15} />{approveLabel}
+            </button>
+          {/if}
+        </div>
+      {/if}
+    </div>
   </section>
 {/if}
 
@@ -384,12 +420,16 @@
     <form class="cancel" onsubmit={submitMode}>
       <textarea class="field" bind:value={text} rows="2" placeholder={PLACEHOLDERS.cancel}
       ></textarea>
-      <div class="buttons">
-        <button type="button" class="btn ghost" onclick={() => (mode = null)}>Keep it</button>
-        <button class="btn danger" disabled={busy || !text.trim()}>Cancel task</button>
-      </div>
+      {#if work}
+        <Working {work} />
+      {:else}
+        <div class="buttons">
+          <button type="button" class="btn ghost" onclick={() => (mode = null)}>Keep it</button>
+          <button class="btn danger" disabled={!text.trim()}>Cancel task</button>
+        </div>
+      {/if}
     </form>
-  {:else}
+  {:else if !busy}
     <div class="cancel-row">
       <button class="link" onclick={() => (mode = 'cancel')}>Cancel this task</button>
     </div>
@@ -592,6 +632,15 @@
     justify-content: flex-end;
     gap: 8px;
     flex-wrap: wrap;
+  }
+
+  /* The buttons stay where they are, in the section's own layout, and step aside while at work. */
+  .controls {
+    display: contents;
+  }
+
+  .away {
+    display: none;
   }
 
   .cancel {

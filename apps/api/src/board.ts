@@ -412,6 +412,13 @@ const afterTheTask = (row: BoardTaskRow, viewer: BoardViewer): WaitingOn => {
   };
 };
 
+/** What a task waits on while its build is being handed in: nobody, it is at work. */
+const handingInWait = (row: BoardTaskRow, names: ReadonlyMap<string, string>): WaitingOn => ({
+  kind: 'people',
+  label: `${row.handingInBy ? (names.get(row.handingInBy) ?? 'A former member') : 'Someone'} is handing the build in`,
+  me: false
+});
+
 const waitingOn = (
   row: BoardTaskRow,
   viewer: BoardViewer,
@@ -432,6 +439,9 @@ const waitingOn = (
     };
   }
   if (row.paused) return { kind: 'people', label: 'Paused', me: can(member, 'steer') };
+  // A hand-in under way waits on nobody, from its first GitHub read to the pull request it opens
+  // once the task has moved on to review: it is at work, on every board.
+  if (row.handingInSince) return handingInWait(row, facts.names);
   const running = row.runningRoles.map(roleLabel);
   switch (row.stage) {
     case 'request':
@@ -567,7 +577,9 @@ const actionsFor = (
   const member = viewerMember(viewer);
   // Nobody writes on a task they may not read: no comment or answer.
   const writes = readsTask(viewer, row);
-  if (TERMINAL_STAGES.has(row.stage)) return writes && can(member, 'comment') ? ['comment'] : [];
+  // A finished task, or one whose build is being handed in, takes nothing but comments.
+  if (TERMINAL_STAGES.has(row.stage) || row.handingInSince)
+    return writes && can(member, 'comment') ? ['comment'] : [];
   const actions: BoardAction[] = [];
   const requester = row.requesterId === viewer.memberId;
   if (canSubmitRequest(row, member)) actions.push('submit');
@@ -598,6 +610,24 @@ const projectFacts = async (pool: Pool, viewer: BoardViewer): Promise<ProjectFac
     onboarding: onboarding?.number ?? null
   };
 };
+
+/**
+ * The hand-in under way on a task's build, while its claim is live: who is handing it in, whether it
+ * is the viewer, and since when. Every board that shows the task shows it at work, so nobody hands
+ * the build in twice.
+ */
+const handingInView = (
+  row: BoardTaskRow,
+  viewer: BoardViewer,
+  names: ReadonlyMap<string, string>
+) =>
+  row.handingInSince
+    ? {
+        by: row.handingInBy ? (names.get(row.handingInBy) ?? 'a former member') : null,
+        you: row.handingInBy === viewer.memberId,
+        since: row.handingInSince
+      }
+    : null;
 
 const cardView = (
   row: BoardTaskRow,
@@ -633,6 +663,7 @@ const cardView = (
   autoVerified: row.autoVerified,
   autoMergeOn: row.autoMergeOn,
   learningPullRequests: learningPullRequestsFor(row, viewer),
+  handingIn: handingInView(row, viewer, facts.names),
   waitingOn: waitingOn(row, viewer, approval, facts)
 });
 

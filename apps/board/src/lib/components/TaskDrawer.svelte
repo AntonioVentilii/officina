@@ -45,22 +45,25 @@
   // A slow answer, or one for a task or project no longer shown, must not replace a newer one.
   const latest = latestOnly();
 
-  const load = async () => {
+  /** Loads the task; says whether this load is the one now shown. */
+  const load = async (): Promise<boolean> => {
     const newer = latest();
     const projectId = session.projectId;
-    if (!projectId) return;
+    if (!projectId) return false;
     try {
       const next = await get<TaskDetail>(`/api/projects/${projectId}/tasks/${number}`);
-      if (newer()) return;
+      if (newer()) return false;
       // Running sessions open themselves the first time they appear.
       for (const run of next.runs) {
         if (isActive(run) && !(run.id in openRuns)) openRuns[run.id] = true;
       }
       task = next;
+      return true;
     } catch (error) {
-      if (newer()) return;
+      if (newer()) return false;
       if (error instanceof ApiError && error.status === 404) missing = true;
       else toasts.show('error', (error as Error).message);
+      return false;
     }
   };
 
@@ -136,8 +139,8 @@
   };
 
   const onChanged = () => {
-    void load();
     void board.refresh();
+    return load();
   };
 </script>
 

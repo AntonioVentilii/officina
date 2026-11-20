@@ -37,6 +37,18 @@
   const inboxCount = $derived(board.waitingOnMe.length + board.notices.length);
 
   const LIVE_LABELS = { live: 'Live', connecting: 'Reconnecting', offline: 'Offline' } as const;
+
+  /** Connecting or disconnecting GitHub under way, so a second click sends nothing. */
+  let linking = $state(false);
+  const relink = async (change: () => Promise<void>) => {
+    if (linking) return;
+    linking = true;
+    try {
+      await change();
+    } finally {
+      linking = false;
+    }
+  };
 </script>
 
 <nav class="sidebar" aria-label="Main">
@@ -111,10 +123,18 @@
       {#if session.me.github}
         <div class="github" title="Approvals you give here also approve on GitHub as you">
           <GitMerge size={13} />@{session.me.github.login}
-          <button class="connect" onclick={() => session.disconnectGitHub()}>Disconnect</button>
+          <button
+            class="connect"
+            disabled={linking}
+            onclick={() => relink(() => session.disconnectGitHub())}>Disconnect</button
+          >
         </div>
       {:else}
-        <button class="github connect" onclick={() => session.connectGitHub()}>
+        <button
+          class="github connect"
+          disabled={linking}
+          onclick={() => relink(() => session.connectGitHub())}
+        >
           <GitMerge size={13} />Connect GitHub
         </button>
       {/if}

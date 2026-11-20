@@ -7,6 +7,7 @@
   import type { Card } from '#lib/types.ts';
   import AgentAvatar from './AgentAvatar.svelte';
   import LaneChip from './LaneChip.svelte';
+  import Loader from './Loader.svelte';
 
   interface Props {
     card: Card;
@@ -45,6 +46,13 @@
     </div>
   {:else if card.blocked}
     <div class="waiting"><CircleHelp size={14} /><span>{card.waitingOn.label}</span></div>
+  {:else if card.handingIn}
+    <!-- In ink, not the yellow of "your turn": the build is at work, nothing waits on anyone. -->
+    <div class="waiting at-work">
+      <Loader /><span
+        >{card.handingIn.you ? 'You are' : `${card.handingIn.by ?? 'Someone'} is`} handing the build in</span
+      >
+    </div>
   {:else if card.paused}
     <div class="waiting"><Pause size={14} /><span>Paused</span></div>
   {:else if working}
@@ -244,6 +252,11 @@
   }
 
   :global([data-look='tecnica']) .you,
+  .waiting.at-work {
+    --loader-size: 12px;
+    color: var(--text);
+  }
+
   :global([data-look='tecnica']) .waiting {
     margin: 8px 14px 0;
     font-size: 12.5px;

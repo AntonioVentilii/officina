@@ -23,6 +23,7 @@ const card = (number: number, stage: Stage, extra: Partial<Card> = {}): Card => 
   autoVerified: false,
   autoMergeOn: false,
   learningPullRequests: [],
+  handingIn: null,
   waitingOn: { kind: 'people', label: 'Waiting on you', me: true },
   guards: [],
   ...extra
