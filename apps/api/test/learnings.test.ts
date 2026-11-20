@@ -13,6 +13,7 @@ import { Pool } from 'pg';
 import { createTaskInMerging, resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
 import { catchUpLearningPullRequests } from '../src/catch-up';
 import { applyEdit, type LearningGitHub } from '../src/learning-pull-request';
+import { learningsView } from '../src/board';
 import { decide } from '../src/learnings';
 import { invite } from '../src/people';
 import { TaskCommandError } from '../src/tasks';
@@ -154,7 +155,10 @@ describe.skipIf(!url)('learning decisions', () => {
 
   /** Hands a learning back to the learner, as an accept that found its edit stale does. */
   const handBack = async (id: string) => {
-    const claim = await claimLearningDecision(pool, seeded.projectId, id);
+    const claim = await claimLearningDecision(pool, seeded.projectId, id, {
+      memberId: seeded.ownerId,
+      decision: 'accept'
+    });
     expect(await requestLearningRewrite(pool, id, claim!)).toBe(true);
   };
 
@@ -215,6 +219,52 @@ describe.skipIf(!url)('learning decisions', () => {
     expect(github.calls.some((call) => call.method === 'closePullRequestsFrom')).toBe(false);
   });
 
+  test('every board shows who is deciding a learning while the claim is live, and nothing after', async () => {
+    const learning = await propose('docs');
+    const workspaceId = (
+      await pool.query<{ id: string }>('select workspace_id as id from projects where id = $1', [
+        seeded.projectId
+      ])
+    ).rows[0]!.id;
+    const viewer = (memberId: string) => ({
+      memberId,
+      workspaceId,
+      projectId: seeded.projectId,
+      role: 'owner' as const,
+      domains: []
+    });
+    const decidingOf = async (memberId: string) =>
+      (await learningsView(pool, viewer(memberId))).find((item) => item.id === learning.id)!
+        .deciding;
+    const github = fakeGitHub();
+    const slow = slowAt(github, 'openPullRequest');
+    const accepting = decide(pool, slow.port, owner(), {
+      id: learning.id,
+      decision: 'accept',
+      rewrittenAt: null
+    });
+    await slow.reached();
+
+    expect(await decidingOf(seeded.ownerId)).toMatchObject({
+      decision: 'accept',
+      by: 'Antonio',
+      you: true
+    });
+    expect(await decidingOf(crypto.randomUUID())).toMatchObject({ by: 'Antonio', you: false });
+    slow.release();
+    await accepting;
+    expect(await decidingOf(seeded.ownerId)).toBeNull();
+
+    const stale = await propose('docs');
+    await claimLearningDecision(pool, seeded.projectId, stale.id, {
+      memberId: seeded.ownerId,
+      decision: 'reject'
+    });
+    await expireClaim(stale.id);
+    const views = await learningsView(pool, viewer(seeded.ownerId));
+    expect(views.find((item) => item.id === stale.id)!.deciding).toBeNull();
+  });
+
   test('an accept holds no database connection while it waits on GitHub', async () => {
     const learning = await propose('docs');
     const single = new Pool({ connectionString: url, max: 1 });
@@ -261,7 +311,12 @@ describe.skipIf(!url)('learning decisions', () => {
 
   test('a claim a stopped process left is taken over once its lease ran out, writing the edit once', async () => {
     const learning = await propose('docs');
-    expect(await claimLearningDecision(pool, seeded.projectId, learning.id)).toBeString();
+    expect(
+      await claimLearningDecision(pool, seeded.projectId, learning.id, {
+        memberId: seeded.ownerId,
+        decision: 'accept'
+      })
+    ).toBeString();
     const github = fakeGitHub();
     await expect(
       decide(pool, github.port, owner(), { id: learning.id, decision: 'accept', rewrittenAt: null })

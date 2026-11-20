@@ -49,9 +49,10 @@ class Board {
     void this.refresh();
   }
 
-  async refresh() {
+  /** Loads what the board shows; says whether this load landed, rather than failed or was outrun. */
+  async refresh(): Promise<boolean> {
     const projectId = this.#projectId;
-    if (!projectId) return;
+    if (!projectId) return false;
     const newer = this.#latest();
     const stale = () => newer() || projectId !== this.#projectId;
     // Runs, learnings and members are for maintainers and owners; the API refuses them to anyone else.
@@ -74,7 +75,7 @@ class Board {
           : { members: [] },
         get<{ notifications: Notice[] }>(`/api/projects/${projectId}/notifications`)
       ]);
-      if (stale()) return;
+      if (stale()) return false;
       this.tasks = board.tasks;
       this.roleLabels = board.roleLabels;
       this.runs = runs.runs;
@@ -85,11 +86,13 @@ class Board {
       this.notices = notices.notifications;
       this.error = null;
       this.loaded = true;
+      return true;
     } catch (error) {
-      if (stale()) return;
+      if (stale()) return false;
       // An expired session sends the person to sign in; anything else is shown with a retry.
       if (error instanceof ApiError && error.status === 401) session.status = 'signed-out';
       else this.error = (error as Error).message;
+      return false;
     }
   }
 

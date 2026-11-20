@@ -1,5 +1,6 @@
-import type { LearningTarget } from '@officina/core';
+import type { LearningDecision, LearningTarget } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
+import { DECISION_CLAIM_LIVE } from './learning-decisions';
 import { RUN_IS_ACTIVE } from './run-status';
 import { startRun, type NewRun } from './runs';
 import { inTransaction } from './store';
@@ -61,6 +62,10 @@ export interface LearningRow {
   readonly prState: LearningPullRequestState | null;
   readonly rewrite: LearningRewrite | null;
   readonly rewrittenAt: Date | null;
+  /** While a decision holds a live claim: since when, which decision, and who (null once removed). */
+  readonly decidingSince: Date | null;
+  readonly decidingFor: LearningDecision | null;
+  readonly decidingBy: string | null;
   readonly createdAt: Date;
 }
 
@@ -70,7 +75,11 @@ const COLUMNS = `
   l.file, l.find, l.proposed_change as text, l.status, l.decided_by as "decidedBy",
   l.decided_at as "decidedAt", l.decision_note as "decisionNote", l.pr_number as "prNumber",
   l.pr_url as "prUrl", case when l.pr_number is null then null else ${PR_STATE} end as "prState",
-  l.rewrite, l.rewritten_at as "rewrittenAt", l.created_at as "createdAt"`;
+  l.rewrite, l.rewritten_at as "rewrittenAt",
+  case when ${DECISION_CLAIM_LIVE} then l.decision_claimed_at end as "decidingSince",
+  case when ${DECISION_CLAIM_LIVE} then l.decision_claimed_for end as "decidingFor",
+  case when ${DECISION_CLAIM_LIVE} then l.decision_claimed_by end as "decidingBy",
+  l.created_at as "createdAt"`;
 
 export interface NewLearning {
   readonly title: string;

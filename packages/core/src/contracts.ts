@@ -186,6 +186,10 @@ export type LearningTarget = (typeof LEARNING_TARGETS)[number];
 /** Edits to the project land in its repository as a pull request; agent edits stay with Officina. */
 export const editsProject = (target: LearningTarget): boolean => target !== 'agent';
 
+/** What a maintainer decides about a proposed learning. */
+export const LEARNING_DECISIONS = ['accept', 'reject'] as const;
+export type LearningDecision = (typeof LEARNING_DECISIONS)[number];
+
 /**
  * A learning is a lesson from one finished task plus the exact edit that would make it stick: an
  * addition to the project's docs, or to an Officina agent prompt. People accept or reject it.

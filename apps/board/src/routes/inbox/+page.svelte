@@ -36,8 +36,19 @@
     inboxGroups(board.waitingOnMe).map((group) => ({ ...group, icon: ICONS[group.id] }))
   );
 
-  const dismiss = (id: string) =>
-    board.dismiss(id).catch((error: Error) => toasts.show('error', error.message));
+  /** The notices being marked read, whose button stays off until the API answers. */
+  let dismissing = $state<string[]>([]);
+
+  const dismiss = async (id: string) => {
+    dismissing = [...dismissing, id];
+    try {
+      await board.dismiss(id);
+    } catch (error) {
+      toasts.show('error', (error as Error).message);
+    } finally {
+      dismissing = dismissing.filter((other) => other !== id);
+    }
+  };
 </script>
 
 <div class="page">
@@ -56,6 +67,7 @@
             <span class="age num" title="When">{since(notice.createdAt, clock.now)}</span>
             <button
               class="btn ghost icon sm"
+              disabled={dismissing.includes(notice.id)}
               onclick={() => dismiss(notice.id)}
               title="Mark as read"
               aria-label="Mark as read"><X size={14} /></button

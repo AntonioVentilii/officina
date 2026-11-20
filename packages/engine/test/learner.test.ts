@@ -208,7 +208,10 @@ describe.skipIf(!url)('learner', () => {
     });
     const [stale] = await listLearnings(pool, seeded.projectId);
     // As an accept that found the edit no longer applies hands it back.
-    const claim = await claimLearningDecision(pool, seeded.projectId, stale!.id);
+    const claim = await claimLearningDecision(pool, seeded.projectId, stale!.id, {
+      memberId: seeded.ownerId,
+      decision: 'accept'
+    });
     await requestLearningRewrite(pool, stale!.id, claim!);
     return { taskId, id: stale!.id };
   };

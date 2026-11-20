@@ -6,6 +6,7 @@ import {
   CHECK_OUTCOMES,
   GUARDS,
   LANES,
+  LEARNING_DECISIONS,
   LEARNING_TARGETS,
   ROLES,
   STAGES,
@@ -61,7 +62,8 @@ describe.skipIf(!url)('migrations', () => {
       '0028_run_refs_checked.sql',
       '0029_checklist_checks.sql',
       '0030_task_diff_allowance.sql',
-      '0031_learning_pr_closed.sql'
+      '0031_learning_pr_closed.sql',
+      '0032_learning_decision_claimer.sql'
     ]);
     expect(await migrate(client)).toEqual([]);
   });
@@ -85,6 +87,9 @@ describe.skipIf(!url)('migrations', () => {
     expect(quoted(await definition('agent_versions_role_check'))).toEqual([...AGENT_ROLES].sort());
     expect(quoted(await definition('learnings_target_check'))).toEqual(
       [...LEARNING_TARGETS].sort()
+    );
+    expect(quoted(await definition('learnings_decision_claimed_for_check'))).toEqual(
+      [...LEARNING_DECISIONS].sort()
     );
     expect(quoted(await definition('checklist_checks_outcome_check'))).toEqual(
       [...CHECK_OUTCOMES].sort()
