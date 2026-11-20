@@ -3,12 +3,12 @@ import type { LiveRuns } from '@officina/engine';
 import { createGitHubAsUser, createGitHubClient, createGitHubUserAuth } from '@officina/github';
 import { PROMPTS_DIR, anthropicAuthFrom, createModelResolver } from '@officina/runner';
 import { join } from 'node:path';
-import { Pool } from 'pg';
 import { z } from 'zod';
 import { createApp } from './app';
 import { LOOPBACK_HOSTS } from './connector';
 import { createAgentsPort, startEngine } from './engine';
 import { createGitHubAccounts } from './github-accounts';
+import { createPool } from './pool';
 import { startRealtime } from './realtime';
 import type { Scheduler } from './scheduler';
 import { createTokenBox } from './token-box';
@@ -49,7 +49,7 @@ const env = z
 const log = (message: string, details?: Record<string, unknown>) =>
   console.log(JSON.stringify({ at: new Date().toISOString(), message, ...details }));
 
-const pool = new Pool({ connectionString: env.DATABASE_URL });
+const pool = createPool({ connectionString: env.DATABASE_URL, log });
 
 const client = await pool.connect();
 try {
