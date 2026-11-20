@@ -61,29 +61,45 @@ class Session {
     store(PROJECT_KEY, id);
   }
 
-  /** Connecting GitHub is a write, so it starts from a request this page sends, never a plain link. */
-  async connectGitHub() {
+  /**
+   * A change to who is signed in (connecting or disconnecting GitHub, signing out) under way. Every
+   * button that starts one, wherever it is drawn, is off meanwhile, so a second click sends nothing.
+   */
+  changingAccount = $state(false);
+
+  async #changeAccount(change: () => Promise<void>) {
+    if (this.changingAccount) return;
+    this.changingAccount = true;
     try {
+      await change();
+    } catch (error) {
+      toasts.show('error', (error as Error).message);
+    } finally {
+      this.changingAccount = false;
+    }
+  }
+
+  /** Connecting GitHub is a write, so it starts from a request this page sends, never a plain link. */
+  connectGitHub() {
+    return this.#changeAccount(async () => {
       const { redirect } = await post<{ redirect: string }>('/auth/github/link');
       location.assign(redirect);
-    } catch (error) {
-      toasts.show('error', (error as Error).message);
-    }
+    });
   }
 
-  async disconnectGitHub() {
-    try {
+  disconnectGitHub() {
+    return this.#changeAccount(async () => {
       await post('/auth/github/unlink');
       await this.load();
-    } catch (error) {
-      toasts.show('error', (error as Error).message);
-    }
+    });
   }
 
-  async signOut() {
-    await post('/auth/sign-out');
-    this.me = null;
-    this.status = 'signed-out';
+  signOut() {
+    return this.#changeAccount(async () => {
+      await post('/auth/sign-out');
+      this.me = null;
+      this.status = 'signed-out';
+    });
   }
 }
 

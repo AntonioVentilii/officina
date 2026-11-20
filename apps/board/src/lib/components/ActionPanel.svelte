@@ -300,7 +300,11 @@
           <div class="label">Merge the pull request on GitHub; the task closes itself.</div>
           {#if session.me?.githubAvailable}
             <div class="approval faint">
-              <button class="inline" onclick={() => session.connectGitHub()}>Connect GitHub</button>
+              <button
+                class="inline"
+                disabled={session.changingAccount}
+                onclick={() => session.connectGitHub()}>Connect GitHub</button
+              >
               and your next verification approves the pull request on GitHub as you.
             </div>
           {/if}
