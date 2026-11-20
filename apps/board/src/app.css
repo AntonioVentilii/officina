@@ -296,7 +296,7 @@ button {
     color 0.15s;
 }
 
-.btn:hover {
+.btn:hover:not(:disabled) {
   background: var(--hover);
 }
 
@@ -320,7 +320,7 @@ button {
   color: var(--text-2);
 }
 
-.btn.ghost:hover {
+.btn.ghost:hover:not(:disabled) {
   color: var(--text);
 }
 

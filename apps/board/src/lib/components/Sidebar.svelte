@@ -449,7 +449,7 @@
     color: var(--nav-text-2);
   }
 
-  .me .btn:hover {
+  .me .btn:hover:not(:disabled) {
     color: var(--nav-text);
     background: none;
   }
