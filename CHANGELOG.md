@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.14.0](https://github.com/AntonioVentilii/officina/compare/v1.13.1...v1.14.0) (2026-11-20)
+
+
+### Features
+
+* **db,api,board:** show a learning being decided on every board and lock its buttons ([#282](https://github.com/AntonioVentilii/officina/issues/282)) ([72e0c98](https://github.com/AntonioVentilii/officina/commit/72e0c986ce3a01f49a9bbe80e37be3a0b1dc44b5))
+* **db,engine,api,board:** show a hand-in and every task action at work, and lock their buttons ([#284](https://github.com/AntonioVentilii/officina/issues/284)) ([db29612](https://github.com/AntonioVentilii/officina/commit/db29612743c8df9fe6479d8dc16cde5c4dc887aa))
+
+
+### Bug Fixes
+
+* **api:** keep running when a database connection drops ([#281](https://github.com/AntonioVentilii/officina/issues/281)) ([93ca0c9](https://github.com/AntonioVentilii/officina/commit/93ca0c949c4de8d983882744fe50d24d81e19511))
+* **db,api:** fail a query on a silent database connection instead of waiting forever ([#285](https://github.com/AntonioVentilii/officina/issues/285)) ([1b9b275](https://github.com/AntonioVentilii/officina/commit/1b9b2754fae9bbbc07469ed70f699e4d59d672cd))
+
 ## [1.13.1](https://github.com/AntonioVentilii/officina/compare/v1.13.0...v1.13.1) (2026-11-20)
 
 
