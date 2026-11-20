@@ -26,6 +26,17 @@
 
   let rejecting = $state(false);
   let note = $state('');
+  /**
+   * The learning as it stood when a refresh after the answer failed to land. That proves nothing
+   * about the claim, so the decision stays shown until a later refresh replaces the learning.
+   */
+  let heldOver = $state.raw<Learning | null>(null);
+
+  $effect(() => {
+    if (!heldOver || learning === heldOver) return;
+    heldOver = null;
+    sent = null;
+  });
 
   const decide = async (decision: LearningDecision) => {
     if (!session.projectId || work) return;
@@ -54,10 +65,10 @@
     } catch (error) {
       toasts.show('error', (error as Error).message);
     } finally {
-      // The API says whether the decision is still at work (an answer lost on the way while the
-      // server goes on) before this board stops showing its own, so the buttons never come back early.
-      await board.refresh();
-      sent = null;
+      // Only a refresh that lands says whether the decision is still at work (an answer lost on the
+      // way while the server goes on), so the buttons never come back before the API has spoken.
+      if (await board.refresh()) sent = null;
+      else heldOver = learning;
     }
   };
 </script>

@@ -16,11 +16,14 @@
   let { work }: Props = $props();
 </script>
 
-<div class="working" role="status" aria-live="polite">
+<div class="working">
   <Loader />
-  <span class="label">{work.label}</span>
-  <span class="detail">{work.detail}</span>
-  {#if work.who}<span class="who">{work.who}</span>{/if}
+  <!-- Announced once when the work starts; the timer beside it changes every second, so it stays out. -->
+  <span class="said" role="status">
+    <span class="label">{work.label}</span>
+    <span class="detail">{work.detail}</span>
+    {#if work.who}<span class="who">{work.who}</span>{/if}
+  </span>
   <span class="elapsed num">{duration(work.since, null, clock.now)}</span>
 </div>
 
@@ -44,6 +47,14 @@
   .who,
   .elapsed {
     animation: appear 0.25s 0.32s both;
+  }
+
+  .said {
+    display: flex;
+    flex: 1;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
   }
 
   .label {
