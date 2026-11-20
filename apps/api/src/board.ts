@@ -583,6 +583,8 @@ const actionsFor = (
   const actions: BoardAction[] = [];
   const requester = row.requesterId === viewer.memberId;
   if (canSubmitRequest(row, member)) actions.push('submit');
+  // A paused task's question stays answerable: the lifecycle accepts an answer while paused, and
+  // waitingOn alone says the task waits on whoever may resume it.
   if (row.blocked) {
     if (writes && canAnswer(member, row.blocked.askedOf)) actions.push('answer');
   } else if (!row.paused) {
