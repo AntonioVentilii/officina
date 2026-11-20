@@ -3,6 +3,7 @@
   import { ExternalLink, GitPullRequest, X } from '@lucide/svelte';
   import { goto } from '$app/navigation';
   import { ApiError, get, post } from '#lib/api.ts';
+  import { coalesce } from '#lib/coalesce.ts';
   import { closesDrawer, focusAfterDrawer } from '#lib/drawer.ts';
   import { ago, dateTime, money } from '#lib/format.ts';
   import { inertAround } from '#lib/inert.ts';
@@ -10,7 +11,7 @@
   import { STAGE_LABELS } from '#lib/stages.ts';
   import { board } from '#lib/state/board.svelte.ts';
   import { clock } from '#lib/state/clock.svelte.ts';
-  import { coalesce, live, refreshesProject } from '#lib/state/live.svelte.ts';
+  import { live, refreshesProject } from '#lib/state/live.svelte.ts';
   import { session } from '#lib/state/session.svelte.ts';
   import { toasts } from '#lib/state/toasts.svelte.ts';
   import type { TaskDetail } from '#lib/types.ts';
@@ -67,7 +68,7 @@
     }
   };
 
-  const loadSoon = coalesce(() => void load(), 250);
+  const loadSoon = coalesce(() => load(), 250);
 
   $effect(() => {
     void load();

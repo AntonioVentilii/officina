@@ -1,8 +1,9 @@
 import { ApiError, get, post } from '#lib/api.ts';
+import { coalesce } from '#lib/coalesce.ts';
 import { latestOnly } from '#lib/latest.ts';
 import { isActive } from '#lib/runs.ts';
 import type { AgentRoleInfo, Card, Learning, MemberActivity, Notice, Run } from '#lib/types.ts';
-import { coalesce, live, refreshesAll } from './live.svelte';
+import { live, refreshesAll } from './live.svelte';
 import { session } from './session.svelte';
 
 class Board {
@@ -27,7 +28,7 @@ class Board {
   proposedLearnings = $derived(this.learnings.filter((item) => item.status === 'proposed'));
   running = $derived(this.runs.filter(isActive));
 
-  #refreshSoon = coalesce(() => void this.refresh(), 250);
+  #refreshSoon = coalesce(() => this.refresh(), 250);
 
   start(projectId: string) {
     if (this.#projectId === projectId) return;
