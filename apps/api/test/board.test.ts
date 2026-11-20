@@ -8,6 +8,7 @@ import {
   HAND_IN_LEASE,
   insertLearnings,
   listLearnings,
+  renameMember,
   startRun
 } from '@officina/db';
 import { parseProjectConfig } from '@officina/core';
@@ -2045,6 +2046,24 @@ describe.skipIf(!url)('board api', () => {
     try {
       await openRequest();
       expect(await next.event).toEqual({ kind: 'task', projectId: seeded.projectId, number: 1 });
+    } finally {
+      next.unsubscribe();
+      await hub.close();
+    }
+  });
+
+  test("a member's new name reaches the boards open on their project", async () => {
+    const hub = await startRealtime({ connectionString: url!, pool, log: () => {} });
+    const next = nextEvent(hub);
+    try {
+      const rename = {
+        projectId: seeded.projectId,
+        memberId: seeded.ownerId,
+        viewerId: seeded.ownerId,
+        name: 'Antonio Ventilii'
+      };
+      await renameMember(pool, rename);
+      expect(await next.event).toEqual({ kind: 'members', projectId: seeded.projectId });
     } finally {
       next.unsubscribe();
       await hub.close();

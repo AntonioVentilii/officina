@@ -1,6 +1,7 @@
 import { ROLES, managesEverywhere, type Role } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
 import { recordAccessEvent } from './access';
+import { announceMemberChange } from './changes';
 import { notifyInviteAccepted } from './notifications';
 import { viewerRolesOver } from './projects';
 import { inTransaction } from './store';
@@ -122,7 +123,8 @@ export type RenameMemberResult =
  * workspace, so anyone may change their own, and someone else's only if they may manage that member
  * in every project the member is in, as for a fresh invite link. The member must be in `projectId`,
  * the project the request comes from. Renaming to the name already held changes nothing and records
- * nothing, so a repeated request leaves one `renamed` access event.
+ * nothing, so a repeated request leaves one `renamed` access event. A change is announced to the
+ * boards open on each of the member's projects, where the name shows on cards and avatars.
  */
 export const renameMember = (
   pool: Pool,
@@ -156,5 +158,6 @@ export const renameMember = (
       detail: { from: member.name, to: name },
       actor: self ? null : { memberId: input.viewerId }
     });
+    await announceMemberChange(client, input.memberId);
     return { ok: true, name, changed: true };
   });

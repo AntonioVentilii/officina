@@ -6,6 +6,7 @@
   import MemberName from '#lib/components/MemberName.svelte';
   import { ago, dateTime } from '#lib/format.ts';
   import { latestOnly } from '#lib/latest.ts';
+  import { live, refreshesProject } from '#lib/state/live.svelte.ts';
   import { board } from '#lib/state/board.svelte.ts';
   import { clock } from '#lib/state/clock.svelte.ts';
   import { session } from '#lib/state/session.svelte.ts';
@@ -50,8 +51,13 @@
 
   // Owners only: who signed in, who sent links and which apps act for whom.
   let accessLog = $state<readonly AccessEvent[] | null>(null);
-  // Bumped by a rename, which the log records, so it is read again.
+  // Bumped when a member changes (a rename, which the log records), so it is read again.
   let logVersion = $state(0);
+  $effect(() =>
+    live.subscribe((event) => {
+      if (refreshesProject(event, session.projectId)) logVersion++;
+    })
+  );
   // A slow answer for a project no longer selected must not replace the selected one's log.
   const latestLog = latestOnly();
   $effect(() => {
@@ -92,7 +98,7 @@
         <div class="row">
           <MemberAvatar name={member.name} size={26} />
           <div class="who">
-            <MemberName {member} onrenamed={() => logVersion++} />
+            <MemberName {member} />
             <span class="role caps"
               >{member.role}{#if member.domains.length}, {member.domains.join(', ')}{/if}</span
             >

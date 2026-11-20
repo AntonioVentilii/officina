@@ -10,7 +10,7 @@
   import { STAGE_LABELS } from '#lib/stages.ts';
   import { board } from '#lib/state/board.svelte.ts';
   import { clock } from '#lib/state/clock.svelte.ts';
-  import { coalesce, live, refreshesAll } from '#lib/state/live.svelte.ts';
+  import { coalesce, live, refreshesProject } from '#lib/state/live.svelte.ts';
   import { session } from '#lib/state/session.svelte.ts';
   import { toasts } from '#lib/state/toasts.svelte.ts';
   import type { TaskDetail } from '#lib/types.ts';
@@ -72,8 +72,9 @@
   $effect(() => {
     void load();
     return live.subscribe((event) => {
-      if (refreshesAll(event) || (event.projectId === session.projectId && event.number === number))
-        loadSoon();
+      const ofThisTask =
+        'number' in event && event.projectId === session.projectId && event.number === number;
+      if (ofThisTask || refreshesProject(event, session.projectId)) loadSoon();
     });
   });
 
