@@ -1,0 +1,100 @@
+# Officina project config for Officina itself: how agents may work on this repository.
+# Officina reads this file from the default branch; a push that changes it refreshes the stored copy.
+# Lanes are decided by the paths a change really touches, read from the diff, not from what an agent claims.
+version: 1
+
+docs:
+  entry: AGENTS.md
+
+# Same rule as the `pr-title` job in .github/workflows/ci.yml; Officina reads its own copy here, so
+# change both together. Copilot's review is a rule of the `main` ruleset, and the App has no Copilot
+# seat, so Officina asks for it as the requester.
+pull_request:
+  title_pattern: '^(feat|fix|perf|deps|revert|docs|style|chore|refactor|test|build|ci)\([-a-zA-Z0-9,._/]+\)!?: .+$'
+  copilot_review: true
+
+# A merge into main deploys nothing. Production ships from `v*` tags, cut when a person merges the
+# release-please PR (docs/deployment.md).
+release:
+  on_merge: nothing
+
+# The local gates of docs/ai/pr-and-ci.md that need no Docker. `bun run test:db` needs a Postgres
+# container the sandbox does not have, so it runs in CI (the `db` job) only.
+verify:
+  - 'bun install --frozen-lockfile'
+  - 'bun run lint'
+  - 'bun run typecheck'
+  - 'bun run test'
+  - 'bun run check:board'
+
+# Files that deploy this instance or decide who gets in: the owner approves both gates, and no result
+# auto-merges or skips a person's check.
+guards:
+  publishing:
+    - 'Dockerfile'
+    - 'docker/**'
+    - 'fly.toml'
+    - 'scripts/officina'
+    - '.github/workflows/deploy.yml'
+    - '.github/workflows/release-please.yml'
+    - 'release-please-config.json'
+    - 'packages/core/src/permissions.ts'
+    - 'packages/core/src/guards.ts'
+    - 'packages/db/src/auth.ts'
+    - 'packages/db/src/access.ts'
+    - 'packages/github/src/webhooks.ts'
+    - 'apps/api/src/connector/oauth.ts'
+    - 'apps/api/src/github-accounts.ts'
+    - 'apps/api/src/token-box.ts'
+
+lanes:
+  # Agents never build in the red lane: the spec agent writes the plan, a person builds it and hands it in.
+  red:
+    agents_build: false
+    approvals:
+      spec_review: [{ role: owner }]
+      verifying: [{ role: owner }]
+    paths:
+      # CI, release and deploy
+      - '.github/**'
+      - 'Dockerfile'
+      - 'docker/**'
+      - 'fly.toml'
+      - 'scripts/officina'
+      - 'release-please-config.json'
+      - '.release-please-manifest.json'
+      - 'CHANGELOG.md'
+      # Dependencies and the toolchain
+      - 'package.json'
+      - '**/package.json'
+      - 'bun.lock'
+      - 'tsconfig.json'
+      # The quality gate (docs/ai/governance.md: limits only tighten)
+      - 'eslint.config.js'
+      - 'eslint-suppressions.json'
+      - 'knip.jsonc'
+      - '.jscpd.json'
+      - 'scripts/check-repo.ts'
+      - 'scripts/markdown-tables.ts'
+      # The universal standard every repository links, and the security wall
+      - 'standards/**'
+      - 'packages/core/src/permissions.ts'
+      - 'packages/core/src/guards.ts'
+      - 'packages/engine/src/step-refs.ts'
+      - 'packages/db/src/auth.ts'
+      - 'packages/db/src/access.ts'
+      - 'packages/github/src/webhooks.ts'
+      - 'apps/api/src/connector/oauth.ts'
+      - 'apps/api/src/github-accounts.ts'
+      - 'apps/api/src/token-box.ts'
+      # Tool layers
+      - 'CLAUDE.md'
+      - '.claude/**'
+
+  # Everything else: engine, store, API, board, agent prompts and agent docs. The owner approves the
+  # plan and checks the result; migrations land here too and apply on the next deploy.
+  standard:
+    paths: ['**']
+    approvals:
+      spec_review: [{ role: owner }]
+      verifying: [{ role: owner }]
