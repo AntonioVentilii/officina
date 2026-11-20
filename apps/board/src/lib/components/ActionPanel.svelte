@@ -301,7 +301,7 @@
           {#if session.me?.githubAvailable}
             <div class="approval faint">
               <button
-                class="inline"
+                class="link-button"
                 disabled={session.changingAccount}
                 onclick={() => session.connectGitHub()}>Connect GitHub</button
               >
@@ -655,17 +655,6 @@
     display: flex;
     justify-content: flex-end;
     margin-top: 8px;
-  }
-
-  .inline {
-    padding: 0;
-    border: 0;
-    background: none;
-    font: inherit;
-    color: inherit;
-    cursor: pointer;
-    text-decoration: underline;
-    text-underline-offset: 3px;
   }
 
   .confirm {

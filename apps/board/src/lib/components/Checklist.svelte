@@ -62,7 +62,7 @@
           <span class="num">{index + 1}.</span>
           <span class="text">{item}</span>
           {#if view.canCheck}
-            <button class="link" onclick={() => start(index)}
+            <button class="link-button link" onclick={() => start(index)}
               >{check ? 'Check again' : 'Check'}</button
             >
           {/if}
@@ -109,7 +109,9 @@
       {#if locales.length > 1}
         <div class="locales">
           {#each locales as code (code)}
-            <button class:on={code === shownLocale} onclick={() => (locale = code)}>{code}</button>
+            <button class="tab" class:on={code === shownLocale} onclick={() => (locale = code)}
+              >{code}</button
+            >
           {/each}
         </div>
       {/if}
@@ -221,13 +223,8 @@
 
   .link {
     flex: none;
-    border: 0;
-    background: none;
-    padding: 0;
     font-size: 12.5px;
     color: var(--text-2);
-    text-decoration: underline;
-    text-underline-offset: 3px;
   }
 
   .compare {
@@ -255,19 +252,10 @@
 
   .locales button {
     padding: 2px 0 3px;
-    border: 0;
-    border-bottom: 3px solid transparent;
-    background: none;
-    color: var(--text-2);
     font-size: 12px;
     font-weight: 700;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-  }
-
-  .locales button.on {
-    color: var(--text);
-    border-bottom-color: var(--rule);
   }
 
   table {
