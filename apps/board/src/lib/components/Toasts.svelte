@@ -38,6 +38,12 @@
     animation: slide 0.25s var(--ease);
   }
 
+  /* A click dismisses it; on a slab of either colour the pointer can only underline the words. */
+  .toast:hover {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+
   .toast :global(svg) {
     flex: none;
     margin-top: 2px;
