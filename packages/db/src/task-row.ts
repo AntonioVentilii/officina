@@ -8,6 +8,7 @@ export interface TaskRow {
   id: string;
   kind: Task['kind'];
   project_id: string;
+  parent_id: string | null;
   requester_id: string;
   stage: Task['stage'];
   lane: Task['lane'];

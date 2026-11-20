@@ -2210,3 +2210,65 @@ describe('commands the task is not in a state for', () => {
     ).toEqual({ ok: false, error: 'no_head' });
   });
 });
+
+describe('sub-tasks and their order', () => {
+  const dispatch = {
+    type: 'dispatch',
+    assignee: { kind: 'agent', role: 'builder' },
+    openInLane: 0
+  } as const;
+  /** A driver for a task that still waits for task 3 to merge. */
+  const waiting = () =>
+    createDriver([owner], loadConfig(), { buildWait: { kind: 'after', numbers: [3] } });
+
+  test('a ready task that waits for other tasks is neither dispatched nor claimed', () => {
+    const driver = waiting();
+    const task = toReady(driver, PAGE_PATHS);
+    expect(driver.attempt(task, dispatch, engine)).toEqual({ ok: false, error: 'awaiting_tasks' });
+    expect(driver.attempt(task, { type: 'claim' }, asMember(owner))).toEqual({
+      ok: false,
+      error: 'awaiting_tasks'
+    });
+    const free = createDriver([owner], loadConfig(), { buildWait: null });
+    expect(free.step(task, dispatch, engine).stage).toBe('building');
+    expect(free.step(task, { type: 'claim' }, asMember(owner)).stage).toBe('building');
+  });
+
+  test('taking over a build already under way does not wait', () => {
+    const free = createDriver([owner]);
+    const building = dispatchAgent(free, toReady(free, PAGE_PATHS));
+    expect(waiting().step(building, { type: 'claim' }, asMember(owner)).assignee).toEqual({
+      kind: 'member',
+      memberId: owner.id
+    });
+  });
+
+  test('the engine closes a parent whose sub-tasks merged, even while it is held', () => {
+    const driver = createDriver([owner]);
+    const held = driver.step(
+      toReady(driver, PAGE_PATHS),
+      { type: 'block', question: 'Which one first?', askedOf: { role: 'maintainer' } },
+      asMember(owner)
+    );
+    const closed = driver.step(held, { type: 'close_parent', subtasks: [2, 3] }, engine);
+    expect(closed).toMatchObject({ stage: 'done', blocked: null, assignee: null });
+    expect(driver.events()).toEqual([
+      { type: 'subtasks_merged', subtasks: [2, 3] },
+      { type: 'stage_changed', from: 'ready', to: 'done' }
+    ]);
+  });
+
+  test('only the engine closes a parent, and never a closed one', () => {
+    const driver = createDriver([owner]);
+    const ready = toReady(driver, PAGE_PATHS);
+    const close = { type: 'close_parent', subtasks: [2] } as const;
+    expect(driver.attempt(ready, close, asMember(owner))).toEqual({
+      ok: false,
+      error: 'not_allowed'
+    });
+    expect(driver.attempt({ ...ready, stage: 'done' }, close, engine)).toEqual({
+      ok: false,
+      error: 'terminal'
+    });
+  });
+});

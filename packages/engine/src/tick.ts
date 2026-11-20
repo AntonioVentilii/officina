@@ -3,12 +3,15 @@ import {
   ENGINE,
   humanBuildReason,
   nextAgentRoles,
+  parentCloses,
   parseProjectConfig
 } from '@officina/core';
 import {
   applyCommand,
+  buildLinksOf,
   countOpenAgentWork,
   listActiveTaskIds,
+  listOpenParents,
   listTasksAwaitingLearning,
   listTasksAwaitingRewrite,
   loadTaskContext
@@ -29,6 +32,25 @@ export interface TickReport {
 }
 
 /**
+ * Closes each open parent whose sub-tasks have all closed with at least one merged, rechecked under
+ * the parent's lock. A parent already closed is no longer listed, so a second pass does nothing.
+ */
+const closeMergedParents = async (pool: EngineDependencies['pool'], projectId: string) => {
+  for (const parent of await listOpenParents(pool, projectId)) {
+    if (!parentCloses(parent.subtasks)) continue;
+    await applyCommand(pool, {
+      taskId: parent.id,
+      command: {
+        type: 'close_parent',
+        subtasks: parent.subtasks.filter((task) => task.stage === 'done').map((task) => task.number)
+      },
+      actor: ENGINE,
+      guard: async (_task, client) => parentCloses((await buildLinksOf(client, parent.id)).subtasks)
+    });
+  }
+};
+
+/**
  * Hands ready tasks to the builder agent within lane limits and lists every agent step now due.
  * Starting the steps is left to the caller, so a scheduler can run long sessions without blocking.
  */
@@ -41,6 +63,7 @@ export const collectDueSteps = async (
   const dueFor = (taskId: string, roles: readonly string[]) =>
     due.push(...roles.filter(isRunnerRole).map((role) => ({ taskId, role })));
 
+  await closeMergedParents(deps.pool, projectId);
   for (const taskId of await listActiveTaskIds(deps.pool, projectId)) {
     const context = await loadTaskContext(deps.pool, taskId);
     if (!context) continue;

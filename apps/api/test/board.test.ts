@@ -8,9 +8,10 @@ import {
   HAND_IN_LEASE,
   insertLearnings,
   listLearnings,
+  saveSpecVersion,
   startRun
 } from '@officina/db';
-import { parseProjectConfig } from '@officina/core';
+import { ENGINE, parseProjectConfig } from '@officina/core';
 import { Pool } from 'pg';
 import {
   createAutoVerifiedTask,
@@ -26,7 +27,7 @@ import { createApp } from '../src/app';
 import { agentsView, logEntries, RUN_LOG_PAGE } from '../src/board';
 import { invite, loginLink } from '../src/people';
 import { startRealtime, type BoardEvent } from '../src/realtime';
-import { createRequest, createRequestAs, describeTask } from '../src/tasks';
+import { createRequest, createRequestAs, describeTask, linkTask } from '../src/tasks';
 import { handleWebhookAction } from '../src/webhooks';
 
 const url = process.env.TEST_DATABASE_URL;
@@ -195,6 +196,38 @@ describe.skipIf(!url)('board api', () => {
       label: 'Builds once the agent docs of task 2 are merged',
       me: false
     });
+  });
+
+  test('a ready task that waits for other tasks says which, and offers no claim', async () => {
+    const cookie = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    for (const title of ['Settings', 'Profile', 'Header', 'Redesign', 'Footer'])
+      await createRequest(pool, { title, request: 'Tidy it.' });
+    await pool.query("update tasks set stage = 'ready', lane = 'standard'");
+    for (const number of [3, 5])
+      await saveSpecVersion(pool, {
+        taskId: (await findTaskIdByNumber(pool, seeded.projectId, number))!,
+        version: 0,
+        body: 'The spec.',
+        createdBy: ENGINE,
+        predictedPaths: ['src/routes/+layout.svelte']
+      });
+    await linkTask(pool, { number: 1, after: [2] });
+    await linkTask(pool, { number: 3, parent: 4, after: [] });
+    await linkTask(pool, { number: 5, parent: 4, after: [] });
+    await pool.query("update tasks set stage = 'building' where number = 5");
+
+    const board = (await json(await call(cookie, `/api/projects/${seeded.projectId}/board`))).tasks;
+    const label = (number: number) =>
+      board.find((task: { number: number }) => task.number === number).waitingOn.label;
+    expect(label(1)).toBe('Builds once task 2 is merged');
+    expect(label(4)).toBe('Built through its sub-tasks: task 3, task 5');
+    expect(label(3)).toBe('Builds once task 5 is merged: they change the same files');
+    expect(label(2)).toBe('Waiting for a build slot');
+
+    const actions = async (number: number) =>
+      (await json(await call(cookie, `/api/projects/${seeded.projectId}/tasks/${number}`))).actions;
+    expect(await actions(1)).not.toContain('claim');
+    expect(await actions(2)).toContain('claim');
   });
 
   test('a verifier records checks on the board, and the task page shows each with who and how', async () => {

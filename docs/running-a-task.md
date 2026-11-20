@@ -72,6 +72,14 @@ back from the board ("Hand the build back"), from Claude (`hand_back_build`) or 
 `task hand-back --number <n>`, and the task returns to `ready`; a maintainer or an owner can hand
 back another person's build the same way.
 
+A large request can be built as ordered sub-tasks. A maintainer or an owner links them with
+`task link --number <n> [--parent <p>] [--after <m> ...]`, which replaces the task's earlier links
+(with neither option, it removes them), while the task and its parent are at `ready` or earlier.
+A task then waits in `ready` until every task it waits for is merged, and a sub-task also waits
+while a sibling in flight changes one of its files; the parent itself is never built, only its
+sub-tasks. The board and `task show` say what the task waits for. The parent closes by itself once
+its sub-tasks are merged.
+
 ## Step by step
 
 1. **See what exists.**

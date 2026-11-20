@@ -12,6 +12,7 @@ import {
   createRequest,
   describeTask,
   handIn,
+  linkTask,
   listTasksText,
   type TaskAction
 } from './tasks';
@@ -34,6 +35,13 @@ export const decodeArgs = (argv: readonly string[]): string[] =>
 const need = (value: string | undefined, flag: string): string => {
   if (!value) throw new TaskCommandError(`missing --${flag}\n\n${USAGE}`);
   return value;
+};
+
+const taskNumber = (value: string, flag: string): number => {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1)
+    throw new TaskCommandError(`--${flag} must be a task number`);
+  return parsed;
 };
 
 /** The flags a task action may carry, as the command line gave them. */
@@ -121,6 +129,8 @@ const main = async () => {
       role: { type: 'string' },
       domains: { type: 'string' },
       checked: { type: 'string', multiple: true },
+      parent: { type: 'string' },
+      after: { type: 'string', multiple: true },
       'skip-interview': { type: 'boolean' },
       help: { type: 'boolean', short: 'h' }
     }
@@ -132,12 +142,7 @@ const main = async () => {
   }
   const [command, subcommand] = positionals;
   const pool = new Pool({ connectionString: required('DATABASE_URL') });
-  const number = () => {
-    const parsed = Number(need(values.number, 'number'));
-    if (!Number.isInteger(parsed) || parsed < 1)
-      throw new TaskCommandError('--number must be a task number');
-    return parsed;
-  };
+  const number = () => taskNumber(need(values.number, 'number'), 'number');
   const target = { repo: values.repo, asEmail: values.as };
 
   try {
@@ -169,6 +174,16 @@ const main = async () => {
           );
           return;
         }
+        case 'link':
+          console.log(
+            await linkTask(pool, {
+              ...target,
+              number: number(),
+              parent: values.parent === undefined ? undefined : taskNumber(values.parent, 'parent'),
+              after: (values.after ?? []).map((after) => taskNumber(after, 'after'))
+            })
+          );
+          return;
         case 'hand-in': {
           const handedIn = await handIn(pool, githubClient(), {
             ...target,

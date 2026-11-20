@@ -1,7 +1,7 @@
 import { ENGINE, type Actor, type Command } from '@officina/core';
 import type { Pool } from 'pg';
 import { CONFIG_YAML } from '../../core/test/fixtures';
-import { applyCommand, createTask, insertLearnings, migrate } from '../src';
+import { applyCommand, createTask, insertLearnings, migrate, saveSpecVersion } from '../src';
 
 export interface Seeded {
   readonly projectId: string;
@@ -54,6 +54,39 @@ const agent = (
   role,
   version: 1
 });
+
+/** Creates a task and takes it to `ready`, its spec stored with the paths it predicts as the engine does. */
+export const createReadyTask = async (
+  pool: Pool,
+  seeded: Seeded,
+  paths: readonly string[]
+): Promise<string> => {
+  const { task } = await createTask(pool, {
+    projectId: seeded.projectId,
+    title: 'Split work',
+    requesterId: seeded.ownerId
+  });
+  const id = task.id;
+  await applyOrThrow(pool, id, { type: 'submit_request' }, seeded.owner);
+  await applyOrThrow(pool, id, { type: 'accept' }, seeded.owner);
+  const specced = await applyCommand(pool, {
+    taskId: id,
+    command: { type: 'post_spec', predictedPaths: paths, userVisible: false },
+    actor: agent('spec'),
+    onApplied: (client, applied) =>
+      saveSpecVersion(client, {
+        taskId: id,
+        version: applied.specVersion,
+        body: 'The spec.',
+        createdBy: agent('spec'),
+        predictedPaths: paths
+      })
+  });
+  if (!specced.ok) throw new Error(`post_spec: ${specced.error}`);
+  await applyOrThrow(pool, id, { type: 'plan_approval', userVisible: false, plan: PLAN }, ENGINE);
+  await applyOrThrow(pool, id, { type: 'approve' }, seeded.owner);
+  return id;
+};
 
 /** Creates a copy-change task and takes it to `choosing`, built at `abc` and reviewed. */
 export const createTaskInChoosing = async (pool: Pool, seeded: Seeded): Promise<string> => {

@@ -78,7 +78,7 @@ export const PLAN: PlanInput = {
 export const createDriver = (
   members: readonly Member[],
   config = loadConfig(),
-  facts: Partial<Pick<DecideContext, 'onboardingOpen'>> = {}
+  facts: Partial<Pick<DecideContext, 'onboardingOpen' | 'buildWait'>> = {}
 ) => {
   const approvals: Approval[] = [];
   let lastEvents: readonly DomainEvent[] = [];
@@ -88,7 +88,8 @@ export const createDriver = (
       config,
       members,
       approvals,
-      onboardingOpen: facts.onboardingOpen ?? false
+      onboardingOpen: facts.onboardingOpen ?? false,
+      buildWait: facts.buildWait ?? null
     });
 
   const step = (task: Task, command: Command, actor: Actor): Task => {

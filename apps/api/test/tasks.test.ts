@@ -15,6 +15,7 @@ import {
   createRequestAs,
   describeTask,
   handIn,
+  linkTask,
   listTasksText
 } from '../src/tasks';
 
@@ -503,5 +504,37 @@ describe.skipIf(!url)('task commands', () => {
       taskId
     ]);
     expect(stage.rows[0]!.stage).toBe('building');
+  });
+  test("task link sets a task's parent and what it waits for, for maintainers alone, and says why not", async () => {
+    for (const title of ['Split it', 'Header', 'Footer'])
+      await createRequest(pool, { ...request, title });
+    for (const [email, role] of [
+      ['mia@example.com', 'maintainer'],
+      ['gio@example.com', 'contributor']
+    ] as const)
+      await invite(pool, { publicUrl: 'x', email, name: email, role, domains: [] });
+    const link = { asEmail: 'mia@example.com', number: 3, parent: 1, after: [2] };
+    expect(await linkTask(pool, link)).toBe('Task #3: parent task 1, waits for task 2.');
+    expect(await linkTask(pool, link)).toBe('Task #3: parent task 1, waits for task 2.');
+    const events = await pool.query("select id from task_events where type = 'links_changed'");
+    expect(events.rows).toHaveLength(1);
+
+    await expect(
+      linkTask(pool, { asEmail: 'gio@example.com', number: 3, after: [] })
+    ).rejects.toMatchObject({ status: 403 });
+    await expect(linkTask(pool, { number: 2, after: [2] })).rejects.toThrow(
+      'a task can be neither its own parent nor wait for itself'
+    );
+    await expect(linkTask(pool, { number: 2, after: [3] })).rejects.toThrow(
+      'those links would make tasks wait for each other in a loop'
+    );
+    expect(await linkTask(pool, { number: 3, after: [] })).toBe('Task #3: no links.');
+  });
+
+  test('task show says what a ready task waits for as its next step', async () => {
+    for (const title of ['Header', 'Footer']) await createRequest(pool, { ...request, title });
+    await linkTask(pool, { number: 1, after: [2] });
+    await pool.query("update tasks set stage = 'ready', lane = 'standard' where number = 1");
+    expect(await describeTask(pool, { number: 1 })).toContain('Next: Builds once task 2 is merged');
   });
 });
