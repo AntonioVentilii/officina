@@ -90,15 +90,3 @@ class Live {
 }
 
 export const live = new Live();
-
-/** Runs `fn` at most once per `ms`, trailing, so bursts of events cost one request. */
-export const coalesce = (fn: () => void, ms: number) => {
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  return () => {
-    if (timer) return;
-    timer = setTimeout(() => {
-      timer = null;
-      fn();
-    }, ms);
-  };
-};
