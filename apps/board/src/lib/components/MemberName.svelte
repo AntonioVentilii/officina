@@ -8,9 +8,11 @@
 
   interface Props {
     member: MemberActivity;
+    /** Called once a new name is saved, for the page to reload what records it. */
+    onrenamed: () => void;
   }
 
-  let { member }: Props = $props();
+  let { member, onrenamed }: Props = $props();
 
   /** The name as typed so far, while it is being edited. */
   let draft = $state<string | null>(null);
@@ -22,6 +24,7 @@
     try {
       await post(`/api/projects/${session.projectId}/members/${member.id}/name`, { name: draft });
       draft = null;
+      onrenamed();
       // Your own name is also in the sidebar, which reads it from the session.
       await Promise.all([
         board.refresh(),

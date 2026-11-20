@@ -50,10 +50,13 @@
 
   // Owners only: who signed in, who sent links and which apps act for whom.
   let accessLog = $state<readonly AccessEvent[] | null>(null);
+  // Bumped by a rename, which the log records, so it is read again.
+  let logVersion = $state(0);
   // A slow answer for a project no longer selected must not replace the selected one's log.
   const latestLog = latestOnly();
   $effect(() => {
     const projectId = session.projectId;
+    void logVersion;
     const stale = latestLog();
     accessLog = null;
     if (!projectId || !session.can('see_access_log')) return;
@@ -89,7 +92,7 @@
         <div class="row">
           <MemberAvatar name={member.name} size={26} />
           <div class="who">
-            <MemberName {member} />
+            <MemberName {member} onrenamed={() => logVersion++} />
             <span class="role caps"
               >{member.role}{#if member.domains.length}, {member.domains.join(', ')}{/if}</span
             >
