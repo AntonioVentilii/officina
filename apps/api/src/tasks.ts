@@ -41,7 +41,8 @@ import {
   nameRequestedTask,
   resolveProjectId,
   resolveProjectMember,
-  type StoreError
+  type StoreError,
+  handInUnderWay
 } from '@officina/db';
 import { handInBuild, type HandInPort } from '@officina/engine';
 import { GitHubError } from '@officina/github';
@@ -378,6 +379,12 @@ const refuseWhileAgentRuns = async (client: PoolClient, taskId: string) => {
     );
 };
 
+/** No decision changes a task while a build is being handed in on it, from any board or the CLI. */
+const refuseWhileHandingIn = async (client: PoolClient, taskId: string) => {
+  if (await handInUnderWay(client, taskId))
+    throw new TaskCommandError('this build is being handed in; wait for it to finish');
+};
+
 /** Applies one person's decision to a task, as that person. */
 export const actOnTask = async (
   pool: Pool,
@@ -406,6 +413,7 @@ export const actOnTaskAs = async (
     // In the same transaction as the decision: someone not allowed to answer leaves no comment, and
     // a build is not handed back while an agent's run on it is still being stopped.
     onApplied: async (client) => {
+      await refuseWhileHandingIn(client, taskId);
       if (action.type === 'release') await refuseWhileAgentRuns(client, taskId);
       if (action.type === 'answer') await addComment(client, taskId, actor, action.text);
     }
@@ -451,7 +459,9 @@ export const handInAs = async (
         ? result.problems.join('; ')
         : result.error === 'not_installed'
           ? 'the GitHub App is not installed on this repository'
-          : ERROR_TEXT[result.error]
+          : result.error === 'handing_in'
+            ? 'this build is being handed in; wait for it to finish'
+            : ERROR_TEXT[result.error]
     );
   } catch (error) {
     if (error instanceof GitHubError)

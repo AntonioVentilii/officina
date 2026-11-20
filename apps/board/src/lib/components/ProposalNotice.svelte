@@ -1,36 +1,15 @@
 <script lang="ts">
-  import { post } from '#lib/api.ts';
-  import { session } from '#lib/state/session.svelte.ts';
-  import { toasts } from '#lib/state/toasts.svelte.ts';
   import type { TaskDetail } from '#lib/types.ts';
 
   interface Props {
-    number: number;
     proposal: NonNullable<TaskDetail['proposal']>;
     /** The name of the button that confirms it. */
     approve: string;
-    onchanged: () => void;
+    /** Discards it, as an action on the task the panel shows at work. */
+    ondiscard: () => void;
   }
 
-  let { number, proposal, approve, onchanged }: Props = $props();
-
-  let busy = $state(false);
-
-  const discard = async () => {
-    if (!session.projectId) return;
-    busy = true;
-    try {
-      await post(`/api/projects/${session.projectId}/tasks/${number}/actions`, {
-        type: 'discard_proposal'
-      });
-      toasts.show('ok', 'Proposal discarded');
-      onchanged();
-    } catch (error) {
-      toasts.show('error', (error as Error).message);
-    } finally {
-      busy = false;
-    }
-  };
+  let { proposal, approve, ondiscard }: Props = $props();
 </script>
 
 <p class="proposal">
@@ -39,7 +18,7 @@
     name, not verified), connection {proposal.via.connection} under Connected apps. It counts only once
     you press {approve}.
   </span>
-  <button class="btn" disabled={busy} onclick={discard}>Discard</button>
+  <button class="btn" onclick={ondiscard}>Discard</button>
 </p>
 
 <style>

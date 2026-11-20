@@ -63,7 +63,8 @@ describe.skipIf(!url)('migrations', () => {
       '0029_checklist_checks.sql',
       '0030_task_diff_allowance.sql',
       '0031_learning_pr_closed.sql',
-      '0032_learning_decision_claimer.sql'
+      '0032_learning_decision_claimer.sql',
+      '0033_task_hand_in_claim.sql'
     ]);
     expect(await migrate(client)).toEqual([]);
   });

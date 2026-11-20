@@ -10,10 +10,13 @@ import {
 import {
   appendTaskEvent,
   applyCommand,
+  claimHandIn,
   HAND_IN_EVENT,
+  holdHandIn,
   loadProjectMember,
   loadTask,
   loadTaskContext,
+  releaseHandIn,
   type StoreError,
   type StoredTaskContext
 } from '@officina/db';
@@ -46,7 +49,8 @@ export interface HandIn {
 
 export type HandInResult =
   | { readonly ok: true; readonly stage: string; readonly pullRequest: number | null }
-  | { readonly ok: false; readonly error: StoreError | 'not_installed' }
+  /** `handing_in`: another hand-in of the task is under way, on a board or from the CLI. */
+  | { readonly ok: false; readonly error: StoreError | 'not_installed' | 'handing_in' }
   /**
    * The title breaks the project's `pull_request.title_pattern`, or the body leaves its pull request
    * template out, as an agent's would.
@@ -166,6 +170,63 @@ const handInAgain = async (
   return { ok: true, stage, pullRequest: pr?.number ?? context.pullRequest };
 };
 
+/** What a hand-in that lost its claim to another one answers: that one goes on, this one stops. */
+const TAKEN_OVER = { ok: false, error: 'handing_in' } as const;
+
+/**
+ * A hand-in under its claim, as `handInBuild` describes. `held` renews the claim before each
+ * GitHub call and before the push is applied, and says whether it is still this hand-in's.
+ */
+const handInClaimed = async (
+  deps: { readonly pool: Pool; readonly github: HandInPort; readonly publicUrl: string },
+  input: HandIn,
+  source: Source,
+  held: () => Promise<boolean>
+): Promise<HandInResult> => {
+  const { context, installationId, config } = source;
+  const branch = branchForTask(context.number);
+  const built = builtFrom(input, branch);
+  const problems = await pullRequestProblems(deps.github, source, built);
+  if (problems.length) return { ok: false, error: 'bad_pull_request', problems };
+  // A pull request a hand-in that lost its claim did not open is opened by the one that took over.
+  const open = async () =>
+    (await held())
+      ? openTaskPullRequest(deps.pool, deps.github, {
+          taskId: input.taskId,
+          publicUrl: deps.publicUrl,
+          built
+        })
+      : null;
+  const checks = { taskId: input.taskId, ref: { installationId, repo: context.repo }, branch };
+  if (handedIn(context.task, input.memberId))
+    return handInAgain(deps, { context, memberId: input.memberId, checks, open });
+  if (!(await held())) return TAKEN_OVER;
+  const facts = await readPush(deps.github, checks.ref, {
+    base: context.defaultBranch,
+    branch,
+    catalogs: config.docs.standards.catalogs
+  });
+  const pushed = { task: context.task, memberId: input.memberId, head: facts.headSha };
+  if (await sentBackRed(deps.github, { ...checks, ...pushed })) {
+    return { ok: true, stage: context.task.stage, pullRequest: context.pullRequest };
+  }
+  if (!(await held())) return TAKEN_OVER;
+  const actor = memberActor(input.memberId, input.via);
+  const applied = await applyCommand(deps.pool, {
+    taskId: input.taskId,
+    command: { type: 'push', ...facts },
+    actor,
+    // With the push, so a pull request that fails to open is opened later from this title and
+    // these checks, not from an earlier agent round's.
+    onApplied: (client) =>
+      appendTaskEvent(client, { taskId: input.taskId, actor, type: HAND_IN_EVENT, payload: built })
+  });
+  if (!applied.ok) return applied;
+  const pr = await open();
+  const stage = await stageAfterChecks(deps, checks, applied.task);
+  return { ok: true, stage, pullRequest: pr?.number ?? null };
+};
+
 /**
  * A developer who claimed a build hands in what they pushed to the task branch, built by hand or
  * with their own agents. Officina reads the push from GitHub, applies it as theirs through the
@@ -181,41 +242,17 @@ export const handInBuild = async (
 ): Promise<HandInResult> => {
   const source = await handInSource(deps.pool, input.taskId);
   if (!source.ok) return source;
-  const { context, installationId, config } = source;
-  const branch = branchForTask(context.number);
-  const built = builtFrom(input, branch);
-  const problems = await pullRequestProblems(deps.github, source, built);
-  if (problems.length) return { ok: false, error: 'bad_pull_request', problems };
-  const open = () =>
-    openTaskPullRequest(deps.pool, deps.github, {
-      taskId: input.taskId,
-      publicUrl: deps.publicUrl,
-      built
-    });
-  const checks = { taskId: input.taskId, ref: { installationId, repo: context.repo }, branch };
-  if (handedIn(context.task, input.memberId))
-    return handInAgain(deps, { context, memberId: input.memberId, checks, open });
-  const facts = await readPush(deps.github, checks.ref, {
-    base: context.defaultBranch,
-    branch,
-    catalogs: config.docs.standards.catalogs
-  });
-  const held = { task: context.task, memberId: input.memberId, head: facts.headSha };
-  if (await sentBackRed(deps.github, { ...checks, ...held })) {
-    return { ok: true, stage: context.task.stage, pullRequest: context.pullRequest };
+  // Only the member whose build it is hands it in, checked before the claim so nobody else makes
+  // every board show a hand-in; the push command checks it again, for a build taken meanwhile.
+  if (!theirs(source.context.task, input.memberId)) return { ok: false, error: 'not_allowed' };
+  // One hand-in at a time: the second is refused plainly, and every board shows the first at work.
+  const claim = await claimHandIn(deps.pool, input.taskId, input.memberId);
+  if (!claim) return { ok: false, error: 'handing_in' };
+  try {
+    return await handInClaimed(deps, input, source, () =>
+      holdHandIn(deps.pool, input.taskId, claim)
+    );
+  } finally {
+    await releaseHandIn(deps.pool, input.taskId, claim);
   }
-  const actor = memberActor(input.memberId, input.via);
-  const applied = await applyCommand(deps.pool, {
-    taskId: input.taskId,
-    command: { type: 'push', ...facts },
-    actor,
-    // With the push, so a pull request that fails to open is opened later from this title and
-    // these checks, not from an earlier agent round's.
-    onApplied: (client) =>
-      appendTaskEvent(client, { taskId: input.taskId, actor, type: HAND_IN_EVENT, payload: built })
-  });
-  if (!applied.ok) return applied;
-  const pr = await open();
-  const stage = await stageAfterChecks(deps, checks, applied.task);
-  return { ok: true, stage, pullRequest: pr?.number ?? null };
 };

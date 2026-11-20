@@ -1,21 +1,20 @@
 <script lang="ts">
   import { post } from '#lib/api.ts';
   import { session } from '#lib/state/session.svelte.ts';
-  import { toasts } from '#lib/state/toasts.svelte.ts';
 
   interface Props {
     number: number;
     branch: string;
-    onchanged: () => void;
+    /** Sends the hand-in as an action on the task, shown at work until the task reloads. */
+    send: (request: () => Promise<string>) => Promise<boolean>;
   }
 
-  let { number, branch, onchanged }: Props = $props();
+  let { number, branch, send }: Props = $props();
 
   let open = $state(false);
   let title = $state('');
   let body = $state('');
   let checked = $state('');
-  let busy = $state(false);
 
   const limits = $derived(session.me?.limits.prTitle);
   const ready = $derived(limits !== undefined && title.trim().length >= limits.min);
@@ -29,21 +28,16 @@
   const handIn = async (event: SubmitEvent) => {
     event.preventDefault();
     if (!session.projectId || !ready) return;
-    busy = true;
-    try {
+    // What was written stays when the hand-in fails, to send again once fixed.
+    const taken = await send(async () => {
       await post(`/api/projects/${session.projectId}/tasks/${number}/hand-in`, {
         prTitle: title.trim(),
         ...(body.trim() ? { prBody: body.trim() } : {}),
         verified: lines(checked)
       });
-      toasts.show('ok', 'Handed in; the reviewers read it next');
-      open = false;
-      onchanged();
-    } catch (error) {
-      toasts.show('error', (error as Error).message);
-    } finally {
-      busy = false;
-    }
+      return 'Handed in; the reviewers read it next';
+    });
+    if (taken) open = false;
   };
 </script>
 
@@ -79,7 +73,7 @@
       placeholder="One item per line"></textarea>
     <div class="buttons">
       <button type="button" class="btn ghost" onclick={() => (open = false)}>Back</button>
-      <button class="btn primary" disabled={busy || !ready}>Hand in</button>
+      <button class="btn primary" disabled={!ready}>Hand in</button>
     </div>
   </form>
 {:else}
