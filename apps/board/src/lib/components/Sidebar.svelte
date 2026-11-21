@@ -156,7 +156,6 @@
       {/if}
     {/if}
     <div class="looks" role="group" aria-label="Look">
-      <span class="looks-label caps">Look</span>
       {#each LOOKS as item (item.id)}
         <button
           class="tile"
@@ -414,20 +413,18 @@
     color: var(--nav-text);
   }
 
-  /* Each look as its logo, the chosen one ringed and named: one row however many looks there are. */
+  /* Each look as its logo, the chosen one ringed and named, on one row within the sidebar's padding.
+     The row is named "Look" for assistive technology only: a visible label beside the longest name,
+     Modernista, would not fit. */
   .looks {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     padding: 0 24px;
   }
 
-  .looks-label {
-    margin-right: 2px;
-    color: var(--nav-text-2);
-  }
-
   .tile {
+    flex: none;
     display: inline-grid;
     place-items: center;
     width: 28px;
@@ -454,7 +451,8 @@
   }
 
   .looks-name {
-    margin-left: 4px;
+    flex: none;
+    margin-left: 2px;
     font-size: 12.5px;
     color: var(--nav-text);
   }
