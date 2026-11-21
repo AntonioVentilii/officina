@@ -1237,6 +1237,7 @@ export const learningsView = async (pool: Pool, viewer: BoardViewer) => {
     prState: row.prState,
     rewrite: row.rewrite,
     rewrittenAt: row.rewrittenAt,
+    duplicateOf: row.duplicateOf,
     createdAt: row.createdAt,
     canDecide: canDecide && row.status === 'proposed',
     deciding: decidingView(row, viewer, names)
