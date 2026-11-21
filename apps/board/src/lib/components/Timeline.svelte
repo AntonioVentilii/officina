@@ -81,6 +81,8 @@
         return 'answered the question';
       case 'diff_allowed':
         return `allowed this task up to ${p.lines} lines, over the ${p.lane} lane limit`;
+      case 'split_asked':
+        return 'sent it back to be split into smaller tasks';
       case 'paused':
         return 'paused it';
       case 'resumed':

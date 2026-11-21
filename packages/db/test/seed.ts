@@ -1,4 +1,11 @@
-import { ENGINE, type Actor, type Command } from '@officina/core';
+import {
+  ENGINE,
+  splitMarkdown,
+  splitPaths,
+  type Actor,
+  type Command,
+  type ProposedSplit
+} from '@officina/core';
 import type { Pool } from 'pg';
 import { CONFIG_YAML } from '../../core/test/fixtures';
 import { applyCommand, createTask, insertLearnings, migrate, saveSpecVersion } from '../src';
@@ -97,6 +104,51 @@ export const createReadyTask = async (
     task.id
   ]);
   return { id: task.id, number: rows[0]!.number };
+};
+
+/** A split the spec agent could propose: the copy first, then the page that shows it. */
+export const SPLIT: ProposedSplit = {
+  why: 'Two purposes: the settings copy and a new settings page.',
+  subtasks: [
+    { title: 'Rename the settings title', scope: 'The copy only.', paths: ['src/a.ts'], after: [] },
+    { title: 'Add the settings page', scope: 'The page.', paths: ['src/b.svelte'], after: [1] }
+  ]
+};
+
+/** Creates a task and takes it to spec review with `split` proposed, as the spec agent stores it. */
+export const createTaskWithSplit = async (
+  pool: Pool,
+  seeded: Seeded,
+  split: ProposedSplit = SPLIT
+): Promise<string> => {
+  const { task } = await createTask(pool, {
+    projectId: seeded.projectId,
+    title: 'Settings',
+    requesterId: seeded.ownerId
+  });
+  await applyOrThrow(pool, task.id, { type: 'submit_request' }, seeded.owner);
+  await applyOrThrow(pool, task.id, { type: 'accept' }, seeded.owner);
+  const proposed = await applyCommand(pool, {
+    taskId: task.id,
+    command: {
+      type: 'post_spec',
+      predictedPaths: splitPaths(split),
+      userVisible: false,
+      split: true
+    },
+    actor: agent('spec'),
+    onApplied: (client, after) =>
+      saveSpecVersion(client, {
+        taskId: task.id,
+        version: after.specVersion,
+        body: splitMarkdown(split),
+        createdBy: agent('spec'),
+        predictedPaths: splitPaths(split),
+        split
+      })
+  });
+  if (!proposed.ok) throw new Error(`post_spec: ${proposed.error}`);
+  return task.id;
 };
 
 /** Creates a copy-change task and takes it to `choosing`, built at `abc` and reviewed. */
