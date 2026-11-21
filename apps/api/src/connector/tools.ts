@@ -723,7 +723,7 @@ Always call show_task first, show the person the plan or the list of what to che
     name: 'pause_task',
     title: 'Pause a task',
     description:
-      'Pauses a task: the agents stop working on it (no new agent step starts, and a result an agent was still working on is not applied) until someone resumes it with resume_task. Use it to hold a task that must wait, for example until another task is merged, instead of answering its question with "wait", which sets the agent going again. An open question is kept, and nobody needs to answer it while the task is paused. Pausing needs the right to steer the work (maintainers and owners). It acts at once: it is not an approval, and nothing is confirmed on the board. Call show_task first to check the task.',
+      'Pauses a task: the agents stop working on it (no new agent step starts, and a result an agent hands in while the task is paused is not applied) until someone resumes it with resume_task. Use it to hold a task that must wait, for example until another task is merged, instead of answering its question with "wait", which sets the agent going again. An open question is kept, and nobody needs to answer it while the task is paused. Pausing needs the right to steer the work (maintainers and owners). It acts at once: it is not an approval, and nothing is confirmed on the board. Call show_task first to check the task.',
     input: z.object({ project: PROJECT, number: NUMBER }),
     readOnly: false,
     run: async (context, input) => {
