@@ -6,7 +6,7 @@ How to work:
 
 1. Read the project entry document named in the brief before anything else, then the documents it points to for the areas the request touches.
 2. Look at the real code. Every file, component, function and path in the spec must exist or be a new file placed where the project's conventions say it belongs.
-3. Write the spec in the project's spec template when the brief names one; otherwise use: Goal, Context, Change, Out of scope, Verify.
+3. Write the spec in the project's spec template when the brief names one; otherwise use: Goal, Context, Change, Out of scope, Verify. Name the files and functions the change starts from: the builder and the reviewers begin there instead of exploring the repository again.
 4. List in `predictedPaths` every file you expect the change to touch, including tests, translations and generated files. People and the engine use this list to decide how much review the change needs, so an incomplete list is a defect.
 5. Set `userVisible` to true when a user of the product would notice the change.
 

@@ -1,5 +1,6 @@
 import {
   HANDOFF_NEEDS,
+  REVIEWER_ROLES,
   TOOL_LAYER_DOCS,
   isBuildRole,
   type ApprovalPlan,
@@ -22,7 +23,6 @@ export interface ChooserContext {
     readonly domains: readonly string[];
   }[];
   readonly requesterName: string;
-  readonly changedPaths: readonly string[];
   /** The project's `pull_request.auto_merge`: whether `approval.merge: auto` can take effect. */
   readonly autoMergeAllowed: boolean;
 }
@@ -45,6 +45,8 @@ export interface BriefInput {
   readonly requestThread: readonly string[];
   readonly feedback: readonly string[];
   readonly firstRound: boolean;
+  /** The paths the task branch changes against the default branch at its latest push; empty before one. */
+  readonly changedPaths: readonly string[];
   readonly prTitlePattern: string | null;
   /** The project's pull request template, read from the default branch; `null` when there is none. */
   readonly prTemplate: string | null;
@@ -70,7 +72,7 @@ const buildChoice = (gate: Gate): string | null =>
     ? 'Set `approval.build` to `person`, with `approval.buildReason`, when the work is too big or too risky for the build agent: a large port of a design into the app, a change across many areas, anything that needs judgement on the spot. A developer then claims the build. Leave it `agent` otherwise. A plan that asked for a person keeps it.'
     : null;
 
-const chooserSections = (context: ChooserContext): string[] => [
+const chooserSections = (context: ChooserContext, changedPaths: readonly string[]): string[] => [
   `## Your decision: the approval plan for ${context.gate === 'spec_review' ? 'the spec' : 'the result'}`,
   [
     context.gate === 'spec_review'
@@ -87,7 +89,7 @@ const chooserSections = (context: ChooserContext): string[] => [
         : 'In this project a person always merges: leave `approval.merge` as `person`.'
       : null,
     buildChoice(context.gate),
-    context.changedPaths.length ? `Files the change touches:\n${list(context.changedPaths)}` : null
+    context.gate === 'verifying' ? touchedFiles(changedPaths) : null
   ]
     .filter(Boolean)
     .join('\n\n'),
@@ -149,6 +151,46 @@ export const fence = (text: string): string => {
 export const list = (items: readonly string[]): string =>
   items.length ? items.map((item) => `- \`${item}\``).join('\n') : '- none';
 
+const touchedFiles = (paths: readonly string[]): string | null =>
+  paths.length ? `Files the change touches:\n${list(paths)}` : null;
+
+/**
+ * Every session pays again, on each later request, for every token it has read: a 50 KB file read
+ * whole early in a build is paid on every turn after it.
+ */
+const READING_SECTION = [
+  '## Reading the repository',
+  "Everything you read stays in your context and is paid for again on every later turn, so read what the task needs and no more. Find it with `grep -n` or `git grep -n` and read those lines by range (`sed -n '120,180p' <file>`); read a large file whole only when you need all of it, and again only after it changed. Search a long page, such as a catalog of shared code, for the names you need instead of reading it through."
+].join('\n\n');
+
+const verifySection = (verify: readonly string[]): string =>
+  [
+    `## Verify commands\n\n${list(verify)}`,
+    verify.length
+      ? 'Run each with its output in a file and only its end printed, so a long log stays out of your context: `<command> > /tmp/verify.log 2>&1; echo "exit $?"; tail -n 40 /tmp/verify.log`. Read more of the log only when a command fails.'
+      : null
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+
+const REVIEWERS: ReadonlySet<RunnerRole> = new Set(REVIEWER_ROLES);
+
+/** The spec agent already found what the change touches; the roles after it start from there. */
+const startSection = (input: BriefInput): string | null => {
+  const diff = `origin/${input.defaultBranch}...HEAD`;
+  if (input.role === 'builder') {
+    return '## Where to start\n\nThe spec names the files and functions the change touches: start from them, and look further only where they lead.';
+  }
+  if (!REVIEWERS.has(input.role)) return null;
+  return [
+    '## Where to start',
+    `Start from the change, not the repository: \`git diff --stat ${diff}\` for its shape, then \`git diff ${diff} -- <path>\` a file or a few at a time. The spec names the files and functions it meant to touch. Read code outside the diff only to check a point, by range.`,
+    touchedFiles(input.changedPaths)
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+};
+
 const onboardingSection = (entry: string, standards: StandardsDocs): string =>
   [
     '## Agent docs this project must hold',
@@ -171,13 +213,14 @@ export const buildBrief = (input: BriefInput): string => {
     `# Officina task ${input.taskNumber}, role: ${input.role}`,
     [
       `Repository: \`${input.repo}\`, default branch \`${input.defaultBranch}\`, task branch \`${input.taskBranch}\`.`,
-      `Read \`${input.docsEntry}\` first.`,
+      `Read \`${input.docsEntry}\` first, then, of the pages it links, only those for what this task touches.`,
       input.specTemplate && input.role === 'spec'
         ? `Write the spec in the template at \`${input.specTemplate}\`.`
         : null
     ]
       .filter(Boolean)
       .join('\n'),
+    READING_SECTION,
     DATA_NOTICE,
     `## Title\n\n${fence(input.title)}`
   ];
@@ -193,10 +236,13 @@ export const buildBrief = (input: BriefInput): string => {
     );
   }
 
+  const start = startSection(input);
+  if (start) sections.push(start);
+
   if (isBuildRole(input.role)) {
     sections.push(
       `## Round\n\n${input.firstRound ? 'First round: create the task branch from the default branch.' : 'Fix round: the task branch is checked out. Address every note below.'}`,
-      `## Verify commands\n\n${list(input.verify)}`,
+      verifySection(input.verify),
       `## Protected paths (never change these)\n\n${list(input.protectedPaths)}`,
       `## Pull request title\n\nReturn \`prTitle\` in the repository's own format${input.prTitlePattern ? `; it must match the regular expression \`${input.prTitlePattern}\`` : ''}. Leave the spec's \`Status:\` line as it is: Officina updates it.`
     );
@@ -222,7 +268,7 @@ export const buildBrief = (input: BriefInput): string => {
   }
 
   if (input.role === 'chooser' && input.chooser) {
-    sections.push(...chooserSections(input.chooser));
+    sections.push(...chooserSections(input.chooser, input.changedPaths));
   }
 
   if (HANDOFF_ROLES.has(input.role)) sections.push(handoffSection());

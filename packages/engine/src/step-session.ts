@@ -66,7 +66,6 @@ const chooserContext = async (step: Step, inputs: StepInputs): Promise<ChooserCo
     requesterName:
       inputs.members.find((member) => member.id === context.task.requesterId)?.name ??
       'a former member',
-    changedPaths: gate === 'verifying' ? await latestPushedPaths(step.deps.pool, step.taskId) : [],
     autoMergeAllowed: config.pullRequest.autoMerge
   };
 };
@@ -96,6 +95,7 @@ const briefFor = async (step: Step, inputs: StepInputs) => {
     firstRound: context.task.headSha === null,
     prTitlePattern: config.pullRequest.titlePattern,
     prTemplate: inputs.prTemplate?.path ?? null,
+    changedPaths: await latestPushedPaths(pool, taskId),
     chooser: role === 'chooser' ? await chooserContext(step, inputs) : undefined,
     questionsAsked: inputs.questionsAsked,
     standards: role === 'onboarder' ? config.docs.standards : undefined
