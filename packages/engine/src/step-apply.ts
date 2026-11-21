@@ -2,8 +2,11 @@ import {
   commandForOutput,
   errorText,
   questionMarkdown,
+  splitMarkdown,
+  splitPaths,
   type AgentOutput,
   type RoleOutput,
+  type RunUsage,
   type Task
 } from '@officina/core';
 import {
@@ -13,6 +16,7 @@ import {
   finishRun,
   recordRunResult,
   runIsActive,
+  runWasPaused,
   saveSpecVersion,
   setTaskTitle
 } from '@officina/db';
@@ -40,13 +44,17 @@ const sameFields = (seen: Task, current: Task) =>
 
 /**
  * Only the state the agent saw may receive its result, or its failure, and only while its own run
- * is still in progress: a build a member took over meanwhile is theirs, and nothing the agent's run
- * ends with applies to it, even once the same role builds the task again after the member let go.
+ * is still in progress and its task was never paused meanwhile: a build a member took over is
+ * theirs, and nothing the agent's run ends with applies to it, even once the same role builds the
+ * task again after the member let go; a pause ends the run's part the same way, even once the task
+ * is resumed.
  */
 export const sameWork =
   (seen: Task, runId: string) =>
   async (current: Task, client: PoolClient): Promise<boolean> =>
-    sameFields(seen, current) && (await runIsActive(client, runId));
+    sameFields(seen, current) &&
+    (await runIsActive(client, runId)) &&
+    !(await runWasPaused(client, runId));
 
 /** A build result with the facts of what was really pushed, read from GitHub. */
 const pushedOutput = async (step: Step, built: PushedBuild): Promise<RoleOutput> => {
@@ -79,17 +87,35 @@ const recordAlongside =
         await setTaskTitle(client, step.taskId, interview.title);
       }
     }
-    if (step.role === 'spec' && (output as AgentOutput<'spec'>).outcome === 'specced') {
-      const specced = output as Extract<AgentOutput<'spec'>, { outcome: 'specced' }>;
-      await saveSpecVersion(client, {
-        taskId: step.taskId,
-        version: task.specVersion,
-        body: specced.spec,
-        createdBy: step.actor,
-        predictedPaths: specced.predictedPaths
-      });
-    }
+    if (step.role === 'spec')
+      await saveSpecOutput(client, step, task, output as AgentOutput<'spec'>);
   };
+
+/** A spec, or a proposed split as the version people read, with its sub-tasks kept beside it. */
+const saveSpecOutput = async (
+  client: PoolClient,
+  step: Step,
+  task: Task,
+  output: AgentOutput<'spec'>
+): Promise<void> => {
+  const version = { taskId: step.taskId, version: task.specVersion, createdBy: step.actor };
+  if (output.outcome === 'specced') {
+    await saveSpecVersion(client, {
+      ...version,
+      body: output.spec,
+      predictedPaths: output.predictedPaths
+    });
+  }
+  if (output.outcome === 'split') {
+    const split = { why: output.why, subtasks: output.subtasks };
+    await saveSpecVersion(client, {
+      ...version,
+      body: splitMarkdown(split),
+      predictedPaths: splitPaths(split),
+      split
+    });
+  }
+};
 
 /**
  * A GitHub write after the round is applied: a failure is recorded on the run and never thrown, so
@@ -203,17 +229,17 @@ export const roleOutputOf = async (
   return pushedOutput(step, built);
 };
 
-/** A valid result, the command input it maps to, and what its session cost. */
+/** A valid result, the command input it maps to, and what its session used. */
 export interface StepOutcome {
   readonly output: AgentOutput<RunnerRole>;
   readonly roleOutput: RoleOutput;
-  readonly costCents: number | null;
+  readonly usage: RunUsage;
 }
 
 /** Applies a valid result to the work the agent saw, then mirrors it to GitHub. */
 export const applyResult = async (
   step: Step,
-  { output, roleOutput, costCents }: StepOutcome,
+  { output, roleOutput, usage }: StepOutcome,
   inputs: StepInputs
 ): Promise<StepResult> => {
   const { pool } = step.deps;
@@ -232,7 +258,7 @@ export const applyResult = async (
   if (!applied.ok) {
     await finishRun(pool, step.runId, {
       status: 'failed',
-      costCents,
+      usage,
       result: { discarded: applied.error, output }
     });
     return { status: 'discarded', reason: applied.error };
@@ -243,7 +269,7 @@ export const applyResult = async (
   if (pullRequest !== null) await redChecksAfter(step, output, applied.task);
   await finishRun(pool, step.runId, {
     status: 'succeeded',
-    costCents,
+    usage,
     result: output
   });
   return { status: 'applied' };

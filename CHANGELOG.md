@@ -1,5 +1,39 @@
 # Changelog
 
+## [1.16.0](https://github.com/AntonioVentilii/officina/compare/v1.15.0...v1.16.0) (2026-11-21)
+
+
+### Features
+
+* **api,board:** pause and resume a task from Claude, and read a paused task as Paused ([#307](https://github.com/AntonioVentilii/officina/issues/307)) ([88ab4c7](https://github.com/AntonioVentilii/officina/commit/88ab4c73410b4bc03ca2313a2c1f59116e6c5905))
+* **board:** pick a look by its logo, and on a phone from the tab bar ([#311](https://github.com/AntonioVentilii/officina/issues/311)) ([904876c](https://github.com/AntonioVentilii/officina/commit/904876cfaec4fee1010994a8e5655280dcc485cd))
+* **core,board:** fucina, a lively new default look with an animated mark for each agent ([#309](https://github.com/AntonioVentilii/officina/issues/309)) ([8d18be3](https://github.com/AntonioVentilii/officina/commit/8d18be38186f80f9a691fcbad7929174aa9dab35))
+* **core,db,engine,api,board:** sub-tasks and the order their builds start in ([#305](https://github.com/AntonioVentilii/officina/issues/305)) ([14d65b2](https://github.com/AntonioVentilii/officina/commit/14d65b23d3b62b6bfe1eba6c7e3269f21684422e))
+
+
+### Bug Fixes
+
+* **board:** let a refresh land while a running agent streams its log ([#300](https://github.com/AntonioVentilii/officina/issues/300)) ([dcb9ffb](https://github.com/AntonioVentilii/officina/commit/dcb9ffbd4f8d3e90c4a3216d2522c4d38b7ea4d5))
+* **board:** underline a toast under the pointer, since a click dismisses it ([#297](https://github.com/AntonioVentilii/officina/issues/297)) ([1febbe1](https://github.com/AntonioVentilii/officina/commit/1febbe1b1c1435302abfb8035b985ec901e65be3))
+* **db,api,board:** never offer to accept a learning whose pull request is already open ([#308](https://github.com/AntonioVentilii/officina/issues/308)) ([7b1f9ac](https://github.com/AntonioVentilii/officina/commit/7b1f9ac069773a842b1be40246d85110b01f2408))
+* **engine:** keep a GitHub review that arrives while its task is held ([#306](https://github.com/AntonioVentilii/officina/issues/306)) ([34c9880](https://github.com/AntonioVentilii/officina/commit/34c98805710e63052b4f84ee794dafdd60d679d7))
+
+
+### Performance Improvements
+
+* **board:** leave a run's log lines to its own log, not the whole board ([#302](https://github.com/AntonioVentilii/officina/issues/302)) ([778b182](https://github.com/AntonioVentilii/officina/commit/778b182947674a588565a0854331797793a0e995))
+
+
+### Documentation
+
+* **repo:** show all three board looks side by side in the readme ([#310](https://github.com/AntonioVentilii/officina/issues/310)) ([60903f0](https://github.com/AntonioVentilii/officina/commit/60903f046a096891d0b44c79812f3b8a97758626))
+
+
+### Code Refactoring
+
+* **board:** draw every button that reads as a link from one class, with a hover ([#295](https://github.com/AntonioVentilii/officina/issues/295)) ([a25a465](https://github.com/AntonioVentilii/officina/commit/a25a465ff02a9c3aad2ba3076699d9f5354d33d5))
+* **board:** draw every row of tabs from one class, each with a hover ([#296](https://github.com/AntonioVentilii/officina/issues/296)) ([f9b8d2d](https://github.com/AntonioVentilii/officina/commit/f9b8d2d1f49eb17f553e354b27b71e30e330c9b1))
+
 ## [1.15.0](https://github.com/AntonioVentilii/officina/compare/v1.14.0...v1.15.0) (2026-11-20)
 
 
