@@ -32,6 +32,7 @@ export {
 } from './github-feedback';
 export { TASK_BUDGET_CENTS } from './spend';
 export {
+  firstBuildChoice,
   planTrialBuild,
   runTrialBuild,
   trialBranch,

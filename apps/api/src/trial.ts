@@ -2,11 +2,13 @@ import { parseProjectConfig } from '@officina/core';
 import {
   findTaskIdByNumber,
   loadTaskContext,
+  predictedPaths,
   resolveProjectId,
   tasksBuildingNow
 } from '@officina/db';
 import {
   TrialError,
+  firstBuildChoice,
   planTrialBuild,
   runTrialBuild,
   type TrialGitHub,
@@ -20,7 +22,7 @@ import {
   readSession,
   trialBuilders,
   type ManagedAgentsPort,
-  type ModelTier,
+  type TierModels,
   type SessionMeasure,
   type TrialArm
 } from '@officina/runner';
@@ -34,7 +36,7 @@ interface TrialBuildInput {
   readonly attempt: number;
   readonly budgetCents: number;
   readonly promptsDir: string;
-  readonly models: Readonly<Record<ModelTier, string>>;
+  readonly models: TierModels;
 }
 
 const trialInput = async (pool: Pool, input: TrialBuildInput) => {
@@ -42,13 +44,15 @@ const trialInput = async (pool: Pool, input: TrialBuildInput) => {
   if (!projectId) throw new TrialError('project not found: pass --repo <owner/name>');
   const taskId = await findTaskIdByNumber(pool, projectId, input.number);
   const context = taskId ? await loadTaskContext(pool, taskId) : null;
-  if (!context) throw new TrialError(`task #${input.number} not found`);
+  if (!taskId || !context) throw new TrialError(`task #${input.number} not found`);
   const config = parseProjectConfig(context.rawConfig);
   if (!config.ok) throw new TrialError("the project's config does not parse");
   const definition = (await trialBuilders(input.promptsDir, input.models))[input.arm];
+  const choice = firstBuildChoice(context, config.config, await predictedPaths(pool, taskId));
+  const model = { id: input.models[choice.tier], effort: choice.effort, reason: choice.reason };
   return {
     projectId,
-    trial: { ...input, context, config: config.config, definition }
+    trial: { ...input, context, config: config.config, definition, model }
   };
 };
 
@@ -117,7 +121,7 @@ export const trialCommand = async (
   deps: {
     readonly agents: ManagedAgentsPort;
     readonly github: () => TrialGitHub;
-    readonly models: () => Promise<Readonly<Record<ModelTier, string>>>;
+    readonly models: () => Promise<TierModels>;
   },
   command: 'trial-build' | 'trial-measure',
   flags: TrialFlags

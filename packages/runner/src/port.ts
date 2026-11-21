@@ -23,6 +23,8 @@ export type OutboundEvent =
 export interface SessionRequest {
   readonly agentId: string;
   readonly agentVersion: number;
+  /** The model and effort this session runs at, in place of the agent's own. */
+  readonly model: AgentModel;
   readonly environmentId: string;
   readonly title: string;
   readonly metadata: Readonly<Record<string, string>>;

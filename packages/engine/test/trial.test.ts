@@ -3,7 +3,7 @@ import type { StoredTaskContext } from '@officina/db';
 import { PINNED_MODELS, PROMPTS_DIR, trialBuilders } from '@officina/runner';
 import { loadConfig, newTask } from '../../core/test/fixtures';
 import { createFakePort, idle, toolUse } from '../../runner/test/fake-port';
-import { planTrialBuild, runTrialBuild, TrialError } from '../src';
+import { firstBuildChoice, planTrialBuild, runTrialBuild, TrialError } from '../src';
 import { gitHubWith } from './fake-github';
 
 const BASE = '1febbe1b1c1435302abfb8035b985ec901e65be3';
@@ -33,11 +33,18 @@ const pushed = {
   notVerified: []
 };
 
+const firstBuild = firstBuildChoice(context, loadConfig(), []);
+
 const trial = async (overrides: { attempt?: number; base?: string } = {}) => ({
   context,
   config: loadConfig(),
   arm: 'solo' as const,
   definition: (await trialBuilders(PROMPTS_DIR, PINNED_MODELS)).solo,
+  model: {
+    id: PINNED_MODELS[firstBuild.tier],
+    effort: firstBuild.effort,
+    reason: firstBuild.reason
+  },
   base: BASE,
   attempt: 1,
   budgetCents: 200,
@@ -92,6 +99,11 @@ describe('a trial build', () => {
       token: 'ghs_run',
       branch: 'main',
       commit: BASE
+    });
+    // Both arms run at the model a first build of the task gets today.
+    expect(agents.sessions[0]!.model).toEqual({
+      id: PINNED_MODELS[firstBuild.tier],
+      effort: firstBuild.effort
     });
     expect(agents.agentWrites.map(({ agent }) => agent.name)).toEqual([
       'officina-trial-builder-solo'

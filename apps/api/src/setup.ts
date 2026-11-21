@@ -14,10 +14,11 @@ import type { GitHubClient } from '@officina/github';
 import {
   createModelResolver,
   ensureEnvironment,
+  resolveTiers,
   loadDefinitions,
   syncAgents,
   type ManagedAgentsPort,
-  type ModelTier
+  type TierModels
 } from '@officina/runner';
 import type { Pool } from 'pg';
 import { CONFIG_PATH } from './webhooks';
@@ -31,29 +32,27 @@ export type SetupGitHub = Pick<
  * The model of each tier, resolved as the server's boot sync resolves it, for the commands that
  * sync or run agents. Its log goes to stderr, so a command that prints JSON prints only that.
  */
-export const resolveModels = async (
-  port: ManagedAgentsPort
-): Promise<Record<ModelTier, string>> => {
-  const resolver = createModelResolver({
-    listModels: () => port.listModels(),
-    env: process.env,
-    log: (message, details) => console.error(message, JSON.stringify(details ?? {}))
-  });
-  return { opus: (await resolver.resolve('opus')).id, haiku: (await resolver.resolve('haiku')).id };
-};
+export const resolveModels = (port: ManagedAgentsPort): Promise<TierModels> =>
+  resolveTiers(
+    createModelResolver({
+      listModels: () => port.listModels(),
+      env: process.env,
+      log: (message, details) => console.error(message, JSON.stringify(details ?? {}))
+    })
+  );
 
 /**
- * Syncs every role agent from its checked-in prompt on the given models (the roles on Opus, their
- * reading worker on Haiku) and records the versions the engine will use. Unchanged definitions are
- * left alone, so running it on every boot is cheap.
+ * Syncs every role agent from its checked-in prompt, each on its own tier of the given models (its
+ * reading worker on Haiku), and records the versions the engine will use. Unchanged definitions
+ * are left alone, so running it on every boot is cheap.
  */
 export const setupAgents = async (
   pool: Pool,
   agents: ManagedAgentsPort,
   promptsDir: string,
-  models: Readonly<Record<ModelTier, string>>
+  models: TierModels
 ): Promise<{ changed: string[] }> => {
-  const definitions = await loadDefinitions(promptsDir, models.opus, models.haiku);
+  const definitions = await loadDefinitions(promptsDir, models);
   const { changed } = await syncAgents(
     agents,
     definitions,

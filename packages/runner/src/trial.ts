@@ -4,7 +4,7 @@ import {
   type AgentDefinition,
   type AgentShape
 } from './definitions';
-import type { ModelTier } from './models';
+import type { TierModels } from './models';
 import type { AgentVersionRef, ManagedAgentsPort } from './port';
 import { loadPrompt, loadStandard, withStandard } from './standard';
 import { syncByName } from './sync';
@@ -29,22 +29,22 @@ const trialName = (name: string, arm?: TrialArm): string =>
 const renamed = <T extends AgentShape>(shape: T, name: string): T => ({ ...shape, name });
 
 /**
- * The builder of each arm on the same models: the reader arm is production's builder as
+ * The builder of each arm on the same model and effort: the reader arm is production's builder as
  * `loadDefinitions` makes it, the solo arm the same prompt and standard without the reader or the
  * rules for using it. Trial agents keep the hash of the definition they copy, so one is written
  * again only when that definition changes.
  */
 export const trialBuilders = async (
   promptsDir: string,
-  models: Readonly<Record<ModelTier, string>>
+  models: TierModels
 ): Promise<Record<TrialArm, AgentDefinition>> => {
   const [definitions, standard, prompt] = await Promise.all([
-    loadDefinitions(promptsDir, models.opus, models.haiku),
+    loadDefinitions(promptsDir, models),
     loadStandard(),
     loadPrompt(promptsDir, 'builder')
   ]);
   const production = definitions.find((definition) => definition.role === 'builder')!;
-  const alone = buildDefinition('builder', withStandard(prompt, standard), models.opus);
+  const alone = buildDefinition('builder', withStandard(prompt, standard), models);
   return {
     reader: {
       ...renamed(production, trialName(production.name, 'reader')),

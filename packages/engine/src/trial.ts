@@ -7,6 +7,7 @@ import {
   readSession,
   syncTrialBuilder,
   type AgentDefinition,
+  type AgentModel,
   type AgentVersionRef,
   type ManagedAgentsPort,
   type RunOutcome,
@@ -14,6 +15,7 @@ import {
   type TrialArm
 } from '@officina/runner';
 import { buildBrief } from './brief';
+import { chooseModel, type StepModel } from './model-choice';
 import { revokeRunToken } from './live-runs';
 import { bodyProblems, readPrTemplate } from './pr-template';
 import type { GitHubPort } from './step';
@@ -35,6 +37,8 @@ export interface TrialInput {
   readonly config: ProjectConfig;
   readonly arm: TrialArm;
   readonly definition: AgentDefinition;
+  /** The model and effort both arms run at: what a first build of the task gets today. */
+  readonly model: AgentModel & { readonly reason: string };
   /** The full sha of the default branch's commit the original build started from. */
   readonly base: string;
   /** Which run of this arm on this task it is, so a repeat gets a branch of its own. */
@@ -49,6 +53,7 @@ export interface TrialPlan {
   readonly branch: string;
   readonly agentName: string;
   readonly readerName: string | null;
+  readonly model: AgentModel & { readonly reason: string };
   readonly budgetCents: number;
   readonly brief: string;
 }
@@ -69,6 +74,26 @@ export interface TrialReport extends Omit<TrialPlan, 'brief'> {
  */
 export const trialBranch = (taskNumber: number, arm: TrialArm, attempt: number): string =>
   `${TASK_BRANCH_PREFIX}trial-task-${taskNumber}-${arm}-${attempt}`;
+
+/**
+ * The model a first build of the task gets today, as `chooseModel` picks it with nothing pushed
+ * yet, so a trial measures what production would run rather than the role's default.
+ */
+export const firstBuildChoice = (
+  context: StoredTaskContext,
+  config: ProjectConfig,
+  predictedPaths: readonly string[]
+): StepModel =>
+  chooseModel({
+    role: 'builder',
+    lane: context.task.lane,
+    guards: context.task.guards,
+    paths: predictedPaths,
+    diffLines: null,
+    strongPaths: config.models.strongPaths,
+    fixRounds: 0,
+    failedAttempts: 0
+  });
 
 const FULL_SHA = /^[0-9a-f]{40}$/;
 
@@ -116,6 +141,7 @@ export const planTrialBuild = async (
     branch,
     agentName: definition.name,
     readerName: definition.reader?.name ?? null,
+    model: input.model,
     budgetCents: input.budgetCents,
     brief: `${brief}\n\n${trialSection(base)}`,
     prTemplate
@@ -156,6 +182,7 @@ export const runTrialBuild = async (
     session: {
       agentId: agent.id,
       agentVersion: agent.version,
+      model: { id: input.model.id, effort: input.model.effort },
       environmentId: environmentOf(context),
       title: `Officina trial #${context.number} builder ${input.arm} ${input.attempt}`,
       metadata: { trial_arm: input.arm, task_id: context.task.id, base: input.base },

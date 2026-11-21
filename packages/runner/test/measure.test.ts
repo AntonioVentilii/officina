@@ -121,6 +121,7 @@ describe('measuring a session', () => {
       session: {
         agentId: 'agent_1',
         agentVersion: 1,
+        model: { id: 'claude-opus-5-5', effort: 'high' },
         environmentId: 'env_1',
         title: 'Officina trial #9 builder solo 1',
         metadata: {},

@@ -13,7 +13,7 @@ describe('trial builders', () => {
   test('the reader arm is the production builder and the solo arm the same builder without the reader, both under trial names', async () => {
     const [arms, definitions] = await Promise.all([
       trialBuilders(PROMPTS_DIR, PINNED_MODELS),
-      loadDefinitions(PROMPTS_DIR, PINNED_MODELS.opus, PINNED_MODELS.haiku)
+      loadDefinitions(PROMPTS_DIR, PINNED_MODELS)
     ]);
     const production = definitions.find((definition) => definition.role === 'builder')!;
 
