@@ -2,6 +2,8 @@ export * from './roles';
 export * from './permissions';
 export * from './model-tiers';
 export * from './guards';
+export * from './handoff-needs';
+export * from './handoff-routes';
 export * from './handoffs';
 export * from './hand-question';
 export * from './lanes';

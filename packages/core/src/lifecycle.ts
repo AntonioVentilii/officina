@@ -20,7 +20,15 @@ import {
   type Guard
 } from './guards';
 import { handedQuestion } from './hand-question';
-import type { HandoffNeed } from './handoffs';
+import type { HandoffNeed } from './handoff-needs';
+import {
+  answeredPart,
+  asOneQuestion,
+  domainHolders,
+  routeHandoff,
+  targetsOf,
+  type HandoffPart
+} from './handoff-routes';
 import { computeLane, redPaths, stricterLane, type Lane } from './lanes';
 import type { ModelTier } from './model-tiers';
 import {
@@ -205,11 +213,25 @@ export type Assignee =
   | { readonly kind: 'member'; readonly memberId: string }
   | { readonly kind: 'agent'; readonly role: BuildRole };
 
+/**
+ * Whom a question is asked of: a member by name, everyone with a role or above, or the members who
+ * hold an approval domain (a contributor or above).
+ */
+export type QuestionTarget =
+  { readonly memberId: string } | { readonly role: Role } | { readonly domain: string };
+
 export interface Blocked {
   readonly question: string;
-  readonly askedOf: { readonly memberId: string } | { readonly role: Role };
-  /** Set when agents cannot go on without something only a person can provide or decide. */
-  readonly handoff?: { readonly needs: readonly HandoffNeed[] };
+  /** One target, or any of several when a handoff's parts go to different people. */
+  readonly askedOf: QuestionTarget | { readonly anyOf: readonly QuestionTarget[] };
+  /**
+   * Set when agents cannot go on without something only a person can provide or decide. Needs that
+   * go to different people are split into `parts`, each answered by its own people.
+   */
+  readonly handoff?: {
+    readonly needs: readonly HandoffNeed[];
+    readonly parts?: readonly HandoffPart[];
+  };
   /** Choices an agent offered, each with an optional preview; people may still answer freely. */
   readonly options?: readonly QuestionOption[];
   /** Set on the size check's question: the size its own option allows for this task. */
@@ -496,6 +518,12 @@ export type DomainEvent =
       readonly type: 'model_forced';
       readonly from: ModelTier | null;
       readonly to: ModelTier | null;
+    }
+  /** A member answered the `needs` of a handoff asked of them; its other parts still wait. */
+  | {
+      readonly type: 'question_part_answered';
+      readonly needs: readonly HandoffNeed[];
+      readonly memberId: string;
     }
   /** The waiting question, asked of `from`, now waits on the member `memberId`. */
   | {
@@ -811,7 +839,10 @@ export const ownerHold = (guards: readonly Guard[]): Blocked => ({
 
 /** Whether a held question already waits on whoever may `publish`, who alone lifts a hold. */
 export const heldForOwner = (blocked: Blocked | null): blocked is Blocked =>
-  blocked !== null && 'role' in blocked.askedOf && blocked.askedOf.role === PERMISSIONS.publish;
+  blocked !== null &&
+  targetsOf(blocked.askedOf).some(
+    (target) => 'role' in target && target.role === PERMISSIONS.publish
+  );
 
 /** The guards a person's words on a task call for, by the request's rule, that it lacks so far. */
 export const guardsAddedBy = (
@@ -1130,7 +1161,62 @@ const answered = (
   // An answer is written in the thread, and nobody writes where they may not read.
   if (!readsTask(member, task)) return fail('not_allowed');
   if (pickedSplit(task.blocked, command.option)) return splitAsked(task, command, member, context);
-  return unblockedBy({ ...task, blocked: task.blocked }, command, member, context);
+  const held = { ...task, blocked: task.blocked };
+  return (
+    answeredInPart(held, command.text, member, context) ??
+    unblockedBy(held, command, member, context)
+  );
+};
+
+/**
+ * Who a question joined with Officina's own waits on: a role it was asked of when that ranks at
+ * least as high, otherwise the joining question's role. Whoever answers it reads both, so it is
+ * never left to a member or a domain's holders alone.
+ */
+const joinedAskedOf = (open: Blocked['askedOf'], role: Role): { readonly role: Role } => {
+  const higher = targetsOf(open).find(
+    (target): target is { readonly role: Role } => 'role' in target && hasRole(target, role)
+  );
+  return higher ?? { role };
+};
+
+/**
+ * A member answers the parts of a handoff asked of them while others still wait: those are marked
+ * answered, the question waits on the rest, and the answer itself is in the thread. `null` when the
+ * answer closes the whole question.
+ */
+const answeredInPart = (
+  task: Task & { readonly blocked: Blocked },
+  text: string,
+  member: Member,
+  context: DecideContext
+): Decision | null => {
+  const partly = answeredPart(task.blocked, member);
+  if (!partly) return null;
+  const answeredEvent: DomainEvent = {
+    type: 'question_part_answered',
+    needs: partly.needs,
+    memberId: member.id
+  };
+  const [guarded, guardEvents] = guardedByWords(
+    { ...task, blocked: partly.blocked },
+    context,
+    member,
+    text
+  );
+  const hold = guarded.blocked;
+  if (!hold || hold === partly.blocked) return ok(guarded, [answeredEvent, ...guardEvents]);
+  // The words call for the owner: what is left joins their hold, asked of them as one question.
+  const blocked: Blocked = {
+    ...asOneQuestion(partly.blocked, hold.askedOf),
+    question: `${hold.question}\n\n${partly.blocked.question}`
+  };
+  return ok({ ...guarded, blocked }, [
+    answeredEvent,
+    ...guardEvents.map((event): DomainEvent =>
+      event.type === 'blocked' ? { type: 'blocked', blocked } : event
+    )
+  ]);
 };
 
 /** An answer that only clears the question, or also grants the size check's allowance. */
@@ -1671,12 +1757,14 @@ export const decide = (
       if (task.blocked) return fail('already_blocked');
       const allowed = actor.kind !== 'member' || memberCan(actor, context, 'comment');
       if (!allowed) return fail('not_allowed');
-      // A handoff is engine-routed from agent output; a person's own question is a plain one.
+      // A handoff is engine-routed from agent output, against who is in the project now; a
+      // person's own question is a plain one.
       const handoff = actor.kind === 'member' ? undefined : command.handoff;
+      const routed = handoff && routeHandoff(handoff.needs, domainHolders(context.members, task));
       const blocked: Blocked = {
         question: command.question,
-        askedOf: command.askedOf,
-        ...(handoff ? { handoff } : {}),
+        askedOf: routed ? routed.askedOf : command.askedOf,
+        ...(routed ? { handoff: routed.handoff } : {}),
         ...(command.options?.length ? { options: command.options } : {})
       };
       // Needing a secret, access or publishing guards the task as asking for it would.
@@ -1691,12 +1779,8 @@ export const decide = (
       if (open?.question.includes(command.question)) return fail('already_blocked');
       const blocked: Blocked = open
         ? {
-            ...open,
-            question: `${open.question}\n\n${command.question}`,
-            askedOf:
-              'role' in open.askedOf && hasRole(open.askedOf, command.askedOf.role)
-                ? open.askedOf
-                : command.askedOf
+            ...asOneQuestion(open, joinedAskedOf(open.askedOf, command.askedOf.role)),
+            question: `${open.question}\n\n${command.question}`
           }
         : { question: command.question, askedOf: command.askedOf };
       return ok({ ...task, blocked }, [{ type: 'blocked', blocked }]);

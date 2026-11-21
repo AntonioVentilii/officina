@@ -14,13 +14,13 @@ import {
 const maintainer: Member = { id: 'mara', role: 'maintainer', domains: [] };
 const tim: Member = { id: 'tim', role: 'contributor', domains: ['product', 'confidential'] };
 
-/** A request the interviewer handed to a person for a product decision. */
+/** A request the interviewer handed to the owners for an account, which an owner may hand on. */
 const handedOff = (driver: ReturnType<typeof createDriver>): Task =>
   driver.step(
     newTask('t1', owner.id),
     handoffCommand({
       outcome: 'needs_person',
-      needs: ['decision'],
+      needs: ['account'],
       why: 'How investors book a call is a product choice.',
       asks: ['Choose how an investor books a call with the founders']
     }),
@@ -35,7 +35,7 @@ describe('handing a waiting question to a member', () => {
     const handed = driver.step(held, { type: 'hand_question', memberId: tim.id }, asMember(owner));
     expect(handed.blocked).toMatchObject({
       askedOf: { memberId: tim.id },
-      handoff: { needs: ['decision'] }
+      handoff: { needs: ['account'] }
     });
     expect(handed.blocked?.question).toBe(held.blocked?.question);
     expect(driver.events()).toEqual([
