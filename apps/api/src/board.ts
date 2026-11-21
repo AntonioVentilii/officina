@@ -233,6 +233,7 @@ const PUBLIC_FIELDS: Readonly<Record<string, readonly string[]>> = {
   blocked: ['blocked'],
   unblocked: ['answer'],
   diff_allowed: ['lines', 'lane', 'memberId'],
+  split_asked: [],
   closed: ['stage', 'reason'],
   pull_request_closed: ['pullRequest'],
   spec_status_set: ['status'],
@@ -507,6 +508,9 @@ const waitingOn = (
       };
     case 'spec_review':
     case 'verifying': {
+      // A proposed split is never planned or approved as a spec: people decide on the split.
+      if (row.splitProposed)
+        return { kind: 'people', label: 'A maintainer decides on the proposed split', me: false };
       if (approval && !approval.planned)
         return { kind: 'agent', label: 'Deciding who approves', me: false };
       const pending = approval?.pending ?? [];
@@ -1032,6 +1036,7 @@ export const taskView = async (
     })),
     specs: specs.map((spec) => ({
       version: spec.version,
+      split: spec.split !== null,
       body: shown.text(spec.body),
       author: label(spec.createdBy),
       at: spec.createdAt
@@ -1237,6 +1242,7 @@ export const learningsView = async (pool: Pool, viewer: BoardViewer) => {
     prState: row.prState,
     rewrite: row.rewrite,
     rewrittenAt: row.rewrittenAt,
+    duplicateOf: row.duplicateOf,
     createdAt: row.createdAt,
     canDecide: canDecide && row.status === 'proposed',
     deciding: decidingView(row, viewer, names)

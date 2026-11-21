@@ -235,6 +235,38 @@ describe('guardrails', () => {
     expect(task).toMatchObject({ lane: 'standard', specVersion: 2 });
   });
 
+  test('a proposed split waits at spec review: nobody plans or approves it, and one spec clears it', () => {
+    const driver = createDriver([owner]);
+    let task = newTask('t1', owner.id);
+    task = driver.step(task, { type: 'submit_request' }, asMember(owner));
+    task = driver.step(task, { type: 'accept' }, asMember(owner));
+    task = driver.step(
+      task,
+      { type: 'post_spec', predictedPaths: PAGE_PATHS, userVisible: false, split: true },
+      asAgent('spec')
+    );
+    expect(task).toMatchObject({ stage: 'spec_review', specVersion: 1, splitProposed: true });
+    expect(nextAgentRoles(task)).toEqual([]);
+    for (const actor of [asAgent('chooser'), engine]) {
+      expect(
+        driver.attempt(task, { type: 'plan_approval', userVisible: false, plan: PLAN }, actor)
+      ).toEqual({ ok: false, error: 'split_proposed' });
+    }
+    expect(driver.attempt(task, { type: 'approve' }, asMember(owner))).toEqual({
+      ok: false,
+      error: 'not_planned'
+    });
+
+    task = driver.step(task, { type: 'request_changes', note: 'keep it whole' }, asMember(owner));
+    task = driver.step(
+      task,
+      { type: 'post_spec', predictedPaths: PAGE_PATHS, userVisible: false },
+      asAgent('spec')
+    );
+    expect(task).toMatchObject({ stage: 'spec_review', specVersion: 2, splitProposed: false });
+    expect(nextAgentRoles(task)).toEqual(['chooser']);
+  });
+
   test('an oversized change is blocked for a maintainer', () => {
     const driver = createDriver([owner]);
     let task = dispatchAgent(driver, toReady(driver, PAGE_PATHS));
@@ -386,6 +418,39 @@ describe('a size allowed for one task', () => {
     });
   });
 
+  test('picking Split stops the build and sends the task back to the spec agent for a split', () => {
+    const driver = createDriver([owner, maintainer, productContributor]);
+    const task = held(driver, PAGE_PATHS, 2449);
+    expect(task.blocked?.split).toEqual({ option: 'a' });
+    expect(driver.attempt(task, pick('a'), asMember(productContributor))).toEqual({
+      ok: false,
+      error: 'not_allowed'
+    });
+
+    const split = driver.step(task, pick('a'), asMember(maintainer));
+    expect(split).toMatchObject({
+      stage: 'speccing',
+      blocked: null,
+      assignee: null,
+      diffAllowance: null,
+      specVersion: task.specVersion
+    });
+    expect(driver.events()).toEqual([
+      { type: 'unblocked', answer: 'Option (a)' },
+      { type: 'split_asked' },
+      { type: 'assigned', assignee: null },
+      { type: 'stage_changed', from: 'building', to: 'speccing' }
+    ]);
+    expect(nextAgentRoles(split)).toEqual(['spec']);
+  });
+
+  test('picking Reduce only answers the question, as before', () => {
+    const driver = createDriver([owner, maintainer]);
+    const task = driver.step(held(driver, PAGE_PATHS, 2449), pick('b'), asMember(maintainer));
+    expect(task).toMatchObject({ stage: 'building', blocked: null, diffAllowance: null });
+    expect(driver.events().map((event) => event.type)).toEqual(['unblocked']);
+  });
+
   test('a maintainer allows it outside red, which sends the held head to review as it is', () => {
     const driver = createDriver([owner, maintainer]);
     const task = driver.step(held(driver, PAGE_PATHS, 2449), pick('c'), asMember(maintainer));
@@ -411,13 +476,6 @@ describe('a size allowed for one task', () => {
     expect(task).toMatchObject({ stage: 'building', headSha: null, guards: ['access'] });
     expect(task.blocked?.askedOf).toEqual({ role: 'owner' });
     expect(task.diffAllowance?.lines).toBe(2449);
-  });
-
-  test('another answer to the size check leaves the head held and the build to the builder', () => {
-    const driver = createDriver([owner, maintainer]);
-    const task = driver.step(held(driver, PAGE_PATHS, 2449), pick('b'), asMember(maintainer));
-    expect(task).toMatchObject({ stage: 'building', headSha: null, blocked: null });
-    expect(task.diffAllowance).toBeNull();
   });
 
   test('a head over the allowance is held again with the same question', () => {

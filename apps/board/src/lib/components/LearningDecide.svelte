@@ -89,13 +89,16 @@
   {:else}
     <div class="actions" out:fly={{ y: 6, duration: 220 }}>
       <button class="btn ghost" onclick={() => (rejecting = true)}>Reject</button>
-      <button
-        class="btn primary"
-        disabled={learning.rewrite !== null}
-        onclick={() => decide('accept')}
-      >
-        <Check size={14} />{opensPullRequest ? 'Accept and open pull request' : 'Accept'}
-      </button>
+      <!-- A repeat of an edit already accepted with its pull request can only be rejected. -->
+      {#if !learning.duplicateOf}
+        <button
+          class="btn primary"
+          disabled={learning.rewrite !== null}
+          onclick={() => decide('accept')}
+        >
+          <Check size={14} />{opensPullRequest ? 'Accept and open pull request' : 'Accept'}
+        </button>
+      {/if}
     </div>
   {/if}
 </div>

@@ -11,6 +11,7 @@ import {
   allowsDiff,
   diffHold,
   pickedAllowance,
+  pickedSplit,
   type AllowanceOffer,
   type DiffAllowance
 } from './allowance';
@@ -198,6 +199,8 @@ export interface Blocked {
   readonly options?: readonly QuestionOption[];
   /** Set on the size check's question: the size its own option allows for this task. */
   readonly allowance?: AllowanceOffer;
+  /** Set on the size check's question: its own option that sends the task back for a split. */
+  readonly split?: { readonly option: string };
 }
 
 export interface Task {
@@ -221,6 +224,11 @@ export interface Task {
   readonly guards: readonly Guard[];
   /** More lines than its lane allows, granted for this task alone; `null` when none was. */
   readonly diffAllowance: DiffAllowance | null;
+  /**
+   * Its current spec version proposes a split into sub-tasks instead of one spec: it is never
+   * planned, approved or built as a spec, and people decide on the split instead.
+   */
+  readonly splitProposed: boolean;
 }
 
 /** How closely people should check: a read, a hands-on test, or a test on a real device. */
@@ -283,6 +291,8 @@ export type Command =
       readonly type: 'post_spec';
       readonly predictedPaths: readonly string[];
       readonly userVisible: boolean;
+      /** The spec proposes sub-tasks instead of one change; the paths are all of theirs. */
+      readonly split?: boolean;
     }
   | { readonly type: 'approve' }
   /**
@@ -409,6 +419,8 @@ export type DomainEvent =
   | { readonly type: 'blocked'; readonly blocked: Blocked }
   | { readonly type: 'unblocked'; readonly answer: string }
   | ({ readonly type: 'diff_allowed' } & DiffAllowance)
+  /** A person picked the size check's Split: the next spec must be a proposed split. */
+  | { readonly type: 'split_asked' }
   | { readonly type: 'paused' }
   | { readonly type: 'resumed' }
   | { readonly type: 'closed'; readonly stage: 'declined' | 'cancelled'; readonly reason: string }
@@ -444,6 +456,7 @@ export type DecisionError =
   | 'stale_head'
   | 'awaiting_onboarding'
   | 'awaiting_tasks'
+  | 'split_proposed'
   | 'confirm_on_board'
   | 'no_proposal';
 
@@ -955,6 +968,32 @@ const allowedHeadIn = (task: Task, offer: AllowanceOffer | null, events: DomainE
  * Answers the task's question. Picking the size check's option to allow more lines also grants that
  * allowance, which only whoever may allow it in the lane can pick.
  */
+/**
+ * The size check's Split, picked: the build stops and the task goes back to the spec agent for a
+ * proposed split. Its branch and head stay as they are, so nothing pushed is lost.
+ */
+const splitAsked = (
+  task: Task,
+  command: Extract<Command, { type: 'answer' }>,
+  member: Member,
+  context: DecideContext
+): Decision => {
+  const [moved, stageEvent] = moveTo(task, 'speccing', {
+    blocked: null,
+    assignee: null,
+    reviews: {},
+    fixRounds: 0
+  });
+  const [guarded, guardEvents] = guardedByWords(moved, context, member, command.text);
+  return ok(guarded, [
+    { type: 'unblocked', answer: command.text },
+    { type: 'split_asked' },
+    ...(task.assignee ? [{ type: 'assigned' as const, assignee: null }] : []),
+    stageEvent,
+    ...guardEvents
+  ]);
+};
+
 const answered = (
   task: Task,
   command: Extract<Command, { type: 'answer' }>,
@@ -965,6 +1004,17 @@ const answered = (
   if (member === undefined || !canAnswer(member, task.blocked.askedOf)) return fail('not_allowed');
   // An answer is written in the thread, and nobody writes where they may not read.
   if (!readsTask(member, task)) return fail('not_allowed');
+  if (pickedSplit(task.blocked, command.option)) return splitAsked(task, command, member, context);
+  return unblockedBy({ ...task, blocked: task.blocked }, command, member, context);
+};
+
+/** An answer that only clears the question, or also grants the size check's allowance. */
+const unblockedBy = (
+  task: Task & { readonly blocked: Blocked },
+  command: Extract<Command, { type: 'answer' }>,
+  member: Member,
+  context: DecideContext
+): Decision => {
   const offer = pickedAllowance(task.blocked, command.option);
   if (offer && !allowsDiff(member, offer.lane)) return fail('not_allowed');
   const allowance: DiffAllowance | null = offer
@@ -1083,7 +1133,8 @@ export const decide = (
         lane,
         specVersion,
         userVisible,
-        guards
+        guards,
+        splitProposed: command.split === true
       });
       const events: DomainEvent[] = [{ type: 'spec_versioned', version: specVersion }];
       if (lane !== task.lane) events.push({ type: 'lane_changed', from: task.lane, to: lane });
@@ -1282,6 +1333,8 @@ export const decide = (
       const allowed =
         (actor.kind === 'agent' && actor.role === 'chooser') || actor.kind === 'engine';
       if (!allowed) return fail('not_allowed');
+      // A proposed split is decided as a split, never planned and approved as a spec.
+      if (task.splitProposed) return fail('split_proposed');
       const subject = gateSubject(task, 'spec_review');
       if (subject === null) return fail('no_head');
       const userVisible = task.userVisible || command.userVisible;

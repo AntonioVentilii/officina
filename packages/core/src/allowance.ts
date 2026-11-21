@@ -73,7 +73,11 @@ export const diffHold = (
     ? `over the ${lane} lane limit of ${laneLimit} and the ${allowance.lines} lines allowed for this task`
     : `over the ${lane} lane limit of ${laneLimit}`;
   const options: QuestionOption[] = [
-    { label: 'Split the spec into smaller tasks' },
+    {
+      label: 'Split the spec into smaller tasks',
+      detail:
+        'The task goes back to the spec agent, which proposes sub-tasks that each fit the limit; a maintainer then decides on them. The work pushed so far stays on the task branch.'
+    },
     { label: 'Reduce the change' },
     {
       label: `Allow ${lines} lines for this task`,
@@ -85,11 +89,16 @@ export const diffHold = (
       question: `The change has ${lines} lines, ${over}. Split the spec, reduce the change, or allow ${lines} lines for this task.`,
       askedOf: { role: 'maintainer' },
       options,
+      split: { option: optionKey(0) },
       allowance: { lines, lane, option: optionKey(options.length - 1), headSha: head.headSha }
     },
     details: `${lines} > ${limit}`
   };
 };
+
+/** Whether an answer picks the size check's own option to split the spec into smaller tasks. */
+export const pickedSplit = (blocked: Blocked, option: string | undefined): boolean =>
+  blocked.split !== undefined && option === blocked.split.option;
 
 /** The allowance an answer grants: the size check's own option, picked from its question. */
 export const pickedAllowance = (

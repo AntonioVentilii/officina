@@ -16,6 +16,7 @@ import {
   PLAN,
   applyOrThrow,
   createAutoVerifiedTask,
+  createTaskWithSplit,
   createDoneTaskWithLearningPullRequest,
   createTaskInVerifying,
   recordChooserChecklist,
@@ -773,6 +774,18 @@ describe.skipIf(!url)('connector for Claude', () => {
     expect(inbox).toContain('Now: Merge the learning pull request #1498 on GitHub.');
   });
 
+  test('show_task shows a proposed split as such, with its sub-tasks in order', async () => {
+    const token = (await connect()).tokens.access_token as string;
+    await createTaskWithSplit(pool, seeded);
+
+    const shown = (await tool(token, 'show_task', { number: 1 })).content[0]!.text;
+    expect(shown).toContain('Now: A maintainer decides on the proposed split.');
+    expect(shown).toContain('Proposed split, version 1:');
+    expect(shown).toContain(
+      '2. **Add the settings page**: The page.\n    - Files: `src/b.svelte`\n    - After: 1'
+    );
+  });
+
   test('show_task says a result was auto-verified instead of naming approvers for it', async () => {
     const token = (await connect()).tokens.access_token as string;
     await createAutoVerifiedTask(pool, seeded);
@@ -1294,6 +1307,9 @@ describe.skipIf(!url)('connector for Claude', () => {
     );
 
     const held = (await tool(token, 'show_task', { number: 1 })).content[0]!.text;
+    expect(held).toContain(
+      '(a) Split the spec into smaller tasks: The task goes back to the spec agent, which proposes sub-tasks'
+    );
     expect(held).toContain('(c) Allow 2449 lines for this task: This head goes to review as it is');
     const version = Number(/pass its letter as option and (\d+) as version/.exec(held)?.[1]);
     const answered = await tool(token, 'answer_question', { number: 1, option: 'c', version });

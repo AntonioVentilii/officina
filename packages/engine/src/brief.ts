@@ -1,9 +1,12 @@
 import {
   HANDOFF_NEEDS,
+  LANES,
   TOOL_LAYER_DOCS,
   isBuildRole,
   type ApprovalPlan,
   type Gate,
+  type Lane,
+  type ProjectConfig,
   type Requirement,
   type StandardsDocs
 } from '@officina/core';
@@ -53,6 +56,15 @@ export interface BriefInput {
   readonly questionsAsked?: number | undefined;
   /** The agent docs the project must hold, for the onboarder that writes them. */
   readonly standards?: StandardsDocs | undefined;
+  /** For the spec agent: each lane's `diff_lines` and the task's lane so far, to judge a split. */
+  readonly sizeLimits?: SizeLimits | undefined;
+}
+
+export interface SizeLimits {
+  readonly lanes: ProjectConfig['lanes'];
+  readonly lane: Lane | null;
+  /** People picked the size check's Split since the latest spec. */
+  readonly splitAsked: boolean;
 }
 
 export const MAX_INTERVIEW_QUESTIONS = 4;
@@ -149,6 +161,15 @@ export const fence = (text: string): string => {
 export const list = (items: readonly string[]): string =>
   items.length ? items.map((item) => `- \`${item}\``).join('\n') : '- none';
 
+const sizeSection = ({ lanes, lane, splitAsked }: SizeLimits): string =>
+  [
+    '## Size limit',
+    `The size check holds a change with more lines, added plus removed, than its lane allows: ${LANES.map((name) => `${name} ${lanes[name].diffLines}`).join(', ')}. The lane comes from the paths the change touches${lane ? `; this task is in the \`${lane}\` lane so far` : ''}.`,
+    splitAsked
+      ? 'The size check held the build of this task for going over its limit, and a maintainer picked Split: submit `split`, cutting the request into sub-tasks that each fit the limit. The work pushed so far is on the task branch; read it to cut well.'
+      : 'If one spec would go over its limit, or the request holds more than one purpose, submit `split` instead of one spec.'
+  ].join('\n\n');
+
 const onboardingSection = (entry: string, standards: StandardsDocs): string =>
   [
     '## Agent docs this project must hold',
@@ -209,6 +230,8 @@ export const buildBrief = (input: BriefInput): string => {
       sections.push(`## Notes to address\n\n${input.feedback.map(fence).join('\n\n')}`);
     }
   }
+
+  if (input.role === 'spec' && input.sizeLimits) sections.push(sizeSection(input.sizeLimits));
 
   if (input.role === 'onboarder' && input.standards) {
     sections.push(onboardingSection(input.docsEntry, input.standards));
