@@ -29,7 +29,14 @@ export type WebhookAction =
       readonly branch: string;
       readonly changedPaths: readonly string[];
     }
-  | { readonly kind: 'pull_request_merged'; readonly repo: string; readonly prNumber: number }
+  | {
+      readonly kind: 'pull_request_merged';
+      readonly repo: string;
+      readonly prNumber: number;
+      /** The GitHub login that merged it, and when (ISO 8601); null when GitHub did not say. */
+      readonly by: string | null;
+      readonly at: string | null;
+    }
   /** Closed without being merged; a reopened one comes back as a new pull request. */
   | { readonly kind: 'pull_request_closed'; readonly repo: string; readonly prNumber: number }
   | {
@@ -88,13 +95,22 @@ export const parseWebhookEvent = (event: string | null, payload: unknown): Webho
   if (event === 'pull_request') {
     const body = payload as {
       action?: string;
-      pull_request?: { merged?: boolean; number?: number };
+      pull_request?: {
+        merged?: boolean;
+        number?: number;
+        merged_by?: { login?: string } | null;
+        merged_at?: string | null;
+      };
     };
-    if (body.action !== 'closed' || !body.pull_request?.number) return null;
+    const pull = body.pull_request;
+    if (body.action !== 'closed' || !pull?.number) return null;
+    if (pull.merged !== true) return { kind: 'pull_request_closed', repo, prNumber: pull.number };
     return {
-      kind: body.pull_request.merged === true ? 'pull_request_merged' : 'pull_request_closed',
+      kind: 'pull_request_merged',
       repo,
-      prNumber: body.pull_request.number
+      prNumber: pull.number,
+      by: pull.merged_by?.login ?? null,
+      at: pull.merged_at ?? null
     };
   }
 

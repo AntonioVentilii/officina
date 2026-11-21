@@ -423,7 +423,9 @@ describe.skipIf(!url)('learning decisions', () => {
     await handleWebhookAction(pool, {
       kind: 'pull_request_merged',
       repo: 'ViciApp/vici-app',
-      prNumber: 77
+      prNumber: 77,
+      by: null,
+      at: null
     });
     expect((await listLearnings(pool, seeded.projectId))[0]!.status).toBe('applied');
   });
@@ -444,7 +446,9 @@ describe.skipIf(!url)('learning decisions', () => {
           node_id: 'PR',
           head: { sha: 'learn1' },
           state: merged ? 'closed' : 'open',
-          merged
+          merged,
+          merged_by: null,
+          merged_at: null
         };
       }
     };
@@ -470,7 +474,14 @@ describe.skipIf(!url)('learning decisions', () => {
     const github = {
       pullRequest: async ({ pullRequest }: { pullRequest: number }) => {
         reads.push(pullRequest);
-        return { node_id: 'PR', head: { sha: 'learn1' }, state: 'closed', merged: false };
+        return {
+          node_id: 'PR',
+          head: { sha: 'learn1' },
+          state: 'closed',
+          merged: false,
+          merged_by: null,
+          merged_at: null
+        };
       }
     };
 
@@ -501,7 +512,9 @@ describe.skipIf(!url)('learning decisions', () => {
     await handleWebhookAction(pool, {
       kind: 'pull_request_merged',
       repo: 'viciapp/VICI-APP',
-      prNumber: 77
+      prNumber: 77,
+      by: null,
+      at: null
     });
     expect((await listLearnings(pool, seeded.projectId))[0]!.status).toBe('applied');
   });
@@ -1112,7 +1125,9 @@ describe.skipIf(!url)('learning decisions', () => {
     await handleWebhookAction(pool, {
       kind: 'pull_request_merged',
       repo: 'ViciApp/vici-app',
-      prNumber: 77
+      prNumber: 77,
+      by: null,
+      at: null
     });
     expect((await learningOf(second.id)).duplicateOf).toMatchObject({
       id: first.id,

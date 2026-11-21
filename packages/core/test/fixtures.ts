@@ -33,6 +33,7 @@ export const newTask = (id: string, requesterId: string, kind: TaskKind = 'reque
   approvalPlans: {},
   guards: [],
   diffAllowance: null,
+  mergedEarly: null,
   splitProposed: false
 });
 

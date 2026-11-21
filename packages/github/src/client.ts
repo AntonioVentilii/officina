@@ -597,13 +597,20 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     return response;
   };
 
-  /** A pull request as GitHub has it now: open or closed, merged or not, and its head commit. */
+  /**
+   * A pull request as GitHub has it now: open or closed, merged or not (by whom and when), and its
+   * head commit.
+   */
   const pullRequest = (ref: RepoRef & { readonly pullRequest: number }) =>
     installationToken(ref).then((token) =>
-      request<{ node_id: string; state: string; merged: boolean; head: { sha: string } }>(
-        `/repos/${ref.repo}/pulls/${ref.pullRequest}`,
-        { token }
-      )
+      request<{
+        node_id: string;
+        state: string;
+        merged: boolean;
+        merged_by: { login: string } | null;
+        merged_at: string | null;
+        head: { sha: string };
+      }>(`/repos/${ref.repo}/pulls/${ref.pullRequest}`, { token })
     );
 
   /** What already failed on a commit of a branch (`failuresOn`). */
