@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { Pool } from 'pg';
-import { applyCommand, createTask, startRun, type NewRun } from '../src';
+import { applyCommand, createTask, runWasPaused, startRun, type NewRun } from '../src';
 import { backendPid, untilWaitingOn } from './locks';
 import { resetAndSeed, type Seeded } from './seed';
 
@@ -45,31 +45,28 @@ describe.skipIf(!url)('starting a run', () => {
     expect(await runsOf(run.taskId)).toEqual([]);
   });
 
-  test('a claim that commits before the pause is seen by the pause', async () => {
+  test('a claim that commits before the pause is marked by the pause, so its result never applies', async () => {
     const claiming = await pool.connect();
     await claiming.query('begin');
     const claim = await startRun(claiming, run);
-    expect(claim.ok).toBe(true);
+    if (!claim.ok) throw new Error('claim failed');
 
-    let seenByThePause: { status: string }[] = [];
     const pause = applyCommand(pool, {
       taskId: run.taskId,
       command: { type: 'pause' },
-      actor: seeded.owner,
-      onApplied: async (client) => {
-        seenByThePause = (
-          await client.query<{ status: string }>('select status from runs where task_id = $1', [
-            run.taskId
-          ])
-        ).rows;
-      }
+      actor: seeded.owner
     });
     await untilWaitingOn(pool, await backendPid(claiming));
     await claiming.query('commit');
     claiming.release();
 
     expect((await pause).ok).toBe(true);
-    expect(seenByThePause).toEqual([{ status: 'running' }]);
+    const reading = await pool.connect();
+    try {
+      expect(await runWasPaused(reading, claim.runId)).toBe(true);
+    } finally {
+      reading.release();
+    }
   });
 
   test('a closed task left paused still gets its run, since nothing can resume it', async () => {
