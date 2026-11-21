@@ -11,7 +11,7 @@ import {
   splitAskedSinceSpec
 } from '@officina/db';
 import { executeRun, type RunnerRole } from '@officina/runner';
-import { buildBrief, type ChooserContext } from './brief';
+import { buildBrief, listsChangedPaths, type ChooserContext } from './brief';
 import type { LiveRun } from './live-runs';
 import { bodyProblems, readPrTemplate, type PrTemplate } from './pr-template';
 import type { Step } from './step';
@@ -71,7 +71,6 @@ const chooserContext = async (step: Step, inputs: StepInputs): Promise<ChooserCo
     requesterName:
       inputs.members.find((member) => member.id === context.task.requesterId)?.name ??
       'a former member',
-    changedPaths: gate === 'verifying' ? await latestPushedPaths(step.deps.pool, step.taskId) : [],
     autoMergeAllowed: config.pullRequest.autoMerge
   };
 };
@@ -101,6 +100,9 @@ const briefFor = async (step: Step, inputs: StepInputs) => {
     firstRound: context.task.headSha === null,
     prTitlePattern: config.pullRequest.titlePattern,
     prTemplate: inputs.prTemplate?.path ?? null,
+    changedPaths: listsChangedPaths(role, gateOf(step))
+      ? await latestPushedPaths(pool, taskId)
+      : [],
     chooser: role === 'chooser' ? await chooserContext(step, inputs) : undefined,
     questionsAsked: inputs.questionsAsked,
     standards: role === 'onboarder' ? config.docs.standards : undefined,
