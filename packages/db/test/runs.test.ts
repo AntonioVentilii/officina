@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { Pool } from 'pg';
+import type { Command } from '@officina/core';
 import { applyCommand, createTask, runWasPaused, startRun, type NewRun } from '../src';
 import { backendPid, untilWaitingOn } from './locks';
 import { resetAndSeed, type Seeded } from './seed';
@@ -67,6 +68,16 @@ describe.skipIf(!url)('starting a run', () => {
     } finally {
       reading.release();
     }
+  });
+
+  test('a claim that read an open task gets no run once it is paused and then cancelled', async () => {
+    const commands: Command[] = [{ type: 'pause' }, { type: 'cancel', reason: 'Not needed.' }];
+    for (const command of commands) {
+      const result = await applyCommand(pool, { taskId: run.taskId, command, actor: seeded.owner });
+      expect(result.ok).toBe(true);
+    }
+    expect(await startRun(pool, run)).toEqual({ ok: false, error: 'paused' });
+    expect(await runsOf(run.taskId)).toEqual([]);
   });
 
   test('a closed task left paused still gets its run, since nothing can resume it', async () => {
