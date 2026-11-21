@@ -44,6 +44,37 @@ describe('the SDK port', () => {
       'POST /v1/sessions': { id: 'sesn_1' },
       'GET /v1/sessions/sesn_1': { id: 'sesn_1', usage },
       'GET /v1/sessions/sesn_1/events': { data: [RUNNING, TOOL_USE], next_page: null },
+      'GET /v1/sessions/sesn_1/threads': {
+        data: [
+          {
+            id: 'sthr_p',
+            type: 'session_thread',
+            parent_thread_id: null,
+            agent: { type: 'agent', id: 'agent_builder', name: 'officina-builder' },
+            usage: {
+              list_cost: { amount: '95', currency: 'USD' },
+              input_tokens: 12,
+              output_tokens: 9_000
+            }
+          },
+          {
+            id: 'sthr_r',
+            type: 'session_thread',
+            parent_thread_id: 'sthr_p',
+            agent: { type: 'agent', id: 'agent_reader', name: 'officina-reader' },
+            usage: { list_cost: { amount: '2', currency: 'USD' }, cache_read_input_tokens: 40_000 }
+          },
+          {
+            id: 'sthr_a',
+            type: 'session_thread',
+            parent_thread_id: 'sthr_p',
+            agent: { type: 'advisor', model: 'claude-opus-5-5' },
+            usage: null
+          }
+        ],
+        next_page: null
+      },
+      'GET /v1/sessions/sesn_1/threads/sthr_r/events': { data: [TOOL_USE], next_page: null },
       'POST /v1/environments': { id: 'env_1' },
       'POST /v1/environments/env_1': { id: 'env_1' },
       'POST /v1/agents': { id: 'agent_builder', version: 1 },
@@ -126,6 +157,62 @@ describe('the SDK port', () => {
           budget: { type: 'limit', max_list_cost: { amount: '300', currency: 'USD' } }
         }
       }
+    ]);
+  });
+
+  test('a trial session checks out the commit it replays instead of the branch head', async () => {
+    const { port, calls } = fakeClient();
+    await port.createSession({
+      agentId: 'agent_trial',
+      agentVersion: 1,
+      model: { id: 'claude-opus-5-5', effort: 'high' },
+      environmentId: 'env_1',
+      title: 'Officina trial #9 builder solo 1',
+      metadata: {},
+      repository: {
+        url: 'https://github.com/AntonioVentilii/officina',
+        token: 'ghs_token',
+        branch: 'main',
+        commit: '1febbe1b1c1435302abfb8035b985ec901e65be3'
+      },
+      budgetCents: 200
+    });
+    expect(calls[0]!.body).toMatchObject({
+      resources: [{ checkout: { type: 'commit', sha: '1febbe1b1c1435302abfb8035b985ec901e65be3' } }]
+    });
+  });
+
+  test("lists a session's threads with each one's cost and tokens, an advisor named by its model", async () => {
+    const { port } = fakeClient();
+    expect(await port.sessionThreads('sesn_1')).toEqual([
+      {
+        id: 'sthr_p',
+        parentId: null,
+        agentName: 'officina-builder',
+        usage: { costCents: 95, tokens: { input: 12, output: 9_000, cacheRead: 0, cacheWrite: 0 } }
+      },
+      {
+        id: 'sthr_r',
+        parentId: 'sthr_p',
+        agentName: 'officina-reader',
+        usage: { costCents: 2, tokens: { input: 0, output: 0, cacheRead: 40_000, cacheWrite: 0 } }
+      },
+      {
+        id: 'sthr_a',
+        parentId: 'sthr_p',
+        agentName: 'claude-opus-5-5',
+        usage: { costCents: null, tokens: null }
+      }
+    ]);
+  });
+
+  test("reads one thread's own events", async () => {
+    const { port, calls } = fakeClient();
+    const events = [];
+    for await (const event of port.threadEvents('sesn_1', 'sthr_r')) events.push(event);
+    expect(events).toEqual([TOOL_USE]);
+    expect(calls).toMatchObject([
+      { method: 'GET', path: '/v1/sessions/sesn_1/threads/sthr_r/events' }
     ]);
   });
 

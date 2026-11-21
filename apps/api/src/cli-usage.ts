@@ -50,6 +50,13 @@ export const USAGE = `usage (on your machine, prefix with scripts/officina; on t
 
     People commands also take --repo <owner/name> (optional with a single project).
 
+  Trials (compare two ways of running the builder on a past task; see docs/ai/workflows/trial.md)
+    trial-build   --number <n> --base <full sha> --arm reader|solo --budget-usd <cap> [--attempt <a>]
+                  [--run]                    without --run, prints the plan and brief and spends
+                                             nothing; with it, runs the build on its own trial
+                                             agents and branch and prints what it cost and read
+    trial-measure --session <session id>     the same measure for any finished session
+
   Setup
     setup-agents
     add-project --workspace <name> --repo <owner/name> --owner-email <email> --owner-name <name> [--config-file <path>]`;

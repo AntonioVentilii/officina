@@ -1,4 +1,5 @@
 import {
+  BUILD_ROLES,
   READS_PROPOSALS,
   openProposals,
   type Actor,
@@ -10,6 +11,7 @@ import {
 } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
 import { findProjectsByRepo } from './projects';
+import { RUN_IS_ACTIVE } from './run-status';
 
 type Queryable = Pool | PoolClient;
 
@@ -202,3 +204,24 @@ export const listProjectMembers = async (db: Queryable, projectId: string) =>
       [projectId]
     )
   ).rows;
+
+/**
+ * The tasks of a project with a build run an agent still holds, or one that ended after `since`.
+ * A build's ref check counts every branch Officina's identity moves while it runs, so nothing else
+ * may push as the App beside one: asked with `since` now, before pushing, and with the push's start,
+ * after it.
+ */
+export const tasksBuildingSince = async (
+  db: Queryable,
+  projectId: string,
+  since: Date
+): Promise<number[]> =>
+  (
+    await db.query<{ number: number }>(
+      `select distinct t.number from runs r join tasks t on t.id = r.task_id
+       where t.project_id = $1 and r.agent_role = any($2::text[])
+         and (r.status ${RUN_IS_ACTIVE} or r.finished_at >= $3)
+       order by t.number`,
+      [projectId, BUILD_ROLES, since]
+    )
+  ).rows.map((row) => row.number);

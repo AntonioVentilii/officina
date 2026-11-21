@@ -18,3 +18,4 @@ Workflows:
 - [Add or change an agent role](./workflows/agent-role.md)
 - [Add a database migration](./workflows/migration.md)
 - [Show something new on the board](./workflows/board-field.md)
+- [Measure a way of running an agent on past tasks](./workflows/trial.md)
