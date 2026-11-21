@@ -583,7 +583,7 @@ const NEXT_STEP: Partial<Record<string, string>> = {
     'read the proposed split, then: task approve --number {n} to open its sub-tasks   (or: task changes --number {n} --note "..."; to keep it as one task, use the board or Claude)',
   ready: 'waiting for a free build slot; the engine dispatches it automatically',
   building: 'an agent is building it; check back with task show',
-  reviewing: 'two agents are reviewing it; check back with task show',
+  reviewing: 'agents are reviewing it, the spec first and then the code; check back with task show',
   choosing: 'an agent is preparing the verification checklist',
   verifying:
     'check the pull request, then: task approve --number {n}   (or: task changes --number {n} --note "...")',

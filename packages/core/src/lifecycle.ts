@@ -97,10 +97,28 @@ export const isBuildRole = (role: string): role is BuildRole =>
 export const buildRoleFor = (kind: TaskKind): BuildRole =>
   kind === 'onboarding' ? 'onboarder' : 'builder';
 
-/** Every one of these must approve the same head commit before a task leaves review. */
+/**
+ * Every one of these must approve the same head commit before a task leaves review, one at a time
+ * in this order: the cheap check that the work does what the spec asks runs first, so the costly
+ * correctness review is paid for only on work that does.
+ */
 export const REVIEWER_ROLES = ['reviewer_spec', 'reviewer_correctness'] as const;
 export type ReviewerRole = (typeof REVIEWER_ROLES)[number];
 export type ReviewVerdict = 'approve' | 'changes';
+
+/**
+ * The agent reviewer at work on the head under review: the first without a verdict, once every
+ * one before it approved. `null` when all approved, or when one asked for changes.
+ */
+export const reviewerAtWork = (
+  reviews: Readonly<Partial<Record<ReviewerRole | 'github', ReviewVerdict>>>
+): ReviewerRole | null => {
+  for (const role of REVIEWER_ROLES) {
+    if (reviews[role] === undefined) return role;
+    if (reviews[role] !== 'approve') return null;
+  }
+  return null;
+};
 
 /**
  * The connected app a member acted through: one OAuth grant of the Claude connector. `name` is the
@@ -864,9 +882,11 @@ const backToBuilding = (task: Task, context: DecideContext, ...why: DomainEvent[
 };
 
 /**
- * Records verdicts on the head under review and moves on once every agent reviewer has given one:
- * back to the build when any asked for changes, a GitHub review's included, so one fix round answers
- * them all and no reviewer's paid run is thrown away while it still works; else to the chooser.
+ * Records verdicts on the head under review. An agent reviewer asking for changes ends the round:
+ * the next one in order is not started. A GitHub review asking for changes waits for the reviewer
+ * at work, so its paid run is not thrown away, and then ends the round too, so one fix round answers
+ * every note known. Once every agent reviewer approved and nothing asked for changes, on to the
+ * chooser.
  */
 const verdictsIn = (
   task: Task,
@@ -874,10 +894,13 @@ const verdictsIn = (
   reviews: Task['reviews'],
   events: DomainEvent[]
 ): Decision => {
-  if (REVIEWER_ROLES.some((role) => reviews[role] === undefined)) {
-    return ok({ ...task, reviews }, events);
+  const atWork = reviewerAtWork(reviews);
+  const startsNext = atWork !== null && atWork !== reviewerAtWork(task.reviews);
+  const agentChanges = REVIEWER_ROLES.some((role) => reviews[role] === 'changes');
+  if (agentChanges || (reviews.github === 'changes' && (atWork === null || startsNext))) {
+    return backToBuilding(task, context, ...events);
   }
-  if (Object.values(reviews).includes('changes')) return backToBuilding(task, context, ...events);
+  if (atWork !== null) return ok({ ...task, reviews }, events);
   const [moved, stageEvent] = moveTo(task, 'choosing', { reviews });
   return ok(moved, [...events, stageEvent]);
 };

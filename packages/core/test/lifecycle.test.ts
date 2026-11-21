@@ -377,13 +377,13 @@ describe('guardrails', () => {
       );
       task = driver.step(
         task,
-        { type: 'review', verdict: 'changes', notes: 'no' },
-        asAgent('reviewer_correctness')
+        { type: 'review', verdict: 'approve', notes: '' },
+        asAgent('reviewer_spec')
       );
       task = driver.step(
         task,
-        { type: 'review', verdict: 'approve', notes: '' },
-        asAgent('reviewer_spec')
+        { type: 'review', verdict: 'changes', notes: 'no' },
+        asAgent('reviewer_correctness')
       );
       expect(task.stage).toBe('building');
     }
@@ -401,13 +401,13 @@ describe('guardrails', () => {
     );
     task = driver.step(
       task,
-      { type: 'review', verdict: 'changes', notes: 'no' },
-      asAgent('reviewer_correctness')
+      { type: 'review', verdict: 'approve', notes: '' },
+      asAgent('reviewer_spec')
     );
     task = driver.step(
       task,
-      { type: 'review', verdict: 'approve', notes: '' },
-      asAgent('reviewer_spec')
+      { type: 'review', verdict: 'changes', notes: 'no' },
+      asAgent('reviewer_correctness')
     );
     expect(task).toMatchObject({ stage: 'ready', assignee: null, fixRounds: 0 });
     expect(task.blocked?.askedOf).toEqual({ role: 'maintainer' });
@@ -1258,17 +1258,9 @@ describe('agent reviews', () => {
       asAgent('builder')
     );
 
-  test('a reviewer asking for changes waits for the other, so one fix round answers both', () => {
+  test('the spec reviewer goes first, and its changes end the round before the costly review', () => {
     const driver = createDriver([owner]);
-    let task = driver.step(
-      pushed(driver),
-      { type: 'review', verdict: 'changes', notes: 'Handle the empty list.' },
-      asAgent('reviewer_correctness')
-    );
-    expect(task).toMatchObject({
-      stage: 'reviewing',
-      reviews: { reviewer_correctness: 'changes' }
-    });
+    let task = pushed(driver);
     expect(nextAgentRoles(task)).toEqual(['reviewer_spec']);
     task = driver.step(
       task,
@@ -1277,6 +1269,29 @@ describe('agent reviews', () => {
     );
     expect(task).toMatchObject({ stage: 'building', fixRounds: 1, reviews: {} });
     expect(nextAgentRoles(task)).toEqual(['builder']);
+  });
+
+  test('the correctness reviewer starts once the spec reviewer approved, and decides the round', () => {
+    const driver = createDriver([owner]);
+    const task = driver.step(
+      pushed(driver),
+      { type: 'review', verdict: 'approve', notes: '' },
+      asAgent('reviewer_spec')
+    );
+    expect(task).toMatchObject({ stage: 'reviewing', reviews: { reviewer_spec: 'approve' } });
+    expect(nextAgentRoles(task)).toEqual(['reviewer_correctness']);
+    const back = driver.step(
+      task,
+      { type: 'review', verdict: 'changes', notes: 'Handle the empty list.' },
+      asAgent('reviewer_correctness')
+    );
+    expect(back).toMatchObject({ stage: 'building', fixRounds: 1, reviews: {} });
+    const approved = driver.step(
+      task,
+      { type: 'review', verdict: 'approve', notes: '' },
+      asAgent('reviewer_correctness')
+    );
+    expect(approved.stage).toBe('choosing');
   });
 
   test('a reviewer that already gave its verdict is not due again on the same head', () => {
@@ -1340,7 +1355,7 @@ describe('reviews on GitHub', () => {
     });
   });
 
-  test('a review while the agent reviewers still run waits for them and joins their fix round', () => {
+  test('a review while the spec reviewer runs waits for it, then starts no other reviewer', () => {
     const driver = createDriver([owner]);
     let task = driver.step(
       dispatchAgent(driver, toReady(driver, PAGE_PATHS)),
@@ -1349,8 +1364,22 @@ describe('reviews on GitHub', () => {
     );
     task = driver.step(task, review('abc'), engine);
     expect(task).toMatchObject({ stage: 'reviewing', reviews: { github: 'changes' } });
-    expect(nextAgentRoles(task)).toEqual(['reviewer_spec', 'reviewer_correctness']);
+    expect(nextAgentRoles(task)).toEqual(['reviewer_spec']);
     task = driver.step(task, approve, asAgent('reviewer_spec'));
+    expect(task).toMatchObject({ stage: 'building', fixRounds: 1, reviews: {} });
+  });
+
+  test('a review while the correctness reviewer runs waits for it and joins its fix round', () => {
+    const driver = createDriver([owner]);
+    let task = driver.step(
+      dispatchAgent(driver, toReady(driver, PAGE_PATHS)),
+      pushTo('abc'),
+      asAgent('builder')
+    );
+    task = driver.step(task, approve, asAgent('reviewer_spec'));
+    task = driver.step(task, review('abc'), engine);
+    expect(task).toMatchObject({ stage: 'reviewing' });
+    expect(nextAgentRoles(task)).toEqual(['reviewer_correctness']);
     task = driver.step(task, approve, asAgent('reviewer_correctness'));
     expect(task).toMatchObject({ stage: 'building', fixRounds: 1, reviews: {} });
   });
