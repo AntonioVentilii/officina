@@ -159,6 +159,10 @@ export interface Run {
   readonly agentVersion: number;
   readonly stage: string;
   readonly status: 'running' | 'succeeded' | 'failed' | 'cancelled';
+  /** The model the session ran at, its effort and why; null for runs from before the choice. */
+  readonly model: string | null;
+  readonly effort: string | null;
+  readonly modelReason: string | null;
   readonly costCents: number | null;
   readonly startedAt: string | null;
   readonly finishedAt: string | null;

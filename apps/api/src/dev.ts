@@ -19,6 +19,7 @@ import {
   linkPullRequest,
   listRunningDemoRuns,
   migrate,
+  recordRunModel,
   resetDemoSchema,
   saveSpecVersion,
   setDemoRunDuration,
@@ -29,7 +30,7 @@ import {
   upsertProject,
   upsertWorkspace
 } from '@officina/db';
-import { RUNNER } from '@officina/runner';
+import { PINNED_MODELS, ROLE_MODELS, RUNNER, isRunnerRole } from '@officina/runner';
 import { Pool } from 'pg';
 import { createApp } from './app';
 import { startRealtime } from './realtime';
@@ -173,6 +174,14 @@ const run = async (
     runner: RUNNER
   });
   if (!claim.ok) throw new Error('run not started');
+  if (isRunnerRole(role)) {
+    const { tier, effort } = ROLE_MODELS[role];
+    await recordRunModel(demo.pool, claim.runId, {
+      model: PINNED_MODELS[tier],
+      effort,
+      reason: 'role default'
+    });
+  }
   await backdateDemoRunStart(demo.pool, claim.runId, `sesn_demo_${claim.runId.slice(0, 8)}`);
   await appendRunEvent(
     demo.pool,

@@ -162,6 +162,10 @@ export interface RunRow {
   readonly role: string;
   readonly agentVersion: number;
   readonly status: string;
+  /** What the session ran at and why; `null` for runs from before the engine chose per step. */
+  readonly model: string | null;
+  readonly effort: string | null;
+  readonly modelReason: string | null;
   readonly costCents: number | null;
   readonly sessionId: string | null;
   readonly result: unknown;
@@ -174,6 +178,7 @@ export interface RunRow {
 const RUN_COLUMNS = `
   r.id, r.task_id as "taskId", t.number as "taskNumber", t.title as "taskTitle", r.stage,
   r.agent_role as role, r.agent_version as "agentVersion", r.status,
+  r.model, r.effort, r.model_reason as "modelReason",
   r.list_cost_cents as "costCents", r.external_id as "sessionId", r.result,
   r.started_at as "startedAt", r.finished_at as "finishedAt", r.created_at as "createdAt",
   (select count(*) from run_events e where e.run_id = r.id)::int as "eventCount"`;
@@ -284,12 +289,19 @@ export const listProjectMemberProfiles = async (db: Queryable, projectId: string
     )
   ).rows;
 
-/** The changed paths of the task's latest push, as the engine read them from GitHub. */
-export const latestPushedPaths = async (db: Queryable, taskId: string): Promise<string[]> =>
+/** The paths and size of the task's latest push, as the engine read them from GitHub. */
+export const latestPush = async (
+  db: Queryable,
+  taskId: string
+): Promise<{ changedPaths: string[]; diffLines: number } | null> =>
   (
-    await db.query<{ paths: string[] }>(
-      `select payload->'changedPaths' as paths from task_events
-       where task_id = $1 and type = 'pushed' order by id desc limit 1`,
+    await db.query<{ changedPaths: string[]; diffLines: number }>(
+      `select payload->'changedPaths' as "changedPaths", (payload->>'diffLines')::int as "diffLines"
+       from task_events where task_id = $1 and type = 'pushed' order by id desc limit 1`,
       [taskId]
     )
-  ).rows[0]?.paths ?? [];
+  ).rows[0] ?? null;
+
+/** The changed paths of the task's latest push, as the engine read them from GitHub. */
+export const latestPushedPaths = async (db: Queryable, taskId: string): Promise<string[]> =>
+  (await latestPush(db, taskId))?.changedPaths ?? [];

@@ -3,6 +3,7 @@ import { appendRunEvent, finishRun, setRunExternalId } from '@officina/db';
 import { executeRun, type RunReport, type RunnerRole } from '@officina/runner';
 import type { ClaimedStep } from './claim';
 import type { EngineDependencies, StepResult } from './step';
+import { roleModel } from './step-model';
 
 /** Learning is cheap reading; a cap well below any build keeps it that way. */
 const LEARNER_BUDGET_CENTS = 300;
@@ -22,6 +23,7 @@ const runLearner = async (
     session: {
       agentId: agent.externalAgentId,
       agentVersion: agent.version,
+      model: await roleModel(deps, step, 'learner'),
       environmentId,
       title: `Officina #${context.number} learner`,
       metadata: { task_id: context.task.id, run_id: runId, role: 'learner' },

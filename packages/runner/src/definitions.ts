@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { AGENT_ROLES, OUTPUT_SCHEMAS, isBuildRole, type AgentRole } from '@officina/core';
 import type { AgentCreateParams } from '@anthropic-ai/sdk/resources/beta/agents/agents';
 import { z } from 'zod';
-import { PINNED_MODELS } from './models';
+import { PINNED_MODELS, type ModelTier, type TierModels } from './models';
 import { loadPrompt, loadStandard, withStandard } from './standard';
 
 export type AgentTools = NonNullable<AgentCreateParams['tools']>;
@@ -26,18 +26,42 @@ const WRITE_TOOLS_OFF: AgentToolConfig[] = [
   { name: 'edit', type: 'edit', enabled: false }
 ];
 
-export type AgentEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+/** The effort levels from the least thinking to the most. */
+export const AGENT_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type AgentEffort = (typeof AGENT_EFFORTS)[number];
 
 export interface AgentModel {
   readonly id: string;
   readonly effort: AgentEffort;
 }
 
+/** A model by its tier, before the tier is resolved to an id. */
+export interface ModelChoice {
+  readonly tier: ModelTier;
+  readonly effort: AgentEffort;
+}
+
 /**
- * Set explicitly because the default moves between releases (Opus 5.5 dropped it to medium), and
- * every role's output feeds a decision people rely on.
+ * What each role runs on when nothing about the task says otherwise: the agent's own model, and
+ * where the engine's choice for a step starts (`chooseModel` in the engine). Effort is set
+ * explicitly because the default moves between releases (Opus 5.5 dropped it to medium).
  */
-export const AGENT_EFFORT: AgentEffort = 'high';
+export const ROLE_MODELS: Readonly<Record<RunnerRole, ModelChoice>> = {
+  interviewer: { tier: 'haiku', effort: 'low' },
+  spec: { tier: 'sonnet', effort: 'medium' },
+  builder: { tier: 'sonnet', effort: 'medium' },
+  reviewer_spec: { tier: 'sonnet', effort: 'medium' },
+  reviewer_correctness: { tier: 'sonnet', effort: 'medium' },
+  chooser: { tier: 'haiku', effort: 'low' },
+  learner: { tier: 'haiku', effort: 'low' },
+  onboarder: { tier: 'sonnet', effort: 'medium' }
+};
+
+/** A choice with its tier resolved to the id `models` names for it. */
+export const modelFor = (choice: ModelChoice, models: TierModels): AgentModel => ({
+  id: models[choice.tier],
+  effort: choice.effort
+});
 
 export interface AgentDefinition {
   readonly role: RunnerRole;
@@ -62,7 +86,7 @@ export const resultToolInputSchema = (role: RunnerRole) => {
 export const buildDefinition = (
   role: RunnerRole,
   system: string,
-  modelId: string = PINNED_MODELS.opus
+  models: TierModels = PINNED_MODELS
 ): AgentDefinition => {
   const disabled: AgentToolConfig[] = [
     // Web access is off for every role: task text is untrusted, and nothing here needs the web.
@@ -86,7 +110,7 @@ export const buildDefinition = (
     }
   ];
   const name = `officina-${role.replaceAll('_', '-')}`;
-  const model: AgentModel = { id: modelId, effort: AGENT_EFFORT };
+  const model = modelFor(ROLE_MODELS[role], models);
   const hash = createHash('sha256')
     .update(JSON.stringify({ name, model, system, tools }))
     .digest('hex');
@@ -99,12 +123,12 @@ export const buildDefinition = (
  */
 export const loadDefinitions = async (
   promptsDir: string,
-  modelId: string = PINNED_MODELS.opus
+  models: TierModels = PINNED_MODELS
 ): Promise<AgentDefinition[]> => {
   const standard = await loadStandard();
   return Promise.all(
     RUNNER_ROLES.map(async (role) =>
-      buildDefinition(role, withStandard(await loadPrompt(promptsDir, role), standard), modelId)
+      buildDefinition(role, withStandard(await loadPrompt(promptsDir, role), standard), models)
     )
   );
 };

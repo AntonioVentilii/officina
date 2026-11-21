@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { loadAgentVersions, migrate } from '@officina/db';
 import { Pool } from 'pg';
 import { CONFIG_YAML } from '../../../packages/core/test/fixtures';
-import { RUNNER_ROLES } from '@officina/runner';
+import { PINNED_MODELS, RUNNER_ROLES } from '@officina/runner';
 import { createFakePort } from '../../../packages/runner/test/fake-port';
 import { SetupError, addProject, environmentNameFor, setupAgents, type SetupGitHub } from '../src';
 
@@ -131,10 +131,10 @@ describe.skipIf(!url)('setup', () => {
   test('agent setup syncs every role once and then reports no changes', async () => {
     const agents = createFakePort(() => []);
     const promptsDir = join(import.meta.dir, '..', '..', '..', 'agents');
-    expect((await setupAgents(pool, agents, promptsDir, 'claude-opus-5-5')).changed).toHaveLength(
+    expect((await setupAgents(pool, agents, promptsDir, PINNED_MODELS)).changed).toHaveLength(
       RUNNER_ROLES.length
     );
     expect(await loadAgentVersions(pool)).toHaveLength(RUNNER_ROLES.length);
-    expect((await setupAgents(pool, agents, promptsDir, 'claude-opus-5-5')).changed).toEqual([]);
+    expect((await setupAgents(pool, agents, promptsDir, PINNED_MODELS)).changed).toEqual([]);
   });
 });

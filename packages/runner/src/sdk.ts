@@ -83,7 +83,13 @@ export const createSdkPort = (client: Anthropic): ManagedAgentsPort => ({
   },
   async createSession(request) {
     const params: SessionCreateParams = {
-      agent: { type: 'agent', id: request.agentId, version: request.agentVersion },
+      // The engine picks each step's model, so one agent per role serves every tier.
+      agent: {
+        type: 'agent_with_overrides',
+        id: request.agentId,
+        version: request.agentVersion,
+        model: { id: request.model.id, effort: request.model.effort }
+      },
       environment_id: request.environmentId,
       title: request.title,
       metadata: { ...request.metadata },

@@ -161,6 +161,20 @@ describe('project config', () => {
     ).toBe(false);
   });
 
+  test('no path asks for the strongest model unless the project names its own', () => {
+    const none = parseProjectConfig({ version: 1, docs: { entry: 'AGENTS.md' } });
+    expect(none.ok && none.config.models.strongPaths).toEqual([]);
+    const named = parseProjectConfig({
+      version: 1,
+      docs: { entry: 'AGENTS.md' },
+      models: { strong_paths: ['src/engine/**'] }
+    });
+    expect(named.ok && named.config.models.strongPaths).toEqual(['src/engine/**']);
+    expect(
+      parseProjectConfig({ version: 1, docs: { entry: 'AGENTS.md' }, models: { tier: 'opus' } }).ok
+    ).toBe(false);
+  });
+
   test('auto_verify is a green-lane setting only', () => {
     const green = parseProjectConfig({
       version: 1,

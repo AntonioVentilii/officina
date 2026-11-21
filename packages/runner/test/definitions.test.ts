@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import { isBuildRole } from '@officina/core';
 import {
+  PINNED_MODELS,
   RESULT_TOOL,
   RUNNER_ROLES,
   buildDefinition,
@@ -54,10 +55,23 @@ describe('agent definitions', () => {
     expect(buildDefinition('spec', 'a').hash).toBe(buildDefinition('spec', 'a').hash);
   });
 
-  test('the model carries an explicit effort, and a new model id means a new version', () => {
-    const definition = buildDefinition('builder', 'prompt', 'claude-opus-6');
-    expect(definition.model).toEqual({ id: 'claude-opus-6', effort: 'high' });
-    expect(definition.hash).not.toBe(buildDefinition('builder', 'prompt', 'claude-opus-5-5').hash);
+  test("each role's agent runs on its own tier at an explicit effort, and a new id means a new version", () => {
+    const models = { haiku: 'claude-haiku-6', sonnet: 'claude-sonnet-6', opus: 'claude-opus-6' };
+    expect(buildDefinition('builder', 'prompt', models).model).toEqual({
+      id: 'claude-sonnet-6',
+      effort: 'medium'
+    });
+    expect(buildDefinition('chooser', 'prompt', models).model).toEqual({
+      id: 'claude-haiku-6',
+      effort: 'low'
+    });
+    expect(buildDefinition('builder', 'prompt', models).hash).not.toBe(
+      buildDefinition('builder', 'prompt', PINNED_MODELS).hash
+    );
+    // A tier the role does not run on changes nothing.
+    expect(
+      buildDefinition('builder', 'prompt', { ...PINNED_MODELS, opus: 'claude-opus-7' }).hash
+    ).toBe(buildDefinition('builder', 'prompt', PINNED_MODELS).hash);
   });
 
   test('every runner role has a checked-in prompt', async () => {

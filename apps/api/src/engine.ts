@@ -34,6 +34,7 @@ import {
   type ManagedAgentsPort,
   type ModelResolver,
   type RunnerRole,
+  resolveTiers,
   SESSION_DEADLINE_MS
 } from '@officina/runner';
 import type { Pool } from 'pg';
@@ -117,6 +118,7 @@ export const startEngine = async (input: {
     pool: input.pool,
     github: input.github,
     agents: input.agents,
+    models: input.models,
     publicUrl: input.publicUrl,
     promptsDir: input.promptsDir,
     liveRuns
@@ -131,9 +133,9 @@ export const startEngine = async (input: {
   if (input.promptsDir) {
     // A failed sync must not keep the board down: the versions recorded last time still run.
     try {
-      const model = await input.models.resolve('opus');
-      const { changed } = await setupAgents(input.pool, input.agents, input.promptsDir, model.id);
-      input.log('agents synced', { model: model.id, changed });
+      const models = await resolveTiers(input.models);
+      const { changed } = await setupAgents(input.pool, input.agents, input.promptsDir, models);
+      input.log('agents synced', { models, changed });
     } catch (error) {
       input.log('agent sync failed, keeping the recorded versions', {
         error: (error as Error).message

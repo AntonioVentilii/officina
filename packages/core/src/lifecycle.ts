@@ -1,12 +1,6 @@
+import { isAgentDocsPath } from './agent-docs';
 import { describeUnlisted, unlistedFiles, type CatalogPages } from './catalogs';
-import {
-  isAgentDocsPath,
-  isGate,
-  type Gate,
-  type Policy,
-  type ProjectConfig,
-  type Requirement
-} from './config';
+import { isGate, type Gate, type Policy, type ProjectConfig, type Requirement } from './config';
 import {
   allowsDiff,
   diffHold,

@@ -5,6 +5,7 @@ export * from './handoffs';
 export * from './lanes';
 export * from './allowance';
 export * from './config';
+export * from './agent-docs';
 export * from './policies';
 export * from './lifecycle';
 export * from './subtasks';

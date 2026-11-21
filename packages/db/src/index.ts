@@ -4,6 +4,7 @@ export * from './task-history';
 export * from './task-links';
 export * from './github';
 export * from './runs';
+export * from './run-models';
 export * from './run-refs';
 export * from './run-status';
 export * from './run-recovery';

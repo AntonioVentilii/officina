@@ -26,8 +26,10 @@ const env = z
     ANTHROPIC_SERVICE_ACCOUNT_ID: z.string().min(1).optional(),
     ANTHROPIC_WORKSPACE_ID: z.string().min(1).optional(),
     ANTHROPIC_API_KEY: z.string().min(1).optional(),
-    // Pins the agents' model; unset, they run the newest Opus the Models API lists.
+    // Pin each tier's model; unset, a tier runs the newest of its family the Models API lists.
     ANTHROPIC_MODEL: z.string().min(1).optional(),
+    ANTHROPIC_SONNET_MODEL: z.string().min(1).optional(),
+    ANTHROPIC_HAIKU_MODEL: z.string().min(1).optional(),
     SCHEDULER_INTERVAL_MS: z.coerce.number().int().positive().default(15_000),
     // Sign-in cookies, OAuth codes and the connector's tokens travel to this address, so anything
     // but the local machine must be https.
@@ -147,7 +149,11 @@ engine =
         agents,
         models: createModelResolver({
           listModels: () => agents.listModels(),
-          env: { ANTHROPIC_MODEL: env.ANTHROPIC_MODEL },
+          env: {
+            ANTHROPIC_MODEL: env.ANTHROPIC_MODEL,
+            ANTHROPIC_SONNET_MODEL: env.ANTHROPIC_SONNET_MODEL,
+            ANTHROPIC_HAIKU_MODEL: env.ANTHROPIC_HAIKU_MODEL
+          },
           log
         }),
         intervalMs: env.SCHEDULER_INTERVAL_MS,
