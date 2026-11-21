@@ -1,9 +1,13 @@
-import { WITH_PULL_REQUEST } from '@officina/core';
+import { branchForLearning, editsProject, WITH_PULL_REQUEST } from '@officina/core';
 import {
+  clearAcceptAttempt,
+  listAcceptsToCheck,
   listLearningPullRequests,
   loadTaskContext,
   markLearningPullRequestsClosed,
-  markLearningsApplied
+  markLearningsApplied,
+  recordLeftAccept,
+  type AcceptToCheck
 } from '@officina/db';
 import { eachTaskOnItsOwn, type TaskFailure } from '@officina/engine';
 import type { GitHubClient } from '@officina/github';
@@ -67,6 +71,61 @@ export const catchUpLearningPullRequests = async (
         await markLearningPullRequestsClosed(pool, learning.repo, learning.pullRequest);
     } catch (error) {
       failures.push({ pullRequest: learning.pullRequest, error: (error as Error).message });
+    }
+  }
+  return failures;
+};
+
+/**
+ * Records the pull request a marked accept left from the branch of the learning's current edit,
+ * the only one holding the edit the card shows: accepted while it is open, applied once merged.
+ * The mark is cleared when the branch has none, when it was closed unmerged (the edit never landed,
+ * so the learning is offered again), or when it was not recorded (`recordLeftAccept`).
+ */
+const catchUpLeftAccept = async (
+  pool: Pool,
+  github: Pick<GitHubClient, 'pullRequestFrom'>,
+  learning: AcceptToCheck
+) => {
+  const clear = () => clearAcceptAttempt(pool, learning.id, learning.attempt);
+  // An agent learning opens no pull request, so there is nothing to look for.
+  if (!editsProject(learning.target)) return clear();
+  const pr = await github.pullRequestFrom({
+    installationId: learning.installationId,
+    repo: learning.repo,
+    branch: branchForLearning(learning),
+    base: learning.defaultBranch
+  });
+  if (!pr || pr.state === 'closed') return clear();
+  const recorded = await recordLeftAccept(pool, {
+    id: learning.id,
+    attempt: learning.attempt,
+    status: pr.state === 'merged' ? 'applied' : 'accepted',
+    prNumber: pr.number,
+    prUrl: pr.url
+  });
+  if (!recorded) await clear();
+};
+
+/**
+ * Records the proposed learnings of a project whose accept opened the pull request but lost its
+ * record (the process stopped, the write failed, GitHub's answer was lost, or the claim was taken
+ * over), so the card stops offering Accept for a pull request already open or merged. Each accept
+ * marks its learning; once no claim is live, the branch is read and the mark recorded or cleared,
+ * so each attempt is looked at once. Each learning is tried on its own; the failures are returned
+ * for the log and tried again on the next pass.
+ */
+export const catchUpLeftAccepts = async (
+  pool: Pool,
+  github: Pick<GitHubClient, 'pullRequestFrom'>,
+  projectId: string
+): Promise<{ learningId: string; error: string }[]> => {
+  const failures: { learningId: string; error: string }[] = [];
+  for (const learning of await listAcceptsToCheck(pool, projectId)) {
+    try {
+      await catchUpLeftAccept(pool, github, learning);
+    } catch (error) {
+      failures.push({ learningId: learning.id, error: (error as Error).message });
     }
   }
   return failures;

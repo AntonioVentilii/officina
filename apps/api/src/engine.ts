@@ -41,7 +41,7 @@ import {
 import type { Pool } from 'pg';
 import { collectEachProject, startScheduler, type Scheduler } from './scheduler';
 import { setupAgents } from './setup';
-import { catchUpLearningPullRequests, catchUpPullRequests } from './catch-up';
+import { catchUpLearningPullRequests, catchUpLeftAccepts, catchUpPullRequests } from './catch-up';
 
 const PURGE_INTERVAL_MS = 60 * 60 * 1000;
 
@@ -207,6 +207,12 @@ export const startEngine = async (input: {
     );
     for (const failure of unapplied) {
       input.log('learning pull request catch-up failed', { projectId, ...failure });
+    }
+    const unrecorded = await catchUpLeftAccepts(input.pool, input.github, projectId).catch(
+      (error: unknown) => [{ error: (error as Error).message }]
+    );
+    for (const failure of unrecorded) {
+      input.log('learning accept catch-up failed', { projectId, ...failure });
     }
     const unopened = await openMissingPullRequests(
       input.pool,
