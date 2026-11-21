@@ -2,11 +2,9 @@ import { errorText, NO_USAGE, type AgentOutput, type RunUsage } from '@officina/
 import { appendRunEvent, finishRun, setRunExternalId } from '@officina/db';
 import { executeRun, type RunReport, type RunnerRole } from '@officina/runner';
 import type { ClaimedStep } from './claim';
+import { runBudgetCents } from './spend';
 import type { EngineDependencies, StepResult } from './step';
 import { roleModel } from './step-model';
-
-/** Learning is cheap reading; a cap well below any build keeps it that way. */
-const LEARNER_BUDGET_CENTS = 300;
 
 /** Runs the learner in one session on a read-only token, with a brief and the checks its result must pass. */
 const runLearner = async (
@@ -32,7 +30,8 @@ const runLearner = async (
         token,
         branch: context.defaultBranch
       },
-      budgetCents: LEARNER_BUDGET_CENTS
+      // Learning is cheap reading; the role's cap keeps it well below any build.
+      budgetCents: runBudgetCents('learner', Infinity)
     },
     validate,
     // Only build runs are failed outside their step (`failTakenOverRuns`); a learner run never is.

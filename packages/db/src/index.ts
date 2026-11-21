@@ -7,6 +7,7 @@ export * from './github';
 export * from './runs';
 export * from './run-models';
 export * from './run-refs';
+export * from './run-spend';
 export * from './run-status';
 export * from './run-recovery';
 export * from './projects';

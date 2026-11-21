@@ -133,7 +133,11 @@ const runClaimed = async (step: Step, reported: (usage: RunUsage) => void): Prom
   const refsBefore = step.builds ? await recordStartingRefs(step, Date.now()) : null;
   let report: RunReport;
   try {
-    report = await withRunToken(step, (token, live) => runSession(step, inputs, token, live));
+    const session = {
+      ...inputs,
+      taskBranchHead: refsBefore?.refs.branches[step.taskBranch] ?? null
+    };
+    report = await withRunToken(step, (token, live) => runSession(step, session, token, live));
     reported(report.usage);
   } catch (error) {
     // A session that throws may have pushed somewhere too, and its retry starts from the refs as
