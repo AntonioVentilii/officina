@@ -126,6 +126,8 @@ const fakeGitHub = (
     /** The shas already on the default branch. */
     onDefault?: string[];
     branchHead?: string;
+    /** The size of every pushed change; 3 lines by default. */
+    diffLines?: number;
     addedPaths?: string[];
     written?: { commitSha: string; parentSha: string };
     /** The pull request's head; by default the branch head after any status commit written. */
@@ -191,7 +193,7 @@ const fakeGitHub = (
         headSha: options.branchHead ?? 'sha1',
         changedPaths: [COPY, SPEC],
         addedPaths: options.addedPaths ?? [],
-        diffLines: 3
+        diffLines: options.diffLines ?? 3
       };
     },
     readFile: async (...args: unknown[]) => {
@@ -484,6 +486,8 @@ describe.skipIf(!url)('engine', () => {
     expect(github.calls.some((call) => call.method === 'failedChecks')).toBe(false);
     await openMissingPullRequests(pool, github.port, [taskId], PUBLIC_URL);
     expect(await linkedPullRequest(taskId)).toBe(42);
+    // Once its pull request is open, the catch-up reads the checks no build round read.
+    expect((await loadTask(pool, taskId))?.task.stage).toBe('building');
   });
 
   test('ticks carry a ready task through build, parallel reviews and choosing', async () => {
@@ -618,6 +622,32 @@ describe.skipIf(!url)('engine', () => {
     // Started before the hold, it finished after it: its cost belongs to the new window.
     await run('reviewer_spec', 300, '2 hours', '0 seconds');
     expect(await taskSpendCents(pool, taskId)).toBe(300);
+
+  test('a build sent back after the size check held its head works on the task branch, not from the default branch', async () => {
+    const withBranch = { ...REFS, branches: { ...REFS.branches, 'officina/task-1': 'sha1' } };
+    const github = fakeGitHub({ diffLines: 2000, refs: [REFS, REFS, withBranch] });
+    const agents = createFakePort(succeed);
+    const deps = { pool, github: github.port, agents, publicUrl: PUBLIC_URL };
+    const taskId = await taskInReady(github, agents);
+    await tick(deps, seeded.projectId);
+    const held = (await loadTask(pool, taskId))!.task;
+    expect(held).toMatchObject({ stage: 'building', headSha: null });
+    expect(held.blocked?.allowance?.headSha).toBe('sha1');
+
+    await applyOrThrow(
+      pool,
+      taskId,
+      { type: 'answer', text: 'Option (b): Reduce the change', option: 'b' },
+      seeded.owner
+    );
+    await runAgentStep(deps, taskId, 'builder');
+    const builds = agents.sessions.filter((session) => session.metadata.role === 'builder');
+    expect(builds.map((session) => session.repository.branch)).toEqual(['main', 'officina/task-1']);
+    const briefs = agents.sent
+      .map((sent) => (sent.events[0] as { text?: string }).text ?? '')
+      .filter((text) => text.includes('role: builder'));
+    expect(briefs[0]).toContain('First round');
+    expect(briefs[1]).toContain('Fix round');
   });
 
   test('a checklist GitHub refuses is recorded on the run and neither fails it nor blocks the task', async () => {

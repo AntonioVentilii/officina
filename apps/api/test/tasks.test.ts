@@ -385,10 +385,10 @@ describe.skipIf(!url)('task commands', () => {
     );
     expect(comments.rows.at(-1)?.body).toBe('Option (c): Allow 700 lines for this task');
 
-    await push('fits', 700);
-    expect((await pool.query('select stage from tasks where id = $1', [taskId])).rows[0]).toEqual({
-      stage: 'reviewing'
-    });
+    // The held head goes to review as it is, without being built again.
+    expect(
+      (await pool.query('select stage, head_sha from tasks where id = $1', [taskId])).rows[0]
+    ).toEqual({ stage: 'reviewing', head_sha: 'big' });
 
     // A head that turns the task stricter leaves the green allowance out of force, and says so.
     await applyOrThrow(

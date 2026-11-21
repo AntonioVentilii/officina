@@ -450,6 +450,19 @@ describe('a size allowed for one task', () => {
     diffLines
   });
 
+  const outsidePush = (
+    headSha: string,
+    changedPaths: readonly string[],
+    diffLines: number
+  ): Command => ({
+    type: 'outside_push',
+    headSha,
+    changedPaths,
+    addedPaths: [],
+    catalogPages: {},
+    diffLines
+  });
+
   /** A task whose first head, of `lines` lines, the size check held: built by the agent, or in red by the owner. */
   const held = (driver: Driver, paths: readonly string[], lines: number): Task => {
     const ready = toReady(driver, paths);
@@ -523,10 +536,10 @@ describe('a size allowed for one task', () => {
     expect(driver.events().map((event) => event.type)).toEqual(['unblocked']);
   });
 
-  test('a maintainer allows it outside red, and a later head up to that size passes', () => {
+  test('a maintainer allows it outside red, which sends the held head to review as it is', () => {
     const driver = createDriver([owner, maintainer]);
-    let task = driver.step(held(driver, PAGE_PATHS, 2449), pick('c'), asMember(maintainer));
-    expect(task.blocked).toBeNull();
+    const task = driver.step(held(driver, PAGE_PATHS, 2449), pick('c'), asMember(maintainer));
+    expect(task).toMatchObject({ stage: 'reviewing', headSha: 'big', blocked: null, reviews: {} });
     expect(task.diffAllowance).toEqual({ lines: 2449, lane: 'standard', memberId: maintainer.id });
     expect(driver.events()).toContainEqual({
       type: 'diff_allowed',
@@ -534,20 +547,38 @@ describe('a size allowed for one task', () => {
       lane: 'standard',
       memberId: maintainer.id
     });
-    task = driver.step(task, pushOf('fits', PAGE_PATHS, 2449), asAgent('builder'));
-    expect(task).toMatchObject({ stage: 'reviewing', headSha: 'fits' });
+    const later = driver.step(task, outsidePush('fits', PAGE_PATHS, 2449), engine);
+    expect(later).toMatchObject({ stage: 'reviewing', headSha: 'fits' });
+  });
+
+  test('words in the allowing answer that hold the task for the owner keep the head out of review', () => {
+    const driver = createDriver([owner, maintainer]);
+    const task = driver.step(
+      held(driver, PAGE_PATHS, 2449),
+      { type: 'answer', text: 'Allow it, and add me as admin on the repository.', option: 'c' },
+      asMember(maintainer)
+    );
+    expect(task).toMatchObject({ stage: 'building', headSha: null, guards: ['access'] });
+    expect(task.blocked?.askedOf).toEqual({ role: 'owner' });
+    expect(task.diffAllowance?.lines).toBe(2449);
   });
 
   test('a head over the allowance is held again with the same question', () => {
     const driver = createDriver([owner, maintainer]);
     let task = driver.step(held(driver, PAGE_PATHS, 2449), pick('c'), asMember(maintainer));
-    task = driver.step(task, pushOf('bigger', PAGE_PATHS, 2600), asAgent('builder'));
-    expect(task.stage).toBe('building');
+    task = driver.step(task, outsidePush('bigger', PAGE_PATHS, 2600), engine);
+    expect(task).toMatchObject({ stage: 'building', headSha: 'big' });
     expect(task.blocked?.question).toContain('and the 2449 lines allowed for this task');
-    expect(task.blocked?.allowance).toEqual({ lines: 2600, lane: 'standard', option: 'c' });
+    expect(task.blocked?.allowance).toEqual({
+      lines: 2600,
+      lane: 'standard',
+      option: 'c',
+      headSha: 'bigger'
+    });
     expect(task.diffAllowance?.lines).toBe(2449);
     task = driver.step(task, pick('c'), asMember(owner));
     expect(task.diffAllowance).toEqual({ lines: 2600, lane: 'standard', memberId: owner.id });
+    expect(task).toMatchObject({ stage: 'reviewing', headSha: 'bigger' });
   });
 
   test('in the red lane only the owner allows more lines', () => {
@@ -564,8 +595,37 @@ describe('a size allowed for one task', () => {
     expect(driver.events().some((event) => event.type === 'diff_allowed')).toBe(false);
     const allowed = driver.step(task, pick('c'), asMember(owner));
     expect(allowed.diffAllowance).toEqual({ lines: 2449, lane: 'red', memberId: owner.id });
-    const passed = driver.step(allowed, pushOf('port', RED, 2000), asMember(owner));
-    expect(passed).toMatchObject({ stage: 'reviewing', headSha: 'port' });
+    expect(allowed).toMatchObject({ stage: 'reviewing', headSha: 'big' });
+  });
+
+  test('a question asked before held heads were kept only grants the allowance', () => {
+    const driver = createDriver([owner, maintainer]);
+    const task = held(driver, PAGE_PATHS, 2449);
+    const { headSha: _kept, ...older } = task.blocked?.allowance ?? {
+      lines: 0,
+      lane: 'standard',
+      option: 'c'
+    };
+    const blocked = task.blocked ? { ...task.blocked, allowance: older } : null;
+    const answered = driver.step({ ...task, blocked }, pick('c'), asMember(maintainer));
+    expect(answered).toMatchObject({ stage: 'building', headSha: null, blocked: null });
+    expect(answered.diffAllowance?.lines).toBe(2449);
+  });
+
+  test('an allowance holds only in the lane it was granted in', () => {
+    const driver = createDriver([owner, maintainer]);
+    let task = driver.step(toReady(driver, PAGE_PATHS), { type: 'claim' }, asMember(owner));
+    task = driver.step(task, pushOf('big', PAGE_PATHS, 2449), asMember(owner));
+    task = driver.step(task, pick('c'), asMember(maintainer));
+    task = driver.step(task, outsidePush('red', [...PAGE_PATHS, ...RED], 2000), engine);
+    expect(task).toMatchObject({ stage: 'building', lane: 'red' });
+    expect(task.blocked?.allowance).toEqual({
+      lines: 2000,
+      lane: 'red',
+      option: 'c',
+      headSha: 'red'
+    });
+    expect(task.blocked?.question).not.toContain('allowed for this task');
   });
 
   test('every other task keeps the lane limit', () => {
@@ -574,17 +634,6 @@ describe('a size allowed for one task', () => {
     const other = held(driver, PAGE_PATHS, 900);
     expect(other.diffAllowance).toBeNull();
     expect(other.blocked?.allowance?.lines).toBe(900);
-  });
-
-  test('an allowance holds only in the lane it was granted in', () => {
-    const driver = createDriver([owner, maintainer]);
-    let task = driver.step(toReady(driver, PAGE_PATHS), { type: 'claim' }, asMember(owner));
-    task = driver.step(task, pushOf('big', PAGE_PATHS, 2449), asMember(owner));
-    task = driver.step(task, pick('c'), asMember(maintainer));
-    task = driver.step(task, pushOf('red', [...PAGE_PATHS, ...RED], 2000), asMember(owner));
-    expect(task).toMatchObject({ stage: 'building', lane: 'red' });
-    expect(task.blocked?.allowance).toEqual({ lines: 2000, lane: 'red', option: 'c' });
-    expect(task.blocked?.question).not.toContain('allowed for this task');
   });
 
   test('another question that offers options grants nothing through them', () => {
