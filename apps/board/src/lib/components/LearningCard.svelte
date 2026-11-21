@@ -76,6 +76,20 @@
     </p>
   {/if}
 
+  {#if learning.status === 'proposed' && learning.duplicateOf}
+    {@const duplicate = learning.duplicateOf}
+    <p class="rewrite faint">
+      Same edit as {#if duplicate.taskNumber}<a href="/tasks/{duplicate.taskNumber}"
+          >“{duplicate.title}”</a
+        >
+        from task {duplicate.taskNumber}{:else}“{duplicate.title}”{/if}, already accepted:
+      <a class="pr" href={duplicate.prUrl} target="_blank" rel="noopener noreferrer">
+        <GitPullRequest size={12} />#{duplicate.prNumber}<ExternalLink size={11} />
+      </a>
+      {duplicate.prState}. Reject this one to clear it.
+    </p>
+  {/if}
+
   {#if work || (learning.status === 'proposed' && learning.canDecide)}
     <LearningDecide {learning} {work} {opensPullRequest} bind:sent />
   {:else if learning.status !== 'proposed'}
