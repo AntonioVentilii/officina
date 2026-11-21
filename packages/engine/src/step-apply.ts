@@ -4,6 +4,7 @@ import {
   questionMarkdown,
   type AgentOutput,
   type RoleOutput,
+  type RunUsage,
   type Task
 } from '@officina/core';
 import {
@@ -203,17 +204,17 @@ export const roleOutputOf = async (
   return pushedOutput(step, built);
 };
 
-/** A valid result, the command input it maps to, and what its session cost. */
+/** A valid result, the command input it maps to, and what its session used. */
 export interface StepOutcome {
   readonly output: AgentOutput<RunnerRole>;
   readonly roleOutput: RoleOutput;
-  readonly costCents: number | null;
+  readonly usage: RunUsage;
 }
 
 /** Applies a valid result to the work the agent saw, then mirrors it to GitHub. */
 export const applyResult = async (
   step: Step,
-  { output, roleOutput, costCents }: StepOutcome,
+  { output, roleOutput, usage }: StepOutcome,
   inputs: StepInputs
 ): Promise<StepResult> => {
   const { pool } = step.deps;
@@ -232,7 +233,7 @@ export const applyResult = async (
   if (!applied.ok) {
     await finishRun(pool, step.runId, {
       status: 'failed',
-      costCents,
+      usage,
       result: { discarded: applied.error, output }
     });
     return { status: 'discarded', reason: applied.error };
@@ -243,7 +244,7 @@ export const applyResult = async (
   if (pullRequest !== null) await redChecksAfter(step, output, applied.task);
   await finishRun(pool, step.runId, {
     status: 'succeeded',
-    costCents,
+    usage,
     result: output
   });
   return { status: 'applied' };

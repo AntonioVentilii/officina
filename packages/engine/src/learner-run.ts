@@ -1,4 +1,4 @@
-import { errorText, type AgentOutput } from '@officina/core';
+import { errorText, NO_USAGE, type AgentOutput } from '@officina/core';
 import { appendRunEvent, finishRun, setRunExternalId } from '@officina/db';
 import { executeRun, type RunReport, type RunnerRole } from '@officina/runner';
 import type { ClaimedStep } from './claim';
@@ -64,7 +64,7 @@ export const learnerRun = async (
       await input.lose();
       await finishRun(pool, runId, {
         status: 'failed',
-        costCents: report.costCents,
+        usage: report.usage,
         result: report.outcome
       });
       return { status: 'discarded', reason: report.outcome.kind };
@@ -73,7 +73,7 @@ export const learnerRun = async (
     await input.keep(output);
     await finishRun(pool, runId, {
       status: 'succeeded',
-      costCents: report.costCents,
+      usage: report.usage,
       result: output
     });
     return { status: 'applied' };
@@ -81,7 +81,7 @@ export const learnerRun = async (
     await input.lose();
     await finishRun(pool, runId, {
       status: 'failed',
-      costCents: null,
+      usage: NO_USAGE,
       result: { error: errorText(error) }
     });
     throw error;

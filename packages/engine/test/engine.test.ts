@@ -4,6 +4,7 @@ import {
   branchForTask,
   ENGINE,
   HANDOFF_NEED_KEYS,
+  NO_USAGE,
   ownerHold,
   type Actor,
   type AgentRole,
@@ -345,11 +346,22 @@ describe.skipIf(!url)('engine', () => {
     expect(spec.rows).toEqual([{ version: 1, body: '# Spec\nChange the settings title.' }]);
 
     const run = (
-      await pool.query('select status, external_id, list_cost_cents from runs where task_id = $1', [
-        taskId
-      ])
+      await pool.query(
+        `select status, external_id, list_cost_cents, input_tokens::int, output_tokens::int,
+           cache_read_tokens::int, cache_write_tokens::int
+         from runs where task_id = $1`,
+        [taskId]
+      )
     ).rows[0];
-    expect(run).toEqual({ status: 'succeeded', external_id: 'sesn_1', list_cost_cents: 12 });
+    expect(run).toEqual({
+      status: 'succeeded',
+      external_id: 'sesn_1',
+      list_cost_cents: 12,
+      input_tokens: 40,
+      output_tokens: 1_500,
+      cache_read_tokens: 90_000,
+      cache_write_tokens: 12_000
+    });
     expect((await pool.query('select 1 from run_events')).rowCount).toBeGreaterThan(0);
 
     expect(agents.sessions[0]!.repository).toEqual({
@@ -1774,7 +1786,7 @@ describe.skipIf(!url)('engine', () => {
       runner: 'managed_agents'
     });
     if (!earlier.ok) throw new Error(earlier.error);
-    await finishRun(pool, earlier.runId, { status: 'succeeded', costCents: null, result: {} });
+    await finishRun(pool, earlier.runId, { status: 'succeeded', usage: NO_USAGE, result: {} });
     await tick({ pool, github: github.port, agents, publicUrl: PUBLIC_URL }, seeded.projectId);
 
     expect((await loadTask(pool, taskId))?.task.blocked?.question).toContain(

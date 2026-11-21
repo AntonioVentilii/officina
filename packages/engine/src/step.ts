@@ -4,7 +4,9 @@ import {
   errorText,
   isBuildRole,
   nextAgentRoles,
+  NO_USAGE,
   type Actor,
+  type RunUsage,
   type Task
 } from '@officina/core';
 import { applyCommand, finishRun } from '@officina/db';
@@ -88,7 +90,7 @@ export interface Step extends ClaimedStep {
  */
 const failAndBlock = async (
   step: Step,
-  run: { readonly costCents: number | null; readonly result: unknown },
+  run: { readonly usage: RunUsage; readonly result: unknown },
   question: string,
   reason: string
 ): Promise<StepResult> => {
@@ -107,14 +109,14 @@ const outcomeOf = async (
   step: Step,
   report: RunReport
 ): Promise<StepOutcome | { readonly reason: string; readonly result: unknown }> => {
-  const { outcome, costCents } = report;
+  const { outcome, usage } = report;
   if (outcome.kind !== 'result') return { reason: describeOutcome(outcome), result: outcome };
   const roleOutput = await roleOutputOf(step, outcome.output);
   if ('wrongBranch' in roleOutput) {
     const reason = `it pushed to ${roleOutput.wrongBranch} instead of ${step.taskBranch}`;
     return { reason, result: outcome.output };
   }
-  return { output: outcome.output, roleOutput, costCents };
+  return { output: outcome.output, roleOutput, usage };
 };
 
 /** From the session to the applied result, for a run already claimed. */
@@ -131,7 +133,7 @@ const runClaimed = async (step: Step): Promise<StepResult> => {
     // they are then: they are checked now or never.
     const result = { error: errorText(error) };
     const moved = refsBefore
-      ? await guardRefs(step, refsBefore, { costCents: null, result })
+      ? await guardRefs(step, refsBefore, { usage: NO_USAGE, result })
       : null;
     if (moved) return moved;
     throw error;
@@ -139,7 +141,7 @@ const runClaimed = async (step: Step): Promise<StepResult> => {
   // Checked whatever the run reported: a failed run may still have pushed somewhere.
   const moved = refsBefore
     ? await guardRefs(step, refsBefore, {
-        costCents: report.costCents,
+        usage: report.usage,
         result: { outcome: report.outcome }
       })
     : null;
@@ -148,7 +150,7 @@ const runClaimed = async (step: Step): Promise<StepResult> => {
   if ('reason' in outcome) {
     return failAndBlock(
       step,
-      { costCents: report.costCents, result: outcome.result },
+      { usage: report.usage, result: outcome.result },
       `The ${step.role} agent could not complete its step: ${outcome.reason}.`,
       outcome.reason
     );
@@ -194,7 +196,7 @@ export const runAgentStep = async (
     ).catch(() => {});
     await finishRun(deps.pool, step.runId, {
       status: 'failed',
-      costCents: null,
+      usage: NO_USAGE,
       result: { error: message }
     });
     throw error;
