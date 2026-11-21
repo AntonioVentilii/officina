@@ -58,6 +58,8 @@ export interface ManagedAgentsPort {
   updateEnvironment(environmentId: string, environment: EnvironmentWrite): Promise<void>;
   createSession(request: SessionRequest): Promise<{ id: string }>;
   openStream(sessionId: string): Promise<AsyncIterable<SessionEvent>>;
+  /** Every event the session has sent so far, oldest first: what a stream opened late missed. */
+  listEvents(sessionId: string): AsyncIterable<SessionEvent>;
   send(sessionId: string, events: readonly OutboundEvent[]): Promise<void>;
   /** The session's list cost and its tokens, read together. */
   sessionUsage(sessionId: string): Promise<RunUsage>;

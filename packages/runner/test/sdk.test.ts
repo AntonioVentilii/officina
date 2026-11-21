@@ -43,6 +43,7 @@ describe('the SDK port', () => {
     const answers: Record<string, unknown> = {
       'POST /v1/sessions': { id: 'sesn_1' },
       'GET /v1/sessions/sesn_1': { id: 'sesn_1', usage },
+      'GET /v1/sessions/sesn_1/events': { data: [RUNNING, TOOL_USE], next_page: null },
       'POST /v1/environments': { id: 'env_1' },
       'POST /v1/environments/env_1': { id: 'env_1' }
     };
@@ -112,6 +113,14 @@ describe('the SDK port', () => {
         }
       }
     ]);
+  });
+
+  test("reads a session's history of events, each with every field", async () => {
+    const { port, calls } = fakeClient();
+    const events = [];
+    for await (const event of port.listEvents('sesn_1')) events.push(event);
+    expect(events).toEqual([RUNNING, TOOL_USE]);
+    expect(calls).toMatchObject([{ method: 'GET', path: '/v1/sessions/sesn_1/events' }]);
   });
 
   test("reads a session's cost in cents and its tokens in one call, cache writes of both lifetimes as one", async () => {
