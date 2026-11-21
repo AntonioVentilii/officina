@@ -379,6 +379,11 @@ describe('guardrails', () => {
         { type: 'review', verdict: 'changes', notes: 'no' },
         asAgent('reviewer_correctness')
       );
+      task = driver.step(
+        task,
+        { type: 'review', verdict: 'approve', notes: '' },
+        asAgent('reviewer_spec')
+      );
       expect(task.stage).toBe('building');
     }
     task = driver.step(
@@ -397,6 +402,11 @@ describe('guardrails', () => {
       task,
       { type: 'review', verdict: 'changes', notes: 'no' },
       asAgent('reviewer_correctness')
+    );
+    task = driver.step(
+      task,
+      { type: 'review', verdict: 'approve', notes: '' },
+      asAgent('reviewer_spec')
     );
     expect(task).toMatchObject({ stage: 'ready', assignee: null, fixRounds: 0 });
     expect(task.blocked?.askedOf).toEqual({ role: 'maintainer' });
@@ -1202,7 +1212,74 @@ describe('who merges', () => {
   });
 });
 
+describe('agent reviews', () => {
+  const pushed = (driver: Driver) =>
+    driver.step(
+      dispatchAgent(driver, toReady(driver, PAGE_PATHS)),
+      {
+        type: 'push',
+        headSha: 'abc',
+        changedPaths: PAGE_PATHS,
+        addedPaths: [],
+        catalogPages: {},
+        diffLines: 40
+      },
+      asAgent('builder')
+    );
+
+  test('a reviewer asking for changes waits for the other, so one fix round answers both', () => {
+    const driver = createDriver([owner]);
+    let task = driver.step(
+      pushed(driver),
+      { type: 'review', verdict: 'changes', notes: 'Handle the empty list.' },
+      asAgent('reviewer_correctness')
+    );
+    expect(task).toMatchObject({
+      stage: 'reviewing',
+      reviews: { reviewer_correctness: 'changes' }
+    });
+    expect(nextAgentRoles(task)).toEqual(['reviewer_spec']);
+    task = driver.step(
+      task,
+      { type: 'review', verdict: 'changes', notes: 'Section 3 is missing.' },
+      asAgent('reviewer_spec')
+    );
+    expect(task).toMatchObject({ stage: 'building', fixRounds: 1, reviews: {} });
+    expect(nextAgentRoles(task)).toEqual(['builder']);
+  });
+
+  test('a reviewer that already gave its verdict is not due again on the same head', () => {
+    const driver = createDriver([owner]);
+    const task = driver.step(
+      pushed(driver),
+      { type: 'review', verdict: 'approve', notes: '' },
+      asAgent('reviewer_spec')
+    );
+    expect(nextAgentRoles(task)).toEqual(['reviewer_correctness']);
+  });
+
+  test("a maintainer's review asking for changes sends the work back at once", () => {
+    const driver = createDriver([owner]);
+    const task = driver.step(
+      pushed(driver),
+      { type: 'review', verdict: 'changes', notes: 'Wrong approach.' },
+      asMember(owner)
+    );
+    expect(task).toMatchObject({ stage: 'building', fixRounds: 1 });
+  });
+});
+
 describe('reviews on GitHub', () => {
+  const approve = { type: 'review', verdict: 'approve', notes: '' } as const;
+  const pushTo = (headSha: string) =>
+    ({
+      type: 'push',
+      headSha,
+      changedPaths: PAGE_PATHS,
+      addedPaths: [],
+      catalogPages: {},
+      diffLines: 40
+    }) as const;
   const review = (headSha: string) =>
     ({
       type: 'github_review',
@@ -1230,6 +1307,21 @@ describe('reviews on GitHub', () => {
       verdict: 'changes',
       githubReviewId: 7
     });
+  });
+
+  test('a review while the agent reviewers still run waits for them and joins their fix round', () => {
+    const driver = createDriver([owner]);
+    let task = driver.step(
+      dispatchAgent(driver, toReady(driver, PAGE_PATHS)),
+      pushTo('abc'),
+      asAgent('builder')
+    );
+    task = driver.step(task, review('abc'), engine);
+    expect(task).toMatchObject({ stage: 'reviewing', reviews: { github: 'changes' } });
+    expect(nextAgentRoles(task)).toEqual(['reviewer_spec', 'reviewer_correctness']);
+    task = driver.step(task, approve, asAgent('reviewer_spec'));
+    task = driver.step(task, approve, asAgent('reviewer_correctness'));
+    expect(task).toMatchObject({ stage: 'building', fixRounds: 1, reviews: {} });
   });
 
   test('a review of an earlier head, or from anyone but the engine, changes nothing', () => {
@@ -1507,7 +1599,7 @@ describe('onboarding', () => {
       task = driver.step(task, { type: 'review', verdict: 'approve', notes: '' }, asAgent(role));
     // A review that asks for changes is a fix round for the onboarder, never a new dispatch.
     const fixing = driver.step(
-      { ...task, stage: 'reviewing', reviews: {} },
+      { ...task, stage: 'reviewing', reviews: { reviewer_spec: 'approve' } },
       { type: 'review', verdict: 'changes', notes: 'name the real paths' },
       asAgent('reviewer_correctness')
     );

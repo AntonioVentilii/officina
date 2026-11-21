@@ -100,6 +100,7 @@ export const buildRoleFor = (kind: TaskKind): BuildRole =>
 /** Every one of these must approve the same head commit before a task leaves review. */
 export const REVIEWER_ROLES = ['reviewer_spec', 'reviewer_correctness'] as const;
 export type ReviewerRole = (typeof REVIEWER_ROLES)[number];
+export type ReviewVerdict = 'approve' | 'changes';
 
 /**
  * The connected app a member acted through: one OAuth grant of the Claude connector. `name` is the
@@ -217,7 +218,11 @@ export interface Task {
   readonly paused: boolean;
   /** Times work went back to building since the last dispatch. */
   readonly fixRounds: number;
-  readonly reviews: Readonly<Partial<Record<ReviewerRole, 'approve'>>>;
+  /**
+   * The verdicts on the head under review so far: each agent reviewer's, and `github` once a review
+   * left on the pull request asked for changes while they still ran.
+   */
+  readonly reviews: Readonly<Partial<Record<ReviewerRole | 'github', ReviewVerdict>>>;
   /** The approval chooser's decision for each human gate. */
   readonly approvalPlans: Readonly<Partial<Record<Gate, ApprovalPlan>>>;
   /** What the task touches that no agent may handle alone (`GUARDS`); set by rule, only grows. */
@@ -315,7 +320,7 @@ export type Command =
   | ({ readonly type: 'push' } & PushedHead)
   /** The builder answered a GitHub review and found nothing to change, so the head stays. */
   | { readonly type: 'unchanged'; readonly note: string }
-  | { readonly type: 'review'; readonly verdict: 'approve' | 'changes'; readonly notes: string }
+  | { readonly type: 'review'; readonly verdict: ReviewVerdict; readonly notes: string }
   | { readonly type: 'plan_approval'; readonly userVisible: boolean; readonly plan: PlanInput }
   | { readonly type: 'choose'; readonly userVisible: boolean; readonly plan: PlanInput }
   | { readonly type: 'merged' }
@@ -408,7 +413,7 @@ export type DomainEvent =
       readonly type: 'review_recorded';
       /** `github` is a review left on the pull request, such as Copilot's, sent back to the builder. */
       readonly reviewer: ReviewerRole | 'member' | 'github';
-      readonly verdict: 'approve' | 'changes';
+      readonly verdict: ReviewVerdict;
       readonly notes: string;
       readonly by?: string;
       readonly githubReviewId?: number;
@@ -815,7 +820,26 @@ const backToBuilding = (task: Task, context: DecideContext, ...why: DomainEvent[
   return ok(moved, [...why, stageEvent]);
 };
 
-/** Records a review: changes send the work back, and the last approval moves it on to choosing. */
+/**
+ * Records verdicts on the head under review and moves on once every agent reviewer has given one:
+ * back to the build when any asked for changes, a GitHub review's included, so one fix round answers
+ * them all and no reviewer's paid run is thrown away while it still works; else to the chooser.
+ */
+const verdictsIn = (
+  task: Task,
+  context: DecideContext,
+  reviews: Task['reviews'],
+  events: DomainEvent[]
+): Decision => {
+  if (REVIEWER_ROLES.some((role) => reviews[role] === undefined)) {
+    return ok({ ...task, reviews }, events);
+  }
+  if (Object.values(reviews).includes('changes')) return backToBuilding(task, context, ...events);
+  const [moved, stageEvent] = moveTo(task, 'choosing', { reviews });
+  return ok(moved, [...events, stageEvent]);
+};
+
+/** Records a review. A maintainer's own review stands in for the agent reviewers and decides at once. */
 const reviewed = (
   task: Task,
   context: DecideContext,
@@ -828,15 +852,11 @@ const reviewed = (
     verdict: command.verdict,
     notes: command.notes
   };
+  if (reviewer !== 'member') {
+    return verdictsIn(task, context, { ...task.reviews, [reviewer]: command.verdict }, [recorded]);
+  }
   if (command.verdict === 'changes') return backToBuilding(task, context, recorded);
-
-  // A maintainer's own review stands in for the agent reviewers.
-  const reviews =
-    reviewer === 'member' ? task.reviews : { ...task.reviews, [reviewer]: 'approve' as const };
-  const complete =
-    reviewer === 'member' || REVIEWER_ROLES.every((role) => reviews[role] === 'approve');
-  if (!complete) return ok({ ...task, reviews }, [recorded]);
-  const [moved, stageEvent] = moveTo(task, 'choosing', { reviews });
+  const [moved, stageEvent] = moveTo(task, 'choosing');
   return ok(moved, [recorded, stageEvent]);
 };
 
@@ -1432,7 +1452,7 @@ export const decide = (
       if (actor.kind !== 'engine') return fail('not_allowed');
       // A review of an earlier head was about code that is no longer there.
       if (command.headSha !== task.headSha) return fail('stale_head');
-      return backToBuilding(task, context, {
+      const recorded: DomainEvent = {
         type: 'review_recorded',
         reviewer: 'github',
         verdict: 'changes',
@@ -1442,7 +1462,11 @@ export const decide = (
           ? { githubReviewId: command.source.reviewId }
           : { githubCommentId: command.source.commentId }),
         overviewOnly: command.overviewOnly
-      });
+      };
+      // While the agent reviewers still run, it waits for their verdicts and joins the same fix round.
+      return task.stage === 'reviewing'
+        ? verdictsIn(task, context, { ...task.reviews, github: 'changes' }, [recorded])
+        : backToBuilding(task, context, recorded);
     }
 
     case 'outside_push': {
