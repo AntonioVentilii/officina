@@ -144,6 +144,12 @@ export const readsTask = (
   task: { readonly guards: readonly Guard[] }
 ): boolean => !task.guards.includes('confidential') || can(member, 'see_confidential');
 
+/** Whether a member can take a question handed to them: they may answer and read the task. */
+export const takesQuestion = (
+  member: Pick<Member, 'role'> & Partial<Pick<Member, 'domains'>>,
+  task: { readonly guards: readonly Guard[] }
+): boolean => can(member, 'answer') && readsTask(member, task);
+
 /**
  * Whether a member may build a task: claim it, and hand in what they built for as long as they hold
  * it. Nobody builds what they may not read.

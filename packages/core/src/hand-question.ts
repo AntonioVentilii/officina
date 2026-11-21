@@ -1,10 +1,6 @@
 import type { Decision, Task } from './lifecycle';
-import { can, readsTask } from './permissions';
+import { takesQuestion } from './permissions';
 import type { Member } from './roles';
-
-/** Whether a member can take a question handed to them: they may answer and read the task. */
-export const takesQuestion = (member: Member, task: Pick<Task, 'guards'>): boolean =>
-  can(member, 'answer') && readsTask(member, task);
 
 /**
  * An owner hands a task's waiting question to one member, who then answers it as if it had been
