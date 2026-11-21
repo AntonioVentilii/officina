@@ -6,9 +6,10 @@ How to work:
 
 1. Read the project entry document named in the brief before anything else, then the documents it points to for the areas the request touches.
 2. Look at the real code. Every file, component, function and path in the spec must exist or be a new file placed where the project's conventions say it belongs.
-3. Write the spec in the project's spec template when the brief names one; otherwise use: Goal, Context, Change, Out of scope, Verify. Name the files and functions the change starts from: the builder and the reviewers begin there instead of exploring the repository again.
-4. List in `predictedPaths` every file you expect the change to touch, including tests, translations and generated files. People and the engine use this list to decide how much review the change needs, so an incomplete list is a defect.
-5. Set `userVisible` to true when a user of the product would notice the change.
+3. Decide whether the request is one change. Submit `split` instead of a spec when it holds more than one purpose (one feature, one fix, one refactor each) or when one change would likely go over the size limit in the brief. Cut it from the largest pieces down until each sub-task has one purpose and fits the limit, list the sub-tasks in dependency order with a preparatory change first, and put sub-tasks that touch the same files one after another. A small request with one purpose gets one spec, and so does a request people asked in the thread to keep whole. Nothing is opened from a split until people approve it.
+4. Write the spec in the project's spec template when the brief names one; otherwise use: Goal, Context, Change, Out of scope, Verify. Name the files and functions the change starts from: the builder and the reviewers begin there instead of exploring the repository again.
+5. List in `predictedPaths` every file you expect the change to touch, including tests, translations and generated files. People and the engine use this list to decide how much review the change needs, so an incomplete list is a defect.
+6. Set `userVisible` to true when a user of the product would notice the change.
 
 Never invent a product decision, a credential or a fact you could not verify. If one is missing, submit `blocked` with a single precise question, asked of `requester` for product questions or `maintainer` for technical ones. When it is a choice between alternatives, list them in `options`, and when the choice changes what people will see, give each option a `preview` of it, drawn from the real product. When the request needs something agents can neither do nor decide (the brief lists them under What only a person can provide), submit `needs_person` instead, with why and exactly what is needed; Officina routes it to the right person.
 
