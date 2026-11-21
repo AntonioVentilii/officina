@@ -89,7 +89,7 @@ const chooserSections = (context: ChooserContext, changedPaths: readonly string[
         : 'In this project a person always merges: leave `approval.merge` as `person`.'
       : null,
     buildChoice(context.gate),
-    context.gate === 'verifying' ? touchedFiles(changedPaths) : null
+    touchedFiles(changedPaths)
   ]
     .filter(Boolean)
     .join('\n\n'),
@@ -151,8 +151,9 @@ export const fence = (text: string): string => {
 export const list = (items: readonly string[]): string =>
   items.length ? items.map((item) => `- \`${item}\``).join('\n') : '- none';
 
+/** File names come from the pushed branch, which an agent wrote, so they are fenced as data. */
 const touchedFiles = (paths: readonly string[]): string | null =>
-  paths.length ? `Files the change touches:\n${list(paths)}` : null;
+  paths.length ? `Files the change touches:\n\n${fence(paths.join('\n'))}` : null;
 
 /**
  * Every session pays again, on each later request, for every token it has read: a 50 KB file read
@@ -174,6 +175,10 @@ const verifySection = (verify: readonly string[]): string =>
     .join('\n\n');
 
 const REVIEWERS: ReadonlySet<RunnerRole> = new Set(REVIEWER_ROLES);
+
+/** Whose brief lists the paths the change touches: the reviewers, and the chooser judging the result. */
+export const listsChangedPaths = (role: RunnerRole, gate: Gate): boolean =>
+  REVIEWERS.has(role) || (role === 'chooser' && gate === 'verifying');
 
 /** The spec agent already found what the change touches; the roles after it start from there. */
 const startSection = (input: BriefInput): string | null => {
