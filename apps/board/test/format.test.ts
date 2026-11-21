@@ -1,7 +1,7 @@
 // The board's own types are the browser's; its tests run under Bun.
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
-import { ago, duration, initials, since } from '../src/lib/format';
+import { ago, duration, initials, since, tokenParts } from '../src/lib/format';
 
 const NOW = Date.parse('2026-11-13T12:00:00Z');
 const at = (offsetMs: number) => new Date(NOW + offsetMs).toISOString();
@@ -35,5 +35,23 @@ describe('initials', () => {
   test('a one-word name gives one letter, and no name none', () => {
     expect(initials('Antonio')).toBe('A');
     expect(initials('   ')).toBe('');
+  });
+});
+
+describe('token counts', () => {
+  test('read kind by kind, in thousands and millions past a thousand', () => {
+    expect(
+      tokenParts({ input: 164, output: 72_500, cacheRead: 13_700_000, cacheWrite: 269_000 })
+    ).toEqual(['164 in', '72.5K out', '13.7M cache read', '269K cache write']);
+    expect(tokenParts({ input: 0, output: 999_960, cacheRead: 1_000, cacheWrite: 1_049 })).toEqual([
+      '0 in',
+      '1M out',
+      '1K cache read',
+      '1K cache write'
+    ]);
+  });
+
+  test('a run without tokens shows none', () => {
+    expect(tokenParts(null)).toEqual([]);
   });
 });
