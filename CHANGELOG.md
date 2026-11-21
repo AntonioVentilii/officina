@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.19.0](https://github.com/AntonioVentilii/officina/compare/v1.18.0...v1.19.0) (2026-11-21)
+
+
+### Features
+
+* **core,api,board:** an owner hands a waiting question to another member ([#335](https://github.com/AntonioVentilii/officina/issues/335)) ([ab95a39](https://github.com/AntonioVentilii/officina/commit/ab95a39246b3cb537435ce47f959652d45895823))
+* **core,api:** a product decision waits on whoever holds the product domain ([#336](https://github.com/AntonioVentilii/officina/issues/336)) ([b675708](https://github.com/AntonioVentilii/officina/commit/b67570808ce020403cdcd982d6d2613138a1bd96))
+
 ## [1.18.0](https://github.com/AntonioVentilii/officina/compare/v1.17.0...v1.18.0) (2026-11-21)
 
 
