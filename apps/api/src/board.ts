@@ -425,7 +425,7 @@ const handingInWait = (row: BoardTaskRow, names: ReadonlyMap<string, string>): W
 });
 
 /** Tasks by number in words: "task 3", "task 3 and task 4", "task 3, task 4 and task 5". */
-const tasksInWords = (numbers: readonly number[]): string => {
+export const tasksInWords = (numbers: readonly number[]): string => {
   const named = numbers.map((number) => `task ${number}`);
   return named.length < 2 ? named.join('') : `${named.slice(0, -1).join(', ')} and ${named.at(-1)}`;
 };
@@ -437,7 +437,7 @@ const mergedFirst = (numbers: readonly number[]): string =>
 export const buildWaitLabel = (wait: BuildWait): string => {
   switch (wait.kind) {
     case 'subtasks':
-      return `Built through its sub-tasks: ${wait.numbers.map((number) => `task ${number}`).join(', ')}`;
+      return `Built through its sub-tasks: ${tasksInWords(wait.numbers)}`;
     case 'after':
       return mergedFirst(wait.numbers);
     case 'shared_paths':

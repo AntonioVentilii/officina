@@ -61,6 +61,7 @@ import {
   optionText,
   questionFor,
   readyWait,
+  tasksInWords,
   type ApprovalState
 } from './board';
 import { checklistLines, checklistView, type ChosenChecklist } from './checklist-view';
@@ -500,9 +501,7 @@ const linkSummary = (number: number, parent: number | undefined, after: readonly
   const waited = [...new Set(after)].sort((a, b) => a - b);
   const parts = [
     ...(parent === undefined ? [] : [`parent task ${parent}`]),
-    ...(waited.length
-      ? [`waits for ${waited.length > 1 ? 'tasks' : 'task'} ${waited.join(', ')}`]
-      : [])
+    ...(waited.length ? [`waits for ${tasksInWords(waited)}`] : [])
   ];
   return `Task #${number}: ${parts.join(', ') || 'no links'}.`;
 };

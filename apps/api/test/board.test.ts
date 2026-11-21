@@ -220,7 +220,7 @@ describe.skipIf(!url)('board api', () => {
     const tasks = (await json(await call(cookie, `/api/projects/${seeded.projectId}/board`))).tasks;
     const label = (number: number) =>
       tasks.find((task: { number: number }) => task.number === number).waitingOn.label;
-    expect(label(1)).toBe('Built through its sub-tasks: task 2, task 3');
+    expect(label(1)).toBe('Built through its sub-tasks: task 2 and task 3');
     expect(label(3)).toBe('Builds once task 2 is merged: they change the same files');
     expect(label(4)).toBe('Builds once task 2 and task 3 are merged');
     for (const number of [1, 3, 4]) {
