@@ -23,6 +23,7 @@ import {
 } from '@officina/db';
 import { isRunnerRole, type RunnerRole } from '@officina/runner';
 import type { Pool, PoolClient } from 'pg';
+import { heldForSpend } from './spend';
 import { runAgentStep, type EngineDependencies, type StepResult } from './step';
 
 export interface DueStep {
@@ -112,6 +113,7 @@ export const collectDueSteps = async (
       const config = parseProjectConfig(context.rawConfig);
       // A task a person must build waits for a maintainer to claim it.
       if (config.ok && humanBuildReason(config.config, task) === null) {
+        if (await heldForSpend(deps.pool, taskId)) continue;
         const result = await applyCommand(deps.pool, {
           taskId,
           command: {
@@ -129,7 +131,11 @@ export const collectDueSteps = async (
       continue;
     }
 
-    dueFor(taskId, nextAgentRoles((await planByRule(deps.pool, taskId, context)) ?? task));
+    // A plan made by rule runs no session, so it needs no spend allowance.
+    const roles = nextAgentRoles((await planByRule(deps.pool, taskId, context)) ?? task);
+    // A task whose runs spent its budget starts none until a maintainer lets them go on.
+    if (roles.length > 0 && (await heldForSpend(deps.pool, taskId))) continue;
+    dueFor(taskId, roles);
   }
   const learning = new Set([
     ...(await listTasksAwaitingLearning(deps.pool, projectId)),
