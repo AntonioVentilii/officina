@@ -622,6 +622,7 @@ describe.skipIf(!url)('engine', () => {
     // Started before the hold, it finished after it: its cost belongs to the new window.
     await run('reviewer_spec', 300, '2 hours', '0 seconds');
     expect(await taskSpendCents(pool, taskId)).toBe(300);
+  });
 
   test('a build sent back after the size check held its head works on the task branch, not from the default branch', async () => {
     const withBranch = { ...REFS, branches: { ...REFS.branches, 'officina/task-1': 'sha1' } };
