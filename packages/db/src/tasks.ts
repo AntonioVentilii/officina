@@ -206,15 +206,22 @@ export const listProjectMembers = async (db: Queryable, projectId: string) =>
   ).rows;
 
 /**
- * The tasks of a project with a build run an agent still holds. Its ref check counts every branch
- * Officina's identity moves meanwhile, so nothing else may push as the App until it ends.
+ * The tasks of a project with a build run an agent still holds, or one that ended after `since`.
+ * A build's ref check counts every branch Officina's identity moves while it runs, so nothing else
+ * may push as the App beside one: asked with `since` now, before pushing, and with the push's start,
+ * after it.
  */
-export const tasksBuildingNow = async (db: Queryable, projectId: string): Promise<number[]> =>
+export const tasksBuildingSince = async (
+  db: Queryable,
+  projectId: string,
+  since: Date
+): Promise<number[]> =>
   (
     await db.query<{ number: number }>(
       `select distinct t.number from runs r join tasks t on t.id = r.task_id
-       where t.project_id = $1 and r.agent_role = any($2::text[]) and r.status ${RUN_IS_ACTIVE}
+       where t.project_id = $1 and r.agent_role = any($2::text[])
+         and (r.status ${RUN_IS_ACTIVE} or r.finished_at >= $3)
        order by t.number`,
-      [projectId, BUILD_ROLES]
+      [projectId, BUILD_ROLES, since]
     )
   ).rows.map((row) => row.number);

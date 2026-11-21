@@ -4,7 +4,7 @@ import {
   loadTaskContext,
   predictedPaths,
   resolveProjectId,
-  tasksBuildingNow
+  tasksBuildingSince
 } from '@officina/db';
 import {
   TrialError,
@@ -71,7 +71,9 @@ const planTrial = async (
 
 /**
  * Runs one arm of a trial, refused while a build of the project is running: its ref check would
- * take the trial's push for its own.
+ * take the trial's push for its own. Nothing stops the scheduler from starting one meanwhile, so
+ * the builds that ran beside the trial are asked again once it ends and named among its problems;
+ * the workflow has a person pause the project's tasks first.
  */
 const runTrial = async (
   pool: Pool,
@@ -79,14 +81,27 @@ const runTrial = async (
   input: TrialBuildInput
 ): Promise<TrialReport> => {
   const { projectId, trial } = await trialInput(pool, input);
-  const building = await tasksBuildingNow(pool, projectId);
+  const started = new Date();
+  const building = await tasksBuildingSince(pool, projectId, started);
   if (building.length > 0) {
     throw new TrialError(
-      `wait for the builds of ${building.map((n) => `#${n}`).join(', ')} to end: their ref check would count the trial's push`
+      `wait for the builds of ${numbers(building)} to end: their ref check would count the trial's push`
     );
   }
-  return runTrialBuild(deps, trial);
+  const report = await runTrialBuild(deps, trial);
+  const beside = await tasksBuildingSince(pool, projectId, started);
+  return {
+    ...report,
+    problems: [
+      ...report.problems,
+      ...(beside.length > 0
+        ? [`builds of ${numbers(beside)} ran beside the trial: their ref check may have held them`]
+        : [])
+    ]
+  };
 };
+
+const numbers = (tasks: readonly number[]): string => tasks.map((n) => `#${n}`).join(', ');
 
 /** The flags the trial commands read, as the command line gave them. */
 export interface TrialFlags {
@@ -110,6 +125,15 @@ const positive = (value: string, flag: string): number => {
   if (!Number.isInteger(parsed) || parsed < 1)
     throw new TrialError(`--${flag} must be a positive whole number`);
   return parsed;
+};
+
+/** A dollar amount such as `0.50` or `8`, in whole cents, as a session budget takes it. */
+const centsOf = (value: string): number => {
+  const dollars = Number(value);
+  const cents = Math.round(dollars * 100);
+  if (!Number.isFinite(dollars) || cents < 1)
+    throw new TrialError('--budget-usd must be a dollar amount of at least 0.01');
+  return cents;
 };
 
 /**
@@ -137,7 +161,7 @@ export const trialCommand = async (
     base: required(flags.base, 'base'),
     arm,
     attempt: positive(flags.attempt ?? '1', 'attempt'),
-    budgetCents: positive(required(flags['budget-usd'], 'budget-usd'), 'budget-usd') * 100,
+    budgetCents: centsOf(required(flags['budget-usd'], 'budget-usd')),
     promptsDir: PROMPTS_DIR,
     models: await deps.models()
   };

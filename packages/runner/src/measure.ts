@@ -39,9 +39,12 @@ const PATH_PATTERN = /(?:[\w@.-]+\/)+[\w@.-]+\.[A-Za-z]\w*/g;
 /** A shell command that prints a file's content, as opposed to one that only edits or runs it. */
 const READING_COMMAND = /\b(?:cat|sed|head|tail|grep|rg|awk|nl|less)\b/;
 
-/** The same file whichever way it is written: the mount point and `./` left out. */
+/**
+ * The same file whichever way it is written: the mount point and `./` left out. A path found in a
+ * command starts after its leading slash, since the slash is not part of what `PATH_PATTERN` matches.
+ */
 const normalPath = (path: string): string =>
-  path.replace(/^\/workspace\/[^/]+\//, '').replace(/^\.\//, '');
+  path.replace(/^\/?workspace\/[^/]+\//, '').replace(/^\.\//, '');
 
 const pathsIn = (text: string): string[] =>
   [...text.matchAll(PATH_PATTERN)].map((m) => normalPath(m[0]));

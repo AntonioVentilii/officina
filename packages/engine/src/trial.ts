@@ -66,6 +66,14 @@ export interface TrialReport extends Omit<TrialPlan, 'brief'> {
   readonly measure: SessionMeasure;
   /** Refs other than the trial's branch that moved while it ran: none, unless something else pushed. */
   readonly otherRefsMoved: readonly string[];
+  /** Whether GitHub took the run token back once the session stopped. */
+  readonly tokenRevoked: boolean;
+  /**
+   * What a person must look at before trusting the trial or leaving it: a token still valid, a ref
+   * moved besides the trial's own. The token can push anywhere, so a stray push is found here, after
+   * the fact, as the production ref check finds it.
+   */
+  readonly problems: readonly string[];
 }
 
 /**
@@ -176,6 +184,7 @@ export const runTrialBuild = async (
   }
   const agent = await syncTrialBuilder(agents, input.definition);
   const token = await github.runToken(ref, { contents: 'write' });
+  let tokenRevoked = false;
   const report = await executeRun(agents, {
     role: 'builder',
     brief,
@@ -198,8 +207,14 @@ export const runTrialBuild = async (
       ...titleProblems(config.pullRequest.titlePattern)(output),
       ...bodyProblems(prTemplate)(output)
     ]
-  }).finally(() => revokeRunToken(github, token));
+  }).finally(async () => {
+    tokenRevoked = await revokeRunToken(github, token);
+  });
   const after = await github.refSnapshot(ref);
+  const otherRefsMoved = [
+    ...movedRefs(before.branches, after.branches).filter((name) => name !== plan.branch),
+    ...movedRefs(before.tags, after.tags).map((tag) => `tag ${tag}`)
+  ];
   return {
     ...plan,
     agent,
@@ -207,9 +222,13 @@ export const runTrialBuild = async (
     outcome: report.outcome,
     usage: report.usage,
     measure: measureSession(await readSession(agents, report.sessionId)),
-    otherRefsMoved: [
-      ...movedRefs(before.branches, after.branches).filter((name) => name !== plan.branch),
-      ...movedRefs(before.tags, after.tags).map((tag) => `tag ${tag}`)
+    otherRefsMoved,
+    tokenRevoked,
+    problems: [
+      ...(tokenRevoked
+        ? []
+        : ['GitHub did not take the run token back: revoke it, or wait the hour it lasts']),
+      ...otherRefsMoved.map((name) => `${name} moved while the trial ran: check who moved it`)
     ]
   };
 };

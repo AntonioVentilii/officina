@@ -277,6 +277,8 @@ const main = async () => {
       const deps = { agents, github: githubClient, models: () => resolveModels(agents) };
       const report = await trialCommand(pool, deps, command, values);
       console.log(JSON.stringify(report, null, 2));
+      if ('problems' in report && report.problems.length)
+        throw new TrialError(report.problems.join('\n'));
       return;
     }
 

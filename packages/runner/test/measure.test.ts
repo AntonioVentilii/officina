@@ -48,6 +48,9 @@ describe('measuring a session', () => {
     const reread = tool('bash', {
       command: "cd /workspace/officina && sed -n '10,40p' apps/api/src/board.ts"
     });
+    const absolute = tool('bash', {
+      command: 'grep -n waitingOn /workspace/officina/apps/api/src/board.ts'
+    });
     const viaRead = tool('read', { file_path: '/workspace/officina/packages/core/src/steps.ts' });
     const formatting = tool('bash', { command: 'bunx prettier --write apps/api/src/board.ts' });
     const unnamed = tool('read', { file_path: '/workspace/officina/apps/api/src/tasks.ts' });
@@ -75,6 +78,8 @@ describe('measuring a session', () => {
           }),
           reread,
           result(reread, 1_200),
+          absolute,
+          result(absolute, 300),
           viaRead,
           result(viaRead, 800),
           formatting,
@@ -104,6 +109,7 @@ describe('measuring a session', () => {
       delegations: 1,
       rereads: [
         { path: 'apps/api/src/board.ts', tool: 'bash', resultChars: 1_200 },
+        { path: 'apps/api/src/board.ts', tool: 'bash', resultChars: 300 },
         { path: 'packages/core/src/steps.ts', tool: 'read', resultChars: 800 }
       ]
     });

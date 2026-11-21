@@ -114,6 +114,8 @@ describe('a trial build', () => {
     expect(report.measure.threads).toHaveLength(1);
     expect(report.measure.delegations).toBe(0);
     expect(report.otherRefsMoved).toEqual([]);
+    expect(report.tokenRevoked).toBe(true);
+    expect(report.problems).toEqual([]);
   });
 
   test('says which other refs moved while it ran', async () => {
@@ -123,6 +125,32 @@ describe('a trial build', () => {
     const report = await runTrialBuild({ github: port, agents }, await trial());
 
     expect(report.otherRefsMoved).toEqual(['main', 'officina/task-3']);
+    expect(report.problems).toEqual([
+      'main moved while the trial ran: check who moved it',
+      'officina/task-3 moved while the trial ran: check who moved it'
+    ]);
+  });
+
+  test('names a run token GitHub would not take back among its problems', async () => {
+    const agents = createFakePort(() => [toolUse(pushed), idle('end_turn')]);
+    const snapshots = [
+      { branches: { main: 'aaa' }, tags: {} },
+      { branches: { main: 'aaa', [BRANCH]: 'bbb' }, tags: {} }
+    ];
+    const port = gitHubWith({
+      refSnapshot: async () => snapshots.shift()!,
+      runToken: async () => 'ghs_run',
+      revokeToken: async () => {
+        throw new Error('GitHub is down');
+      }
+    });
+
+    const report = await runTrialBuild({ github: port, agents }, await trial());
+
+    expect(report.tokenRevoked).toBe(false);
+    expect(report.problems).toEqual([
+      'GitHub did not take the run token back: revoke it, or wait the hour it lasts'
+    ]);
   });
 
   test('refuses a branch an earlier attempt already pushed, before writing or spending anything', async () => {

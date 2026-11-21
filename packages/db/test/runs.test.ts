@@ -7,7 +7,7 @@ import {
   finishRun,
   runWasPaused,
   startRun,
-  tasksBuildingNow,
+  tasksBuildingSince,
   type NewRun
 } from '../src';
 import { backendPid, untilWaitingOn } from './locks';
@@ -103,7 +103,7 @@ describe.skipIf(!url)('builds still running', () => {
     await pool.end();
   });
 
-  test('names the tasks of a project with a build run not finished, and none once it ends', async () => {
+  test('names the tasks with a build still running, or one that ended after a given time', async () => {
     const seeded = await resetAndSeed(pool);
     const open = (title: string) =>
       createTask(pool, { projectId: seeded.projectId, title, requesterId: seeded.ownerId });
@@ -119,11 +119,15 @@ describe.skipIf(!url)('builds still running', () => {
       if (!claim.ok) throw new Error('claim failed');
       return claim.runId;
     };
+    const before = new Date(Date.now() - 60_000);
     const build = await start(built.id, 'builder');
     await start(interviewed.id, 'interviewer');
 
-    expect(await tasksBuildingNow(pool, seeded.projectId)).toEqual([1]);
+    expect(await tasksBuildingSince(pool, seeded.projectId, new Date())).toEqual([1]);
     await finishRun(pool, build, { status: 'succeeded', usage: NO_USAGE, result: {} });
-    expect(await tasksBuildingNow(pool, seeded.projectId)).toEqual([]);
+    expect(await tasksBuildingSince(pool, seeded.projectId, new Date(Date.now() + 60_000))).toEqual(
+      []
+    );
+    expect(await tasksBuildingSince(pool, seeded.projectId, before)).toEqual([1]);
   });
 });
