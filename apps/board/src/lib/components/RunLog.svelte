@@ -4,7 +4,8 @@
   import { tick } from 'svelte';
   import { get } from '#lib/api.ts';
   import { coalesce } from '#lib/coalesce.ts';
-  import { live, refreshesAll } from '#lib/state/live.svelte.ts';
+  import { refreshesAll } from '#lib/live-events.ts';
+  import { live } from '#lib/state/live.svelte.ts';
   import type { LogEntry, Run } from '#lib/types.ts';
   import AgentAvatar from './AgentAvatar.svelte';
   import Markdown from './Markdown.svelte';
