@@ -26,6 +26,7 @@ import {
   failTakenOverRuns,
   feedbackSinceLastPush,
   finishRun,
+  heldGitHubReviews,
   linkPullRequest,
   loadTask,
   saveAgentVersion,
@@ -3102,6 +3103,45 @@ describe.skipIf(!url)('engine', () => {
     expect((await events('github_review_handled')).map((handled) => handled.outcome)).toEqual([
       'forwarded'
     ]);
+  });
+
+  test('a review already sent to the builder and delivered again during a hold is not kept', async () => {
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    const github = fakeGitHub({ branchHead: 'abc' });
+    const review = { reviewId: 29, by: 'alice', notes: 'Rename the flag.', overviewOnly: false };
+    expect(await reviewOnGitHub(github, taskId, review)).toEqual({ ok: true });
+
+    await block(taskId);
+    expect(await reviewOnGitHub(github, taskId, review)).toEqual({ ok: false, error: 'blocked' });
+    const held = await pool.query(
+      `select 1 from task_events where task_id = $1 and type = 'github_review_held'`,
+      [taskId]
+    );
+    expect(held.rowCount).toBe(0);
+  });
+
+  test('a held review waits while its pull request is merged or closed', async () => {
+    for (const prState of [
+      { state: 'closed', merged: true },
+      { state: 'closed', merged: false }
+    ]) {
+      const taskId = await createTaskInMerging(pool, seeded);
+      await linkPullRequest(pool, taskId, 42);
+      const github = fakeGitHub({ branchHead: 'abc', prState });
+      await block(taskId);
+      await reviewOnGitHub(github, taskId, {
+        reviewId: 30,
+        by: 'alice',
+        notes: 'Rename the flag.',
+        overviewOnly: false
+      });
+      await answer(taskId);
+      await forwardHeldReviews(pool, github.port, [taskId]);
+      expect((await loadTask(pool, taskId))?.task.stage).toBe('merging');
+      expect(await githubReviewCount(taskId)).toBe(0);
+      expect(await heldGitHubReviews(pool, taskId)).toHaveLength(1);
+    }
   });
 
   test('a review while the task is not held records no hold', async () => {

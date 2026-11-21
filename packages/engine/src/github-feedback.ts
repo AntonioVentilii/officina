@@ -209,27 +209,38 @@ const freeOfHold = (
   !context.task.paused;
 
 /**
- * Whether the pull request still holds the head Officina expects of the task. `adoptOutsidePushes`
- * skips a held task and may fail on a pass, so a push made during the hold may not be taken in
- * yet; a review accepted against the old head would send the task to building, where pushes from
- * outside are no longer taken in. Outside the review window the lifecycle drops the review anyway.
+ * Whether the task's pull request is still open at the head Officina expects of it.
+ * `adoptOutsidePushes` skips a held task and may fail on a pass, so a push made during the hold may
+ * not be taken in yet; a review accepted against the old head would send the task to building,
+ * where pushes from outside are no longer taken in. Auto-merge is left on while a task is held at
+ * merging and the `merged` command is refused while it is held, so the pull request may also have
+ * merged or closed meanwhile; the catch-up deals with that first. The task's current pull request
+ * is the one read, so a review of one it no longer links is left to the lifecycle's head check, as
+ * is one outside the review window.
  */
-const holdsExpectedHead = async (
+const openAtExpectedHead = async (
   pool: Pool,
   github: HeldReviewPort,
-  context: StoredTaskContext,
-  ref: RepoRef & { readonly pullRequest: number }
+  context: StoredTaskContext & { installationId: number }
 ): Promise<boolean> => {
-  if (!GITHUB_REVIEWABLE.has(context.task.stage)) return true;
+  if (!GITHUB_REVIEWABLE.has(context.task.stage) || context.pullRequest === null) return true;
   const expected = await expectedHead(pool, context.task.id);
-  return !expected || (await github.pullRequest(ref)).head.sha === expected;
+  if (!expected) return true;
+  const { installationId, repo } = context;
+  const pullRequest = await github.pullRequest({
+    installationId,
+    repo,
+    pullRequest: context.pullRequest
+  });
+  return pullRequest.state === 'open' && pullRequest.head.sha === expected;
 };
 
 /**
  * Sends on the reviews kept while the task was held, oldest first, once it is neither blocked nor
- * paused and its pull request holds the head Officina expects, as if each had just arrived: the
- * same overview guard, window, head check and auto-merge stop. A head that moved waits for a later
- * pass to take it in, which drops the reviews of the old one. Each is then recorded as dealt with,
+ * paused and its pull request is open at the head Officina expects, as if each had just arrived:
+ * the same overview guard, window, head check and auto-merge stop. A head that moved waits for a
+ * later pass to take it in, which drops the reviews of the old one, and a pull request that merged
+ * or closed waits for the catch-up to settle the task. Each is then recorded as dealt with,
  * sent or no longer applying, and never sent again; one that finds the task held again waits with
  * the rest. As with reviews arriving together, once one sends the task to building the later ones
  * meet the wrong stage and are dropped.
@@ -239,10 +250,7 @@ const forwardHeldReviewsOf = async (pool: Pool, github: HeldReviewPort, taskId: 
   if (!freeOfHold(context)) return;
   const { installationId, repo } = context;
   const reviews = await heldGitHubReviews(pool, taskId);
-  const [first] = reviews;
-  if (!first) return;
-  const ref = { installationId, repo, pullRequest: first.pullRequest };
-  if (!(await holdsExpectedHead(pool, github, context, ref))) return;
+  if (reviews.length === 0 || !(await openAtExpectedHead(pool, github, context))) return;
   for (const held of reviews) {
     const forwarded = await forwardFeedback(pool, github, {
       taskId,

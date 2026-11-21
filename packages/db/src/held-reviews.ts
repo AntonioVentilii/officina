@@ -1,5 +1,6 @@
 import { ENGINE } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
+import { forwardedReviewIds } from './github';
 import { appendTaskEvent } from './task-history';
 
 /**
@@ -36,9 +37,9 @@ export const heldGitHubReviews = async (pool: Pool, taskId: string): Promise<Hel
 /**
  * Keeps a review refused while its task was held (`github_review_held`). It takes the client of
  * the transaction that refused it, which holds the task's row lock: an answer or a resume cannot
- * clear the hold in between,
- * so the scheduler never finds the task free with the review not yet kept. A review is kept once
- * per task, whatever came of it since, so a repeated delivery during a later hold is not sent again.
+ * clear the hold in between, so the scheduler never finds the task free with the review not yet
+ * kept. A review is kept once per task, whatever came of it since, and never once it was sent to
+ * the builder (`forwardedReviewIds`), so a repeated delivery during a later hold is not sent again.
  */
 export const holdGitHubReview = async (
   client: PoolClient,
@@ -50,7 +51,7 @@ export const holdGitHubReview = async (
      where task_id = $1 and type = 'github_review_held' and payload @> $2::jsonb`,
     [taskId, JSON.stringify({ reviewId: review.reviewId })]
   );
-  if (kept.rowCount) return;
+  if (kept.rowCount || (await forwardedReviewIds(client, taskId)).includes(review.reviewId)) return;
   await appendTaskEvent(client, {
     taskId,
     actor: ENGINE,

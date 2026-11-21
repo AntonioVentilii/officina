@@ -206,9 +206,12 @@ export const expectedHead = async (db: Pool | PoolClient, taskId: string): Promi
   ).rows[0]?.sha ?? null;
 
 /** The GitHub reviews that were ever sent back to the task's builder. */
-export const forwardedReviewIds = async (pool: Pool, taskId: string): Promise<number[]> =>
+export const forwardedReviewIds = async (
+  db: Pool | PoolClient,
+  taskId: string
+): Promise<number[]> =>
   (
-    await pool.query<{ review_id: string }>(
+    await db.query<{ review_id: string }>(
       `select distinct payload->>'githubReviewId' as review_id from task_events
        where task_id = $1 and type = 'review_recorded' and payload->>'reviewer' = 'github'
          and payload ? 'githubReviewId'`,
