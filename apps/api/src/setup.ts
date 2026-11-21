@@ -12,7 +12,9 @@ import {
 import { ensureOnboarding, openOnboardingIn } from '@officina/engine';
 import type { GitHubClient } from '@officina/github';
 import {
+  createModelResolver,
   ensureEnvironment,
+  resolveTiers,
   loadDefinitions,
   syncAgents,
   type ManagedAgentsPort,
@@ -25,6 +27,19 @@ export type SetupGitHub = Pick<
   GitHubClient,
   'repoInstallationId' | 'defaultBranch' | 'fileContent'
 >;
+
+/**
+ * The model of each tier, resolved as the server's boot sync resolves it, for the commands that
+ * sync or run agents. Its log goes to stderr, so a command that prints JSON prints only that.
+ */
+export const resolveModels = (port: ManagedAgentsPort): Promise<TierModels> =>
+  resolveTiers(
+    createModelResolver({
+      listModels: () => port.listModels(),
+      env: process.env,
+      log: (message, details) => console.error(message, JSON.stringify(details ?? {}))
+    })
+  );
 
 /**
  * Syncs every role agent from its checked-in prompt, each on its own tier of the given models (its

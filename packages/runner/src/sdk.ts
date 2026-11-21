@@ -9,6 +9,7 @@ import type {
   BetaManagedAgentsSessionUsage,
   SessionCreateParams
 } from '@anthropic-ai/sdk/resources/beta/sessions/sessions';
+import type { BetaManagedAgentsSessionThread } from '@anthropic-ai/sdk/resources/beta/sessions/threads/threads';
 import type { EnvironmentCreateParams } from '@anthropic-ai/sdk/resources/beta/environments/environments';
 import type { RunTokens, RunUsage } from '@officina/core';
 import type { ListedModel } from './models';
@@ -17,11 +18,19 @@ import type {
   EnvironmentWrite,
   ManagedAgentsPort,
   OutboundEvent,
-  SessionEvent
+  SessionEvent,
+  SessionRequest,
+  SessionThread
 } from './port';
 
+/** The usage fields a session and each of its threads report alike. */
+type Usage = Pick<
+  BetaManagedAgentsSessionUsage,
+  'input_tokens' | 'output_tokens' | 'cache_read_input_tokens' | 'cache_creation' | 'list_cost'
+>;
+
 /** A session's tokens; cache writes of both cache lifetimes are one count. */
-const tokensOf = (usage: BetaManagedAgentsSessionUsage): RunTokens => {
+const tokensOf = (usage: Usage): RunTokens => {
   const written = usage.cache_creation ?? {};
   return {
     input: usage.input_tokens ?? 0,
@@ -35,13 +44,27 @@ const tokensOf = (usage: BetaManagedAgentsSessionUsage): RunTokens => {
  * A session's usage as the port reports it, the list cost's amount in cents. A session with no
  * usage yet has no tokens either.
  */
-const usageOf = (usage: BetaManagedAgentsSessionUsage | undefined): RunUsage => {
+const usageOf = (usage: Usage | null | undefined): RunUsage => {
   const amount = usage?.list_cost?.amount;
   return {
     costCents: amount === undefined ? null : Number(amount),
     tokens: usage ? tokensOf(usage) : null
   };
 };
+
+/** A thread as the port reports it; an advisor thread is named by its model, as it has no name. */
+const threadOf = (thread: BetaManagedAgentsSessionThread): SessionThread => ({
+  id: thread.id,
+  parentId: thread.parent_thread_id,
+  agentName: thread.agent.type === 'advisor' ? thread.agent.model : thread.agent.name,
+  usage: usageOf(thread.usage)
+});
+
+/** The branch's head, or the commit a trial replays from. */
+const checkoutOf = ({ branch, commit }: SessionRequest['repository']) =>
+  commit === undefined
+    ? { type: 'branch' as const, name: branch }
+    : { type: 'commit' as const, sha: commit };
 
 const toSdkEvent = (event: OutboundEvent): EventSendParams['events'][number] => {
   switch (event.type) {
@@ -146,7 +169,7 @@ export const createSdkPort = (client: Anthropic): ManagedAgentsPort => ({
           type: 'github_repository',
           url: request.repository.url,
           authorization_token: request.repository.token,
-          checkout: { type: 'branch', name: request.repository.branch }
+          checkout: checkoutOf(request.repository)
         }
       ],
       budget: {
@@ -168,6 +191,18 @@ export const createSdkPort = (client: Anthropic): ManagedAgentsPort => ({
   },
   async sessionUsage(sessionId) {
     return usageOf((await client.beta.sessions.retrieve(sessionId)).usage);
+  },
+  async sessionThreads(sessionId) {
+    const threads: SessionThread[] = [];
+    for await (const thread of client.beta.sessions.threads.list(sessionId)) {
+      threads.push(threadOf(thread));
+    }
+    return threads;
+  },
+  threadEvents(sessionId, threadId) {
+    return portEvents(
+      client.beta.sessions.threads.events.list(threadId, { session_id: sessionId })
+    );
   },
   async findAgentByName(name) {
     for await (const agent of client.beta.agents.list()) {

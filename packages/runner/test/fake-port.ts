@@ -5,7 +5,8 @@ import type {
   ManagedAgentsPort,
   OutboundEvent,
   SessionEvent,
-  SessionRequest
+  SessionRequest,
+  SessionThread
 } from '../src';
 import type { RunUsage } from '@officina/core';
 
@@ -65,6 +66,16 @@ export interface FakePort extends ManagedAgentsPort {
   readonly log: string[];
   readonly agentWrites: { id: string | null; agent: AgentWrite }[];
   readonly environments: Map<string, EnvironmentWrite & { id: string }>;
+  /**
+   * The threads a session reports, set by a test; a session without any has only its primary
+   * thread, whose events are those its script sent.
+   */
+  readonly threads: Map<string, FakeThread[]>;
+}
+
+export interface FakeThread {
+  readonly thread: SessionThread;
+  readonly events: readonly SessionEvent[];
 }
 
 export const createFakePort = (
@@ -76,6 +87,14 @@ export const createFakePort = (
   const log: string[] = [];
   const agentWrites: FakePort['agentWrites'] = [];
   const environments = new Map<string, EnvironmentWrite & { id: string }>();
+  const threads = new Map<string, FakeThread[]>();
+  const threadsOf = (sessionId: string): FakeThread[] =>
+    threads.get(sessionId) ?? [
+      {
+        thread: { id: `${sessionId}_primary`, parentId: null, agentName: 'fake', usage },
+        events: playOf(sessionId).sent
+      }
+    ];
   // The latest version written under each name, as the agents list shows it.
   const latest = new Map<string, FoundAgent>();
   let agentVersion = 0;
@@ -105,6 +124,7 @@ export const createFakePort = (
     log,
     agentWrites,
     environments,
+    threads,
     async findEnvironmentByName(name) {
       const found = environments.get(name);
       return found ? { id: found.id } : null;
@@ -153,6 +173,12 @@ export const createFakePort = (
     },
     async sessionUsage() {
       return usage;
+    },
+    async sessionThreads(sessionId) {
+      return threadsOf(sessionId).map(({ thread }) => thread);
+    },
+    async *threadEvents(sessionId, threadId) {
+      yield* threadsOf(sessionId).find(({ thread }) => thread.id === threadId)?.events ?? [];
     },
     async findAgentByName(name) {
       return latest.get(name) ?? null;

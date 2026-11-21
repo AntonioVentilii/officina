@@ -32,6 +32,8 @@ export interface SessionRequest {
     readonly url: string;
     readonly token: string;
     readonly branch: string;
+    /** A commit to check out in place of the branch's head, for a trial that replays a past base. */
+    readonly commit?: string;
   };
   readonly budgetCents: number;
 }
@@ -67,6 +69,15 @@ export interface EnvironmentWrite {
   readonly allowedHosts: readonly string[];
 }
 
+/** One thread of a session: the primary, which runs the session's agent, or one it handed work to. */
+export interface SessionThread {
+  readonly id: string;
+  /** `null` for the primary thread. */
+  readonly parentId: string | null;
+  readonly agentName: string;
+  readonly usage: RunUsage;
+}
+
 export interface ManagedAgentsPort {
   findEnvironmentByName(name: string): Promise<{ id: string } | null>;
   createEnvironment(environment: EnvironmentWrite): Promise<{ id: string }>;
@@ -78,6 +89,10 @@ export interface ManagedAgentsPort {
   send(sessionId: string, events: readonly OutboundEvent[]): Promise<void>;
   /** The session's list cost and its tokens, read together. */
   sessionUsage(sessionId: string): Promise<RunUsage>;
+  /** Every thread of the session, the primary included, each with its own cost and tokens. */
+  sessionThreads(sessionId: string): Promise<SessionThread[]>;
+  /** Every event of one thread, oldest first, including those the session's stream leaves out. */
+  threadEvents(sessionId: string, threadId: string): AsyncIterable<SessionEvent>;
   /** An agent with this name, so one created but never recorded is reused rather than duplicated. */
   findAgentByName(name: string): Promise<FoundAgent | null>;
   createAgent(agent: AgentWrite): Promise<{ id: string; version: number }>;
