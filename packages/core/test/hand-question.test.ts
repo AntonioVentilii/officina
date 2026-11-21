@@ -39,7 +39,7 @@ describe('handing a waiting question to a member', () => {
     });
     expect(handed.blocked?.question).toBe(held.blocked?.question);
     expect(driver.events()).toEqual([
-      { type: 'question_handed', from: { role: 'owner' }, memberId: tim.id }
+      { type: 'question_handed', from: { domain: 'product' }, memberId: tim.id }
     ]);
 
     // Handing it to whoever it already waits on records nothing.

@@ -1,3 +1,4 @@
+import { asOneQuestion } from './handoff-routes';
 import type { Decision, Task } from './lifecycle';
 import { takesQuestion } from './permissions';
 import type { Member } from './roles';
@@ -17,7 +18,8 @@ export const handedQuestion = (task: Task, to: Member | undefined): Decision => 
     return { ok: true, task, events: [] };
   return {
     ok: true,
-    task: { ...task, blocked: { ...blocked, askedOf: { memberId: to.id } } },
+    // The whole question goes to them: parts others already answered are in the thread.
+    task: { ...task, blocked: asOneQuestion(blocked, { memberId: to.id }) },
     events: [{ type: 'question_handed', from: blocked.askedOf, memberId: to.id }]
   };
 };

@@ -117,9 +117,17 @@ export const allowedActions = (
 
 type Person = Pick<Member, 'id' | 'role'> & Partial<Pick<Member, 'domains'>>;
 
-/** Whether a question is asked of this member: by name, or of a role they hold. */
-export const isAskedOf = (member: Person, askedOf: Blocked['askedOf']): boolean =>
-  'memberId' in askedOf ? askedOf.memberId === member.id : hasRole(member, askedOf.role);
+/**
+ * Whether a question is asked of this member: by name, of a role they hold, of a domain they hold
+ * (from the contributor floor, as for every domain), or any of these for a handoff's parts.
+ */
+export const isAskedOf = (member: Person, askedOf: Blocked['askedOf']): boolean => {
+  if ('anyOf' in askedOf) return askedOf.anyOf.some((target) => isAskedOf(member, target));
+  if ('memberId' in askedOf) return askedOf.memberId === member.id;
+  if ('domain' in askedOf)
+    return hasRole(member, DOMAIN_GRANT_FLOOR) && (member.domains ?? []).includes(askedOf.domain);
+  return hasRole(member, askedOf.role);
+};
 
 /**
  * Whether a member may answer a question: one asked of them, and any question for an owner, so

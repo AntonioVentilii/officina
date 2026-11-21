@@ -737,17 +737,15 @@ describe.skipIf(!url)('connector for Claude', () => {
     const tim = (await connect('tim@example.com')).tokens.access_token as string;
     await tool(owner, 'open_request', { title: 'Book a call', request: 'Investors book a call.' });
     const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
-    const asked = await applyCommand(pool, {
-      taskId,
-      actor: ENGINE,
-      command: {
-        type: 'block',
+    // Held for the owner as a product decision was before decisions went to whoever holds product.
+    await pool.query('update tasks set blocked = $1 where id = $2', [
+      JSON.stringify({
         question: 'How investors book a call is a product choice.',
         askedOf: { role: 'owner' },
         handoff: { needs: ['decision'] }
-      }
-    });
-    expect(asked.ok).toBe(true);
+      }),
+      taskId
+    ]);
     const text = async (token: string, name: string, args: Record<string, unknown> = {}) =>
       (await tool(token, name, args)).content[0]!.text as string;
 

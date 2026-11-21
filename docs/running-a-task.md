@@ -102,7 +102,7 @@ back another person's build the same way.
    scripts/officina task accept --number 1
    ```
 
-4. **Read the spec or answer the question.** Run `task show` until the stage is `spec_review`, or it says `BLOCKED`. A question that is someone else's to answer, such as a product decision, an owner hands to that member from the task page (Hand it to) or with Claude's `hand_question`; it then waits in their Inbox.
+4. **Read the spec or answer the question.** Run `task show` until the stage is `spec_review`, or it says `BLOCKED`. When agents need a business or product decision, the question goes to whoever holds the `product` domain; an account, access, a secret or anything else only the owner may provide goes to the owners, and a task that needs both waits for each part from its own people. A question that is someone else's to answer, such as a product decision, an owner hands to that member from the task page (Hand it to) or with Claude's `hand_question`; it then waits in their Inbox.
 
    ```bash
    scripts/officina task show --number 1

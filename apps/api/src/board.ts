@@ -29,6 +29,7 @@ import {
   isAskedOf,
   isGate,
   mergedEarlyText,
+  openParts,
   openProposals,
   optionKey,
   outranks,
@@ -294,12 +295,17 @@ const HIDDEN_QUESTION =
 export const questionFor = (member: Member, blocked: Blocked): string =>
   seesQuestion(member, blocked.askedOf) ? blocked.question : HIDDEN_QUESTION;
 
-/** Who a question is asked of, in words: the member by name, or a role. */
+/** Who a question is asked of, in words: the member by name, a role, a domain's holders, or several. */
 export const askedOfLabel = (
   askedOf: Blocked['askedOf'],
   names: ReadonlyMap<string, string>
-): string =>
-  'memberId' in askedOf ? (names.get(askedOf.memberId) ?? 'a member') : article(askedOf.role);
+): string => {
+  if ('anyOf' in askedOf)
+    return askedOf.anyOf.map((target) => askedOfLabel(target, names)).join(' and ');
+  if ('memberId' in askedOf) return names.get(askedOf.memberId) ?? 'a member';
+  if ('domain' in askedOf) return `whoever holds ${askedOf.domain}`;
+  return article(askedOf.role);
+};
 
 /** The options a question offers, by letter, to whoever may read the question itself. */
 export const optionsFor = (member: Member, blocked: Blocked) =>
@@ -427,9 +433,18 @@ export const approvalState = async (
   };
 };
 
-/** What a handoff to a person needs, in words. */
+/** What a handoff to a person still needs, in words: the parts nobody has answered yet. */
 const handoffNeeds = (blocked: Blocked): string[] =>
-  (blocked.handoff?.needs ?? []).map((need) => HANDOFF_NEEDS[need].label);
+  openParts(blocked).flatMap((part) => part.needs.map((need) => HANDOFF_NEEDS[need].label));
+
+/** Who a handoff still waits on and for what, part by part: "Tim for a decision; an owner for an account". */
+const handoffWait = (blocked: Blocked, names: ReadonlyMap<string, string>): string =>
+  openParts(blocked)
+    .map(
+      (part) =>
+        `${askedOfLabel(part.askedOf, names)} for ${part.needs.map((need) => HANDOFF_NEEDS[need].label).join(', ')}`
+    )
+    .join('; ');
 
 /**
  * The pull requests of the task's learnings, for those who see learnings (`see_runs`) and read the
@@ -504,11 +519,10 @@ const questionWait = (
   names: ReadonlyMap<string, string>
 ): WaitingOn => {
   const who = askedOfLabel(blocked.askedOf, names);
-  const needs = handoffNeeds(blocked);
   const label = row.mergedEarly
     ? `Merged on GitHub before verification: ${who} decides`
-    : needs.length
-      ? `Agents cannot go on: needs ${who} for ${needs.join(', ')}`
+    : blocked.handoff?.needs.length
+      ? `Agents cannot go on: needs ${handoffWait(blocked, names)}`
       : `A question for ${who}`;
   return {
     kind: 'people',

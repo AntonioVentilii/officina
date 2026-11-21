@@ -1,5 +1,5 @@
 import { Glob } from 'bun';
-import type { HandoffNeed } from './handoffs';
+import type { HandoffNeed } from './handoff-needs';
 
 /**
  * The security wall. A guard marks a task that touches something no agent may handle on its own:

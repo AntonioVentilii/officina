@@ -15,7 +15,7 @@ import {
   specShapeFor,
   startRun
 } from '@officina/db';
-import { ENGINE, parseProjectConfig } from '@officina/core';
+import { ENGINE, handoffCommand, parseProjectConfig } from '@officina/core';
 import { Pool } from 'pg';
 import {
   applyOrThrow,
@@ -1118,6 +1118,73 @@ describe.skipIf(!url)('board api', () => {
     expect((await call(tim, `${path}/actions`, pick)).status).toBe(200);
   });
 
+  test('a product decision waits on whoever holds product, and an account on the owner', async () => {
+    const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    const tim = await signIn(
+      await invite(pool, {
+        publicUrl: PUBLIC_URL,
+        email: 'tim@example.com',
+        name: 'Tim',
+        role: 'contributor',
+        domains: ['product']
+      })
+    );
+    const gio = await signIn(
+      await invite(pool, {
+        publicUrl: PUBLIC_URL,
+        email: 'gio@example.com',
+        name: 'Gio',
+        role: 'contributor',
+        domains: ['finance']
+      })
+    );
+    await createRequest(pool, {
+      title: 'Book a call',
+      request: 'Let investors book a call with the founders.',
+      skipInterview: true
+    });
+    const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
+    await applyCommand(pool, {
+      taskId,
+      command: handoffCommand({
+        outcome: 'needs_person',
+        needs: ['decision', 'account'],
+        why: 'How investors book a call, and the account to book it with.',
+        asks: ['Choose a way', 'Open the account']
+      }),
+      actor: { kind: 'agent', role: 'interviewer', version: 1 }
+    });
+    const path = `/api/projects/${seeded.projectId}/tasks/1`;
+    const view = async (cookie: string) => json(await call(cookie, path));
+
+    const asTim = await view(tim);
+    expect(asTim.waitingOn).toEqual({
+      kind: 'people',
+      label:
+        'Agents cannot go on: needs an owner for an account with a third-party service; whoever holds product for a business or product decision',
+      me: true
+    });
+    expect(asTim.blocked.question).toContain('Open the account');
+    expect((await view(gio)).waitingOn.me).toBe(false);
+    expect((await view(owner)).waitingOn.me).toBe(true);
+
+    // Tim answers his part; the account still waits on the owner, and no longer on him.
+    expect((await call(tim, `${path}/actions`, { type: 'answer', text: 'Calendly.' })).status).toBe(
+      200
+    );
+    const half = await view(tim);
+    expect(half.waitingOn).toEqual({
+      kind: 'people',
+      label: 'Agents cannot go on: needs an owner for an account with a third-party service',
+      me: false
+    });
+    expect(half.blocked.needs).toEqual(['an account with a third-party service']);
+    expect((await view(owner)).waitingOn.me).toBe(true);
+
+    await call(owner, `${path}/actions`, { type: 'answer', text: 'Account open.' });
+    expect((await view(owner)).blocked).toBeNull();
+  });
+
   test('an owner hands a waiting question to a member, who then has it in their inbox', async () => {
     const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
     const tim = await signIn(
@@ -1135,16 +1202,15 @@ describe.skipIf(!url)('board api', () => {
       skipInterview: true
     });
     const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
-    await applyCommand(pool, {
-      taskId,
-      command: {
-        type: 'block',
+    // Held for the owner as a product decision was before decisions went to whoever holds product.
+    await pool.query('update tasks set blocked = $1 where id = $2', [
+      JSON.stringify({
         question: 'How investors book a call is a product choice.\n\nNeeded:\n- Choose a way',
         askedOf: { role: 'owner' },
         handoff: { needs: ['decision'] }
-      },
-      actor: { kind: 'engine' }
-    });
+      }),
+      taskId
+    ]);
     const path = `/api/projects/${seeded.projectId}/tasks/1`;
 
     const asOwner = await json(await call(owner, path));
