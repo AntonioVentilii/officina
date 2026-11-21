@@ -302,6 +302,26 @@ export const feedbackSinceLastPush = async (pool: Pool, taskId: string): Promise
     )
   ).rows.map((row) => row.text);
 
+/**
+ * What the task's agent runs cost since the engine last held it for its spend (`spend_limit`), so a
+ * maintainer's answer to that hold lets the agents spend the lane's budget again.
+ */
+export const taskSpendCents = async (db: Pool, taskId: string): Promise<number> =>
+  Number(
+    (
+      await db.query<{ cents: string }>(
+        `select coalesce(sum(list_cost_cents), 0) as cents from runs
+         where task_id = $1
+           and created_at > coalesce(
+             (select max(created_at) from task_events
+              where task_id = $1 and type = 'guardrail_tripped'
+                and payload->>'guardrail' = 'spend_limit'),
+             '-infinity')`,
+        [taskId]
+      )
+    ).rows[0]!.cents
+  );
+
 /** How many questions the interviewer has asked on a task so far. */
 export const countInterviewQuestions = async (pool: Pool, taskId: string): Promise<number> =>
   Number(

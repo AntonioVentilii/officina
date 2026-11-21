@@ -300,6 +300,8 @@ export type Command =
     }
   | { readonly type: 'claim' }
   | { readonly type: 'release' }
+  /** The task's agent runs spent the per-task budget since a maintainer last let them go on. */
+  | { readonly type: 'hold_for_spend'; readonly spentCents: number; readonly limitCents: number }
   | ({ readonly type: 'push' } & PushedHead)
   /** The builder answered a GitHub review and found nothing to change, so the head stays. */
   | { readonly type: 'unchanged'; readonly note: string }
@@ -362,7 +364,8 @@ export type Guardrail =
   | 'outside_agent_docs'
   | 'diff_too_large'
   | 'unlisted_files'
-  | 'fix_rounds_exhausted';
+  | 'fix_rounds_exhausted'
+  | 'spend_limit';
 
 export type DomainEvent =
   | { readonly type: 'stage_changed'; readonly from: Stage; readonly to: Stage }
@@ -483,6 +486,9 @@ export const READS_PROPOSALS: ReadonlySet<Command['type']> = new Set([
 const fail = (error: DecisionError): Decision => ({ ok: false, error });
 
 const ok = (task: Task, events: DomainEvent[]): Decision => ({ ok: true, task, events });
+
+/** Cents as people read an amount: `$20.00`. */
+const dollars = (cents: number): string => `$${(cents / 100).toFixed(2)}`;
 
 const moveTo = (task: Task, to: Stage, changes: Partial<Task> = {}): [Task, DomainEvent] => [
   { ...task, ...changes, stage: to },
@@ -1352,6 +1358,20 @@ export const decide = (
         ...pushedEvent(command),
         outside: true
       });
+    }
+
+    case 'hold_for_spend': {
+      if (actor.kind !== 'engine') return fail('not_allowed');
+      const spent = dollars(command.spentCents);
+      const limit = dollars(command.limitCents);
+      const blocked: Blocked = {
+        question: `Agent runs on this task have cost ${spent} since a maintainer last let them go on, over the limit of ${limit} per task. Answer to let them spend up to that much again, or claim or cancel the task.`,
+        askedOf: { role: 'maintainer' }
+      };
+      return ok({ ...task, blocked }, [
+        { type: 'guardrail_tripped', guardrail: 'spend_limit', details: `${spent} > ${limit}` },
+        { type: 'blocked', blocked }
+      ]);
     }
 
     case 'block': {

@@ -61,6 +61,7 @@ import {
   type OnBehalf,
   syncSpecStatus,
   tick,
+  TASK_BUDGET_CENTS,
   type AdoptPort,
   type GitHubPort
 } from '../src';
@@ -531,6 +532,50 @@ describe.skipIf(!url)('engine', () => {
     const updates = github.calls.filter((call) => call.method === 'updateFile');
     expect(updates).toHaveLength(2);
     expect((updates[1]!.args[0] as { text: string }).text).toContain('Status: Implemented (#42)');
+  });
+
+  test('each run is capped by its role, a build by its lane', async () => {
+    const github = fakeGitHub();
+    const agents = createFakePort(succeed);
+    const deps = { pool, github: github.port, agents, publicUrl: PUBLIC_URL };
+    await taskInReady(github, agents);
+    await tick(deps, seeded.projectId);
+    await tick(deps, seeded.projectId);
+    const budgets = Object.fromEntries(
+      agents.sessions.map((session) => [session.metadata.role, session.budgetCents])
+    );
+    expect(budgets).toMatchObject({
+      spec: 600,
+      chooser: 100,
+      reviewer_spec: 300,
+      reviewer_correctness: 300
+    });
+    // The copy change builds in the green lane, whose `budget_usd` is $5.
+    expect(budgets.builder).toBe(500);
+  });
+
+  test('a task whose runs spent the per-task budget starts none until a maintainer lets them go on', async () => {
+    const github = fakeGitHub();
+    const agents = createFakePort(succeed);
+    const deps = { pool, github: github.port, agents, publicUrl: PUBLIC_URL };
+    const taskId = await taskInReady(github, agents);
+    await pool.query(
+      `insert into runs (task_id, stage, runner, agent_role, agent_version, status, list_cost_cents)
+       values ($1, 'building', 'managed_agents', 'builder', 1, 'failed', $2)`,
+      [taskId, TASK_BUDGET_CENTS]
+    );
+    const sessions = agents.sessions.length;
+
+    expect((await tick(deps, seeded.projectId)).steps).toEqual([]);
+    expect(await tick(deps, seeded.projectId)).toEqual({ dispatched: [], steps: [] });
+    const held = (await loadTask(pool, taskId))!.task;
+    expect(held).toMatchObject({ stage: 'ready', blocked: { askedOf: { role: 'maintainer' } } });
+    expect(held.blocked?.question).toContain('over the limit of $20.00 per task');
+    expect(agents.sessions).toHaveLength(sessions);
+
+    await applyOrThrow(pool, taskId, { type: 'answer', text: 'Go on.' }, seeded.owner);
+    expect((await tick(deps, seeded.projectId)).dispatched).toEqual([taskId]);
+    expect(agents.sessions.length).toBeGreaterThan(sessions);
   });
 
   test('a checklist GitHub refuses is recorded on the run and neither fails it nor blocks the task', async () => {
