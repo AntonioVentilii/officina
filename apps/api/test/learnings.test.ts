@@ -1026,6 +1026,23 @@ describe.skipIf(!url)('learning decisions', () => {
     ).toMatchObject({ status: 'rejected', duplicateOf: null });
   });
 
+  test('an accept over an unread one keeps the edit on its branch until the catch-up records it', async () => {
+    const options: { failOpening: number; base?: string } = { failOpening: 1 };
+    const github = fakeGitHub(options);
+    const learning = await leftAccept(github);
+    options.base = '# Agents\n';
+
+    await expect(
+      decide(pool, github.port, owner(), { id: learning.id, decision: 'accept', rewrittenAt: null })
+    ).rejects.toThrow(
+      'an earlier accept of this learning is still being checked; look at it again shortly'
+    );
+    expect((await learningOf(learning.id)).rewrite).toBeNull();
+
+    await catchUpLeftAccepts(pool, github.port, seeded.projectId);
+    expect(await learningOf(learning.id)).toMatchObject({ status: 'accepted', prNumber: 77 });
+  });
+
   test('two copies of one edit accepted at the same moment open one pull request', async () => {
     const github = fakeGitHub();
     const first = await propose('docs');

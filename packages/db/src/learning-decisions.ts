@@ -67,10 +67,11 @@ export const holdLearningDecision = async (
   ).rowCount ?? 0) === 1;
 
 /**
- * What came of marking an accept: marked, its claim taken over by another decision, or refused
- * because another learning with the same edit is accepted with its pull request or being accepted.
+ * What came of marking an accept: marked, marked over the mark of an earlier accept the catch-up
+ * has not read yet, its claim taken over by another decision, or refused because another learning
+ * with the same edit is accepted with its pull request or being accepted.
  */
-export type AcceptMark = 'marked' | 'taken_over' | 'repeated';
+export type AcceptMark = 'marked' | 'remarked' | 'taken_over' | 'repeated';
 
 /**
  * Marks a learning with a new accept attempt, and who made it, under the claim of that accept, once
@@ -80,6 +81,8 @@ export type AcceptMark = 'marked' | 'taken_over' | 'repeated';
  * is marked and still proposed (its accept is opening its pull request, or left one the catch-up has
  * not read yet), so two copies accepted at once never open two identical pull requests. Every copy
  * is locked first, in one order, so two such accepts take turns and the second sees the first mark.
+ * Says when it replaced an earlier mark of this learning: that accept may have left its pull request
+ * on the branch of the edit, so this one must not move the edit to another branch.
  */
 export const markAcceptAttempt = (
   pool: Pool,
@@ -92,8 +95,9 @@ export const markAcceptAttempt = (
       [input.id]
     );
     const copy = (
-      await client.query<{ held: boolean; repeated: boolean }>(
-        `select l.decision_claim = $2 as held, (${DUPLICATE_OF}) is not null or exists (
+      await client.query<{ held: boolean; remarked: boolean; repeated: boolean }>(
+        `select l.decision_claim = $2 as held, l.accept_attempt is not null as remarked,
+           (${DUPLICATE_OF}) is not null or exists (
            select 1 from learnings d where ${sameEditAs('d')} and d.id <> l.id
              and d.status = 'proposed' and d.accept_attempt is not null) as repeated
          from learnings l where l.id = $1 and l.status = 'proposed'`,
@@ -107,7 +111,7 @@ export const markAcceptAttempt = (
        where id = $1`,
       [input.id, input.memberId]
     );
-    return 'marked';
+    return copy.remarked ? 'remarked' : 'marked';
   });
 
 /** Lets go of a claim that recorded nothing, so the learning can be decided again at once. */
