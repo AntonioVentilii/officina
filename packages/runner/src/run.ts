@@ -171,6 +171,7 @@ export const executeRun = async (
   let lastErrors: readonly string[] = [];
   let outcome: RunOutcome | null = null;
   let sessionError: SessionError | null = null;
+  let stopped = false;
   const bounded = untilDeadline(
     untilStopped(port, sessionId, stream),
     input.deadlineMs ?? SESSION_DEADLINE_MS
@@ -245,12 +246,15 @@ export const executeRun = async (
     if (event.type === 'session.status_terminated' || event.type === 'session.status_idle') {
       if (stopReason(event) === 'requires_action') continue;
       if (result === null) outcome ??= stopOutcome(event, sessionError);
+      stopped = true;
       break;
     }
   }
 
+  // Past the deadline, or with a stream that kept closing: nobody listens any more, so the
+  // session must not go on spending, nor pushing with a token about to be revoked.
+  if (!stopped) await port.send(sessionId, [{ type: 'user.interrupt' }]).catch(() => {});
   if (bounded.passed()) {
-    await port.send(sessionId, [{ type: 'user.interrupt' }]).catch(() => {});
     outcome ??= { kind: 'failed', reason: 'the session ran past its deadline and was interrupted' };
   }
 

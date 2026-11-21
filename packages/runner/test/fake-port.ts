@@ -8,11 +8,18 @@ import type {
 } from '../src';
 
 /**
- * A scripted step: an event to emit, an action to run at that point in the session, or `DROP`, where
- * the stream closes as a dropped connection would while the session goes on.
+ * A scripted step: an event to emit, an action to run at that point in the session, `DROP`, where
+ * the stream closes as a dropped connection would while the session goes on, or an event sent
+ * while it was closed (`whileClosed`), which only the history holds.
  */
-export type ScriptItem = SessionEvent | (() => Promise<void>) | typeof DROP;
+export type ScriptItem = SessionEvent | (() => Promise<void>) | typeof DROP | ClosedEvent;
 export const DROP = 'drop';
+interface ClosedEvent {
+  readonly whileClosed: SessionEvent;
+}
+export const whileClosed = (event: SessionEvent): ClosedEvent => ({ whileClosed: event });
+const isClosed = (item: ScriptItem | undefined): item is ClosedEvent =>
+  typeof item === 'object' && !('type' in item);
 
 let eventCounter = 0;
 const nextId = () => `sevt_${++eventCounter}`;
@@ -96,10 +103,15 @@ export const createFakePort = (
     async openStream(sessionId) {
       log.push(`stream ${sessionId}`);
       const play = playOf(sessionId);
+      // What the session sent before this stream opened is in its history, never on the stream.
+      for (let item = play.script[play.next]; isClosed(item); item = play.script[++play.next]) {
+        play.sent.push(item.whileClosed);
+      }
       return (async function* () {
         while (play.next < play.script.length) {
           const item = play.script[play.next++]!;
           if (item === DROP) return;
+          if (isClosed(item)) continue;
           if (typeof item === 'function') await item();
           else {
             play.sent.push(item);

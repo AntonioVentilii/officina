@@ -13,6 +13,7 @@ import {
   createFakePort,
   DROP,
   idle,
+  whileClosed,
   running,
   sessionError,
   terminated,
@@ -213,6 +214,27 @@ describe('executeRun', () => {
     ]);
   });
 
+  test('a result the session sent while the stream was closed is read from the history, once', async () => {
+    const port = createFakePort(() => [
+      running(),
+      DROP,
+      whileClosed(toolUse(approve)),
+      idle('requires_action'),
+      idle('end_turn')
+    ]);
+    const seen: string[] = [];
+    const report = await executeRun(port, {
+      role: 'reviewer_spec',
+      session,
+      brief: 'Review it.',
+      onEvent: (event) => {
+        seen.push(event.type);
+      }
+    });
+    expect(report.outcome).toEqual({ kind: 'result', output: approve });
+    expect(seen.filter((type) => type === 'agent.custom_tool_use')).toHaveLength(1);
+  });
+
   test('each event reaches the run once, though the history repeats what the stream sent', async () => {
     const port = createFakePort(() => [running(), DROP, idle('end_turn')]);
     const seen: string[] = [];
@@ -233,6 +255,8 @@ describe('executeRun', () => {
     expect(port.log.filter((line) => line === 'stream sesn_1')).toHaveLength(
       MAX_STREAM_REOPENS + 1
     );
+    // Nobody listens any more: the session is stopped rather than left to spend on its own.
+    expect(port.sent.at(-1)!.events).toEqual([{ type: 'user.interrupt' }]);
   });
 
   test('a stream that stops sending events past the deadline interrupts the session and fails', async () => {
