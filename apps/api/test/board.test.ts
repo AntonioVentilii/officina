@@ -11,11 +11,13 @@ import {
   renameMember,
   startRun
 } from '@officina/db';
-import { parseProjectConfig } from '@officina/core';
+import { ENGINE, parseProjectConfig } from '@officina/core';
 import { Pool } from 'pg';
 import {
+  applyOrThrow,
   createAutoVerifiedTask,
   createDoneTaskWithLearningPullRequest,
+  createReadyTask,
   createTaskInMerging,
   createTaskInVerifying,
   PLAN,
@@ -27,7 +29,7 @@ import { createApp } from '../src/app';
 import { agentsView, logEntries, RUN_LOG_PAGE } from '../src/board';
 import { invite, loginLink } from '../src/people';
 import { startRealtime, type BoardEvent } from '../src/realtime';
-import { createRequest, createRequestAs, describeTask } from '../src/tasks';
+import { createRequest, createRequestAs, describeTask, linkTask } from '../src/tasks';
 import { handleWebhookAction } from '../src/webhooks';
 
 const url = process.env.TEST_DATABASE_URL;
@@ -196,6 +198,46 @@ describe.skipIf(!url)('board api', () => {
       label: 'Builds once the agent docs of task 2 are merged',
       me: false
     });
+  });
+
+  test('a ready task that waits for other tasks says which, and offers no claim', async () => {
+    const cookie = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    const shared = 'src/routes/settings/+page.svelte';
+    await createReadyTask(pool, seeded, 'Settings', [shared]);
+    const first = await createReadyTask(pool, seeded, 'Title', [shared]);
+    const second = await createReadyTask(pool, seeded, 'Copy', [shared]);
+    await createReadyTask(pool, seeded, 'Icon', ['src/lib/icon.ts']);
+    await linkTask(pool, { number: 2, parent: 1, after: [] });
+    await linkTask(pool, { number: 3, parent: 1, after: [] });
+    await linkTask(pool, { number: 4, after: [2, 3] });
+    await applyOrThrow(
+      pool,
+      first.id,
+      { type: 'dispatch', assignee: { kind: 'agent', role: 'builder' }, openInLane: 0 },
+      ENGINE
+    );
+
+    const tasks = (await json(await call(cookie, `/api/projects/${seeded.projectId}/board`))).tasks;
+    const label = (number: number) =>
+      tasks.find((task: { number: number }) => task.number === number).waitingOn.label;
+    expect(label(1)).toBe('Built through its sub-tasks: task 2 and task 3');
+    expect(label(3)).toBe('Builds once task 2 is merged: they change the same files');
+    expect(label(4)).toBe('Builds once task 2 and task 3 are merged');
+    for (const number of [1, 3, 4]) {
+      const task = await json(
+        await call(cookie, `/api/projects/${seeded.projectId}/tasks/${number}`)
+      );
+      expect(task.waitingOn).toEqual({ kind: 'agent', label: label(number), me: false });
+      expect(task.actions).not.toContain('claim');
+    }
+
+    for (const { id } of [first, second])
+      await applyOrThrow(pool, id, { type: 'cancel', reason: 'Dropped' }, seeded.owner);
+    const parent = await json(await call(cookie, `/api/projects/${seeded.projectId}/tasks/1`));
+    expect(parent.waitingOn.label).toBe(
+      'Never built itself: its sub-tasks (task 2 and task 3) are closed'
+    );
+    expect(parent.actions).not.toContain('claim');
   });
 
   test('a verifier records checks on the board, and the task page shows each with who and how', async () => {

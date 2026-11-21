@@ -202,6 +202,10 @@
   border-radius: 999px;
 }
 
+:root[data-look='fucina'] .sidebar .looks .tile {
+  border-radius: 9px;
+}
+
 @keyframes pop {
   40% {
     transform: scale(1.4);

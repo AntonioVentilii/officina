@@ -1,7 +1,7 @@
 import { ENGINE, type Actor, type Command } from '@officina/core';
 import type { Pool } from 'pg';
 import { CONFIG_YAML } from '../../core/test/fixtures';
-import { applyCommand, createTask, insertLearnings, migrate } from '../src';
+import { applyCommand, createTask, insertLearnings, migrate, saveSpecVersion } from '../src';
 
 export interface Seeded {
   readonly projectId: string;
@@ -54,6 +54,50 @@ const agent = (
   role,
   version: 1
 });
+
+/**
+ * Creates a task and takes it to `ready`, its spec predicting `paths` and stored as the spec agent's
+ * spec is, so the order of sub-tasks reads them.
+ */
+export const createReadyTask = async (
+  pool: Pool,
+  seeded: Seeded,
+  title: string,
+  paths: readonly string[]
+): Promise<{ id: string; number: number }> => {
+  const { task } = await createTask(pool, {
+    projectId: seeded.projectId,
+    title,
+    requesterId: seeded.ownerId
+  });
+  await applyOrThrow(pool, task.id, { type: 'submit_request' }, seeded.owner);
+  await applyOrThrow(pool, task.id, { type: 'accept' }, seeded.owner);
+  const specced = await applyCommand(pool, {
+    taskId: task.id,
+    command: { type: 'post_spec', predictedPaths: paths, userVisible: false },
+    actor: agent('spec'),
+    onApplied: (client, after) =>
+      saveSpecVersion(client, {
+        taskId: task.id,
+        version: after.specVersion,
+        body: `# ${title}`,
+        createdBy: agent('spec'),
+        predictedPaths: paths
+      })
+  });
+  if (!specced.ok) throw new Error(`post_spec: ${specced.error}`);
+  await applyOrThrow(
+    pool,
+    task.id,
+    { type: 'plan_approval', userVisible: false, plan: PLAN },
+    agent('chooser')
+  );
+  await applyOrThrow(pool, task.id, { type: 'approve' }, seeded.owner);
+  const { rows } = await pool.query<{ number: number }>('select number from tasks where id = $1', [
+    task.id
+  ]);
+  return { id: task.id, number: rows[0]!.number };
+};
 
 /** Creates a copy-change task and takes it to `choosing`, built at `abc` and reviewed. */
 export const createTaskInChoosing = async (pool: Pool, seeded: Seeded): Promise<string> => {

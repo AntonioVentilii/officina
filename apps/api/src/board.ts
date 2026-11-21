@@ -8,6 +8,7 @@ import {
   TERMINAL_STAGES,
   applicableRequirements,
   branchForTask,
+  buildWait,
   buildsTask,
   can,
   canAnswer,
@@ -35,6 +36,7 @@ import {
   type Approval,
   type ApprovalPlan,
   type Blocked,
+  type BuildWait,
   type Gate,
   type Eligibility,
   type Member,
@@ -45,6 +47,7 @@ import {
   type Task
 } from '@officina/core';
 import {
+  buildLinksOf,
   domainEventOf,
   latestChooserResult,
   listApprovedSubjects,
@@ -246,7 +249,9 @@ const PUBLIC_FIELDS: Readonly<Record<string, readonly string[]>> = {
   github_review_held: ['by'],
   github_review_handled: ['by', 'outcome'],
   checklist_posted: ['pullRequest'],
-  checklist_checked: ['item', 'outcome', 'channel']
+  checklist_checked: ['item', 'outcome', 'channel'],
+  links_changed: ['parent', 'after'],
+  subtasks_merged: ['subtasks']
 };
 
 const HIDDEN_QUESTION =
@@ -421,10 +426,46 @@ const handingInWait = (row: BoardTaskRow, names: ReadonlyMap<string, string>): W
   me: false
 });
 
+/** Tasks by number in words: "task 3", "task 3 and task 4", "task 3, task 4 and task 5". */
+export const tasksInWords = (numbers: readonly number[]): string => {
+  const named = numbers.map((number) => `task ${number}`);
+  return named.length < 2 ? named.join('') : `${named.slice(0, -1).join(', ')} and ${named.at(-1)}`;
+};
+
+const mergedFirst = (numbers: readonly number[]): string =>
+  `Builds once ${tasksInWords(numbers)} ${numbers.length > 1 ? 'are' : 'is'} merged`;
+
+/** What a ready task waits for before it is built, in words, for the board, the CLI and Claude. */
+export const buildWaitLabel = (wait: BuildWait): string => {
+  switch (wait.kind) {
+    case 'subtasks':
+      return `Built through its sub-tasks: ${tasksInWords(wait.numbers)}`;
+    case 'subtasks_closed':
+      return `Never built itself: its sub-tasks (${tasksInWords(wait.numbers)}) are closed`;
+    case 'after':
+      return mergedFirst(wait.numbers);
+    case 'shared_paths':
+      return `${mergedFirst(wait.numbers)}: they change the same files`;
+  }
+};
+
+/** What a task waits for before it is built, read only for a task at `ready`. */
+export const readyWait = async (
+  pool: Pool,
+  task: { readonly id: string; readonly stage: Task['stage'] }
+): Promise<BuildWait | null> =>
+  task.stage === 'ready' ? buildWait(await buildLinksOf(pool, task.id)) : null;
+
+/** What was read about one task for its view: where its gate stands and what it waits for. */
+interface TaskFacts {
+  readonly approval: ApprovalState | null;
+  readonly wait: BuildWait | null;
+}
+
 const waitingOn = (
   row: BoardTaskRow,
   viewer: BoardViewer,
-  approval: ApprovalState | null,
+  { approval, wait }: TaskFacts,
   facts: Pick<ProjectFacts, 'config' | 'onboarding' | 'names'>
 ): WaitingOn => {
   const member = viewerMember(viewer);
@@ -483,6 +524,7 @@ const waitingOn = (
       };
     }
     case 'ready': {
+      if (wait) return { kind: 'agent', label: buildWaitLabel(wait), me: false };
       const byPerson = buildReasonFor(facts.config, row, viewer);
       if (byPerson)
         return {
@@ -532,10 +574,15 @@ const waitingOn = (
  * it is theirs: built by hand or with their own agents, it goes to the same review. They may hand
  * it back instead, and so may whoever may steer the work, for another person's build.
  */
-const buildActions = (row: BoardTaskRow, viewer: BoardViewer): BoardAction[] => {
+const buildActions = (
+  row: BoardTaskRow,
+  viewer: BoardViewer,
+  wait: BuildWait | null
+): BoardAction[] => {
   if (!buildsTask(viewer, row)) return [];
-  if (row.stage === 'ready' || (row.stage === 'building' && row.assignee?.kind === 'agent'))
-    return ['claim'];
+  // A task that waits for other tasks is claimed once it waits for nothing, as it is dispatched.
+  if (row.stage === 'ready') return wait ? [] : ['claim'];
+  if (row.stage === 'building' && row.assignee?.kind === 'agent') return ['claim'];
   return row.stage === 'building' && row.assignee?.kind === 'member'
     ? heldBuildActions(row.assignee.memberId, viewer)
     : [];
@@ -574,7 +621,8 @@ const gateActions = (
 const actionsFor = (
   row: BoardTaskRow,
   viewer: BoardViewer,
-  facts: Pick<ProjectFacts, 'config' | 'members'>
+  facts: Pick<ProjectFacts, 'config' | 'members'>,
+  wait: BuildWait | null
 ): BoardAction[] => {
   const member = viewerMember(viewer);
   // Nobody writes on a task they may not read: no comment or answer.
@@ -589,7 +637,7 @@ const actionsFor = (
     if (writes && canAnswer(member, row.blocked.askedOf)) actions.push('answer');
   } else if (!row.paused) {
     if (row.stage === 'triage' && can(member, 'triage')) actions.push('accept', 'decline');
-    actions.push(...buildActions(row, viewer), ...gateActions(row, viewer, facts));
+    actions.push(...buildActions(row, viewer, wait), ...gateActions(row, viewer, facts));
   }
   if (can(member, 'steer') || (requester && can(member, 'request'))) actions.push('cancel');
   if (writes && can(member, 'comment')) actions.push('comment');
@@ -634,7 +682,7 @@ const handingInView = (
 const cardView = (
   row: BoardTaskRow,
   viewer: BoardViewer,
-  approval: ApprovalState | null,
+  task: TaskFacts,
   facts: ProjectFacts
 ) => ({
   number: row.number,
@@ -666,7 +714,7 @@ const cardView = (
   autoMergeOn: row.autoMergeOn,
   learningPullRequests: learningPullRequestsFor(row, viewer),
   handingIn: handingInView(row, viewer, facts.names),
-  waitingOn: waitingOn(row, viewer, approval, facts)
+  waitingOn: waitingOn(row, viewer, task, facts)
 });
 
 const DEPTH_LABELS = {
@@ -833,7 +881,14 @@ export const boardView = async (pool: Pool, viewer: BoardViewer) => {
   const facts = await projectFacts(pool, viewer);
   const rows = await listBoardTasks(pool, viewer.projectId);
   return Promise.all(
-    rows.map(async (row) => cardView(row, viewer, await approvalState(pool, row, facts), facts))
+    rows.map(async (row) =>
+      cardView(
+        row,
+        viewer,
+        { approval: await approvalState(pool, row, facts), wait: await readyWait(pool, row) },
+        facts
+      )
+    )
   );
 };
 
@@ -916,7 +971,7 @@ export const taskView = async (
   const row = await loadBoardTask(pool, viewer.projectId, number);
   if (!row) return null;
   const facts = await projectFacts(pool, viewer);
-  const [approval, context, specs, comments, events, runs, chooser, approvals, proposals] =
+  const [approval, context, specs, comments, events, runs, chooser, approvals, proposals, wait] =
     await Promise.all([
       approvalState(pool, row, facts),
       loadTaskContext(pool, row.id),
@@ -926,7 +981,8 @@ export const taskView = async (
       listTaskRuns(pool, row.id),
       latestChooserResult(pool, row.id),
       listApprovedSubjects(pool, row.id),
-      listProposalHistory(pool, row.id)
+      listProposalHistory(pool, row.id),
+      readyWait(pool, row)
     ]);
   const label = (actor: Actor) => actorLabel(actor, facts.names);
   // The viewer's own approval that Claude proposed, waiting for them to confirm or discard it.
@@ -936,7 +992,7 @@ export const taskView = async (
   const [request, ...thread] = comments;
   const shown = confidentialView(row, viewer);
   return {
-    ...cardView(row, viewer, approval, facts),
+    ...cardView(row, viewer, { approval, wait }, facts),
     blocked: row.blocked
       ? {
           question: shown.text(questionFor(viewerMember(viewer), row.blocked)),
@@ -1007,7 +1063,7 @@ export const taskView = async (
       })
     ),
     reviewers: REVIEWER_ROLES.map((role) => ({ role, label: roleLabel(role) })),
-    actions: actionsFor(row, viewer, facts),
+    actions: actionsFor(row, viewer, facts, wait),
     proposal: proposal ? { gate: proposal.gate, via: appView(proposal.via) } : null
   };
 };

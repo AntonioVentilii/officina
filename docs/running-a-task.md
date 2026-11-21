@@ -131,6 +131,14 @@ back another person's build the same way.
 
 To stop a task at any time: `scripts/officina task cancel --number 1 --reason "Why"`.
 
+To build a large request in order, a maintainer or an owner links its parts:
+`scripts/officina task link --number 4 --parent 2 --after 3` makes task 4 a sub-task of task 2
+that waits for task 3, replacing its earlier links (with neither option, it removes them). Links
+change only until a task is built. A task is built only once every task it waits for has merged,
+and a sub-task also waits while a sibling being built or reviewed changes the same files;
+`task show` says what it waits for. The parent is never built itself: it closes on its own once its
+sub-tasks have merged.
+
 ## Reviews on GitHub and low-risk changes
 
 - **Copilot and people on GitHub.** When Copilot leaves inline comments on the pull request, or a person

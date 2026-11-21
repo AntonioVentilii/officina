@@ -1,5 +1,6 @@
 import {
   TERMINAL_STAGES,
+  buildWait,
   computeLane,
   gateSubject,
   isGate,
@@ -19,6 +20,7 @@ import {
 } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
 import { appendTaskEvent, saveSpecVersion } from './task-history';
+import { buildLinksOf } from './task-links';
 import { toStored, type StoredTask, type TaskRow } from './task-row';
 import { addComment, listApprovedSubjects, listProjectMembers, proposalsFor } from './tasks';
 
@@ -280,12 +282,20 @@ export const applyCommandIn = async (
     await client.query('select id from projects where id = $1 for share', [row.project_id]);
     onboardingOpen = (await openOnboardingTask(client, row.project_id)) !== null;
   }
+  // A build starts only once the task waits for nothing. Siblings take their parent's row lock in
+  // turn, so two never both pass the check of shared files; locks go task, project, then parent.
+  const startsBuild =
+    (input.command.type === 'dispatch' || input.command.type === 'claim') &&
+    before.stage === 'ready';
+  if (startsBuild && row.parent_id)
+    await client.query('select id from tasks where id = $1 for update', [row.parent_id]);
   const decision = decide(before, input.command, input.actor, {
     config: parsedConfig.config,
     members,
     approvals,
     onboardingOpen,
-    proposals
+    proposals,
+    ...(startsBuild ? { buildWait: buildWait(await buildLinksOf(client, input.taskId)) } : {})
   });
   if (!decision.ok) return decision;
 

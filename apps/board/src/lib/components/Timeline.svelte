@@ -1,5 +1,6 @@
 <script lang="ts">
   import { ago, dateTime } from '#lib/format.ts';
+  import { LINK_SENTENCES } from '#lib/links.ts';
   import { STAGE_LABELS } from '#lib/stages.ts';
   import { eventDetail } from '#lib/timeline.ts';
   import type { Comment, Stage, TaskEvent } from '#lib/types.ts';
@@ -124,7 +125,7 @@
       case 'checklist_checked':
         return `checked item ${Number(p.item) + 1} of the checklist: ${p.outcome}`;
       default:
-        return event.type.replaceAll('_', ' ');
+        return LINK_SENTENCES[event.type]?.(p) ?? event.type.replaceAll('_', ' ');
     }
   };
 

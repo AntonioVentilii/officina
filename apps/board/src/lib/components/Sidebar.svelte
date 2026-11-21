@@ -20,6 +20,7 @@
   import { live } from '#lib/state/live.svelte.ts';
   import { LOOKS, look } from '#lib/state/look.svelte.ts';
   import { session } from '#lib/state/session.svelte.ts';
+  import type { Look } from '#lib/types.ts';
   import Logo from './Logo.svelte';
   import MemberAvatar from './MemberAvatar.svelte';
   import MemberName from './MemberName.svelte';
@@ -44,6 +45,22 @@
   // on a phone it takes the whole tab bar, where the name is otherwise hidden.
   let renaming = $state(false);
   let nameEditor = $state<ReturnType<typeof MemberName>>();
+
+  // On a computer every look is a tile; on a phone one button steps to the next look, as the theme
+  // button steps through the themes. Either way the new look grows out of what was pressed.
+  const chosenIndex = $derived(
+    Math.max(
+      0,
+      LOOKS.findIndex((item) => item.id === look.current)
+    )
+  );
+  const chosen = $derived(LOOKS[chosenIndex] ?? LOOKS[0]);
+  const next = $derived(LOOKS[(chosenIndex + 1) % LOOKS.length] ?? LOOKS[0]);
+
+  const pick = (id: Look, event: MouseEvent & { currentTarget: HTMLElement }) => {
+    const box = event.currentTarget.getBoundingClientRect();
+    look.choose(id, { x: box.left + box.width / 2, y: box.top + box.height / 2 });
+  };
 </script>
 
 <nav class="sidebar" class:renaming aria-label="Main">
@@ -141,17 +158,18 @@
     <div class="looks" role="group" aria-label="Look">
       {#each LOOKS as item (item.id)}
         <button
+          class="tile"
           class:on={look.current === item.id}
           aria-pressed={look.current === item.id}
+          aria-label={item.label}
+          title={item.label}
           disabled={look.switching}
-          onclick={(event) => {
-            const box = event.currentTarget.getBoundingClientRect();
-            look.choose(item.id, { x: box.left + box.width / 2, y: box.top + box.height / 2 });
-          }}
+          onclick={(event) => pick(item.id, event)}
         >
-          <Logo look={item.id} size={14} />{item.label}
+          <Logo look={item.id} size={20} />
         </button>
       {/each}
+      <span class="looks-name">{chosen.label}</span>
     </div>
     {#if session.me}
       <div class="me">
@@ -176,6 +194,15 @@
             aria-label="Change your name"
           >
             <Pencil size={14} />
+          </button>
+          <button
+            class="btn ghost icon sm next-look"
+            disabled={look.switching}
+            onclick={(event) => pick(next.id, event)}
+            title="Look: {chosen.label}"
+            aria-label="Look: {chosen.label}. Switch to {next.label}"
+          >
+            <Logo size={16} />
           </button>
           <button
             class="btn ghost icon sm"
@@ -386,38 +413,53 @@
     color: var(--nav-text);
   }
 
-  /* Three looks do not fit the sidebar's width on one line. */
+  /* Each look as its logo, the chosen one ringed and named, on one row within the sidebar's padding.
+     The row is named "Look" for assistive technology only: a visible label beside the longest name,
+     Modernista, would not fit. */
   .looks {
     display: flex;
-    flex-wrap: wrap;
-    gap: 6px 16px;
+    align-items: center;
+    gap: 6px;
     padding: 0 24px;
   }
 
-  .looks button {
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-    padding: 2px 0 4px;
+  .tile {
+    flex: none;
+    display: inline-grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
     border: 0;
-    border-bottom: 2px solid transparent;
     background: none;
-    color: var(--nav-text-2);
-    font-size: 12.5px;
+    opacity: 0.7;
+    transition: opacity 0.15s;
   }
 
-  .looks button:hover {
-    color: var(--nav-text);
+  .tile:hover,
+  .tile.on {
+    opacity: 1;
+  }
+
+  .tile.on {
+    box-shadow: 0 0 0 2px var(--nav-text);
   }
 
   /* Locked only while the looks swap: dimming it would show up in the animation itself. */
-  .looks button:disabled {
+  .tile:disabled {
     cursor: progress;
   }
 
-  .looks button.on {
+  .looks-name {
+    flex: none;
+    margin-left: 2px;
+    font-size: 12.5px;
     color: var(--nav-text);
-    border-bottom-color: var(--nav-text);
+  }
+
+  /* The phone's look button; on a computer the tiles take its place. */
+  .next-look {
+    display: none;
   }
 
   .me {
@@ -654,7 +696,8 @@
       border: 0;
     }
 
-    .me .rename-me {
+    .me .rename-me,
+    .me .next-look {
       display: inline-flex;
     }
 
