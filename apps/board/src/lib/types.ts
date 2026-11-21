@@ -69,7 +69,7 @@ export interface Project {
   readonly can: readonly Permission[];
 }
 
-export type Look = 'modernista' | 'tecnica';
+export type Look = 'fucina' | 'modernista' | 'tecnica';
 
 export interface Me {
   readonly member: { readonly id: string; readonly name: string; readonly email: string };

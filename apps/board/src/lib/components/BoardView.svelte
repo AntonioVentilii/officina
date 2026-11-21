@@ -1,7 +1,10 @@
 <script lang="ts">
   import { Plus, Search } from '@lucide/svelte';
+  import { tick } from 'svelte';
+  import { flip } from 'svelte/animate';
   import { page } from '$app/state';
   import { BOARD_HEADING_ID } from '#lib/drawer.ts';
+  import { flipMs, receive, send, settle } from '#lib/motion.ts';
   import { COLUMNS, CLOSED, isOpen } from '#lib/stages.ts';
   import { board } from '#lib/state/board.svelte.ts';
   import { clock } from '#lib/state/clock.svelte.ts';
@@ -40,6 +43,7 @@
             title: 'Closed',
             hint: 'Declined or cancelled',
             stages: CLOSED,
+            hue: undefined,
             cards: visible.filter((card) => CLOSED.includes(card.stage))
           }
         ]
@@ -53,6 +57,10 @@
     (lanes = lanes.includes(lane) ? lanes.filter((item) => item !== lane) : [...lanes, lane]);
 
   const canRequest = $derived(session.can('request'));
+
+  $effect(() => {
+    if (board.loaded) void tick().then(settle);
+  });
 </script>
 
 <section class="board">
@@ -120,7 +128,7 @@
   </header>
   <div class="columns">
     {#each columns as column, index (column.id)}
-      <section class="column" aria-label={column.title}>
+      <section class="column board-column" aria-label={column.title} style:--hue={column.hue}>
         <div class="column-head" title={column.hint}>
           <span class="column-no num">{String(index + 1).padStart(2, '0')}</span>
           <h2 class="column-title">
@@ -129,16 +137,25 @@
               <span class="live-dot" title="An agent is working here"></span>
             {/if}
           </h2>
-          <span class="column-count num">{column.cards.length}</span>
+          {#key column.cards.length}
+            <span class="column-count num">{column.cards.length}</span>
+          {/key}
         </div>
         <div class="cards">
           {#each column.cards as card (card.number)}
-            <TaskCard
-              {card}
-              repo={session.project?.repo ?? null}
-              now={clock.now}
-              active={activeNumber === card.number}
-            />
+            <div
+              class="slot"
+              in:receive={{ key: card.number }}
+              out:send={{ key: card.number }}
+              animate:flip={{ duration: flipMs() }}
+            >
+              <TaskCard
+                {card}
+                repo={session.project?.repo ?? null}
+                now={clock.now}
+                active={activeNumber === card.number}
+              />
+            </div>
           {:else}
             <div class="empty">{board.loaded ? column.hint : ''}</div>
           {/each}

@@ -23,6 +23,7 @@
   import Markdown from './Markdown.svelte';
   import MemberAvatar from './MemberAvatar.svelte';
   import RunRow from './RunRow.svelte';
+  import StageStamp from './StageStamp.svelte';
   import StageTrack from './StageTrack.svelte';
   import TaskPeople from './TaskPeople.svelte';
   import Timeline from './Timeline.svelte';
@@ -188,6 +189,7 @@
         <h1 id="task-{number}-title">{task.title}</h1>
         <div class="track"><StageTrack stage={task.stage} working={task.running.length > 0} /></div>
       </header>
+      <StageStamp number={task.number} stage={task.stage} />
 
       <div class="scroll">
         <div class="next">
