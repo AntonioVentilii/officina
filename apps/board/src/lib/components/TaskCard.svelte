@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { CircleHelp, Pause, UserRound } from '@lucide/svelte';
+  import { CircleHelp, Cpu, Pause, UserRound } from '@lucide/svelte';
   import { initials, money, since } from '#lib/format.ts';
   import { STAGE_LABELS, stageHue } from '#lib/stages.ts';
   import { look } from '#lib/state/look.svelte.ts';
@@ -42,6 +42,13 @@
     <span class="number num">#{card.number}</span>
     <span class="stage">{STAGE_LABELS[card.stage]}</span>
     <span class="lane"><LaneChip lane={card.lane} /></span>
+    {#if card.forcedModel}
+      <span
+        class="forced"
+        title="Every agent step runs on {card.forcedModel.label}, forced by a maintainer"
+        ><Cpu size={12} />{card.forcedModel.label}</span
+      >
+    {/if}
   </div>
 
   <h3 class="title">{card.title}</h3>
@@ -142,6 +149,14 @@
   .lane {
     display: inline-flex;
     margin-left: auto;
+    color: var(--text);
+  }
+
+  .forced {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: 3px;
     color: var(--text);
   }
 

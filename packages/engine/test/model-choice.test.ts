@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { RUNNER_ROLES, type AgentEffort, type ModelTier } from '@officina/runner';
+import type { ModelTier } from '@officina/core';
+import { RUNNER_ROLES, type AgentEffort } from '@officina/runner';
 import { areaOf, chooseModel, type StepSignals } from '../src/model-choice';
 
 /** A first build of a two-file change in one package, in the standard lane, nothing gone wrong. */
@@ -12,6 +13,7 @@ const step = (overrides: Partial<StepSignals>): StepSignals => ({
   strongPaths: [],
   fixRounds: 0,
   failedAttempts: 0,
+  forcedTier: null,
   ...overrides
 });
 
@@ -141,6 +143,41 @@ describe('chooseModel', () => {
       'opus',
       'high',
       'red lane, after a failed attempt'
+    ],
+    [
+      'a first build forced onto opus',
+      { forcedTier: 'opus' },
+      'opus',
+      'medium',
+      'forced by a maintainer'
+    ],
+    [
+      'a red-lane build forced onto haiku',
+      { lane: 'red', forcedTier: 'haiku' },
+      'haiku',
+      'high',
+      'forced by a maintainer'
+    ],
+    [
+      'a build after a failed attempt forced onto sonnet',
+      { failedAttempts: 1, forcedTier: 'sonnet' },
+      'sonnet',
+      'medium',
+      'forced by a maintainer'
+    ],
+    [
+      'an interviewer forced onto opus',
+      { role: 'interviewer', paths: [], forcedTier: 'opus' },
+      'opus',
+      'low',
+      'forced by a maintainer'
+    ],
+    [
+      'a correctness review forced onto haiku',
+      { role: 'reviewer_correctness', forcedTier: 'haiku' },
+      'sonnet',
+      'medium',
+      'forced by a maintainer'
     ]
   ];
 

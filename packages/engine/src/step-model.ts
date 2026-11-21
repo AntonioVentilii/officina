@@ -21,7 +21,8 @@ const signalsFor = async (step: Step): Promise<StepSignals> => {
     diffLines: push?.diffLines ?? null,
     strongPaths: step.config.models.strongPaths,
     fixRounds: task.fixRounds,
-    failedAttempts: failed
+    failedAttempts: failed,
+    forcedTier: task.forcedModel
   };
 };
 

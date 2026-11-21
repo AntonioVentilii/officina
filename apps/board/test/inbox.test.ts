@@ -14,6 +14,7 @@ const card = (number: number, stage: Stage, extra: Partial<Card> = {}): Card => 
   requester: 'Antonio',
   pullRequest: null,
   costCents: null,
+  forcedModel: null,
   running: [],
   fixRounds: 0,
   specVersion: 1,

@@ -139,6 +139,11 @@ back another person's build the same way.
 
 To stop a task at any time: `scripts/officina task cancel --number 1 --reason "Why"`.
 
+To run every agent step on a task on one model tier instead of the one the engine's rule picks,
+a maintainer or an owner forces it: `scripts/officina task force-model --number 1 --tier opus`
+(or `haiku`, `sonnet`); `--tier rule` gives the choice back to the rule. It holds from the next
+agent step, and the rule still sets how hard each step thinks.
+
 To build a large request in order, a maintainer or an owner links its parts:
 `scripts/officina task link --number 4 --parent 2 --after 3` makes task 4 a sub-task of task 2
 that waits for task 3, replacing its earlier links (with neither option, it removes them). Links

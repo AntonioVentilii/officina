@@ -493,7 +493,8 @@ describe.skipIf(!url)('connector for Claude', () => {
       'check_item',
       'review',
       'pause_task',
-      'resume_task'
+      'resume_task',
+      'force_model'
     ]);
     const open = list.result.tools.find((tool: { name: string }) => tool.name === 'open_request');
     expect(open.inputSchema.required).toEqual(['title', 'request']);
@@ -676,6 +677,51 @@ describe.skipIf(!url)('connector for Claude', () => {
       [taskId]
     );
     expect(requested.rows).toEqual([{ note: 'Cover Italian too.' }]);
+  });
+
+  test('Claude forces a model tier for whoever may steer, and gives it back to the rule', async () => {
+    await invite(pool, {
+      publicUrl: PUBLIC_URL,
+      email: 'gio@example.com',
+      name: 'Gio',
+      role: 'contributor',
+      domains: []
+    });
+    const owner = (await connect()).tokens.access_token as string;
+    const gio = (await connect('gio@example.com')).tokens.access_token as string;
+    await tool(owner, 'open_request', { title: 'Rename the Wager button', request: 'Say it.' });
+    const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
+    const forced = async () =>
+      (
+        await pool.query<{ forced_model: string | null }>(
+          'select forced_model from tasks where id = $1',
+          [taskId]
+        )
+      ).rows[0]!.forced_model;
+    const text = async (token: string, name: string, args: Record<string, unknown> = {}) =>
+      (await tool(token, name, args)).content[0]!.text as string;
+
+    const refused = await tool(gio, 'force_model', { number: 1, tier: 'opus' });
+    expect(refused.isError).toBe(true);
+    expect(refused.content[0]!.text).toContain('you do not have the role needed for that');
+    expect(await forced()).toBeNull();
+
+    const set = await tool(owner, 'force_model', { number: 1, tier: 'opus' });
+    expect(set.isError).toBe(false);
+    expect(set.content[0]!.text).toStartWith(
+      'Model: Opus for every agent step, forced by a maintainer'
+    );
+    expect(await forced()).toBe('opus');
+    expect(await text(owner, 'show_task', { number: 1 })).toContain(
+      'Model: Opus for every agent step, forced by a maintainer'
+    );
+    expect(await text(gio, 'show_task', { number: 1 })).not.toContain('Model:');
+
+    expect((await tool(owner, 'force_model', { number: 1, tier: 'rule' })).isError).toBe(false);
+    expect(await forced()).toBeNull();
+    expect(await text(owner, 'show_task', { number: 1 })).toContain(
+      'Model: chosen by rule for each agent step'
+    );
   });
 
   test("Claude pauses and resumes a task for whoever may steer, and a paused question is nobody's turn", async () => {

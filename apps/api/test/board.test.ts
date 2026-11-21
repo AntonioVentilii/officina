@@ -523,7 +523,7 @@ describe.skipIf(!url)('board api', () => {
     ]);
     expect(task.events.map((event: { type: string }) => event.type)).toContain('stage_changed');
     expect(task.waitingOn).toMatchObject({ kind: 'agent', me: false });
-    expect(task.actions).toEqual(['cancel', 'comment']);
+    expect(task.actions).toEqual(['cancel', 'force_model', 'comment']);
   });
 
   test('every member sees every task in the project, with who asked and who approves', async () => {
@@ -1701,6 +1701,59 @@ describe.skipIf(!url)('board api', () => {
     await applyCommand(pool, { taskId, actor: seeded.owner, command: { type: 'resume' } });
     for (const view of await views(contributor))
       expect(view.waitingOn).toEqual({ kind: 'people', label: 'A question for Gio', me: true });
+  });
+
+  test('a forced model tier is set from the board by whoever may steer, and only they read it', async () => {
+    const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    const contributor = await signIn(
+      await invite(pool, {
+        publicUrl: PUBLIC_URL,
+        email: 'gio@example.com',
+        name: 'Gio',
+        role: 'contributor',
+        domains: []
+      })
+    );
+    await createRequest(pool, { title: 'Rename the Wager button', request: 'Say Prediction.' });
+    const project = `/api/projects/${seeded.projectId}`;
+    const force = (cookie: string, tier: string | null) =>
+      call(cookie, `${project}/tasks/1/actions`, { type: 'force_model', tier });
+    const views = async (cookie: string) => {
+      const task = await json(await call(cookie, `${project}/tasks/1`));
+      const card = (await json(await call(cookie, `${project}/board`))).tasks.find(
+        (item: { number: number }) => item.number === 1
+      );
+      return { task, card };
+    };
+
+    expect((await force(contributor, 'opus')).status).toBe(409);
+    expect((await force(owner, 'gpt')).status).toBe(400);
+    expect((await force(owner, 'opus')).status).toBe(200);
+
+    const forOwner = await views(owner);
+    expect(forOwner.card.forcedModel).toEqual({ tier: 'opus', label: 'Opus' });
+    expect(forOwner.task.forcedModel).toEqual({ tier: 'opus', label: 'Opus' });
+    expect(forOwner.task.modelTiers.map((option: { tier: string }) => option.tier)).toEqual([
+      'haiku',
+      'sonnet',
+      'opus'
+    ]);
+    expect(forOwner.task.actions).toContain('force_model');
+    expect(
+      forOwner.task.events.find((event: { type: string }) => event.type === 'model_forced')?.payload
+    ).toEqual({ from: null, to: 'opus' });
+
+    const forContributor = await views(contributor);
+    expect(forContributor.card.forcedModel).toBeNull();
+    expect(forContributor.task.modelTiers).toEqual([]);
+    expect(forContributor.task.actions).not.toContain('force_model');
+    expect(
+      forContributor.task.events.find((event: { type: string }) => event.type === 'model_forced')
+        ?.payload
+    ).toEqual({});
+
+    expect((await force(owner, null)).status).toBe(200);
+    expect((await views(owner)).card.forcedModel).toBeNull();
   });
 
   test("an owner of one project cannot read, act on or decide another project's work", async () => {
