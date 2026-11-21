@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.18.0](https://github.com/AntonioVentilii/officina/compare/v1.17.0...v1.18.0) (2026-11-21)
+
+
+### Features
+
+* **api,board:** show what a role asks its reader and what the reader answers in the run log ([#329](https://github.com/AntonioVentilii/officina/issues/329)) ([b3c3a33](https://github.com/AntonioVentilii/officina/commit/b3c3a3375480969d9ecdaa1cf5d45bc505425cce))
+* **core,db,engine,api,board:** a maintainer forces the model tier of a task's agent steps ([#334](https://github.com/AntonioVentilii/officina/issues/334)) ([50d2613](https://github.com/AntonioVentilii/officina/commit/50d2613b61973b4d33f955f1fbef0850551a9bb3))
+* **core:** the reviewers take turns, so the correctness review runs only on work that meets the spec ([#330](https://github.com/AntonioVentilii/officina/issues/330)) ([1ec55a9](https://github.com/AntonioVentilii/officina/commit/1ec55a9520fa1e898cd8d138964c6542e6f75669))
+* **runner,engine,api:** replay a past build on its own trial agents to measure what the reader saves ([#332](https://github.com/AntonioVentilii/officina/issues/332)) ([a4e1274](https://github.com/AntonioVentilii/officina/commit/a4e1274526da887793e2a6eeb546a16f26f14522))
+
+
+### Tests
+
+* db` against a local Postgres 17 container (474 pass), `bun run ([1ec55a9](https://github.com/AntonioVentilii/officina/commit/1ec55a9520fa1e898cd8d138964c6542e6f75669))
+
 ## [1.17.0](https://github.com/AntonioVentilii/officina/compare/v1.16.0...v1.17.0) (2026-11-21)
 
 
