@@ -256,12 +256,15 @@ const main = async () => {
 
     if (command === 'setup-agents') {
       const port = agentsPort();
-      const model = await createModelResolver({
+      const resolver = createModelResolver({
         listModels: () => port.listModels(),
         env: process.env,
         log: (message, details) => console.log(message, JSON.stringify(details ?? {}))
-      }).resolve('opus');
-      const { changed } = await setupAgents(pool, port, PROMPTS_DIR, model.id);
+      });
+      const { changed } = await setupAgents(pool, port, PROMPTS_DIR, {
+        opus: (await resolver.resolve('opus')).id,
+        haiku: (await resolver.resolve('haiku')).id
+      });
       console.log(
         changed.length ? `agents created or updated: ${changed.join(', ')}` : 'agents up to date'
       );

@@ -1,18 +1,28 @@
 /*
- * The one place that knows which model id stands behind each tier. Opus follows the newest
- * `claude-opus-*` the Models API lists, so a new Opus release reaches the agents on the next boot
- * without editing ids anywhere.
+ * The one place that knows which model id stands behind each tier. Each tier follows the newest
+ * model of its family the Models API lists, so a new release reaches the agents on the next boot
+ * without editing ids anywhere. Opus runs the roles; Haiku runs the reading worker they hand
+ * exploration to.
  */
 
-export type ModelTier = 'opus';
+export type ModelTier = 'opus' | 'haiku';
 
 /** Used when the Models API cannot be read or lists nothing for the tier. */
-export const PINNED_MODELS: Readonly<Record<ModelTier, string>> = { opus: 'claude-opus-5-5' };
+export const PINNED_MODELS: Readonly<Record<ModelTier, string>> = {
+  opus: 'claude-opus-5-5',
+  haiku: 'claude-haiku-5-5'
+};
 
-const TIER_PREFIX: Readonly<Record<ModelTier, string>> = { opus: 'claude-opus-' };
+const TIER_PREFIX: Readonly<Record<ModelTier, string>> = {
+  opus: 'claude-opus-',
+  haiku: 'claude-haiku-'
+};
 
 /** An explicit id here wins over the lookup, e.g. to hold a new release back while it is checked. */
-export const MODEL_OVERRIDE_ENV: Readonly<Record<ModelTier, string>> = { opus: 'ANTHROPIC_MODEL' };
+export const MODEL_OVERRIDE_ENV: Readonly<Record<ModelTier, string>> = {
+  opus: 'ANTHROPIC_MODEL',
+  haiku: 'ANTHROPIC_HAIKU_MODEL'
+};
 
 export interface ListedModel {
   readonly id: string;

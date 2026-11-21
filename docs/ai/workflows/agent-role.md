@@ -7,5 +7,6 @@ History: `feat(engine): approval chooser plans who approves each gate and how cl
 3. Add the role to `AGENT_ROLES` (`packages/core/src/lifecycle.ts`); `RUNNER_ROLES` (`packages/runner/src/definitions.ts`) reads it from there. If it may write files, add it to `BUILD_ROLES` in the same file (`isBuildRole` reads it); read-only roles get read-only tokens.
 4. Say when it is due in `nextAgentRoles` (`packages/core/src/steps.ts`) and what it reads in `buildBrief` (`packages/engine/src/brief.ts`). Every brief already says how to read the repository (by range, only the pages the task touches) and how to run verify commands; the prompt adds only what its role starts from. Role-specific checks on a result go in `packages/engine/src/validators.ts`, wired to the role in `validatorFor` (`step-session.ts`).
 5. Give it a label (`ROLE_LABELS` in `apps/api/src/board.ts`), a shape and a code (`apps/board/src/lib/components/roles.ts`, `AgentAvatar.svelte`) and, if people should see its stats, a row on the Agents page.
-6. Tests: the contract in `packages/core/test/contracts.test.ts`, the step in an engine suite with `createFakePort`. `apps/api/test/setup.test.ts` counts the synced roles.
-7. Update the roles table in `docs/architecture.md` section 6, the shapes in section 9 and the README crew table.
+6. If the role reads much of the repository or its docs, add it to `READER_ROLES` (`packages/runner/src/definitions.ts`) so it hands that reading to the reader.
+7. Tests: the contract in `packages/core/test/contracts.test.ts`, the step in an engine suite with `createFakePort`. `apps/api/test/setup.test.ts` counts the synced roles.
+8. Update the roles table in `docs/architecture.md` section 6, the shapes in section 9 and the README crew table.

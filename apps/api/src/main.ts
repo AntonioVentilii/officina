@@ -28,6 +28,8 @@ const env = z
     ANTHROPIC_API_KEY: z.string().min(1).optional(),
     // Pins the agents' model; unset, they run the newest Opus the Models API lists.
     ANTHROPIC_MODEL: z.string().min(1).optional(),
+    // Pins the reader's model; unset, it runs the newest Haiku the Models API lists.
+    ANTHROPIC_HAIKU_MODEL: z.string().min(1).optional(),
     SCHEDULER_INTERVAL_MS: z.coerce.number().int().positive().default(15_000),
     // Sign-in cookies, OAuth codes and the connector's tokens travel to this address, so anything
     // but the local machine must be https.
@@ -147,7 +149,10 @@ engine =
         agents,
         models: createModelResolver({
           listModels: () => agents.listModels(),
-          env: { ANTHROPIC_MODEL: env.ANTHROPIC_MODEL },
+          env: {
+            ANTHROPIC_MODEL: env.ANTHROPIC_MODEL,
+            ANTHROPIC_HAIKU_MODEL: env.ANTHROPIC_HAIKU_MODEL
+          },
           log
         }),
         intervalMs: env.SCHEDULER_INTERVAL_MS,
