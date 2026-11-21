@@ -33,7 +33,8 @@ export const newTask = (id: string, requesterId: string, kind: TaskKind = 'reque
   approvalPlans: {},
   guards: [],
   diffAllowance: null,
-  mergedEarly: null
+  mergedEarly: null,
+  splitProposed: false
 });
 
 export const CONFIG_YAML = `

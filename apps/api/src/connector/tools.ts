@@ -461,7 +461,12 @@ After it is opened, tell the person the task link and what happens next, as the 
       if (task.request)
         lines.push('', `Request (${task.request.author}):`, fence(task.request.body));
       const spec = task.specs.at(-1);
-      if (spec) lines.push('', `Plan, version ${spec.version}:`, fence(clip(spec.body, 8_000)));
+      if (spec)
+        lines.push(
+          '',
+          `${spec.split ? 'Proposed split' : 'Plan'}, version ${spec.version}:`,
+          fence(clip(spec.body, 8_000))
+        );
       if (task.approval?.pending.length)
         lines.push('', `Still needs approval from: ${task.approval.pending.join(', ')}.`);
       if (task.plan?.current) lines.push(`How deep to check: ${task.plan.depthLabel}.`);

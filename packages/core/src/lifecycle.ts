@@ -244,6 +244,11 @@ export interface Task {
   readonly diffAllowance: DiffAllowance | null;
   /** Set once, when its pull request merged on GitHub before the task reached `merging`. */
   readonly mergedEarly: MergedEarly | null;
+  /**
+   * Its current spec version proposes a split into sub-tasks instead of one spec: it is never
+   * planned, approved or built as a spec, and people decide on the split instead.
+   */
+  readonly splitProposed: boolean;
 }
 
 /** How closely people should check: a read, a hands-on test, or a test on a real device. */
@@ -306,6 +311,8 @@ export type Command =
       readonly type: 'post_spec';
       readonly predictedPaths: readonly string[];
       readonly userVisible: boolean;
+      /** The spec proposes sub-tasks instead of one change; the paths are all of theirs. */
+      readonly split?: boolean;
     }
   | { readonly type: 'approve' }
   /**
@@ -480,6 +487,7 @@ export type DecisionError =
   | 'stale_head'
   | 'awaiting_onboarding'
   | 'awaiting_tasks'
+  | 'split_proposed'
   | 'confirm_on_board'
   | 'no_proposal'
   | 'merged_early';
@@ -1187,7 +1195,8 @@ export const decide = (
         lane,
         specVersion,
         userVisible,
-        guards
+        guards,
+        splitProposed: command.split === true
       });
       const events: DomainEvent[] = [{ type: 'spec_versioned', version: specVersion }];
       if (lane !== task.lane) events.push({ type: 'lane_changed', from: task.lane, to: lane });
@@ -1386,6 +1395,8 @@ export const decide = (
       const allowed =
         (actor.kind === 'agent' && actor.role === 'chooser') || actor.kind === 'engine';
       if (!allowed) return fail('not_allowed');
+      // A proposed split is decided as a split, never planned and approved as a spec.
+      if (task.splitProposed) return fail('split_proposed');
       const subject = gateSubject(task, 'spec_review');
       if (subject === null) return fail('no_head');
       const userVisible = task.userVisible || command.userVisible;
