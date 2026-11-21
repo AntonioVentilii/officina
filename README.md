@@ -96,7 +96,7 @@ A change touching sensitive paths needs an owner's approval of the exact spec ve
 
 ### Three looks, light and dark
 
-Pick one in the sidebar footer, or set a project default with `board.look` in `.github/officina.yml`. **Fucina**, the default, is the lively one: every column has a colour and the agent who works there the same one, each agent is a small drawing that moves while it works (the builder hammers on the anvil), cards fly to their next column and an approved plan gets stamped. **Modernista** is a strict grid with big numerals and a shape for every agent. **Tecnica** treats every task as a work order on a technical drawing, with risk drawn as hatching. In all three, yellow means one thing only: it is your turn.
+Pick one by its logo in the sidebar footer (on a phone, tap the logo in the tab bar to step to the next one), or set a project default with `board.look` in `.github/officina.yml`. **Fucina**, the default, is the lively one: every column has a colour and the agent who works there the same one, each agent is a small drawing that moves while it works (the builder hammers on the anvil), cards fly to their next column and an approved plan gets stamped. **Modernista** is a strict grid with big numerals and a shape for every agent. **Tecnica** treats every task as a work order on a technical drawing, with risk drawn as hatching. In all three, yellow means one thing only: it is your turn.
 
 The same moment of the demo workshop (`bun run dev`) in each look, light above and dark below:
 
