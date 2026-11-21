@@ -30,6 +30,13 @@ describe('next agent roles', () => {
     ).toEqual(['reviewer_correctness']);
   });
 
+  test('spec review waits on the chooser once per version, and never for a proposed split', () => {
+    expect(nextAgentRoles(at({ stage: 'spec_review', specVersion: 1 }))).toEqual(['chooser']);
+    expect(
+      nextAgentRoles(at({ stage: 'spec_review', specVersion: 1, splitProposed: true }))
+    ).toEqual([]);
+  });
+
   test('blocked, paused and closed tasks wait on people', () => {
     const blocked = { question: 'which?', askedOf: { role: 'maintainer' as const } };
     expect(nextAgentRoles(at({ stage: 'speccing', blocked }))).toEqual([]);
