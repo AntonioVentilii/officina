@@ -101,7 +101,7 @@
               <span class="title">{card.title}</span>
               <span class="lane-cell"><LaneChip lane={card.lane} /></span>
               <span class="label"
-                >{card.blocked ? card.blocked.question : card.waitingOn.label}</span
+                >{card.blocked && !card.paused ? card.blocked.question : card.waitingOn.label}</span
               >
               <MemberAvatar name={card.requester} size={20} />
               <span class="age num" title="Waiting for">{since(card.stageSince, clock.now)}</span>

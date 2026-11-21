@@ -5,7 +5,11 @@ import type { Card } from './types';
  * the rest, so the page lists every card the Inbox badge counts.
  */
 const GROUPS = [
-  { id: 'questions', title: 'Questions for you', match: (card: Card) => Boolean(card.blocked) },
+  {
+    id: 'questions',
+    title: 'Questions for you',
+    match: (card: Card) => Boolean(card.blocked) && !card.paused
+  },
   { id: 'paused', title: 'Paused tasks', match: (card: Card) => card.paused },
   { id: 'triage', title: 'New requests to triage', match: (card: Card) => card.stage === 'triage' },
   { id: 'specs', title: 'Specs to approve', match: (card: Card) => card.stage === 'spec_review' },
