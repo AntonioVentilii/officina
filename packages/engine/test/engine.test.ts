@@ -5,6 +5,7 @@ import {
   ENGINE,
   HANDOFF_NEED_KEYS,
   ownerHold,
+  splitMarkdown,
   type Actor,
   type AgentRole,
   type Command
@@ -3196,6 +3197,53 @@ describe.skipIf(!url)('engine', () => {
     expect(stored?.task).toMatchObject({
       stage: 'speccing',
       blocked: { askedOf: { role: 'maintainer' } }
+    });
+  });
+
+  test('a spec step that proposes a split stores it as the version people read, with nothing planned', async () => {
+    const taskId = await taskInSpeccing();
+    const split = {
+      why: 'Two purposes: the settings title and a new settings page.',
+      subtasks: [
+        { title: 'Rename the settings title', scope: 'The copy only.', paths: [COPY], after: [] },
+        {
+          title: 'Add the settings page',
+          scope: 'The new page, after the copy.',
+          paths: ['src/routes/settings/+page.svelte', COPY],
+          after: [1]
+        }
+      ]
+    };
+    const agents = createFakePort(() => [
+      toolUse({ outcome: 'split', ...split, userVisible: true }),
+      idle('requires_action'),
+      idle('end_turn')
+    ]);
+    const deps = { pool, github: fakeGitHub().port, agents, publicUrl: PUBLIC_URL };
+    expect(await runAgentStep(deps, taskId, 'spec')).toEqual({ status: 'applied' });
+
+    const brief = (agents.sent[0]!.events[0] as { text: string }).text;
+    expect(brief).toContain('## Size limit');
+    expect(brief).toContain('than its lane allows: green 600, standard 800, red 800.');
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({
+      stage: 'spec_review',
+      specVersion: 1,
+      splitProposed: true
+    });
+    const version = await pool.query(
+      'select body, split, predicted_paths from spec_versions where task_id = $1',
+      [taskId]
+    );
+    expect(version.rows).toEqual([
+      {
+        body: splitMarkdown(split),
+        split,
+        predicted_paths: [COPY, 'src/routes/settings/+page.svelte']
+      }
+    ]);
+    expect(await runAgentStep(deps, taskId, 'chooser')).toEqual({
+      status: 'skipped',
+      reason: 'not_due'
     });
   });
 
