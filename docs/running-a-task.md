@@ -41,15 +41,15 @@ To stop it, remove the connector in Claude.
 
 ## The flow at a glance
 
-| You run                            | Then what happens                                                                                                                   |
-| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `task create`                      | The interviewer asks follow-up questions (`task answer`), then the request waits in triage. `--skip-interview` goes straight there. |
-| `task accept`                      | The spec agent starts within about 15 seconds.                                                                                      |
-| (wait)                             | The spec agent writes a spec, or stops with a question.                                                                             |
-| `task approve` (or `task changes`) | Approval sends it to build; changes send it back to the spec agent.                                                                 |
-| (wait)                             | The builder pushes `officina/task-<n>`, Officina opens the pull request, two reviewers check it, the chooser writes a checklist.    |
-| `task approve` (or `task changes`) | Your verification of the result. Low-risk changes in a project that allows it skip this step (below).                               |
-| Approve and merge on GitHub        | As with any pull request. The task closes itself.                                                                                   |
+| You run                            | Then what happens                                                                                                                                              |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `task create`                      | A maintainer's or owner's request goes straight to triage; anyone else's is interviewed first (`task answer`). `--interview` or `--skip-interview` decides it. |
+| `task accept`                      | The spec agent starts within about 15 seconds.                                                                                                                 |
+| (wait)                             | The spec agent writes a spec, or stops with a question.                                                                                                        |
+| `task approve` (or `task changes`) | Approval sends it to build; changes send it back to the spec agent.                                                                                            |
+| (wait)                             | The builder pushes `officina/task-<n>`, Officina opens the pull request, two reviewers check it, the chooser writes a checklist.                               |
+| `task approve` (or `task changes`) | Your verification of the result. Low-risk changes in a project that allows it skip this step (below).                                                          |
+| Approve and merge on GitHub        | As with any pull request. The task closes itself.                                                                                                              |
 
 At any point, `task show` says where the task is and what it waits for, and ends with the exact next
 command.
@@ -86,11 +86,15 @@ back another person's build the same way.
    scripts/officina task create --title "Short imperative title" --request "What you want, why, and what must stay as it is."
    ```
 
-   The interviewer reads it and the code it is about, then asks up to `MAX_INTERVIEW_QUESTIONS` (`packages/engine/src/brief.ts`) questions, one at a
+   A request from someone who may triage (a maintainer or the owner, as the CLI acts without
+   `--as`) skips the interview: they would send it on anyway, so no interviewer session runs. It
+   goes straight to triage, unless its words guard it and the owner must answer first.
+   Add `--interview` to have one anyway, or `--skip-interview` to skip it for anyone.
+
+   In an interview, the interviewer reads the request and the code it is about, then asks up to `MAX_INTERVIEW_QUESTIONS` (`packages/engine/src/brief.ts`) questions, one at a
    time, in the task thread. Answer each with `task answer --number 1 --text "..."`. When the
    request is clear it writes a summary with "done when" checks, renames the task in your words,
-   and sends it to triage. `task submit --number 1` sends it to triage as it is at any point; add
-   `--skip-interview` to `task create` to skip the interview entirely.
+   and sends it to triage. `task submit --number 1` sends it to triage as it is at any point.
 
 3. **Accept it**, so the spec agent picks it up.
 

@@ -17,4 +17,5 @@ export * from './steps';
 export * from './catalogs';
 export * from './checklist';
 export * from './usage';
+export * from './intake';
 export * from './ruled-plan';
