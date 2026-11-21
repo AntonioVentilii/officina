@@ -489,6 +489,13 @@ describe.skipIf(!url)('task commands', () => {
         })
       ]
     );
+    // The other reviewer's verdict first: changes go back to the build once both have reviewed.
+    await applyOrThrow(
+      pool,
+      taskId,
+      { type: 'review', verdict: 'approve', notes: '' },
+      { kind: 'agent', role: 'reviewer_spec', version: 1 }
+    );
     await applyOrThrow(
       pool,
       taskId,
