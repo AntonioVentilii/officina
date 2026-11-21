@@ -4,7 +4,9 @@ import {
   humanBuildReason,
   nextAgentRoles,
   parentCloses,
-  parseProjectConfig
+  parseProjectConfig,
+  ruledSpecPlan,
+  type Task
 } from '@officina/core';
 import {
   applyCommand,
@@ -12,12 +14,14 @@ import {
   countOpenAgentWork,
   listActiveTaskIds,
   listOpenParents,
+  listProjectMembers,
   listTasksAwaitingLearning,
   listTasksAwaitingRewrite,
-  loadTaskContext
+  loadTaskContext,
+  type StoredTaskContext
 } from '@officina/db';
 import { isRunnerRole, type RunnerRole } from '@officina/runner';
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import { runAgentStep, type EngineDependencies, type StepResult } from './step';
 
 export interface DueStep {
@@ -51,9 +55,35 @@ const closeMergedParents = async (pool: Pool, projectId: string) => {
 };
 
 /**
+ * Plans a spec by rule when no chooser could change the plan (`ruledSpecPlan`), so no chooser
+ * session is paid for it. The rule is read again under the task's lock, with the members then.
+ * The task as planned, or `null` when the chooser still decides.
+ */
+const planByRule = async (
+  pool: Pool,
+  taskId: string,
+  context: StoredTaskContext
+): Promise<Task | null> => {
+  if (!nextAgentRoles(context.task).includes('chooser')) return null;
+  const config = parseProjectConfig(context.rawConfig);
+  if (!config.ok) return null;
+  const membersIn = (db: Pool | PoolClient) => listProjectMembers(db, context.projectId);
+  const plan = ruledSpecPlan(config.config, context.task, await membersIn(pool));
+  if (!plan) return null;
+  const result = await applyCommand(pool, {
+    taskId,
+    command: { type: 'plan_approval', userVisible: context.task.userVisible, plan },
+    actor: ENGINE,
+    guard: async (task, client) =>
+      ruledSpecPlan(config.config, task, await membersIn(client)) !== null
+  });
+  return result.ok ? result.task : null;
+};
+
+/**
  * Closes parents whose sub-tasks have merged, then hands ready tasks to the builder agent within
- * lane limits and lists every agent step now due. Starting the steps is left to the caller, so a
- * scheduler can run long sessions without blocking.
+ * lane limits, plans the specs a rule settles, and lists every agent step now due. Starting the
+ * steps is left to the caller, so a scheduler can run long sessions without blocking.
  */
 export const collectDueSteps = async (
   deps: Pick<EngineDependencies, 'pool'>,
@@ -92,7 +122,7 @@ export const collectDueSteps = async (
       continue;
     }
 
-    dueFor(taskId, nextAgentRoles(task));
+    dueFor(taskId, nextAgentRoles((await planByRule(deps.pool, taskId, context)) ?? task));
   }
   const learning = new Set([
     ...(await listTasksAwaitingLearning(deps.pool, projectId)),
