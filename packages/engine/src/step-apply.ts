@@ -80,11 +80,13 @@ const recordAlongside =
       }
     }
     if (step.role === 'spec' && (output as AgentOutput<'spec'>).outcome === 'specced') {
+      const specced = output as Extract<AgentOutput<'spec'>, { outcome: 'specced' }>;
       await saveSpecVersion(client, {
         taskId: step.taskId,
         version: task.specVersion,
-        body: (output as Extract<AgentOutput<'spec'>, { outcome: 'specced' }>).spec,
-        createdBy: step.actor
+        body: specced.spec,
+        createdBy: step.actor,
+        predictedPaths: specced.predictedPaths
       });
     }
   };

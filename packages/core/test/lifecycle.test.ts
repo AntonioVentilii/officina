@@ -1444,6 +1444,66 @@ describe('onboarding', () => {
   });
 });
 
+describe('sub-tasks and their order', () => {
+  const dispatch: Command = {
+    type: 'dispatch',
+    assignee: { kind: 'agent', role: 'builder' },
+    openInLane: 0
+  };
+  /** A driver for a task that waits for task 3 to be merged. */
+  const waiting = () =>
+    createDriver([owner], loadConfig(), { buildWait: { kind: 'after', numbers: [3] } });
+
+  test('a ready task that waits for other tasks is neither dispatched nor claimed', () => {
+    const driver = waiting();
+    const task = toReady(driver, PAGE_PATHS);
+    for (const [command, actor] of [
+      [dispatch, engine],
+      [{ type: 'claim' }, asMember(owner)]
+    ] as const)
+      expect(driver.attempt(task, command, actor)).toEqual({ ok: false, error: 'awaiting_tasks' });
+    const free = createDriver([owner], loadConfig(), { buildWait: null });
+    expect(free.step(task, dispatch, engine).stage).toBe('building');
+    expect(free.step(task, { type: 'claim' }, asMember(owner)).stage).toBe('building');
+  });
+
+  test('taking over a build already under way is not held', () => {
+    const building = dispatchAgent(
+      createDriver([owner]),
+      toReady(createDriver([owner]), PAGE_PATHS)
+    );
+    const taken = waiting().step(building, { type: 'claim' }, asMember(owner));
+    expect(taken.assignee).toEqual({ kind: 'member', memberId: owner.id });
+  });
+
+  test('the engine closes a parent once its sub-tasks merged, even while it is held', () => {
+    const driver = createDriver([owner]);
+    const held = driver.step(
+      toReady(driver, PAGE_PATHS),
+      { type: 'block', question: 'Which locale?', askedOf: { role: 'maintainer' } },
+      asMember(owner)
+    );
+    const closed = driver.step(held, { type: 'close_parent', subtasks: [3, 4] }, engine);
+    expect(closed).toMatchObject({ stage: 'done', assignee: null, blocked: null });
+    expect(driver.events()).toEqual([
+      { type: 'subtasks_merged', subtasks: [3, 4] },
+      { type: 'stage_changed', from: 'ready', to: 'done' }
+    ]);
+  });
+
+  test('only the engine closes a parent, and never a closed one', () => {
+    const driver = createDriver([owner]);
+    const task = toReady(driver, PAGE_PATHS);
+    const close: Command = { type: 'close_parent', subtasks: [3] };
+    expect(driver.attempt(task, close, asMember(owner))).toEqual({
+      ok: false,
+      error: 'not_allowed'
+    });
+    const done = driver.step(task, close, engine);
+    expect(driver.attempt(done, close, engine)).toEqual({ ok: false, error: 'terminal' });
+  });
+});
+
 describe('catalog check', () => {
   const withCatalog = loadConfig(
     CONFIG_YAML.replace(

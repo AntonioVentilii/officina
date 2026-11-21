@@ -7,6 +7,7 @@ export * from './allowance';
 export * from './config';
 export * from './policies';
 export * from './lifecycle';
+export * from './subtasks';
 export * from './limits';
 export * from './contracts';
 export * from './questions';
