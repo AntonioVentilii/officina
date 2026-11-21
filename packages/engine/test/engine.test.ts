@@ -3074,6 +3074,36 @@ describe.skipIf(!url)('engine', () => {
     expect(held.rowCount).toBe(1);
   });
 
+  test('a review delivered twice while the task is blocked is kept once and reaches the builder once', async () => {
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    const github = fakeGitHub({ branchHead: 'abc' });
+    const review = { reviewId: 28, by: 'alice', notes: 'Rename the flag.', overviewOnly: false };
+    await block(taskId);
+    expect(await reviewOnGitHub(github, taskId, review)).toEqual({ ok: false, error: 'blocked' });
+    expect(await reviewOnGitHub(github, taskId, review)).toEqual({ ok: false, error: 'blocked' });
+    const events = async (type: string) =>
+      (
+        await pool.query<{ payload: { outcome?: string } }>(
+          'select payload from task_events where task_id = $1 and type = $2 order by id',
+          [taskId, type]
+        )
+      ).rows.map((row) => row.payload);
+    expect(await events('github_review_held')).toHaveLength(1);
+
+    await answer(taskId);
+    await forwardHeldReviews(pool, github.port, [taskId]);
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({
+      stage: 'building',
+      fixRounds: 1
+    });
+    expect(await githubReviewCount(taskId)).toBe(1);
+    expect(await feedbackSinceLastPush(pool, taskId)).toEqual([review.notes]);
+    expect((await events('github_review_handled')).map((handled) => handled.outcome)).toEqual([
+      'forwarded'
+    ]);
+  });
+
   test('a review while the task is not held records no hold', async () => {
     const taskId = await createTaskInMerging(pool, seeded);
     await linkPullRequest(pool, taskId, 42);
