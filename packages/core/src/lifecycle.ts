@@ -21,6 +21,7 @@ import {
 } from './guards';
 import type { HandoffNeed } from './handoffs';
 import { computeLane, redPaths, stricterLane, type Lane } from './lanes';
+import type { ModelTier } from './model-tiers';
 import {
   GATE_ACTIONS,
   PERMISSIONS,
@@ -251,6 +252,11 @@ export interface Task {
    * planned, approved or built as a spec, and people decide on the split instead.
    */
   readonly splitProposed: boolean;
+  /**
+   * The tier a maintainer forced for every agent step on the task, over the engine's rule; `null`
+   * when the rule picks.
+   */
+  readonly forcedModel: ModelTier | null;
 }
 
 /** How closely people should check: a read, a hands-on test, or a test on a real device. */
@@ -396,6 +402,8 @@ export type Command =
   | { readonly type: 'pause' }
   | { readonly type: 'resume' }
   | { readonly type: 'cancel'; readonly reason: string }
+  /** A maintainer forces the tier every agent step on the task runs on; `null` gives it back to the rule. */
+  | { readonly type: 'force_model'; readonly tier: ModelTier | null }
   /** Every sub-task of the task is closed and these merged: the parent closes with them. */
   | { readonly type: 'close_parent'; readonly subtasks: readonly number[] };
 
@@ -463,6 +471,11 @@ export type DomainEvent =
   | { readonly type: 'kept_whole' }
   | { readonly type: 'paused' }
   | { readonly type: 'resumed' }
+  | {
+      readonly type: 'model_forced';
+      readonly from: ModelTier | null;
+      readonly to: ModelTier | null;
+    }
   | {
       readonly type: 'closed';
       readonly stage: 'declined' | 'cancelled' | 'done';
@@ -1202,6 +1215,8 @@ const ALLOWED_WHILE_HELD: ReadonlySet<Command['type']> = new Set([
   'block',
   'add_question',
   'pause',
+  // Choosing the model for the steps to come waits on no answer.
+  'force_model',
   'pull_request_closed',
   'close_parent'
 ]);
@@ -1675,6 +1690,15 @@ export const decide = (
       if (!memberCan(actor, context, 'steer')) return fail('not_allowed');
       if (!task.paused) return fail('not_paused');
       return ok({ ...task, paused: false }, [{ type: 'resumed' }]);
+    }
+
+    case 'force_model': {
+      if (!memberCan(actor, context, 'steer')) return fail('not_allowed');
+      // Asked twice, it changes nothing and records nothing the second time.
+      if (command.tier === task.forcedModel) return ok(task, []);
+      return ok({ ...task, forcedModel: command.tier }, [
+        { type: 'model_forced', from: task.forcedModel, to: command.tier }
+      ]);
     }
 
     case 'cancel': {

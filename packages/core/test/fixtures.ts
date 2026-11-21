@@ -34,7 +34,8 @@ export const newTask = (id: string, requesterId: string, kind: TaskKind = 'reque
   guards: [],
   diffAllowance: null,
   mergedEarly: null,
-  splitProposed: false
+  splitProposed: false,
+  forcedModel: null
 });
 
 export const CONFIG_YAML = `

@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import {
   INPUT_LIMITS,
   LEARNING_DECISIONS,
+  MODEL_TIERS,
   allowedActions,
   can,
   checksSchema,
@@ -161,7 +162,9 @@ const actionSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('decline'), reason }),
   z.strictObject({ type: z.literal('cancel'), reason }),
   // A task whose pull request merged before it was verified is closed as done, with why.
-  z.strictObject({ type: z.literal('close_merged'), reason })
+  z.strictObject({ type: z.literal('close_merged'), reason }),
+  // A maintainer forces the tier the task's agent steps run on; `null` gives it back to the rule.
+  z.strictObject({ type: z.literal('force_model'), tier: z.enum(MODEL_TIERS).nullable() })
 ]);
 
 const handInSchema = z.strictObject({

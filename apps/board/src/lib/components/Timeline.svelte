@@ -2,6 +2,7 @@
   import { ago, dateTime } from '#lib/format.ts';
   import { CLOSING_SENTENCES } from '#lib/closing.ts';
   import { LINK_SENTENCES } from '#lib/links.ts';
+  import { MODEL_SENTENCES } from '#lib/model-forced.ts';
   import { STAGE_LABELS } from '#lib/stages.ts';
   import { eventDetail } from '#lib/timeline.ts';
   import type { Comment, Stage, TaskEvent } from '#lib/types.ts';
@@ -20,7 +21,7 @@
 
   const stage = (value: unknown) => STAGE_LABELS[value as Stage] ?? String(value);
   const GATES: Record<string, string> = { spec_review: 'the spec', verifying: 'the result' };
-  const SENTENCES = { ...LINK_SENTENCES, ...CLOSING_SENTENCES };
+  const SENTENCES = { ...LINK_SENTENCES, ...CLOSING_SENTENCES, ...MODEL_SENTENCES };
 
   const sentence = (event: TaskEvent): string | null => {
     const p = event.payload;

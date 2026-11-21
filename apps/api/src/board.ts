@@ -4,6 +4,8 @@ import {
   GATE_ACTIONS,
   GUARD_LABELS,
   HANDOFF_NEEDS,
+  MODEL_TIERS,
+  MODEL_TIER_LABELS,
   NO_TOKENS,
   REVIEWER_ROLES,
   TERMINAL_STAGES,
@@ -44,6 +46,7 @@ import {
   type Gate,
   type Eligibility,
   type Member,
+  type ModelTier,
   type Policy,
   type ProjectConfig,
   type Requirement,
@@ -101,6 +104,7 @@ export type BoardAction =
   | 'answer'
   | 'close_merged'
   | 'cancel'
+  | 'force_model'
   | 'comment';
 
 export interface BoardViewer {
@@ -221,6 +225,13 @@ const viewerMember = (viewer: BoardViewer): Member => ({
  * access to the repository at all, so they get the decisions and the trail, not the code or money.
  */
 export const seesTechnical = (viewer: BoardViewer): boolean => can(viewer, 'see_runs');
+
+/** A model tier with its name, as the board shows and offers it. */
+const tierView = (tier: ModelTier) => ({ tier, label: MODEL_TIER_LABELS[tier] });
+
+/** The tier forced on a task, for viewers who see the runs it decides: the model is technical. */
+const forcedModelView = (row: Pick<BoardTaskRow, 'forcedModel'>, viewer: BoardViewer) =>
+  seesTechnical(viewer) && row.forcedModel ? tierView(row.forcedModel) : null;
 
 /**
  * What contributors and watchers read of each event's payload: what the timeline says about the
@@ -679,6 +690,7 @@ const actionsFor = (
     actions.push(...buildActions(row, viewer, wait), ...gateActions(row, viewer, facts));
   }
   if (can(member, 'steer') || (requester && can(member, 'request'))) actions.push('cancel');
+  if (can(member, 'steer')) actions.push('force_model');
   if (writes && can(member, 'comment')) actions.push('comment');
   return actions;
 };
@@ -743,6 +755,7 @@ const cardView = (
   // Its pull request shows the confidential change itself.
   pullRequest: readsTask(viewer, row) ? row.pullRequest : null,
   costCents: seesTechnical(viewer) ? row.costCents : null,
+  forcedModel: forcedModelView(row, viewer),
   running: row.runningRoles.map((role) => ({ role, label: roleLabel(role) })),
   fixRounds: row.fixRounds,
   specVersion: row.specVersion,
@@ -1116,6 +1129,8 @@ export const taskView = async (
       at: event.createdAt
     })),
     runs: seesTechnical(viewer) ? runs.map((run) => runView(run, consoleWorkspace)) : [],
+    // The tiers a maintainer may force, from the cheapest; the rule picks when none is.
+    modelTiers: seesTechnical(viewer) ? MODEL_TIERS.map(tierView) : [],
     plan: shown.value(planView(row, facts)),
     people: peopleView(row, viewer, facts, { approvals, events }),
     approval: approval && {

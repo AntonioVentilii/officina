@@ -917,6 +917,39 @@ describe('permissions', () => {
     expect(dispatchAgent(driver, resumed).stage).toBe('building');
   });
 
+  test('only a maintainer forces a model tier, even on a held task, and clears it again', () => {
+    const maintainer: Member = { id: 'mara', role: 'maintainer', domains: [] };
+    const driver = createDriver([owner, maintainer, productContributor]);
+    const ready = toReady(driver, PAGE_PATHS);
+    expect(
+      driver.attempt(ready, { type: 'force_model', tier: 'opus' }, asMember(productContributor))
+    ).toEqual({ ok: false, error: 'not_allowed' });
+    expect(driver.attempt(ready, { type: 'force_model', tier: 'opus' }, engine)).toEqual({
+      ok: false,
+      error: 'not_allowed'
+    });
+
+    const paused = driver.step(ready, { type: 'pause' }, asMember(owner));
+    const forced = driver.step(paused, { type: 'force_model', tier: 'opus' }, asMember(maintainer));
+    expect(forced.forcedModel).toBe('opus');
+    expect(driver.events()).toEqual([{ type: 'model_forced', from: null, to: 'opus' }]);
+
+    // Forcing the same tier again changes nothing and records nothing.
+    expect(driver.step(forced, { type: 'force_model', tier: 'opus' }, asMember(owner))).toEqual(
+      forced
+    );
+    expect(driver.events()).toEqual([]);
+
+    const cleared = driver.step(forced, { type: 'force_model', tier: null }, asMember(owner));
+    expect(cleared.forcedModel).toBeNull();
+    expect(driver.events()).toEqual([{ type: 'model_forced', from: 'opus', to: null }]);
+
+    const cancelled = driver.step(cleared, { type: 'cancel', reason: 'done' }, asMember(owner));
+    expect(
+      driver.attempt(cancelled, { type: 'force_model', tier: 'haiku' }, asMember(owner))
+    ).toEqual({ ok: false, error: 'terminal' });
+  });
+
   test('the engine dispatches a build only to a member who can build', () => {
     const driver = createDriver([owner, productContributor]);
     const task = toReady(driver, PAGE_PATHS);

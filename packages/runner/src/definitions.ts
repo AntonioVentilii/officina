@@ -1,8 +1,14 @@
 import { createHash } from 'node:crypto';
-import { AGENT_ROLES, OUTPUT_SCHEMAS, isBuildRole, type AgentRole } from '@officina/core';
+import {
+  AGENT_ROLES,
+  OUTPUT_SCHEMAS,
+  isBuildRole,
+  type AgentRole,
+  type ModelTier
+} from '@officina/core';
 import type { AgentCreateParams } from '@anthropic-ai/sdk/resources/beta/agents/agents';
 import { z } from 'zod';
-import { PINNED_MODELS, type ModelTier, type TierModels } from './models';
+import { PINNED_MODELS, type TierModels } from './models';
 import { READER_NAME, READER_PROMPT, withReader } from './reader';
 import { loadPrompt, loadStandard, withStandard } from './standard';
 

@@ -76,7 +76,8 @@ export const ACTION_LABELS: Readonly<Record<Action, string>> = {
   triage: "accept or decline requests, and send anyone's request on",
   build:
     'claim a build and hand it in, built by hand or with their own agents (also anyone with the `developer` domain)',
-  steer: 'cancel any task, and take over a build another member claimed',
+  steer:
+    'cancel any task, take over a build another member claimed, and force the model tier its agents run on',
   see_runs: 'see agent runs, their logs and costs',
   decide_learnings: 'accept or reject learnings',
   merge: 'merge results on GitHub',

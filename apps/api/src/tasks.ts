@@ -4,6 +4,9 @@ import {
   guardsAddedBy,
   guardsInRequest,
   interviewsRequest,
+  isModelTier,
+  MODEL_TIER_LABELS,
+  MODEL_TIERS,
   mergedEarlyText,
   ownerHold,
   readsTask,
@@ -19,6 +22,7 @@ import {
   type Command,
   type ConnectedApp,
   type LinkProblem,
+  type ModelTier,
   type Task
 } from '@officina/core';
 import {
@@ -328,7 +332,28 @@ export type TaskAction =
     }
   | { readonly type: 'cancel'; readonly reason: string }
   | { readonly type: 'decline'; readonly reason: string }
-  | { readonly type: 'close_merged'; readonly reason: string };
+  | { readonly type: 'close_merged'; readonly reason: string }
+  /** `null` gives the choice of model back to the engine's rule. */
+  | { readonly type: 'force_model'; readonly tier: ModelTier | null };
+
+/** The word the CLI and the Claude connector take for "no tier forced: the rule picks". */
+export const BY_RULE = 'rule';
+
+/** The tiers a person may name, and the rule, as the CLI and the connector take them. */
+export const MODEL_CHOICES = [...MODEL_TIERS, BY_RULE] as const;
+
+/** A tier the CLI or the connector named, or `null` for the rule; anything else is refused. */
+export const forcedTierFrom = (word: string): ModelTier | null => {
+  if (word === BY_RULE) return null;
+  if (isModelTier(word)) return word;
+  throw new TaskCommandError(`the tier is one of ${MODEL_CHOICES.join(', ')}`, 400);
+};
+
+/** The model a task's agents run on, as `task show` and the connector's `show_task` say it. */
+export const modelLine = (forced: ModelTier | null): string =>
+  forced
+    ? `Model: ${MODEL_TIER_LABELS[forced]} for every agent step, forced by a maintainer`
+    : 'Model: chosen by rule for each agent step';
 
 const toCommand = (action: TaskAction): Command => {
   switch (action.type) {
@@ -346,6 +371,8 @@ const toCommand = (action: TaskAction): Command => {
     case 'decline':
     case 'close_merged':
       return { type: action.type, reason: action.reason };
+    case 'force_model':
+      return { type: 'force_model', tier: action.tier };
     // The rest carry nothing but the command they name.
     default:
       return { type: action.type };
@@ -702,7 +729,9 @@ export const describeTask = async (
     lines.push('', `Spec, version ${task.specVersion}:`, '', shown(context.latestSpec));
 
   // Runs quote the code and carry costs: like the board, only for members with `see_runs`.
-  const runs = viewer && can(viewer, 'see_runs') ? await listRuns(pool, taskId) : [];
+  const technical = can(viewer, 'see_runs');
+  if (technical) lines.push('', modelLine(task.forcedModel));
+  const runs = technical ? await listRuns(pool, taskId) : [];
   if (runs.length) {
     lines.push('', 'Agent runs:');
     for (const run of runs) {

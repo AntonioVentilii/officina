@@ -23,6 +23,7 @@
   import LaneChip from './LaneChip.svelte';
   import Markdown from './Markdown.svelte';
   import MemberAvatar from './MemberAvatar.svelte';
+  import ModelForce from './ModelForce.svelte';
   import RunRow from './RunRow.svelte';
   import StageStamp from './StageStamp.svelte';
   import StageTrack from './StageTrack.svelte';
@@ -360,6 +361,7 @@
               <p class="empty">No plan yet. An agent writes one once the request is accepted.</p>
             {/if}
           {:else if tab === 'agents'}
+            {#if task.modelTiers.length}<ModelForce {task} onchanged={onChanged} />{/if}
             {#if task.runs.length}
               <div class="runs">
                 {#each [...task.runs].reverse() as run (run.id)}
