@@ -829,7 +829,7 @@ describe.skipIf(!url)('learning decisions', () => {
       memberId: seeded.ownerId,
       decision: 'accept'
     }))!;
-    expect(await markAcceptAttempt(pool, { id, claim, memberId: seeded.ownerId })).toBe(true);
+    expect(await markAcceptAttempt(pool, { id, claim, memberId: seeded.ownerId })).toBe('marked');
     return claim;
   };
 
@@ -1026,15 +1026,51 @@ describe.skipIf(!url)('learning decisions', () => {
     ).toMatchObject({ status: 'rejected', duplicateOf: null });
   });
 
-  test('a pull request a lost accept left is not recorded once another copy of its edit was accepted', async () => {
-    const github = fakeGitHub({ failOpening: 1 });
-    const second = await leftAccept(github);
+  test('two copies of one edit accepted at the same moment open one pull request', async () => {
+    const github = fakeGitHub();
     const first = await propose('docs');
-    await decide(pool, github.port, owner(), {
-      id: first.id,
-      decision: 'accept',
-      rewrittenAt: null
-    });
+    const second = await propose('docs');
+    const accepting = (id: string) =>
+      decide(pool, github.port, owner(), { id, decision: 'accept', rewrittenAt: null });
+
+    const results = await Promise.allSettled([accepting(first.id), accepting(second.id)]);
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    const refused = results.find((result) => result.status === 'rejected');
+    expect((refused as PromiseRejectedResult).reason.message).toMatch(
+      /^(this learning repeats|another learning with the same edit is being accepted)/
+    );
+    expect(callsOf(github, 'openPullRequest')).toHaveLength(1);
+    const statuses = [(await learningOf(first.id)).status, (await learningOf(second.id)).status];
+    expect(statuses.sort()).toEqual(['accepted', 'proposed']);
+  });
+
+  test("a copy waits while the pull request another copy's accept left is unread, then is its duplicate", async () => {
+    const github = fakeGitHub({ failOpening: 1 });
+    const left = await leftAccept(github);
+    const copy = await propose('docs');
+
+    await expect(
+      decide(pool, github.port, owner(), { id: copy.id, decision: 'accept', rewrittenAt: null })
+    ).rejects.toThrow(
+      'another learning with the same edit is being accepted right now; look at it again shortly'
+    );
+    expect(callsOf(github, 'openPullRequest')).toHaveLength(1);
+    expect(await acceptAttemptOf(copy.id)).toBeNull();
+
+    await catchUpLeftAccepts(pool, github.port, seeded.projectId);
+    expect(await learningOf(left.id)).toMatchObject({ status: 'accepted', prNumber: 77 });
+    expect((await learningOf(copy.id)).duplicateOf).toMatchObject({ id: left.id, prNumber: 77 });
+  });
+
+  test('a pull request a lost accept left is not recorded once another copy of its edit was accepted', async () => {
+    // As the migration left it: a copy accepted before the mark existed, and one marked since.
+    const github = fakeGitHub();
+    const { first, second } = await proposeTwice(github);
+    await pool.query('update learnings set accept_attempt = gen_random_uuid() where id = $1', [
+      second.id
+    ]);
+    github.open.add(branchForLearning(second));
 
     expect(await catchUpLeftAccepts(pool, github.port, seeded.projectId)).toEqual([]);
     expect(await learningOf(second.id)).toMatchObject({

@@ -36,15 +36,22 @@ export interface LearningDuplicate {
 }
 
 /**
- * The `LearningDuplicate` of a proposed learning `l`: the same edit (target, file, find and text)
- * already accepted in the project with its pull request open or merged, the earliest decided.
+ * Whether the learning under `alias` makes the same edit as learning `l` in its project (target,
+ * file, find and text), the one place "the same lesson" is decided. `l` itself matches too.
+ */
+export const sameEditAs = (alias: string) => `${alias}.project_id = l.project_id
+  and ${alias}.target = l.target and ${alias}.file = l.file
+  and ${alias}.find is not distinct from l.find and ${alias}.proposed_change = l.proposed_change`;
+
+/**
+ * The `LearningDuplicate` of a proposed learning `l`: the same edit already accepted in the
+ * project with its pull request open or merged, the earliest decided.
  */
 export const DUPLICATE_OF = `case when l.status = 'proposed' then (
   select json_build_object('id', d.id, 'title', d.title, 'taskNumber', dt.number,
     'prNumber', d.pr_number, 'prUrl', d.pr_url, 'prState', ${prStateOf('d')})
   from learnings d left join tasks dt on dt.id = d.task_id
-  where d.project_id = l.project_id and d.id <> l.id and d.target = l.target and d.file = l.file
-    and d.find is not distinct from l.find and d.proposed_change = l.proposed_change
+  where ${sameEditAs('d')} and d.id <> l.id
     and d.pr_number is not null and d.status in ('accepted', 'applied')
     and ${prStateOf('d')} <> 'closed'
   order by d.decided_at, d.id limit 1) end`;

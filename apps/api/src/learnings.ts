@@ -44,6 +44,10 @@ const REWRITE_BLOCKS = {
 const repeats = ({ title, prNumber }: LearningDuplicate) =>
   `this learning repeats "${title}", already accepted with pull request #${prNumber}; reject it instead`;
 
+/** Why a learning cannot be accepted while another copy of its edit is being accepted. */
+const COPY_UNDER_WAY =
+  'another learning with the same edit is being accepted right now; look at it again shortly';
+
 /** Said when the claim of a decision was taken over, after its lease ran out, by another one. */
 const TAKEN_OVER = 'someone else decided this learning meanwhile; look at it again';
 
@@ -80,12 +84,16 @@ const acceptIntoPullRequest = async (
   const { learning } = claimed;
   if (learning.rewrite) throw new TaskCommandError(REWRITE_BLOCKS[learning.rewrite]);
   if (!github) throw new TaskCommandError('the GitHub App is not configured');
-  const marked = await markAcceptAttempt(pool, {
+  const mark = await markAcceptAttempt(pool, {
     id: learning.id,
     claim: claimed.claim,
     memberId: target.memberId
   });
-  if (!marked) throw new TaskCommandError(TAKEN_OVER);
+  if (mark === 'taken_over') throw new TaskCommandError(TAKEN_OVER);
+  if (mark === 'repeated') {
+    const now = await loadLearning(pool, target.projectId, learning.id);
+    throw new TaskCommandError(now?.duplicateOf ? repeats(now.duplicateOf) : COPY_UNDER_WAY);
+  }
   const project = (await loadProject(pool, target.projectId))!;
   const opened = await openLearningPullRequest(github, project, learning, {
     publicUrl: target.publicUrl,
@@ -148,9 +156,6 @@ const decidable = (learning: LearningRow | null, input: DecisionInput): Learning
   if (!learning) throw new TaskCommandError('learning not found');
   if (learning.status !== 'proposed')
     throw new TaskCommandError('this learning was already decided');
-  // Not serialized across learnings: two copies of one edit accepted at the same moment both pass
-  // this check and each opens its own pull request. That race is rare and left to a follow-up;
-  // rejecting either copy closes the pull request it opened.
   if (input.decision === 'accept' && learning.duplicateOf)
     throw new TaskCommandError(repeats(learning.duplicateOf));
   const read = learning.rewrittenAt?.toISOString() ?? null;
