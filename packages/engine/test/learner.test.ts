@@ -96,7 +96,12 @@ describe.skipIf(!url)('learner', () => {
 
   const doneTask = async () => {
     const taskId = await createTaskInMerging(pool, seeded);
-    await applyOrThrow(pool, taskId, { type: 'merged' }, { kind: 'engine' });
+    await applyOrThrow(
+      pool,
+      taskId,
+      { type: 'merged', pullRequest: 42, by: null, at: null },
+      { kind: 'engine' }
+    );
     return taskId;
   };
 

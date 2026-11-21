@@ -22,6 +22,7 @@ import {
   gateSubject,
   humanBuildReason,
   isGate,
+  mergedEarlyText,
   openProposals,
   optionKey,
   outranks,
@@ -94,6 +95,7 @@ export type BoardAction =
   | 'approve'
   | 'changes'
   | 'answer'
+  | 'close_merged'
   | 'cancel'
   | 'comment';
 
@@ -235,6 +237,7 @@ const PUBLIC_FIELDS: Readonly<Record<string, readonly string[]>> = {
   diff_allowed: ['lines', 'lane', 'memberId'],
   closed: ['stage', 'reason'],
   pull_request_closed: ['pullRequest'],
+  pull_request_merged_early: ['pullRequest', 'by', 'at', 'stage'],
   spec_status_set: ['status'],
   github_approved: ['login', 'merge'],
   github_auto_merge: ['merge'],
@@ -462,6 +465,27 @@ interface TaskFacts {
   readonly wait: BuildWait | null;
 }
 
+/** Who a held task waits on: whoever may answer its question, or close it after an early merge. */
+const questionWait = (
+  row: BoardTaskRow,
+  blocked: Blocked,
+  viewer: BoardViewer,
+  names: ReadonlyMap<string, string>
+): WaitingOn => {
+  const who = askedOfLabel(blocked.askedOf, names);
+  const needs = handoffNeeds(blocked);
+  const label = row.mergedEarly
+    ? `Merged on GitHub before verification: ${who} decides`
+    : needs.length
+      ? `Agents cannot go on: needs ${who} for ${needs.join(', ')}`
+      : `A question for ${who}`;
+  return {
+    kind: 'people',
+    label,
+    me: readsTask(viewer, row) && canAnswer(viewerMember(viewer), blocked.askedOf)
+  };
+};
+
 const waitingOn = (
   row: BoardTaskRow,
   viewer: BoardViewer,
@@ -471,17 +495,7 @@ const waitingOn = (
   const member = viewerMember(viewer);
   if (TERMINAL_STAGES.has(row.stage)) return afterTheTask(row, viewer);
   if (row.paused) return { kind: 'people', label: 'Paused', me: can(member, 'steer') };
-  if (row.blocked) {
-    const who = askedOfLabel(row.blocked.askedOf, facts.names);
-    const needs = handoffNeeds(row.blocked);
-    return {
-      kind: 'people',
-      label: needs.length
-        ? `Agents cannot go on: needs ${who} for ${needs.join(', ')}`
-        : `A question for ${who}`,
-      me: readsTask(viewer, row) && canAnswer(member, row.blocked.askedOf)
-    };
-  }
+  if (row.blocked) return questionWait(row, row.blocked, viewer, facts.names);
   // A hand-in under way waits on nobody, from its first GitHub read to the pull request it opens
   // once the task has moved on to review: it is at work, on every board.
   if (row.handingInSince) return handingInWait(row, facts.names);
@@ -636,7 +650,9 @@ const actionsFor = (
   // A paused task's question stays answerable: the lifecycle accepts an answer while paused, and
   // waitingOn alone says the task waits on whoever may resume it.
   if (row.blocked) {
-    if (writes && canAnswer(member, row.blocked.askedOf)) actions.push('answer');
+    // An early merge's hold is not answered: it is closed as done, or the task cancelled.
+    if (writes && canAnswer(member, row.blocked.askedOf))
+      actions.push(row.mergedEarly ? 'close_merged' : 'answer');
   } else if (!row.paused) {
     if (row.stage === 'triage' && can(member, 'triage')) actions.push('accept', 'decline');
     actions.push(...buildActions(row, viewer, wait), ...gateActions(row, viewer, facts));
@@ -781,6 +797,17 @@ const GATE_PEOPLE = [
 /** What a result's gate says when the lifecycle let it skip people's check (`canAutoVerify`). */
 const AUTO_VERIFIED_GATE = "skipped: a low-risk change the agents and GitHub's checks reviewed";
 
+/** What a result's gate says when its pull request merged on GitHub before anyone checked it. */
+const MERGED_EARLY_GATE =
+  'skipped: the pull request was merged on GitHub before anyone verified it';
+
+/** Why a gate was skipped, or `null`: only the result's check can be, and only these two ways. */
+const skippedGate = (row: BoardTaskRow, gate: Gate): string | null => {
+  if (gate !== 'verifying') return null;
+  if (row.mergedEarly) return MERGED_EARLY_GATE;
+  return row.autoVerified ? AUTO_VERIFIED_GATE : null;
+};
+
 /**
  * What was waived when a gate passed for its current subject, or `null` while it has not passed. A
  * gate already passed reads as it was decided then, not with the members who joined since.
@@ -832,7 +859,7 @@ const peopleView = (
         });
         const policy = effectivePolicy(config.config, row, gate);
         const waivedThen = waivedWhenPassed(recorded.events, gate, subject);
-        const skipped = gate === 'verifying' && row.autoVerified ? AUTO_VERIFIED_GATE : null;
+        const skipped = skippedGate(row, gate);
         // Nobody was asked to check a skipped result, so it names no approvers.
         const shown = skipped ? [] : shownRequirements(policy, row.userVisible, context);
         return {
@@ -964,6 +991,23 @@ export const allowanceView = (
 export const allowanceText = (allowance: NonNullable<ReturnType<typeof allowanceView>>): string =>
   `Size allowed for this task: up to ${allowance.lines} lines in the ${allowance.lane} lane, by ${allowance.by}${allowance.at ? ` on ${allowance.at.toISOString().slice(0, 10)}` : ''}. Every other task keeps the lane's limit.`;
 
+/**
+ * The task's pull request merged on GitHub before people verified it: who merged it, when, and the
+ * stage the task was at, said to everyone; the pull request itself only to who reads the task.
+ */
+const mergedEarlyView = (row: BoardTaskRow, viewer: BoardViewer) => {
+  const merged = row.mergedEarly;
+  if (!merged) return null;
+  const shown = confidentialView(row, viewer);
+  return {
+    by: merged.by,
+    at: merged.at,
+    stage: merged.stage,
+    pullRequest: shown.value(merged.pullRequest),
+    text: shown.text(mergedEarlyText(merged))
+  };
+};
+
 export const taskView = async (
   pool: Pool,
   viewer: BoardViewer,
@@ -1013,6 +1057,7 @@ export const taskView = async (
         : null
     ),
     headSha: shown.value(row.headSha),
+    mergedEarly: mergedEarlyView(row, viewer),
     allowance: allowanceView(row, events, facts.names),
     request: request
       ? {

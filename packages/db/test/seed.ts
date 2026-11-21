@@ -99,8 +99,8 @@ export const createReadyTask = async (
   return { id: task.id, number: rows[0]!.number };
 };
 
-/** Creates a copy-change task and takes it to `choosing`, built at `abc` and reviewed. */
-export const createTaskInChoosing = async (pool: Pool, seeded: Seeded): Promise<string> => {
+/** Creates a copy-change task and takes it to `reviewing`, built at `abc`. */
+export const createTaskInReviewing = async (pool: Pool, seeded: Seeded): Promise<string> => {
   const paths = ['src/lib/constants/messages/en.ts'];
   const { task } = await createTask(pool, {
     projectId: seeded.projectId,
@@ -147,6 +147,12 @@ export const createTaskInChoosing = async (pool: Pool, seeded: Seeded): Promise<
     },
     agent('builder')
   );
+  return id;
+};
+
+/** Creates a copy-change task and takes it to `choosing`, built at `abc` and reviewed. */
+export const createTaskInChoosing = async (pool: Pool, seeded: Seeded): Promise<string> => {
+  const id = await createTaskInReviewing(pool, seeded);
   await applyOrThrow(
     pool,
     id,
@@ -218,7 +224,7 @@ export const createDoneTaskWithLearningPullRequest = async (
   prNumber: number
 ): Promise<string> => {
   const taskId = await createTaskInMerging(pool, seeded);
-  await applyOrThrow(pool, taskId, { type: 'merged' }, ENGINE);
+  await applyOrThrow(pool, taskId, { type: 'merged', pullRequest: 42, by: null, at: null }, ENGINE);
   const run = await pool.query<{ id: string }>(
     `insert into runs (task_id, stage, runner, agent_role, agent_version, status)
      values ($1, 'done', 'managed_agents', 'learner', 1, 'succeeded') returning id`,

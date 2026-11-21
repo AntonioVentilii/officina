@@ -56,6 +56,7 @@ export type BoardAction =
   | 'approve'
   | 'changes'
   | 'answer'
+  | 'close_merged'
   | 'cancel'
   | 'comment';
 
@@ -221,6 +222,17 @@ export interface TaskDetail extends Card {
   readonly branch: string;
   readonly pullRequestUrl: string | null;
   readonly headSha: string | null;
+  /**
+   * Its pull request merged on GitHub before people verified it: who merged it and when, the stage
+   * the task was at, and the words that say so. The pull request only for who may read the task.
+   */
+  readonly mergedEarly: Readonly<{
+    by: string | null;
+    at: string | null;
+    stage: Stage;
+    pullRequest: number | null;
+    text: string;
+  }> | null;
   /** More lines than its lane allows, granted for this task alone; `null` when none was. */
   readonly allowance: Readonly<{ lines: number; lane: Lane; by: string; at: string | null }> | null;
   readonly request: Pick<Comment, 'author' | 'via' | 'body' | 'at'> | null;

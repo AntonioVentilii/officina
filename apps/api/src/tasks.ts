@@ -3,6 +3,7 @@ import {
   can,
   guardsAddedBy,
   guardsInRequest,
+  mergedEarlyText,
   ownerHold,
   readsTask,
   type Blocked,
@@ -102,7 +103,8 @@ const ERROR_TEXT: Record<StoreError, string> = {
   invalid_config: "the project's config is invalid",
   confirm_on_board:
     'an approval through a connected app is only a proposal; confirm it on the board',
-  no_proposal: 'no approval proposed for you is waiting on this task'
+  no_proposal: 'no approval proposed for you is waiting on this task',
+  merged_early: 'its pull request was already merged on GitHub; close the task as done or cancel it'
 };
 
 const LINK_PROBLEM_TEXT: Record<LinkProblem, string> = {
@@ -313,7 +315,8 @@ export type TaskAction =
       readonly version?: number | undefined;
     }
   | { readonly type: 'cancel'; readonly reason: string }
-  | { readonly type: 'decline'; readonly reason: string };
+  | { readonly type: 'decline'; readonly reason: string }
+  | { readonly type: 'close_merged'; readonly reason: string };
 
 const toCommand = (action: TaskAction): Command => {
   switch (action.type) {
@@ -329,6 +332,7 @@ const toCommand = (action: TaskAction): Command => {
       };
     case 'cancel':
     case 'decline':
+    case 'close_merged':
       return { type: action.type, reason: action.reason };
     // The rest carry nothing but the command they name.
     default:
@@ -616,6 +620,9 @@ const answerHint = (blocked: Blocked, version: number): string =>
     ? `task answer --number {n} --option <letter> --version ${version}   (or: task answer --number {n} --text "...")`
     : 'task answer --number {n} --text "..."';
 
+/** What a task whose pull request merged early waits for, which no CLI command does. */
+const CLOSE_MERGED_HINT = 'close the task as done with a reason on the board, or cancel it';
+
 /** A human-readable status of one task: where it is, what it waits for, and what to do next. */
 export const describeTask = async (
   pool: Pool,
@@ -639,6 +646,7 @@ export const describeTask = async (
   const names = new Map(
     (await listProjectMemberProfiles(pool, projectId)).map((member) => [member.id, member.name])
   );
+  if (task.mergedEarly) lines.push('', shown(mergedEarlyText(task.mergedEarly)));
   if (task.blocked) lines.push(...blockedLines(task.blocked, viewer, names, reads));
   const allowance = allowanceView(task, await listTaskEvents(pool, taskId), names);
   if (allowance) lines.push('', allowanceText(allowance));
@@ -684,15 +692,18 @@ export const describeTask = async (
   if (reviews?.latest) lines.push('', ...reviewLines(reviews, indent));
 
   const wait = await readyWait(pool, { id: taskId, stage: task.stage });
-  const next = task.blocked
-    ? answerHint(task.blocked, context.version)
-    : task.paused
-      ? 'the task is paused'
-      : reviews?.sentBack
-        ? SENT_BACK
-        : wait
-          ? buildWaitLabel(wait)
-          : (NEXT_STEP[task.stage] ?? '');
+  const next =
+    task.mergedEarly && task.blocked
+      ? CLOSE_MERGED_HINT
+      : task.blocked
+        ? answerHint(task.blocked, context.version)
+        : task.paused
+          ? 'the task is paused'
+          : reviews?.sentBack
+            ? SENT_BACK
+            : wait
+              ? buildWaitLabel(wait)
+              : (NEXT_STEP[task.stage] ?? '');
   lines.push('', `Next: ${next.replaceAll('{n}', String(context.number))}`);
   return lines.join('\n');
 };

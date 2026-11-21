@@ -32,7 +32,8 @@ export const newTask = (id: string, requesterId: string, kind: TaskKind = 'reque
   reviews: {},
   approvalPlans: {},
   guards: [],
-  diffAllowance: null
+  diffAllowance: null,
+  mergedEarly: null
 });
 
 export const CONFIG_YAML = `

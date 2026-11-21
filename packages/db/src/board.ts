@@ -28,6 +28,7 @@ export interface BoardTaskRow {
   readonly approvalPlans: Task['approvalPlans'];
   readonly guards: Task['guards'];
   readonly diffAllowance: Task['diffAllowance'];
+  readonly mergedEarly: Task['mergedEarly'];
   readonly pullRequest: number | null;
   readonly costCents: number;
   readonly runningRoles: readonly string[];
@@ -51,7 +52,7 @@ const BOARD_COLUMNS = `
   t.user_visible as "userVisible", t.assignee, t.requester_id as "requesterId",
   m.display_name as "requesterName", t.spec_version as "specVersion", t.head_sha as "headSha",
   t.fix_rounds as "fixRounds", t.approval_plans as "approvalPlans", t.guards,
-  t.diff_allowance as "diffAllowance",
+  t.diff_allowance as "diffAllowance", t.merged_early as "mergedEarly",
   t.github_pr as "pullRequest",
   coalesce((select sum(r.list_cost_cents) from runs r where r.task_id = t.id), 0)::int as "costCents",
   coalesce(

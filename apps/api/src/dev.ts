@@ -426,7 +426,8 @@ const seedDemo = async (pool: Pool) => {
   await done.review();
   await done.choose();
   await done.approve([owner, giulia]);
-  await apply(demo, done.id, { type: 'merged' }, ENGINE);
+  const merge = { pullRequest: 1300, by: 'marco-dev', at: new Date().toISOString() };
+  await apply(demo, done.id, { type: 'merged', ...merge }, ENGINE);
   const learnerRun = await run(demo, done.id, 'done', 'learner', { cost: 31, result: {} });
   await insertLearnings(pool, {
     projectId,

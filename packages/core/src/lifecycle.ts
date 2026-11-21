@@ -200,6 +200,27 @@ export interface Blocked {
   readonly allowance?: AllowanceOffer;
 }
 
+/** The task's pull request merged on GitHub before the task reached `merging`, as GitHub reported it. */
+export interface MergedEarly {
+  readonly pullRequest: number;
+  /** The GitHub login that merged it; null when GitHub names nobody. */
+  readonly by: string | null;
+  /** When GitHub merged it (ISO 8601); null when GitHub did not say. */
+  readonly at: string | null;
+  /** The stage the task was at. */
+  readonly stage: Stage;
+}
+
+/**
+ * The words that say a pull request merged before people verified it, the one place they are
+ * written: the task's question, the board, `show_task` and the CLI all read them.
+ */
+export const mergedEarlyText = (merged: MergedEarly): string => {
+  const by = merged.by ? ` by @${merged.by}` : '';
+  const at = merged.at ? ` at ${merged.at.slice(0, 16).replace('T', ' ')} UTC` : '';
+  return `Pull request #${merged.pullRequest} was merged on GitHub${by}${at}, before people verified it (the task was at ${merged.stage}).`;
+};
+
 export interface Task {
   readonly id: string;
   readonly kind: TaskKind;
@@ -221,6 +242,8 @@ export interface Task {
   readonly guards: readonly Guard[];
   /** More lines than its lane allows, granted for this task alone; `null` when none was. */
   readonly diffAllowance: DiffAllowance | null;
+  /** Set once, when its pull request merged on GitHub before the task reached `merging`. */
+  readonly mergedEarly: MergedEarly | null;
 }
 
 /** How closely people should check: a read, a hands-on test, or a test on a real device. */
@@ -306,7 +329,15 @@ export type Command =
   | { readonly type: 'review'; readonly verdict: 'approve' | 'changes'; readonly notes: string }
   | { readonly type: 'plan_approval'; readonly userVisible: boolean; readonly plan: PlanInput }
   | { readonly type: 'choose'; readonly userVisible: boolean; readonly plan: PlanInput }
-  | { readonly type: 'merged' }
+  /** The task's pull request merged on GitHub, by `by` at `at` as GitHub reported them. */
+  | {
+      readonly type: 'merged';
+      readonly pullRequest: number;
+      readonly by: string | null;
+      readonly at: string | null;
+    }
+  /** A person closes as done a task whose pull request merged before it reached `merging`. */
+  | { readonly type: 'close_merged'; readonly reason: string }
   /** A check or a commit status failed on `headSha`, the task's head in its own terms. */
   | { readonly type: 'ci_failed'; readonly headSha: string; readonly details: string }
   /** The task's pull request was closed on GitHub without being merged. */
@@ -406,12 +437,17 @@ export type DomainEvent =
   | { readonly type: 'guardrail_tripped'; readonly guardrail: Guardrail; readonly details: string }
   | { readonly type: 'ci_failed'; readonly headSha: string; readonly details: string }
   | { readonly type: 'pull_request_closed'; readonly pullRequest: number }
+  | ({ readonly type: 'pull_request_merged_early' } & MergedEarly)
   | { readonly type: 'blocked'; readonly blocked: Blocked }
   | { readonly type: 'unblocked'; readonly answer: string }
   | ({ readonly type: 'diff_allowed' } & DiffAllowance)
   | { readonly type: 'paused' }
   | { readonly type: 'resumed' }
-  | { readonly type: 'closed'; readonly stage: 'declined' | 'cancelled'; readonly reason: string }
+  | {
+      readonly type: 'closed';
+      readonly stage: 'declined' | 'cancelled' | 'done';
+      readonly reason: string;
+    }
   /** A parent closed because its sub-tasks merged; `subtasks` are the merged ones' numbers. */
   | { readonly type: 'subtasks_merged'; readonly subtasks: readonly number[] }
   /** The result went to merge without a person's check; `subject` is the head it covers. */
@@ -445,7 +481,8 @@ export type DecisionError =
   | 'awaiting_onboarding'
   | 'awaiting_tasks'
   | 'confirm_on_board'
-  | 'no_proposal';
+  | 'no_proposal'
+  | 'merged_early';
 
 export type Decision =
   | { readonly ok: true; readonly task: Task; readonly events: readonly DomainEvent[] }
@@ -970,8 +1007,75 @@ const answered = (
   ]);
 };
 
+/**
+ * The task's pull request merged on GitHub. At `merging` that is the end of the task; earlier, the
+ * merge skipped the people's check, so it is recorded and the task held for whoever decides. A
+ * task held or paused at `merging` waits as it always has.
+ */
+const merged = (
+  task: Task,
+  command: Extract<Command, { type: 'merged' }>,
+  actor: Actor
+): Decision => {
+  if (task.stage === 'merging') return mergedAtMerging(task, actor);
+  if (actor.kind !== 'engine') return fail('not_allowed');
+  if (!WITH_PULL_REQUEST.has(task.stage) || task.headSha === null) return fail('wrong_stage');
+  // A redelivered webhook or a second catch-up finds it already recorded.
+  if (task.mergedEarly) return fail('merged_early');
+  const { pullRequest, by, at } = command;
+  return ok(...heldAfterEarlyMerge(task, { pullRequest, by, at, stage: task.stage }));
+};
+
+/** The task's own merge, the end of it, as before: a held or paused task waits for its hold. */
+const mergedAtMerging = (task: Task, actor: Actor): Decision => {
+  if (task.blocked) return fail('blocked');
+  if (task.paused) return fail('paused');
+  if (actor.kind !== 'engine') return fail('not_allowed');
+  const [moved, event] = moveTo(task, 'done');
+  return ok(moved, [event]);
+};
+
+/**
+ * Records the early merge and holds the task, which stops every agent step, for the owner when the
+ * task needs them at its gates, otherwise for any maintainer. A question it already held can no
+ * longer be answered, so only its words are kept, after the merge's.
+ */
+const heldAfterEarlyMerge = (task: Task, mergedEarly: MergedEarly): [Task, DomainEvent[]] => {
+  const question = [
+    `${mergedEarlyText(mergedEarly)} Officina stopped the agents' work on it and never undoes a merge. Close the task as done with a reason, which records that it skipped verification, or cancel it.`,
+    ...(task.blocked ? [task.blocked.question] : [])
+  ].join('\n\n');
+  const askedOf: Blocked['askedOf'] =
+    needsOwner(task) || heldForOwner(task.blocked)
+      ? { role: PERMISSIONS.publish }
+      : { role: 'maintainer' };
+  const blocked: Blocked = { question, askedOf };
+  return [
+    { ...task, mergedEarly, blocked },
+    [
+      { type: 'pull_request_merged_early', ...mergedEarly },
+      { type: 'blocked', blocked }
+    ]
+  ];
+};
+
+/** Whoever may answer the early merge's hold closes the task as done, with their reason. */
+const closedMerged = (
+  task: Task,
+  command: Extract<Command, { type: 'close_merged' }>,
+  member: Member | undefined
+): Decision => {
+  if (!task.mergedEarly || !task.blocked) return fail('wrong_stage');
+  if (member === undefined || !canAnswer(member, task.blocked.askedOf)) return fail('not_allowed');
+  if (!readsTask(member, task)) return fail('not_allowed');
+  const [moved, event] = moveTo(task, 'done', { blocked: null, assignee: null });
+  return ok(moved, [event, { type: 'closed', stage: 'done', reason: command.reason }]);
+};
+
 const ALLOWED_WHILE_HELD: ReadonlySet<Command['type']> = new Set([
   'submit_request',
+  'merged',
+  'close_merged',
   'answer',
   'guard_words',
   'resume',
@@ -1277,12 +1381,11 @@ export const decide = (
       return ok({ ...task, ...planned, userVisible }, [...events, planEvent]);
     }
 
-    case 'merged': {
-      if (task.stage !== 'merging') return fail('wrong_stage');
-      if (actor.kind !== 'engine') return fail('not_allowed');
-      const [moved, event] = moveTo(task, 'done');
-      return ok(moved, [event]);
-    }
+    case 'merged':
+      return merged(task, command, actor);
+
+    case 'close_merged':
+      return closedMerged(task, command, memberFor(actor, context));
 
     case 'ci_failed': {
       // Before merging too: nobody should review, plan or verify a head whose checks are red.
@@ -1390,6 +1493,8 @@ export const decide = (
     }
 
     case 'answer':
+      // The merge is done on GitHub: only closing the task as done, or cancelling it, lifts its hold.
+      if (task.mergedEarly) return fail('merged_early');
       return answered(task, command, memberFor(actor, context), context);
 
     case 'guard_words': {

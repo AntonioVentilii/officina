@@ -144,6 +144,12 @@
 
   const submitAsIs = () => void act({ type: 'submit' }, 'Sent to triage as it is');
 
+  const closeMerged = (event: SubmitEvent) => {
+    event.preventDefault();
+    const value = text.trim();
+    if (value) void act({ type: 'close_merged', reason: value }, 'Task closed as done');
+  };
+
   const answer = (event: SubmitEvent) => {
     event.preventDefault();
     const value = text.trim();
@@ -175,14 +181,23 @@
         >{:else}<CircleHelp size={18} />{/if}
       <div>
         <div class="kicker caps">
-          {task.paused ? 'Paused. ' : ''}{task.blocked.needs.length
-            ? `Agents cannot go on: for ${task.blocked.askedOf}`
-            : `A question for ${task.blocked.askedOf}`}
+          {task.paused ? 'Paused. ' : ''}{task.mergedEarly
+            ? 'Merged on GitHub before verification'
+            : task.blocked.needs.length
+              ? `Agents cannot go on: for ${task.blocked.askedOf}`
+              : `A question for ${task.blocked.askedOf}`}
         </div>
         {#if task.blocked.needs.length}
           <p class="needs">Needs {task.blocked.needs.join(', ')}.</p>
         {/if}
-        <div class="question"><Markdown source={task.blocked.question} /></div>
+        <!-- Who may not close it reads only the early merge, never a question meant for another. -->
+        <div class="question">
+          <Markdown
+            source={task.mergedEarly && !can('close_merged')
+              ? task.mergedEarly.text
+              : task.blocked.question}
+          />
+        </div>
       </div>
     </div>
     {#if task.blocked.options.length}
@@ -193,6 +208,19 @@
       />
     {/if}
     {#if work && mode !== 'cancel'}<Working {work} />{/if}
+    {#if can('close_merged')}
+      <form onsubmit={closeMerged} class:away={busy}>
+        <textarea
+          class="field"
+          bind:value={text}
+          rows="3"
+          placeholder="Why is it done without verification? It is kept in the task's history."
+        ></textarea>
+        <div class="buttons">
+          <button class="btn primary" disabled={busy || !text.trim()}>Close as done</button>
+        </div>
+      </form>
+    {/if}
     {#if can('answer')}
       <form onsubmit={answer} class:away={busy}>
         <textarea

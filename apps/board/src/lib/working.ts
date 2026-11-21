@@ -69,6 +69,7 @@ const TASK_WORK = {
   submit: { label: 'Submitting', detail: 'to triage as it is' },
   answer: { label: 'Answering', detail: 'the step runs again next' },
   cancel: { label: 'Cancelling', detail: 'the task' },
+  close_merged: { label: 'Closing', detail: 'as done, with your reason' },
   discard_proposal: { label: 'Discarding', detail: 'the approval Claude proposed' },
   hand_in: {
     label: 'Handing in',

@@ -154,7 +154,9 @@ const actionSchema = z.discriminatedUnion('type', [
     version: z.number().int().positive().optional()
   }),
   z.strictObject({ type: z.literal('decline'), reason }),
-  z.strictObject({ type: z.literal('cancel'), reason })
+  z.strictObject({ type: z.literal('cancel'), reason }),
+  // A task whose pull request merged before it was verified is closed as done, with why.
+  z.strictObject({ type: z.literal('close_merged'), reason })
 ]);
 
 const handInSchema = z.strictObject({

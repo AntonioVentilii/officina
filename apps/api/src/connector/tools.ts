@@ -206,6 +206,10 @@ const questionLines = (blocked: NonNullable<TaskView['blocked']>): string[] => {
 const allowanceLines = (task: TaskView): string[] =>
   task.allowance ? ['', allowanceText(task.allowance)] : [];
 
+/** The task's pull request merged on GitHub before people verified it, said on its own line. */
+const mergedEarlyLines = (task: { readonly mergedEarly: { readonly text: string } | null }) =>
+  task.mergedEarly ? [task.mergedEarly.text] : [];
+
 const WHAT_TO_DO: Record<string, string> = {
   answer: 'answer the open question (answer_question)',
   approve:
@@ -217,6 +221,7 @@ const WHAT_TO_DO: Record<string, string> = {
   hand_in: 'hand in the build once its branch is pushed (hand_in_build)',
   hand_back: 'hand the build back, so it waits to be built again (hand_back_build)',
   submit: 'send it on as it is, on the board',
+  close_merged: 'close it as done with a reason, on the board',
   cancel: 'cancel it on the board'
 };
 
@@ -446,6 +451,7 @@ After it is opened, tell the person the task link and what happens next, as the 
         `Task ${task.number} in ${project.name}: ${task.title}`,
         `Link: ${taskUrl(context.publicUrl, project.id, task.number)}`,
         `Requested by ${task.requester}. Now: ${task.waitingOn.label}${task.waitingOn.me ? ' (your turn)' : ''}${reviews?.sentBack ? `; ${SENT_BACK}` : ''}.`,
+        ...mergedEarlyLines(task),
         ...peopleLines(task)
       ];
       if (task.pullRequestUrl) lines.push(`Pull request: ${task.pullRequestUrl}`);

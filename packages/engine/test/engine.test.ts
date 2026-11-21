@@ -224,6 +224,8 @@ const fakeGitHub = (
       calls.push({ method: 'pullRequest', args });
       return {
         node_id: 'PR_42',
+        merged_by: null,
+        merged_at: null,
         ...(options.prState ?? { state: 'open', merged: false }),
         head: { sha: options.prHead ?? branch }
       };
@@ -1945,6 +1947,8 @@ describe.skipIf(!url)('engine', () => {
         node_id: 'PR_42',
         state: 'open',
         merged: false,
+        merged_by: null,
+        merged_at: null,
         head: { sha: head }
       })
     };
