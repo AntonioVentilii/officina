@@ -23,6 +23,7 @@ import {
   addComment,
   applyCommand,
   applyCommandIn,
+  lockTaskLinks,
   openSplitSubtasks,
   buildRunInProgress,
   findRequestedTask,
@@ -426,21 +427,26 @@ export const actOnTaskAs = async (
   const taskId = await findTaskIdByNumber(pool, projectId, input.number);
   if (!taskId) throw new TaskCommandError(`task #${input.number} not found`);
   const { action, expectedVersion } = await resolveAnswer(pool, taskId, input.action);
-  const result = await applyCommand(pool, {
-    taskId,
-    command: toCommand(action),
-    actor,
-    ...(expectedVersion === undefined ? {} : { expectedVersion }),
-    // In the same transaction as the decision: someone not allowed to answer leaves no comment, and
-    // a build is not handed back while an agent's run on it is still being stopped.
-    onApplied: async (client, after) => {
-      await refuseWhileHandingIn(client, taskId);
-      if (action.type === 'release') await refuseWhileAgentRuns(client, taskId);
-      if (action.type === 'answer') await addComment(client, taskId, actor, action.text);
-      // An approval that moves a proposed split on approved the split: its sub-tasks open with it.
-      if (action.type === 'approve' && after.stage === 'ready' && after.splitProposed)
-        await openSplitSubtasks(client, { taskId, actor });
-    }
+  const result = await inTransaction(pool, async (client) => {
+    // Approving a split links its sub-tasks under the task's row lock, so the project's link
+    // lock comes first, in the order every link change takes them.
+    if (action.type === 'approve') await lockTaskLinks(client, projectId);
+    return applyCommandIn(client, {
+      taskId,
+      command: toCommand(action),
+      actor,
+      ...(expectedVersion === undefined ? {} : { expectedVersion }),
+      // In the same transaction as the decision: someone not allowed to answer leaves no comment, and
+      // a build is not handed back while an agent's run on it is still being stopped.
+      onApplied: async (client, after) => {
+        await refuseWhileHandingIn(client, taskId);
+        if (action.type === 'release') await refuseWhileAgentRuns(client, taskId);
+        if (action.type === 'answer') await addComment(client, taskId, actor, action.text);
+        // An approval that moves a proposed split on approved the split: its sub-tasks open with it.
+        if (action.type === 'approve' && after.stage === 'ready' && after.splitProposed)
+          await openSplitSubtasks(client, { taskId, actor });
+      }
+    });
   });
   if (!result.ok) throw new TaskCommandError(ERROR_TEXT[result.error]);
   const recorded = result.events.find((event) => event.type === 'approval_recorded');
@@ -561,6 +567,8 @@ const NEXT_STEP: Partial<Record<string, string>> = {
   speccing: 'an agent is writing the spec; check back with task show',
   spec_review:
     'read the spec, then: task approve --number {n}   (or: task changes --number {n} --note "...")',
+  split_review:
+    'read the proposed split, then: task approve --number {n} to open its sub-tasks   (or: task changes --number {n} --note "..."; to keep it as one task, use the board or Claude)',
   ready: 'waiting for a free build slot; the engine dispatches it automatically',
   building: 'an agent is building it; check back with task show',
   reviewing: 'two agents are reviewing it; check back with task show',
@@ -581,8 +589,17 @@ const approvalLines = (
   /** The task's words as this viewer may read them (a confidential task hides them). */
   shown: (text: string) => string
 ): string[] => {
-  if (!approval.planned || !plan)
-    return ['', 'Waiting for the approval chooser to decide who approves.'];
+  if (!approval.planned) return ['', 'Waiting for the approval chooser to decide who approves.'];
+  const needed = [
+    `Approval needed from: ${approval.pending.map(describeRequirement).join(', ') || 'nobody (satisfied)'}`,
+    ...(approval.waived.length
+      ? [
+          `Waived (nobody holds the role yet): ${approval.waived.map(describeRequirement).join(', ')}`
+        ]
+      : [])
+  ];
+  // A proposed split has no approval plan: the lane's policy says who decides on it.
+  if (!plan) return ['', 'A proposed split: approving it opens its sub-tasks.', ...needed];
   return [
     '',
     `Approval plan: check depth ${plan.depth}. ${shown(plan.rationale)}`,
@@ -594,12 +611,7 @@ const approvalLines = (
         `  asks ${names.get(verifier.memberId) ?? 'a former member'} to verify: ${shown(verifier.reason)}`
     ),
     '',
-    `Approval needed from: ${approval.pending.map(describeRequirement).join(', ') || 'nobody (satisfied)'}`,
-    ...(approval.waived.length
-      ? [
-          `Waived (nobody holds the role yet): ${approval.waived.map(describeRequirement).join(', ')}`
-        ]
-      : [])
+    ...needed
   ];
 };
 
@@ -698,7 +710,9 @@ export const describeTask = async (
         ? SENT_BACK
         : wait
           ? buildWaitLabel(wait)
-          : (NEXT_STEP[task.stage] ?? '');
+          : (NEXT_STEP[
+              task.splitProposed && task.stage === 'spec_review' ? 'split_review' : task.stage
+            ] ?? '');
   lines.push('', `Next: ${next.replaceAll('{n}', String(context.number))}`);
   return lines.join('\n');
 };

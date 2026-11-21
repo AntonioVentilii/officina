@@ -8,6 +8,7 @@ import {
   HAND_IN_LEASE,
   insertLearnings,
   listLearnings,
+  lockTaskLinks,
   renameMember,
   specShapeFor,
   startRun
@@ -27,6 +28,7 @@ import {
   resetAndSeed,
   type Seeded
 } from '../../../packages/db/test/seed';
+import { backendPid, untilWaitingOn } from '../../../packages/db/test/locks';
 import { createApp } from '../src/app';
 import { agentsView, logEntries, RUN_LOG_PAGE } from '../src/board';
 import { invite, loginLink } from '../src/people';
@@ -217,6 +219,9 @@ describe.skipIf(!url)('board api', () => {
     expect(task.waitingOn).toMatchObject({ kind: 'people', me: true });
     expect(task.waitingOn.label).toStartWith('Approval of the proposed split');
     expect(task.actions).toEqual(expect.arrayContaining(['approve', 'changes', 'keep_whole']));
+    const cli = await describeTask(pool, { number: 1 });
+    expect(cli).toContain('A proposed split: approving it opens its sub-tasks.');
+    expect(cli).toContain('Next: read the proposed split, then: task approve --number 1');
 
     expect(await json(await call(cookie, `${path}/1/actions`, { type: 'approve' }))).toMatchObject({
       stage: 'ready'
@@ -242,6 +247,29 @@ describe.skipIf(!url)('board api', () => {
     expect(await specShapeFor(pool, (await findTaskIdByNumber(pool, seeded.projectId, 3))!)).toBe(
       'whole'
     );
+  });
+
+  test('approving a split waits for a link change in flight instead of deadlocking with it', async () => {
+    const cookie = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    const parentId = await createTaskWithSplit(pool, seeded);
+    const linking = await pool.connect();
+    try {
+      await linking.query('begin');
+      await lockTaskLinks(linking, seeded.projectId);
+      const approving = call(cookie, `/api/projects/${seeded.projectId}/tasks/1/actions`, {
+        type: 'approve'
+      });
+      await untilWaitingOn(pool, await backendPid(linking));
+      // A link change locks the task it links to after the link lock, as `setTaskLinks` does.
+      await linking.query('select id from tasks where id = $1 for update', [parentId]);
+      await linking.query('commit');
+      expect((await approving).status).toBe(200);
+    } finally {
+      linking.release();
+    }
+    expect(
+      (await pool.query('select 1 from tasks where parent_id = $1', [parentId])).rowCount
+    ).toBe(2);
   });
 
   test('a ready task that waits for other tasks says which, and offers no claim', async () => {

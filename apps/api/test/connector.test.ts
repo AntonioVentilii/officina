@@ -784,6 +784,9 @@ describe.skipIf(!url)('connector for Claude', () => {
     expect(shown).toContain('Now: Approval of the proposed split');
     expect(shown).toContain('Proposed split, version 1:');
     expect(shown).toContain(
+      'keep the proposed split as one task (review with decision "keep_whole")'
+    );
+    expect(shown).toContain(
       '2. **Add the settings page**: The page.\n    - Files: `src/b.svelte`\n    - After: 1'
     );
 

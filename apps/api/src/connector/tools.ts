@@ -211,6 +211,7 @@ const WHAT_TO_DO: Record<string, string> = {
   approve:
     'propose your approval, after reading what to check, to confirm on the board (review with decision "approve")',
   changes: 'ask for changes, saying what is wrong (review with decision "changes")',
+  keep_whole: 'keep the proposed split as one task (review with decision "keep_whole")',
   comment: 'add a comment (comment)',
   accept: 'accept or decline it on the board',
   claim: 'claim the build, to build it yourself (claim_build)',
