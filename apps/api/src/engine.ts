@@ -17,6 +17,7 @@ import {
 } from '@officina/engine';
 import {
   failOrphanedRuns,
+  failPausedRuns,
   failStaleRuns,
   failTakenOverRuns,
   listActiveTaskIds,
@@ -24,7 +25,8 @@ import {
   purgeConnectorCredentials,
   purgeExpiredCredentials,
   purgeOldAccessEvents,
-  purgeOldDeliveries
+  purgeOldDeliveries,
+  type StoppedRun
 } from '@officina/db';
 import type { GitHubClient } from '@officina/github';
 import {
@@ -141,6 +143,19 @@ export const startEngine = async (input: {
     }
   }
 
+  /** Fails runs outside their step and interrupts their sessions; a failure is logged, never thrown. */
+  const stopRuns = async (
+    fail: () => Promise<readonly StoppedRun[]>,
+    stopped: string,
+    failed: string
+  ) => {
+    const runs = await fail().catch((error: unknown) => {
+      input.log(failed, { error: (error as Error).message });
+      return [];
+    });
+    await interruptSessions(input.agents, runs, input.log, stopped);
+  };
+
   /** One project's share of a pass; it may throw, and `collectEachProject` keeps the others going. */
   const passProject = async (projectId: string) => {
     const active = await listActiveTaskIds(input.pool, projectId);
@@ -228,17 +243,23 @@ export const startEngine = async (input: {
         lastPurge = Date.now();
         await purgeStaleRows(input.pool, input.log);
       }
-      // A member who takes a build over stops the agent's session, which would only spend now.
-      const takenOver = await failTakenOverRuns(input.pool).catch((error: unknown) => {
-        input.log('taken over run stop failed', { error: (error as Error).message });
-        return [];
-      });
-      await interruptSessions(input.agents, takenOver, input.log, 'taken over run stopped');
-      const stale = await failStaleRuns(input.pool, STALE_RUN_MS).catch((error: unknown) => {
-        input.log('stale run check failed', { error: (error as Error).message });
-        return [];
-      });
-      await interruptSessions(input.agents, stale, input.log, 'stale run failed');
+      // A member who takes a build over, or a pause, stops the agent's session, which would only
+      // spend now; before the due steps, so a task resumed since can be given to its role again.
+      await stopRuns(
+        () => failTakenOverRuns(input.pool),
+        'taken over run stopped',
+        'taken over run stop failed'
+      );
+      await stopRuns(
+        () => failPausedRuns(input.pool),
+        'paused run stopped',
+        'paused run stop failed'
+      );
+      await stopRuns(
+        () => failStaleRuns(input.pool, STALE_RUN_MS),
+        'stale run failed',
+        'stale run check failed'
+      );
       return collectEachProject(
         await listSchedulableProjectIds(input.pool),
         passProject,

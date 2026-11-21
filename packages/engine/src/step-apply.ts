@@ -13,6 +13,7 @@ import {
   finishRun,
   recordRunResult,
   runIsActive,
+  runWasPaused,
   saveSpecVersion,
   setTaskTitle
 } from '@officina/db';
@@ -40,13 +41,17 @@ const sameFields = (seen: Task, current: Task) =>
 
 /**
  * Only the state the agent saw may receive its result, or its failure, and only while its own run
- * is still in progress: a build a member took over meanwhile is theirs, and nothing the agent's run
- * ends with applies to it, even once the same role builds the task again after the member let go.
+ * is still in progress and its task was never paused meanwhile: a build a member took over is
+ * theirs, and nothing the agent's run ends with applies to it, even once the same role builds the
+ * task again after the member let go; a pause ends the run's part the same way, even once the task
+ * is resumed.
  */
 export const sameWork =
   (seen: Task, runId: string) =>
   async (current: Task, client: PoolClient): Promise<boolean> =>
-    sameFields(seen, current) && (await runIsActive(client, runId));
+    sameFields(seen, current) &&
+    (await runIsActive(client, runId)) &&
+    !(await runWasPaused(client, runId));
 
 /** A build result with the facts of what was really pushed, read from GitHub. */
 const pushedOutput = async (step: Step, built: PushedBuild): Promise<RoleOutput> => {
