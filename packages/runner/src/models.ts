@@ -1,7 +1,8 @@
 /*
  * The one place that knows which model id stands behind each tier. Each tier follows the newest
  * model of its family the Models API lists, so a new release reaches the agents on the next boot
- * without editing ids anywhere.
+ * without editing ids anywhere. The engine picks a tier for each step; Haiku also runs the reading
+ * worker the builder and the correctness reviewer hand exploration to.
  */
 
 /** The tiers from the cheapest to the strongest; a step escalates to the next one. */

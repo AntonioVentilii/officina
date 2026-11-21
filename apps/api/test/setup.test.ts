@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { loadAgentVersions, migrate } from '@officina/db';
 import { Pool } from 'pg';
 import { CONFIG_YAML } from '../../../packages/core/test/fixtures';
-import { PINNED_MODELS, RUNNER_ROLES } from '@officina/runner';
+import { PINNED_MODELS, ROLE_MODELS, RUNNER_ROLES } from '@officina/runner';
 import { createFakePort } from '../../../packages/runner/test/fake-port';
 import { SetupError, addProject, environmentNameFor, setupAgents, type SetupGitHub } from '../src';
 
@@ -128,13 +128,21 @@ describe.skipIf(!url)('setup', () => {
     expect(result.projectId).toBeString();
   });
 
-  test('agent setup syncs every role once and then reports no changes', async () => {
+  test('agent setup syncs every role and the reader once and then reports no changes', async () => {
     const agents = createFakePort(() => []);
     const promptsDir = join(import.meta.dir, '..', '..', '..', 'agents');
     expect((await setupAgents(pool, agents, promptsDir, PINNED_MODELS)).changed).toHaveLength(
       RUNNER_ROLES.length
     );
     expect(await loadAgentVersions(pool)).toHaveLength(RUNNER_ROLES.length);
+    // Each role on its own tier, and the reader once, on Haiku.
+    expect(agents.agentWrites.map((write) => write.agent.model.id).sort()).toEqual(
+      [
+        ...RUNNER_ROLES.map((role) => PINNED_MODELS[ROLE_MODELS[role].tier]),
+        PINNED_MODELS.haiku
+      ].sort()
+    );
     expect((await setupAgents(pool, agents, promptsDir, PINNED_MODELS)).changed).toEqual([]);
+    expect(agents.agentWrites).toHaveLength(RUNNER_ROLES.length + 1);
   });
 });

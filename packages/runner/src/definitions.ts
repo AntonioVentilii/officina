@@ -3,6 +3,7 @@ import { AGENT_ROLES, OUTPUT_SCHEMAS, isBuildRole, type AgentRole } from '@offic
 import type { AgentCreateParams } from '@anthropic-ai/sdk/resources/beta/agents/agents';
 import { z } from 'zod';
 import { PINNED_MODELS, type ModelTier, type TierModels } from './models';
+import { READER_NAME, READER_PROMPT, withReader } from './reader';
 import { loadPrompt, loadStandard, withStandard } from './standard';
 
 export type AgentTools = NonNullable<AgentCreateParams['tools']>;
@@ -63,8 +64,8 @@ export const modelFor = (choice: ModelChoice, models: TierModels): AgentModel =>
   effort: choice.effort
 });
 
-export interface AgentDefinition {
-  readonly role: RunnerRole;
+/** What every agent the runner syncs is made of. */
+export interface AgentShape {
   readonly name: string;
   readonly model: AgentModel;
   readonly system: string;
@@ -72,6 +73,59 @@ export interface AgentDefinition {
   /** Changes whenever anything that shapes the agent changes; a new hash means a new agent version. */
   readonly hash: string;
 }
+
+export interface AgentDefinition extends AgentShape {
+  readonly role: RunnerRole;
+  /** The reading worker this role hands exploration to, or `null` when it reads everything itself. */
+  readonly reader: AgentShape | null;
+}
+
+/** Thinks least: it locates and quotes, and every judgment stays with the role that asked. */
+export const READER_EFFORT: AgentEffort = 'low';
+
+/**
+ * The roles whose sessions read the most, each given the reader: a build explores the code it
+ * changes, a correctness review the diff's surroundings and the project's agent docs.
+ */
+export const READER_ROLES = [
+  'builder',
+  'reviewer_correctness'
+] as const satisfies readonly RunnerRole[];
+
+export const hasReader = (role: RunnerRole): boolean =>
+  (READER_ROLES as readonly RunnerRole[]).includes(role);
+
+const hashOf = (parts: Record<string, unknown>): string =>
+  createHash('sha256').update(JSON.stringify(parts)).digest('hex');
+
+/**
+ * The reading worker: read, glob and grep only, so it can neither change the workspace nor push with
+ * the session's token, and no result tool, so only the role that asked hands a result in.
+ */
+export const buildReaderDefinition = (
+  system: string,
+  modelId: string = PINNED_MODELS.haiku
+): AgentShape => {
+  const tools: AgentTools = [
+    {
+      type: 'agent_toolset_20260401',
+      default_config: { enabled: false, permission_policy: { type: 'always_allow' } },
+      configs: [
+        { name: 'read', type: 'read', enabled: true },
+        { name: 'glob', type: 'glob', enabled: true },
+        { name: 'grep', type: 'grep', enabled: true }
+      ]
+    }
+  ];
+  const model: AgentModel = { id: modelId, effort: READER_EFFORT };
+  return {
+    name: READER_NAME,
+    model,
+    system,
+    tools,
+    hash: hashOf({ name: READER_NAME, model, system, tools })
+  };
+};
 
 /** The custom tool's input schema: the role's output contract wrapped in `{ result }`. */
 export const resultToolInputSchema = (role: RunnerRole) => {
@@ -83,10 +137,15 @@ export const resultToolInputSchema = (role: RunnerRole) => {
   };
 };
 
+/**
+ * A role's agent. With a reader, the reader's hash is part of the role's, so a changed reader
+ * becomes a new version of every role that hands it work, pinned to the reader's new version.
+ */
 export const buildDefinition = (
   role: RunnerRole,
   system: string,
-  models: TierModels = PINNED_MODELS
+  models: TierModels = PINNED_MODELS,
+  reader: AgentShape | null = null
 ): AgentDefinition => {
   const disabled: AgentToolConfig[] = [
     // Web access is off for every role: task text is untrusted, and nothing here needs the web.
@@ -111,24 +170,30 @@ export const buildDefinition = (
   ];
   const name = `officina-${role.replaceAll('_', '-')}`;
   const model = modelFor(ROLE_MODELS[role], models);
-  const hash = createHash('sha256')
-    .update(JSON.stringify({ name, model, system, tools }))
-    .digest('hex');
-  return { role, name, model, system, tools, hash };
+  const hash = hashOf(
+    reader ? { name, model, system, tools, reader: reader.hash } : { name, model, system, tools }
+  );
+  return { role, name, model, system, tools, reader, hash };
 };
 
 /**
  * Reads `agents/<role>.md` prompts from a directory and builds every runner role's definition, each
- * prompt followed by the code standard.
+ * on its own tier of `models` and its prompt followed by the code standard. The roles in
+ * `READER_ROLES` also get the reader, built from `agents/reader.md` on the Haiku tier, and the
+ * rules for handing it work before the standard.
  */
 export const loadDefinitions = async (
   promptsDir: string,
   models: TierModels = PINNED_MODELS
 ): Promise<AgentDefinition[]> => {
   const standard = await loadStandard();
+  const reader = buildReaderDefinition(await loadPrompt(promptsDir, READER_PROMPT), models.haiku);
   return Promise.all(
-    RUNNER_ROLES.map(async (role) =>
-      buildDefinition(role, withStandard(await loadPrompt(promptsDir, role), standard), models)
-    )
+    RUNNER_ROLES.map(async (role) => {
+      const prompt = await loadPrompt(promptsDir, role);
+      return hasReader(role)
+        ? buildDefinition(role, withStandard(withReader(prompt), standard), models, reader)
+        : buildDefinition(role, withStandard(prompt, standard), models);
+    })
   );
 };

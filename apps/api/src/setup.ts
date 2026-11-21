@@ -27,9 +27,9 @@ export type SetupGitHub = Pick<
 >;
 
 /**
- * Syncs every role agent from its checked-in prompt, each on its own tier of the given models, and
- * records the versions the engine will use. Unchanged definitions are left alone, so running it on
- * every boot is cheap.
+ * Syncs every role agent from its checked-in prompt, each on its own tier of the given models (its
+ * reading worker on Haiku), and records the versions the engine will use. Unchanged definitions
+ * are left alone, so running it on every boot is cheap.
  */
 export const setupAgents = async (
   pool: Pool,

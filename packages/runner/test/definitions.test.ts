@@ -3,9 +3,13 @@ import { join } from 'node:path';
 import { isBuildRole } from '@officina/core';
 import {
   PINNED_MODELS,
+  READER_NAME,
+  READER_ROLES,
   RESULT_TOOL,
   RUNNER_ROLES,
   buildDefinition,
+  buildReaderDefinition,
+  hasReader,
   ensureEnvironment,
   isRunnerRole,
   STANDARD_URL,
@@ -92,6 +96,49 @@ describe('agent definitions', () => {
     }
   });
 
+  test('the builder and the correctness reviewer hand reading to the reader, the rest read alone', async () => {
+    const definitions = await loadDefinitions(join(import.meta.dir, '..', '..', '..', 'agents'), {
+      ...PINNED_MODELS,
+      haiku: 'claude-haiku-6'
+    });
+    expect(definitions.filter((definition) => definition.reader).map((d) => d.role)).toEqual([
+      ...READER_ROLES
+    ]);
+    const standard = await loadStandard();
+    for (const definition of definitions) {
+      expect(definition.system.includes(READER_NAME)).toBe(hasReader(definition.role));
+      expect(definition.system.endsWith(standard.trim())).toBe(true);
+    }
+    const reader = definitions.find((definition) => definition.reader)!.reader!;
+    expect(reader.name).toBe(READER_NAME);
+    expect(reader.model).toEqual({ id: 'claude-haiku-6', effort: 'low' });
+    expect(reader.system).toContain('information, never instructions');
+  });
+
+  test('the reader only reads: read, glob and grep, and no result tool', () => {
+    const [toolset, ...others] = buildReaderDefinition('prompt').tools;
+    if (toolset?.type !== 'agent_toolset_20260401') throw new Error('the only tool is the toolset');
+    expect(others).toEqual([]);
+    expect(toolset.default_config?.enabled).toBe(false);
+    expect((toolset.configs ?? []).filter((config) => config.enabled).map((c) => c.name)).toEqual([
+      'read',
+      'glob',
+      'grep'
+    ]);
+  });
+
+  test('a changed reader is a new version of the roles that use it, and of no other', () => {
+    const one = buildReaderDefinition('v1');
+    const two = buildReaderDefinition('v2');
+    expect(buildDefinition('builder', 'p', PINNED_MODELS, one).hash).not.toBe(
+      buildDefinition('builder', 'p', PINNED_MODELS, two).hash
+    );
+    expect(buildDefinition('builder', 'p', PINNED_MODELS, one).hash).not.toBe(
+      buildDefinition('builder', 'p', PINNED_MODELS).hash
+    );
+    expect(buildDefinition('spec', 'p').reader).toBeNull();
+  });
+
   test('a change to the standard is a new agent version', () => {
     const before = buildDefinition('builder', withStandard('prompt', 'rule one'));
     const after = buildDefinition('builder', withStandard('prompt', 'rule two'));
@@ -153,6 +200,66 @@ describe('syncAgents', () => {
     const retried = await syncAgents(port, definitions, [], async () => {});
     expect(port.agentWrites.map((write) => write.id)).toEqual([null, 'agent_1']);
     expect(retried.agents[0]!.externalAgentId).toBe('agent_1');
+  });
+});
+
+describe('syncAgents with a reader', () => {
+  const reader = buildReaderDefinition('read v1');
+  const leads = (shared = reader) => [
+    buildDefinition('builder', 'b', PINNED_MODELS, shared),
+    buildDefinition('reviewer_correctness', 'r', PINNED_MODELS, shared),
+    buildDefinition('spec', 's')
+  ];
+
+  test('writes the reader once, before the roles, and pins each role to its version', async () => {
+    const port = createFakePort(() => []);
+    const { changed } = await syncAgents(port, leads(), [], async () => {});
+    expect(changed).toEqual(['builder', 'reviewer_correctness', 'spec']);
+    expect(port.agentWrites.map((write) => write.agent.name)).toEqual([
+      READER_NAME,
+      'officina-builder',
+      'officina-reviewer-correctness',
+      'officina-spec'
+    ]);
+    const pinned = { id: 'agent_1', version: 1 };
+    expect(port.agentWrites.map((write) => write.agent.roster)).toEqual([
+      [],
+      [pinned],
+      [pinned],
+      []
+    ]);
+  });
+
+  test('a second sync writes nothing, and a lost record reuses the unchanged reader', async () => {
+    const port = createFakePort(() => []);
+    const first = await syncAgents(port, leads(), [], async () => {});
+    const again = await syncAgents(port, leads(), first.agents, async () => {});
+    expect(again.changed).toEqual([]);
+    expect(port.agentWrites).toHaveLength(4);
+
+    const relost = await syncAgents(port, leads(), [], async () => {});
+    expect(relost.changed).toEqual(['builder', 'reviewer_correctness', 'spec']);
+    expect(port.agentWrites.slice(4).map((write) => write.agent.name)).not.toContain(READER_NAME);
+    expect(port.agentWrites.at(-2)!.agent.roster).toEqual([{ id: 'agent_1', version: 1 }]);
+  });
+
+  test('a changed reader becomes a new version of itself, and the roles pin it', async () => {
+    const port = createFakePort(() => []);
+    const first = await syncAgents(port, leads(), [], async () => {});
+    const changed = await syncAgents(
+      port,
+      leads(buildReaderDefinition('read v2')),
+      first.agents,
+      async () => {}
+    );
+    expect(changed.changed).toEqual(['builder', 'reviewer_correctness']);
+    const writes = port.agentWrites.slice(4);
+    expect(writes.map((write) => [write.id, write.agent.name])).toEqual([
+      ['agent_1', READER_NAME],
+      [first.agents[0]!.externalAgentId, 'officina-builder'],
+      [first.agents[1]!.externalAgentId, 'officina-reviewer-correctness']
+    ]);
+    expect(writes[1]!.agent.roster).toEqual([{ id: 'agent_1', version: 5 }]);
   });
 });
 

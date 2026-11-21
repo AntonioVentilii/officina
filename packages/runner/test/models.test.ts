@@ -121,4 +121,22 @@ describe('createModelResolver', () => {
     expect(await held.resolve('sonnet')).toEqual({ id: 'claude-sonnet-5-5', source: 'env' });
     expect(await held.resolve('opus')).toEqual({ id: 'claude-opus-6', source: 'models_api' });
   });
+
+  test('resolves haiku on its own: the newest listed haiku, its own override, its own pin', async () => {
+    const listed = [...LISTED, { id: 'claude-haiku-6', createdAt: '2026-11-01T00:00:00Z' }];
+    expect(await createModelResolver({ listModels: async () => listed }).resolve('haiku')).toEqual({
+      id: 'claude-haiku-6',
+      source: 'models_api'
+    });
+    const held = createModelResolver({
+      listModels: async () => listed,
+      env: { ANTHROPIC_MODEL: 'claude-opus-5', ANTHROPIC_HAIKU_MODEL: 'claude-haiku-5-5' }
+    });
+    expect(await held.resolve('haiku')).toEqual({ id: 'claude-haiku-5-5', source: 'env' });
+    expect(await createModelResolver({ listModels: async () => LISTED }).resolve('haiku')).toEqual({
+      id: PINNED_MODELS.haiku,
+      source: 'pinned'
+    });
+    expect(PINNED_MODELS.haiku).toBe('claude-haiku-5-5');
+  });
 });

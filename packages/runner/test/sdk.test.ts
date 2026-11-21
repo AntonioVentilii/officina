@@ -45,7 +45,21 @@ describe('the SDK port', () => {
       'GET /v1/sessions/sesn_1': { id: 'sesn_1', usage },
       'GET /v1/sessions/sesn_1/events': { data: [RUNNING, TOOL_USE], next_page: null },
       'POST /v1/environments': { id: 'env_1' },
-      'POST /v1/environments/env_1': { id: 'env_1' }
+      'POST /v1/environments/env_1': { id: 'env_1' },
+      'POST /v1/agents': { id: 'agent_builder', version: 1 },
+      'POST /v1/agents/agent_spec': { id: 'agent_spec', version: 3 },
+      'GET /v1/agents': {
+        data: [
+          { id: 'agent_spec', name: 'officina-spec', version: 2, metadata: {} },
+          {
+            id: 'agent_reader',
+            name: 'officina-reader',
+            version: 4,
+            metadata: { officina_definition_hash: 'h1' }
+          }
+        ],
+        next_page: null
+      }
     };
     const fetch: NonNullable<ClientOptions['fetch']> = async (input, init) => {
       const method = init?.method ?? 'GET';
@@ -113,6 +127,48 @@ describe('the SDK port', () => {
         }
       }
     ]);
+  });
+
+  test('an agent with a roster is a coordinator pinned to its exact versions, one without has none', async () => {
+    const { port, calls } = fakeClient();
+    const agent = {
+      name: 'officina-builder',
+      model: { id: 'claude-opus-5-5', effort: 'high' as const },
+      system: 'prompt',
+      tools: [],
+      hash: 'h2'
+    };
+    expect(
+      await port.createAgent({ ...agent, roster: [{ id: 'agent_reader', version: 4 }] })
+    ).toEqual({ id: 'agent_builder', version: 1 });
+    await port.updateAgent('agent_spec', { ...agent, name: 'officina-spec', roster: [] });
+    expect(calls.map((call) => [call.method, call.path])).toEqual([
+      ['POST', '/v1/agents'],
+      ['POST', '/v1/agents/agent_spec']
+    ]);
+    expect(calls[0]!.body).toMatchObject({
+      metadata: { officina_definition_hash: 'h2' },
+      multiagent: {
+        type: 'coordinator',
+        agents: [{ type: 'agent', id: 'agent_reader', version: 4 }]
+      }
+    });
+    expect(calls[1]!.body).toMatchObject({ multiagent: null });
+  });
+
+  test('finds an agent by name with its latest version and the hash it was written from', async () => {
+    const { port } = fakeClient();
+    expect(await port.findAgentByName('officina-reader')).toEqual({
+      id: 'agent_reader',
+      version: 4,
+      hash: 'h1'
+    });
+    expect(await port.findAgentByName('officina-spec')).toEqual({
+      id: 'agent_spec',
+      version: 2,
+      hash: null
+    });
+    expect(await port.findAgentByName('officina-learner')).toBeNull();
   });
 
   test("reads a session's history of events, each with every field", async () => {
