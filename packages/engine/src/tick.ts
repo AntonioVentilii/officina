@@ -17,6 +17,7 @@ import {
   listProjectMembers,
   listTasksAwaitingLearning,
   listTasksAwaitingRewrite,
+  loadProjectConfig,
   loadTaskContext,
   type StoredTaskContext
 } from '@officina/db';
@@ -54,10 +55,19 @@ const closeMergedParents = async (pool: Pool, projectId: string) => {
   }
 };
 
+/** The rule's plan for a task with the project's config and members as `db` reads them now. */
+const ruledPlanIn = async (db: Pool | PoolClient, projectId: string, task: Task) => {
+  const config = parseProjectConfig(await loadProjectConfig(db, projectId));
+  return config.ok
+    ? ruledSpecPlan(config.config, task, await listProjectMembers(db, projectId))
+    : null;
+};
+
 /**
  * Plans a spec by rule when no chooser could change the plan (`ruledSpecPlan`), so no chooser
- * session is paid for it. The rule is read again under the task's lock, with the members then.
- * The task as planned, or `null` when the chooser still decides.
+ * session is paid for it. Under the task's lock the rule is read again, from the config and the
+ * members the command is decided with, and must give the same plan. The task as planned, or
+ * `null` when the chooser still decides.
  */
 const planByRule = async (
   pool: Pool,
@@ -65,17 +75,14 @@ const planByRule = async (
   context: StoredTaskContext
 ): Promise<Task | null> => {
   if (!nextAgentRoles(context.task).includes('chooser')) return null;
-  const config = parseProjectConfig(context.rawConfig);
-  if (!config.ok) return null;
-  const membersIn = (db: Pool | PoolClient) => listProjectMembers(db, context.projectId);
-  const plan = ruledSpecPlan(config.config, context.task, await membersIn(pool));
+  const plan = await ruledPlanIn(pool, context.projectId, context.task);
   if (!plan) return null;
   const result = await applyCommand(pool, {
     taskId,
     command: { type: 'plan_approval', userVisible: context.task.userVisible, plan },
     actor: ENGINE,
     guard: async (task, client) =>
-      ruledSpecPlan(config.config, task, await membersIn(client)) !== null
+      Bun.deepEquals(await ruledPlanIn(client, context.projectId, task), plan)
   });
   return result.ok ? result.task : null;
 };
