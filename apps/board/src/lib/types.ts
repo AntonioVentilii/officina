@@ -143,6 +143,14 @@ export interface Card {
   readonly guards: readonly string[];
 }
 
+/** What a run's session read and wrote, in tokens; cache writes of every lifetime are one count. */
+export interface RunTokens {
+  readonly input: number;
+  readonly output: number;
+  readonly cacheRead: number;
+  readonly cacheWrite: number;
+}
+
 /** A role on the Agents page, with its numbers over the runs the page lists. */
 export interface AgentRoleInfo {
   readonly role: string;
@@ -153,6 +161,7 @@ export interface AgentRoleInfo {
   /** The share of its finished runs that succeeded, in percent; null before one finishes. */
   readonly success: number | null;
   readonly costCents: number;
+  readonly tokens: RunTokens;
 }
 
 export interface Run {
@@ -165,6 +174,8 @@ export interface Run {
   readonly stage: string;
   readonly status: 'running' | 'succeeded' | 'failed' | 'cancelled';
   readonly costCents: number | null;
+  /** None while the run is going, or when its session's usage could not be read. */
+  readonly tokens: RunTokens | null;
   readonly startedAt: string | null;
   readonly finishedAt: string | null;
   readonly eventCount: number;
@@ -232,6 +243,8 @@ export interface TaskDetail extends Card {
   readonly comments: readonly Comment[];
   readonly specs: readonly (Pick<Comment, 'author' | 'body' | 'at'> & {
     readonly version: number;
+    /** The version proposes a split into sub-tasks instead of one spec. */
+    readonly split: boolean;
   })[];
   readonly events: readonly TaskEvent[];
   readonly runs: readonly Run[];

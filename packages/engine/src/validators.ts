@@ -13,6 +13,12 @@ export const interviewProblems = (asked: number) => (output: AgentOutput<RunnerR
     ? [`you have asked ${asked} questions already: complete the request now`]
     : [];
 
+/** A spec due after people picked the size check's Split must be a proposed split. */
+export const splitProblems = (asked: boolean) => (output: AgentOutput<RunnerRole>) =>
+  asked && (output as AgentOutput<'spec'>).outcome === 'specced'
+    ? ['a maintainer picked Split when the size check held the build: submit `split`, not one spec']
+    : [];
+
 export const planProblems =
   (gate: 'spec_review' | 'verifying', memberIds: ReadonlySet<string>) =>
   (output: AgentOutput<RunnerRole>) => {

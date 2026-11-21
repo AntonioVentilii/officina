@@ -34,6 +34,7 @@ export interface SessionRequest {
   readonly budgetCents: number;
 }
 
+import type { RunUsage } from '@officina/core';
 import type { AgentModel, AgentTools } from './definitions';
 import type { ListedModel } from './models';
 
@@ -56,7 +57,8 @@ export interface ManagedAgentsPort {
   createSession(request: SessionRequest): Promise<{ id: string }>;
   openStream(sessionId: string): Promise<AsyncIterable<SessionEvent>>;
   send(sessionId: string, events: readonly OutboundEvent[]): Promise<void>;
-  sessionCostCents(sessionId: string): Promise<number | null>;
+  /** The session's list cost and its tokens, read together. */
+  sessionUsage(sessionId: string): Promise<RunUsage>;
   /** An agent with this name, so one created but never recorded is reused rather than duplicated. */
   findAgentByName(name: string): Promise<{ id: string } | null>;
   createAgent(agent: AgentWrite): Promise<{ id: string; version: number }>;

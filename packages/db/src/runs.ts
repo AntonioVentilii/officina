@@ -1,4 +1,4 @@
-import { TERMINAL_STAGES, redactDeep } from '@officina/core';
+import { TERMINAL_STAGES, redactDeep, type RunUsage } from '@officina/core';
 import type { StoredTaskContext } from './types';
 import type { Pool, PoolClient } from 'pg';
 import { runJson } from './run-json';
@@ -19,25 +19,42 @@ export interface NewRun {
   readonly learningId?: string;
 }
 
+/** Why no run started: a run of the role is already in progress on the task, or the task is paused. */
+export type StartRunRefusal = 'already_running' | 'paused';
+
+/**
+ * Claims a run, unless the task is paused. The insert reads the task row `for share`, so a pause
+ * holding the row (`applyCommandIn` locks it `for update`) is waited for and its `paused` read;
+ * a claim that inserts first holds the pause back until it commits, so the pause sees its run.
+ * A claim made on a closed task (`stage`, as the claim read it) is exempt: only the learner looks
+ * back at one, nothing can pause or resume it any more, and a flag left on it (a parent closed
+ * while paused) would keep the learner off it for good. A claim that read an open task gets no
+ * run once that task is paused, even if it was closed since.
+ */
 export const startRun = async (
   db: Pool | PoolClient,
   input: NewRun
-): Promise<{ ok: true; runId: string } | { ok: false; error: 'already_running' }> => {
+): Promise<{ ok: true; runId: string } | { ok: false; error: StartRunRefusal }> => {
   try {
     const { rows } = await db.query<{ id: string }>(
       `insert into runs (task_id, stage, runner, agent_role, agent_version, status, started_at,
          learning_id)
-       values ($1, $2, $3, $4, $5, 'running', now(), $6) returning id`,
+       select t.id, $2, $3, $4, $5, 'running', now(), $6 from tasks t
+       where t.id = $1 and (not t.paused or $2::text = any($7::text[]))
+       for share of t
+       returning id`,
       [
         input.taskId,
         input.stage,
         input.runner,
         input.role,
         input.agentVersion,
-        input.learningId ?? null
+        input.learningId ?? null,
+        [...TERMINAL_STAGES]
       ]
     );
-    return { ok: true, runId: rows[0]!.id };
+    if (!rows[0]) return { ok: false, error: 'paused' };
+    return { ok: true, runId: rows[0].id };
   } catch (error) {
     if ((error as { code?: string }).code === UNIQUE_VIOLATION) {
       return { ok: false, error: 'already_running' };
@@ -166,24 +183,35 @@ export const appendRunEvent = async (pool: Pool, runId: string, type: string, pa
 /**
  * Records how a run ended. A run already ended outside its step (taken over, orphaned, or long past
  * its deadline) keeps that status, so a step that finishes after it cannot undo it: what the step
- * ends with is added to its result, beside the reason, and its cost is recorded.
+ * ends with is added to its result, beside the reason, and what its session used is recorded.
  */
 export const finishRun = async (
   pool: Pool,
   runId: string,
   input: {
     status: Exclude<RunStatus, 'running'>;
-    costCents: number | null;
+    usage: RunUsage;
     result: unknown;
   }
 ) => {
+  const { costCents, tokens } = input.usage;
   await pool.query(
-    `update runs set list_cost_cents = $3,
+    `update runs set list_cost_cents = $3, input_tokens = $5, output_tokens = $6,
+       cache_read_tokens = $7, cache_write_tokens = $8,
        status = case when status ${RUN_IS_ACTIVE} then $2 else status end,
        result = case when status ${RUN_IS_ACTIVE} then $4::jsonb else coalesce(result, '{}'::jsonb) || $4::jsonb end,
        finished_at = case when status ${RUN_IS_ACTIVE} then now() else finished_at end
      where id = $1`,
-    [runId, input.status, input.costCents, runJson(input.result)]
+    [
+      runId,
+      input.status,
+      costCents,
+      runJson(input.result),
+      tokens?.input ?? null,
+      tokens?.output ?? null,
+      tokens?.cacheRead ?? null,
+      tokens?.cacheWrite ?? null
+    ]
   );
 };
 

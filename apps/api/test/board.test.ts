@@ -5,6 +5,7 @@ import {
   applyCommand,
   createOnboardingTask,
   findTaskIdByNumber,
+  finishRun,
   HAND_IN_LEASE,
   insertLearnings,
   listLearnings,
@@ -20,6 +21,7 @@ import {
   createReadyTask,
   createTaskInMerging,
   createTaskInVerifying,
+  createTaskWithSplit,
   PLAN,
   recordChooserChecklist,
   resetAndSeed,
@@ -90,6 +92,16 @@ describe('agents page', () => {
     stage: 'building',
     status,
     costCents,
+    // In proportion to the cost, so each role's totals are easy to read off.
+    tokens:
+      costCents === null
+        ? null
+        : {
+            input: costCents,
+            output: costCents * 10,
+            cacheRead: costCents * 100,
+            cacheWrite: costCents * 5
+          },
     startedAt: new Date(),
     finishedAt: null,
     eventCount: 0,
@@ -97,7 +109,7 @@ describe('agents page', () => {
     result: null
   });
 
-  test('each role counts its runs, its share of finished ones that succeeded and their cost', () => {
+  test('each role counts its runs, its share of finished ones that succeeded, their cost and tokens', () => {
     const view = agentsView([
       run('builder', 'succeeded', 120),
       run('builder', 'succeeded', 80),
@@ -110,13 +122,15 @@ describe('agents page', () => {
       running: true,
       runs: 5,
       success: 67,
-      costCents: 250
+      costCents: 250,
+      tokens: { input: 250, output: 2_500, cacheRead: 25_000, cacheWrite: 1_250 }
     });
     expect(view.agents.find((agent) => agent.role === 'spec')).toMatchObject({
       running: false,
       runs: 0,
       success: null,
-      costCents: 0
+      costCents: 0,
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
     });
     // The learner is not listed, but what its runs cost is in the total.
     expect(view.agents.some((agent) => agent.role === 'learner')).toBe(false);
@@ -198,6 +212,25 @@ describe.skipIf(!url)('board api', () => {
       label: 'Builds once the agent docs of task 2 are merged',
       me: false
     });
+  });
+
+  test('a proposed split shows as the latest version, waiting on a maintainer, with nothing to approve', async () => {
+    const cookie = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    await createTaskWithSplit(pool, seeded);
+    const task = await json(await call(cookie, `/api/projects/${seeded.projectId}/tasks/1`));
+    expect(task.specs).toEqual([
+      expect.objectContaining({
+        version: 1,
+        split: true,
+        body: expect.stringContaining('**Proposed split into 2 sub-tasks.**')
+      })
+    ]);
+    expect(task.waitingOn).toEqual({
+      kind: 'people',
+      label: 'A maintainer decides on the proposed split',
+      me: false
+    });
+    expect(task.actions).not.toContain('approve');
   });
 
   test('a ready task that waits for other tasks says which, and offers no claim', async () => {
@@ -1843,6 +1876,34 @@ describe.skipIf(!url)('board api', () => {
     expect((await json(await call(owner, `${project}/tasks/1`))).blocked.question).toContain(
       'SECRET2'
     );
+  });
+
+  test("a finished run shows what its session used, and its role's totals add it up", async () => {
+    const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    await createRequest(pool, {
+      title: 'Rename settings',
+      request: 'Call it Preferences.',
+      skipInterview: true
+    });
+    const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
+    const run = await startRun(pool, {
+      taskId,
+      stage: 'speccing',
+      role: 'spec',
+      agentVersion: 1,
+      runner: 'managed_agents'
+    });
+    if (!run.ok) throw new Error('run not started');
+    const tokens = { input: 164, output: 72_500, cacheRead: 13_700_000, cacheWrite: 269_000 };
+    await finishRun(pool, run.runId, {
+      status: 'succeeded',
+      usage: { costCents: 556, tokens },
+      result: {}
+    });
+
+    const view = await json(await call(owner, `/api/projects/${seeded.projectId}/runs`));
+    expect(view.runs).toMatchObject([{ costCents: 556, tokens }]);
+    expect(view.agents[0]).toMatchObject({ role: 'spec', costCents: 556, tokens });
   });
 
   test('owners and maintainers see who accepted their invite; only owners send a fresh link', async () => {

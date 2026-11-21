@@ -455,7 +455,12 @@ After it is opened, tell the person the task link and what happens next, as the 
       if (task.request)
         lines.push('', `Request (${task.request.author}):`, fence(task.request.body));
       const spec = task.specs.at(-1);
-      if (spec) lines.push('', `Plan, version ${spec.version}:`, fence(clip(spec.body, 8_000)));
+      if (spec)
+        lines.push(
+          '',
+          `${spec.split ? 'Proposed split' : 'Plan'}, version ${spec.version}:`,
+          fence(clip(spec.body, 8_000))
+        );
       if (task.approval?.pending.length)
         lines.push('', `Still needs approval from: ${task.approval.pending.join(', ')}.`);
       if (task.plan?.current) lines.push(`How deep to check: ${task.plan.depthLabel}.`);
@@ -723,12 +728,12 @@ Always call show_task first, show the person the plan or the list of what to che
     name: 'pause_task',
     title: 'Pause a task',
     description:
-      'Pauses a task: no new agent step starts on it until someone resumes it with resume_task. An agent step already running is not stopped: its result is dropped if the task is still paused when the result is applied, and applied as usual if the task has been resumed by then. Use it to hold a task that must wait, for example until another task is merged, instead of answering its question with "wait", which sets the agent going again. An open question is kept, and nobody needs to answer it while the task is paused. Pausing needs the right to steer the work (maintainers and owners). It acts at once: it is not an approval, and nothing is confirmed on the board. Call show_task first to check the task.',
+      'Pauses a task: no new agent step starts on it until someone resumes it with resume_task, and an agent step already running is stopped: its result is dropped, even if the task is resumed before the step ends, and the agents start that step again once the task is resumed. Use it to hold a task that must wait, for example until another task is merged, instead of answering its question with "wait", which sets the agent going again. An open question is kept, and nobody needs to answer it while the task is paused. Pausing needs the right to steer the work (maintainers and owners). It acts at once: it is not an approval, and nothing is confirmed on the board. Call show_task first to check the task.',
     input: z.object({ project: PROJECT, number: NUMBER }),
     readOnly: false,
     run: async (context, input) => {
       const project = await actOnTaskFor(context, input, { type: 'pause' });
-      return `Paused; no new agent step starts on task ${input.number} until it is resumed (resume_task), and an agent step already running is not stopped. Any open question is kept. ${taskUrl(context.publicUrl, project.id, input.number)}`;
+      return `Paused; no new agent step starts on task ${input.number} until it is resumed (resume_task), and an agent step already running is stopped, its result dropped. Any open question is kept. ${taskUrl(context.publicUrl, project.id, input.number)}`;
     }
   }),
   tool({

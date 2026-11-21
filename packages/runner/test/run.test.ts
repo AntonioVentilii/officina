@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { ERROR_TEXT_MAX } from '@officina/core';
+import { ERROR_TEXT_MAX, NO_USAGE, type RunUsage } from '@officina/core';
 import {
   describeOutcome,
   executeRun,
@@ -10,6 +10,7 @@ import {
 } from '../src';
 import {
   createFakePort,
+  FAKE_USAGE,
   idle,
   running,
   sessionError,
@@ -35,12 +36,12 @@ type Validate = Parameters<typeof executeRun>[1]['validate'];
 const run = (
   script: readonly ScriptItem[],
   options: {
-    readonly costCents?: number | null;
+    readonly usage?: RunUsage;
     readonly validate?: Validate;
     readonly deadlineMs?: number;
   } = {}
 ) => {
-  const port = createFakePort(() => script, options.costCents);
+  const port = createFakePort(() => script, options.usage);
   return {
     port,
     report: executeRun(port, {
@@ -59,7 +60,7 @@ const toolResults = (sent: { events: readonly OutboundEvent[] }[]) =>
 const hang = () => new Promise<void>(() => {});
 
 describe('executeRun', () => {
-  test('opens the stream before sending the brief, accepts a valid result and reports cost', async () => {
+  test('opens the stream before sending the brief, accepts a valid result and reports what it used', async () => {
     const { port, report } = run([
       running(),
       toolUse(approve),
@@ -68,7 +69,7 @@ describe('executeRun', () => {
     ]);
     expect(await report).toEqual({
       sessionId: 'sesn_1',
-      costCents: 12,
+      usage: FAKE_USAGE,
       outcome: { kind: 'result', output: approve }
     });
     expect(port.log.slice(0, 3)).toEqual([
@@ -189,8 +190,8 @@ describe('executeRun', () => {
   });
 
   test('a result submitted before the budget pause still counts', async () => {
-    const { report } = run([toolUse(approve), idle('budget_reached')], { costCents: null });
-    expect(await report).toMatchObject({ costCents: null, outcome: { kind: 'result' } });
+    const { report } = run([toolUse(approve), idle('budget_reached')], { usage: NO_USAGE });
+    expect(await report).toMatchObject({ usage: NO_USAGE, outcome: { kind: 'result' } });
   });
 
   test('a stream that stops sending events past the deadline interrupts the session and fails', async () => {
