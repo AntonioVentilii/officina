@@ -6,9 +6,16 @@ import type {
   SessionEvent,
   SessionRequest
 } from '../src';
+import type { RunUsage } from '@officina/core';
 
 /** A scripted step: an event to emit, or an action to run at that point in the session. */
 export type ScriptItem = SessionEvent | (() => Promise<void>);
+
+/** What every fake session reports it used, unless a test says otherwise. */
+export const FAKE_USAGE: RunUsage = {
+  costCents: 12,
+  tokens: { input: 40, output: 1_500, cacheRead: 90_000, cacheWrite: 12_000 }
+};
 
 let eventCounter = 0;
 const nextId = () => `sevt_${++eventCounter}`;
@@ -42,7 +49,7 @@ export interface FakePort extends ManagedAgentsPort {
 
 export const createFakePort = (
   scriptFor: (request: SessionRequest) => readonly ScriptItem[],
-  costCents: number | null = 12
+  usage: RunUsage = FAKE_USAGE
 ): FakePort => {
   const sessions: SessionRequest[] = [];
   const sent: FakePort['sent'] = [];
@@ -90,8 +97,8 @@ export const createFakePort = (
       log.push(`send ${sessionId} ${events.map((event) => event.type).join(',')}`);
       sent.push({ sessionId, events });
     },
-    async sessionCostCents() {
-      return costCents;
+    async sessionUsage() {
+      return usage;
     },
     async findAgentByName(name) {
       const index = agentWrites.findIndex(
