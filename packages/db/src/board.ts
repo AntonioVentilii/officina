@@ -1,4 +1,4 @@
-import type { Actor, DomainEvent, ProposedSplit, Task } from '@officina/core';
+import type { Actor, DomainEvent, ProposedSplit, RunTokens, Task } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
 import { autoMergeIsOn, wasAutoVerified } from './github';
 import { HAND_IN_CLAIM_LIVE } from './hand-in-claims';
@@ -168,6 +168,8 @@ export interface RunRow {
   readonly agentVersion: number;
   readonly status: string;
   readonly costCents: number | null;
+  /** None for a run whose session usage was never read. */
+  readonly tokens: RunTokens | null;
   readonly sessionId: string | null;
   readonly result: unknown;
   readonly startedAt: Date | null;
@@ -180,6 +182,10 @@ const RUN_COLUMNS = `
   r.id, r.task_id as "taskId", t.number as "taskNumber", t.title as "taskTitle", r.stage,
   r.agent_role as role, r.agent_version as "agentVersion", r.status,
   r.list_cost_cents as "costCents", r.external_id as "sessionId", r.result,
+  case when r.input_tokens is not null then json_build_object(
+    'input', r.input_tokens, 'output', r.output_tokens,
+    'cacheRead', r.cache_read_tokens, 'cacheWrite', r.cache_write_tokens
+  ) end as tokens,
   r.started_at as "startedAt", r.finished_at as "finishedAt", r.created_at as "createdAt",
   (select count(*) from run_events e where e.run_id = r.id)::int as "eventCount"`;
 

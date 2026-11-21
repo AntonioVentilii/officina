@@ -1,4 +1,11 @@
-import { clip, ERROR_TEXT_MAX, parseAgentOutput, type AgentOutput } from '@officina/core';
+import {
+  clip,
+  ERROR_TEXT_MAX,
+  NO_USAGE,
+  parseAgentOutput,
+  type AgentOutput,
+  type RunUsage
+} from '@officina/core';
 import { RESULT_TOOL, type RunnerRole } from './definitions';
 import type { ManagedAgentsPort, SessionEvent, SessionRequest } from './port';
 
@@ -32,7 +39,7 @@ export type RunOutcome =
 export interface RunReport {
   readonly sessionId: string;
   readonly outcome: RunOutcome;
-  readonly costCents: number | null;
+  readonly usage: RunUsage;
 }
 
 const stopReason = (event: SessionEvent): string | undefined =>
@@ -210,9 +217,9 @@ export const executeRun = async (
     outcome ??= { kind: 'failed', reason: 'the session ran past its deadline and was interrupted' };
   }
 
-  const costCents = await port.sessionCostCents(sessionId).catch(() => null);
+  const usage = await port.sessionUsage(sessionId).catch(() => NO_USAGE);
   if (result !== null && outcome?.kind !== 'invalid_result') {
-    return { sessionId, costCents, outcome: { kind: 'result', output: result } };
+    return { sessionId, usage, outcome: { kind: 'result', output: result } };
   }
-  return { sessionId, costCents, outcome: outcome ?? { kind: 'no_result' } };
+  return { sessionId, usage, outcome: outcome ?? { kind: 'no_result' } };
 };

@@ -282,7 +282,11 @@ describe.skipIf(!url)('task store', () => {
       { id: recent, status: 'running' }
     ]);
 
-    await finishRun(pool, stale, { status: 'succeeded', costCents: 7, result: { late: true } });
+    await finishRun(pool, stale, {
+      status: 'succeeded',
+      usage: { costCents: 7, tokens: null },
+      result: { late: true }
+    });
     const late = await pool.query<{ status: string; cost: number; result: unknown }>(
       'select status, list_cost_cents as cost, result from runs where id = $1',
       [stale]

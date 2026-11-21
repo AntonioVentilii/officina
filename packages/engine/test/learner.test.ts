@@ -332,6 +332,39 @@ describe.skipIf(!url)('learner', () => {
     expect((await collectDueSteps({ pool }, seeded.projectId)).due).toEqual([]);
   });
 
+  test('a rewrite whose result fails to be stored still records what its session used', async () => {
+    const { taskId } = await staleLearning();
+    // Only storing the rewritten edit sets rewritten_at, so only that write fails.
+    await pool.query(`
+      create function refuse_rewrite() returns trigger language plpgsql as
+        $$ begin raise exception 'the store refused the rewrite'; end $$;
+      create trigger refuse_rewrite before update on learnings for each row
+        when (new.rewritten_at is distinct from old.rewritten_at) execute function refuse_rewrite();`);
+    const agents = createFakePort(() => [
+      toolUse({ learnings: [learning({})] }),
+      idle('requires_action'),
+      idle('end_turn')
+    ]);
+    const deps = { pool, github: fakeGitHub(), agents, publicUrl: 'x' };
+    await expect(runAgentStep(deps, taskId, 'learner')).rejects.toThrow('refused the rewrite');
+    const run = await pool.query(
+      `select status, list_cost_cents, input_tokens::int, output_tokens::int,
+         cache_read_tokens::int, cache_write_tokens::int
+       from runs where task_id = $1 and learning_id is not null`,
+      [taskId]
+    );
+    expect(run.rows).toEqual([
+      {
+        status: 'failed',
+        list_cost_cents: 12,
+        input_tokens: 40,
+        output_tokens: 1_500,
+        cache_read_tokens: 90_000,
+        cache_write_tokens: 12_000
+      }
+    ]);
+  });
+
   /** Waits until `ready` holds, as a step running in the background gets there. */
   const until = async (ready: () => boolean | Promise<boolean>) => {
     for (let wait = 0; !(await ready()); wait++) {

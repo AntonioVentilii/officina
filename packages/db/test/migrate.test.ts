@@ -68,7 +68,8 @@ describe.skipIf(!url)('migrations', () => {
       '0034_task_links.sql',
       '0035_learning_accept_attempt.sql',
       '0036_spec_split.sql',
-      '0037_task_merged_early.sql'
+      '0037_run_cache_tokens.sql',
+      '0038_task_merged_early.sql'
     ]);
     expect(await migrate(client)).toEqual([]);
   });
