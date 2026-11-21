@@ -1074,6 +1074,13 @@ describe.skipIf(!url)('connector for Claude', () => {
       discarded: 'stale',
       output: { outcome: 'approve', summary: 'Matches the plan.' }
     });
+    // The other reviewer's verdict first: changes go back to the build once both have reviewed.
+    await applyOrThrow(
+      pool,
+      taskId,
+      { type: 'review', verdict: 'approve', notes: '' },
+      { kind: 'agent', role: 'reviewer_spec', version: 1 }
+    );
     await applyOrThrow(
       pool,
       taskId,
@@ -1340,7 +1347,7 @@ describe.skipIf(!url)('connector for Claude', () => {
     expect(held).toContain(
       '(a) Split the spec into smaller tasks: The task goes back to the spec agent, which proposes sub-tasks'
     );
-    expect(held).toContain('(c) Allow 2449 lines for this task: Later heads of this task pass');
+    expect(held).toContain('(c) Allow 2449 lines for this task: This head goes to review as it is');
     const version = Number(/pass its letter as option and (\d+) as version/.exec(held)?.[1]);
     const answered = await tool(token, 'answer_question', { number: 1, option: 'c', version });
     expect(answered.isError).toBe(false);

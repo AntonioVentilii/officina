@@ -34,7 +34,8 @@ import {
   loadTask,
   saveAgentVersion,
   specShapeFor,
-  startRun
+  startRun,
+  taskSpendCents
 } from '@officina/db';
 import { GitHubError, type RefSnapshot } from '@officina/github';
 import { RUNNER_ROLES, type SessionRequest } from '@officina/runner';
@@ -65,6 +66,7 @@ import {
   type OnBehalf,
   syncSpecStatus,
   tick,
+  TASK_BUDGET_CENTS,
   type AdoptPort,
   type GitHubPort
 } from '../src';
@@ -124,6 +126,8 @@ const fakeGitHub = (
     /** The shas already on the default branch. */
     onDefault?: string[];
     branchHead?: string;
+    /** The size of every pushed change; 3 lines by default. */
+    diffLines?: number;
     addedPaths?: string[];
     written?: { commitSha: string; parentSha: string };
     /** The pull request's head; by default the branch head after any status commit written. */
@@ -189,7 +193,7 @@ const fakeGitHub = (
         headSha: options.branchHead ?? 'sha1',
         changedPaths: [COPY, SPEC],
         addedPaths: options.addedPaths ?? [],
-        diffLines: 3
+        diffLines: options.diffLines ?? 3
       };
     },
     readFile: async (...args: unknown[]) => {
@@ -484,6 +488,8 @@ describe.skipIf(!url)('engine', () => {
     expect(github.calls.some((call) => call.method === 'failedChecks')).toBe(false);
     await openMissingPullRequests(pool, github.port, [taskId], PUBLIC_URL);
     expect(await linkedPullRequest(taskId)).toBe(42);
+    // Once its pull request is open, the catch-up reads the checks no build round read.
+    expect((await loadTask(pool, taskId))?.task.stage).toBe('building');
   });
 
   test('ticks carry a ready task through build, parallel reviews and choosing', async () => {
@@ -548,6 +554,103 @@ describe.skipIf(!url)('engine', () => {
     const updates = github.calls.filter((call) => call.method === 'updateFile');
     expect(updates).toHaveLength(2);
     expect((updates[1]!.args[0] as { text: string }).text).toContain('Status: Implemented (#42)');
+  });
+
+  test('each run is capped by its role, a build by its lane', async () => {
+    const github = fakeGitHub();
+    const agents = createFakePort(succeed);
+    const deps = { pool, github: github.port, agents, publicUrl: PUBLIC_URL };
+    await taskInReady(github, agents);
+    await tick(deps, seeded.projectId);
+    await tick(deps, seeded.projectId);
+    const budgets = Object.fromEntries(
+      agents.sessions.map((session) => [session.metadata.role, session.budgetCents])
+    );
+    expect(budgets).toMatchObject({
+      spec: 600,
+      chooser: 100,
+      reviewer_spec: 300,
+      reviewer_correctness: 300
+    });
+    // The copy change builds in the green lane, whose `budget_usd` is $5.
+    expect(budgets.builder).toBe(500);
+  });
+
+  test('a task whose runs spent the per-task budget starts none until a maintainer lets them go on', async () => {
+    const github = fakeGitHub();
+    const agents = createFakePort(succeed);
+    const deps = { pool, github: github.port, agents, publicUrl: PUBLIC_URL };
+    const taskId = await taskInReady(github, agents);
+    await pool.query(
+      `insert into runs (task_id, stage, runner, agent_role, agent_version, status, list_cost_cents)
+       values ($1, 'building', 'managed_agents', 'builder', 1, 'failed', $2)`,
+      [taskId, TASK_BUDGET_CENTS]
+    );
+    const sessions = agents.sessions.length;
+
+    expect((await tick(deps, seeded.projectId)).steps).toEqual([]);
+    expect(await tick(deps, seeded.projectId)).toEqual({ dispatched: [], steps: [] });
+    const held = (await loadTask(pool, taskId))!.task;
+    expect(held).toMatchObject({ stage: 'ready', blocked: { askedOf: { role: 'maintainer' } } });
+    expect(held.blocked?.question).toContain('over the limit of $20.00 per task');
+    expect(agents.sessions).toHaveLength(sessions);
+
+    await applyOrThrow(pool, taskId, { type: 'answer', text: 'Go on.' }, seeded.owner);
+    expect((await tick(deps, seeded.projectId)).dispatched).toEqual([taskId]);
+    expect(agents.sessions.length).toBeGreaterThan(sessions);
+  });
+
+  test('a run still going at the spend hold counts in the next window, and the learner never counts', async () => {
+    const github = fakeGitHub();
+    const agents = createFakePort(succeed);
+    const deps = { pool, github: github.port, agents, publicUrl: PUBLIC_URL };
+    const taskId = await taskInReady(github, agents);
+    const run = (role: string, cents: number, createdAgo: string, finishedAgo: string) =>
+      pool.query(
+        `insert into runs (task_id, stage, runner, agent_role, agent_version, status, list_cost_cents,
+                           created_at, finished_at)
+         values ($1, 'building', 'managed_agents', $2, 1, 'succeeded', $3,
+                 now() - $4::interval, now() - $5::interval)`,
+        [taskId, role, cents, createdAgo, finishedAgo]
+      );
+    await run('learner', TASK_BUDGET_CENTS, '2 hours', '2 hours');
+    expect(await taskSpendCents(pool, taskId)).toBe(24);
+
+    await run('builder', TASK_BUDGET_CENTS, '2 hours', '2 hours');
+    await tick(deps, seeded.projectId);
+    expect((await loadTask(pool, taskId))!.task.blocked).not.toBeNull();
+    await applyOrThrow(pool, taskId, { type: 'answer', text: 'Go on.' }, seeded.owner);
+    expect(await taskSpendCents(pool, taskId)).toBe(0);
+    // Started before the hold, it finished after it: its cost belongs to the new window.
+    await run('reviewer_spec', 300, '2 hours', '0 seconds');
+    expect(await taskSpendCents(pool, taskId)).toBe(300);
+  });
+
+  test('a build sent back after the size check held its head works on the task branch, not from the default branch', async () => {
+    const withBranch = { ...REFS, branches: { ...REFS.branches, 'officina/task-1': 'sha1' } };
+    const github = fakeGitHub({ diffLines: 2000, refs: [REFS, REFS, withBranch] });
+    const agents = createFakePort(succeed);
+    const deps = { pool, github: github.port, agents, publicUrl: PUBLIC_URL };
+    const taskId = await taskInReady(github, agents);
+    await tick(deps, seeded.projectId);
+    const held = (await loadTask(pool, taskId))!.task;
+    expect(held).toMatchObject({ stage: 'building', headSha: null });
+    expect(held.blocked?.allowance?.headSha).toBe('sha1');
+
+    await applyOrThrow(
+      pool,
+      taskId,
+      { type: 'answer', text: 'Option (b): Reduce the change', option: 'b' },
+      seeded.owner
+    );
+    await runAgentStep(deps, taskId, 'builder');
+    const builds = agents.sessions.filter((session) => session.metadata.role === 'builder');
+    expect(builds.map((session) => session.repository.branch)).toEqual(['main', 'officina/task-1']);
+    const briefs = agents.sent
+      .map((sent) => (sent.events[0] as { text?: string }).text ?? '')
+      .filter((text) => text.includes('role: builder'));
+    expect(briefs[0]).toContain('First round');
+    expect(briefs[1]).toContain('Fix round');
   });
 
   test('a checklist GitHub refuses is recorded on the run and neither fails it nor blocks the task', async () => {
@@ -877,6 +980,13 @@ describe.skipIf(!url)('engine', () => {
       },
       { kind: 'engine' }
     );
+    // The review arrived while the agent reviewers had not run: it waits for their verdicts.
+    expect(await runAgentStep(deps, taskId, 'builder')).toEqual({
+      status: 'skipped',
+      reason: 'not_due'
+    });
+    await runAgentStep(deps, taskId, 'reviewer_spec');
+    await runAgentStep(deps, taskId, 'reviewer_correctness');
 
     expect(await runAgentStep(deps, taskId, 'builder')).toEqual({ status: 'applied' });
     expect((await loadTask(pool, taskId))?.task).toMatchObject({
@@ -3488,27 +3598,21 @@ describe.skipIf(!url)('engine', () => {
       headSha: 'sha1'
     });
 
-    // While the spec reviewer reads sha1, the other reviewer sends it back and the builder pushes sha2.
+    // While the spec reviewer reads sha1, a push from outside Officina replaces it with sha2.
     const agents = createFakePort(() => [
       async () => {
         await applyOrThrow(
           pool,
           taskId,
-          { type: 'review', verdict: 'changes', notes: 'Wrong key.' },
-          { kind: 'agent', role: 'reviewer_correctness', version: 1 }
-        );
-        await applyOrThrow(
-          pool,
-          taskId,
           {
-            type: 'push',
+            type: 'outside_push',
             headSha: 'sha2',
             changedPaths: [COPY],
             addedPaths: [],
             catalogPages: {},
             diffLines: 3
           },
-          { kind: 'agent', role: 'builder', version: 1 }
+          { kind: 'engine' }
         );
       },
       toolUse(RESULTS.reviewer_spec),
