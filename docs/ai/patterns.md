@@ -25,6 +25,8 @@ The patterns Officina really uses, each with one place to copy from. [`../archit
 
 ## Seams
 
+- **A role hands reading to the reader, never judgment.** The roles in `READER_ROLES` (`packages/runner/src/definitions.ts`) are Managed Agents coordinators whose roster is the reader alone, pinned to the version the same sync wrote; the reader runs on Haiku with read, glob and grep only, and its own context is thrown away. The rules for using it are written once, in `withReader` (`packages/runner/src/reader.ts`), and appended to those roles' prompts. A role that reads a lot is added to `READER_ROLES`, not given a copy of the rules.
+
 - **Ports, not clients, inside the engine.** `GitHubPort` (`packages/engine/src/step.ts`) and `ManagedAgentsPort` (`packages/runner/src/port.ts`) are `Pick`s or interfaces over the real clients; tests pass fakes. The real clients are built only in `apps/api`.
 - **Text written by people or agents is fenced as data in a brief**, with a fence longer than any backtick run inside it: `fence` in `packages/engine/src/brief.ts`, which every brief uses, and so does the connector's `show_task` (`apps/api/src/connector/tools.ts`).
 - **Config is parsed once into a normalized shape.** Code reads `ProjectConfig` from `parseProjectConfig` (`packages/core/src/config.ts`), with defaults filled in, never the raw YAML.

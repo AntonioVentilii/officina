@@ -1,6 +1,7 @@
 import type {
   AgentWrite,
   EnvironmentWrite,
+  FoundAgent,
   ManagedAgentsPort,
   OutboundEvent,
   SessionEvent,
@@ -30,6 +31,14 @@ export const sessionError = (type: string, message: string, retry = 'exhausted')
   id: nextId(),
   error: { type, message, retry_status: { type: retry } }
 });
+/** An event of the reader's thread as the session stream shows it, e.g. `session.thread_status_idle`. */
+export const threadEvent = (type: string, fields: Record<string, unknown> = {}): SessionEvent => ({
+  type,
+  id: nextId(),
+  session_thread_id: 'sthr_1',
+  agent_name: 'officina-reader',
+  ...fields
+});
 export const terminated = (): SessionEvent => ({ type: 'session.status_terminated', id: nextId() });
 
 export interface FakePort extends ManagedAgentsPort {
@@ -49,7 +58,14 @@ export const createFakePort = (
   const log: string[] = [];
   const agentWrites: FakePort['agentWrites'] = [];
   const environments = new Map<string, EnvironmentWrite & { id: string }>();
+  // The latest version written under each name, as the agents list shows it.
+  const latest = new Map<string, FoundAgent>();
   let agentVersion = 0;
+  const written = (id: string, agent: AgentWrite) => {
+    const saved = { id, version: ++agentVersion };
+    latest.set(agent.name, { ...saved, hash: agent.hash });
+    return saved;
+  };
 
   return {
     sessions,
@@ -94,18 +110,15 @@ export const createFakePort = (
       return costCents;
     },
     async findAgentByName(name) {
-      const index = agentWrites.findIndex(
-        (write) => write.id === null && write.agent.name === name
-      );
-      return index === -1 ? null : { id: `agent_${index + 1}` };
+      return latest.get(name) ?? null;
     },
     async createAgent(agent) {
       agentWrites.push({ id: null, agent });
-      return { id: `agent_${agentWrites.length}`, version: ++agentVersion };
+      return written(`agent_${agentWrites.length}`, agent);
     },
     async updateAgent(agentId, agent) {
       agentWrites.push({ id: agentId, agent });
-      return { id: agentId, version: ++agentVersion };
+      return written(agentId, agent);
     },
     async listModels() {
       return [];
