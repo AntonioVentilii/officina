@@ -102,6 +102,8 @@ interface NewTask {
   readonly guards?: readonly Guard[];
   /** A question the task is born held on, so nothing moves it before someone answers. */
   readonly hold?: Blocked;
+  /** `speccing` for a sub-task of an approved split, which people accepted with the split. */
+  readonly stage?: 'speccing';
 }
 
 /** Opens a task at `request` inside the caller's transaction, so what follows lands with it. */
@@ -110,7 +112,7 @@ export const insertTask = async (client: PoolClient, input: NewTask): Promise<St
   await client.query('select id from projects where id = $1 for update', [input.projectId]);
   const { rows } = await client.query<TaskRow>(
     `insert into tasks (project_id, number, title, requester_id, stage, guards, blocked)
-     values ($1, $2, $3, $4, 'request', $5, $6)
+     values ($1, $2, $3, $4, $7, $5, $6)
      returning *`,
     [
       input.projectId,
@@ -118,7 +120,8 @@ export const insertTask = async (client: PoolClient, input: NewTask): Promise<St
       input.title,
       input.requesterId,
       input.guards ?? [],
-      json(input.hold ?? null)
+      json(input.hold ?? null),
+      input.stage ?? 'request'
     ]
   );
   const row = rows[0]!;
@@ -129,6 +132,13 @@ export const insertTask = async (client: PoolClient, input: NewTask): Promise<St
     type: 'created',
     payload: { title: input.title }
   });
+  if (input.stage) {
+    await insertEvent(client, row.id, ENGINE, {
+      type: 'stage_changed',
+      from: 'request',
+      to: input.stage
+    });
+  }
   if (input.hold) {
     await insertEvent(client, row.id, ENGINE, { type: 'blocked', blocked: input.hold });
   }

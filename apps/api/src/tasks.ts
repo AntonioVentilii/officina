@@ -23,6 +23,7 @@ import {
   addComment,
   applyCommand,
   applyCommandIn,
+  openSplitSubtasks,
   buildRunInProgress,
   findRequestedTask,
   findTaskIdByNumber,
@@ -303,6 +304,7 @@ export type TaskAction =
   | { readonly type: 'pause' }
   | { readonly type: 'resume' }
   | { readonly type: 'changes'; readonly note: string }
+  | { readonly type: 'keep_whole' }
   /**
    * With `option`, the letter of an option the question offers, `version` the task version the
    * question was read at, and `text` an optional note.
@@ -431,10 +433,13 @@ export const actOnTaskAs = async (
     ...(expectedVersion === undefined ? {} : { expectedVersion }),
     // In the same transaction as the decision: someone not allowed to answer leaves no comment, and
     // a build is not handed back while an agent's run on it is still being stopped.
-    onApplied: async (client) => {
+    onApplied: async (client, after) => {
       await refuseWhileHandingIn(client, taskId);
       if (action.type === 'release') await refuseWhileAgentRuns(client, taskId);
       if (action.type === 'answer') await addComment(client, taskId, actor, action.text);
+      // An approval that moves a proposed split on approved the split: its sub-tasks open with it.
+      if (action.type === 'approve' && after.stage === 'ready' && after.splitProposed)
+        await openSplitSubtasks(client, { taskId, actor });
     }
   });
   if (!result.ok) throw new TaskCommandError(ERROR_TEXT[result.error]);

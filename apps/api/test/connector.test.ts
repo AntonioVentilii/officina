@@ -5,8 +5,10 @@ import {
   applyCommand,
   failTakenOverRuns,
   findTaskIdByNumber,
+  loadTask,
   purgeConnectorCredentials,
   purgeOldAccessEvents,
+  specShapeFor,
   startRun,
   UNUSED_CLIENT_LIMIT,
   UNUSED_CLIENT_RETENTION
@@ -774,16 +776,22 @@ describe.skipIf(!url)('connector for Claude', () => {
     expect(inbox).toContain('Now: Merge the learning pull request #1498 on GitHub.');
   });
 
-  test('show_task shows a proposed split as such, with its sub-tasks in order', async () => {
+  test('show_task shows a proposed split as such, and Claude keeps it whole at once', async () => {
     const token = (await connect()).tokens.access_token as string;
     await createTaskWithSplit(pool, seeded);
 
     const shown = (await tool(token, 'show_task', { number: 1 })).content[0]!.text;
-    expect(shown).toContain('Now: A maintainer decides on the proposed split.');
+    expect(shown).toContain('Now: Approval of the proposed split');
     expect(shown).toContain('Proposed split, version 1:');
     expect(shown).toContain(
       '2. **Add the settings page**: The page.\n    - Files: `src/b.svelte`\n    - After: 1'
     );
+
+    const kept = await tool(token, 'review', { number: 1, decision: 'keep_whole' });
+    expect(kept.content[0]!.text).toContain('Kept as one task; the agents write one plan for it.');
+    const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
+    expect((await loadTask(pool, taskId))?.task.stage).toBe('speccing');
+    expect(await specShapeFor(pool, taskId)).toBe('whole');
   });
 
   test('show_task says a result was auto-verified instead of naming approvers for it', async () => {

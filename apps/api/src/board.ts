@@ -19,6 +19,7 @@ import {
   effectivePolicy,
   eligibleMembers,
   evaluatePolicy,
+  gatePlanned,
   gateSubject,
   humanBuildReason,
   isGate,
@@ -93,6 +94,7 @@ export type BoardAction =
   | 'hand_back'
   | 'approve'
   | 'changes'
+  | 'keep_whole'
   | 'answer'
   | 'cancel'
   | 'comment';
@@ -234,6 +236,9 @@ const PUBLIC_FIELDS: Readonly<Record<string, readonly string[]>> = {
   unblocked: ['answer'],
   diff_allowed: ['lines', 'lane', 'memberId'],
   split_asked: [],
+  split_approved: ['version'],
+  subtasks_opened: ['subtasks'],
+  kept_whole: [],
   closed: ['stage', 'reason'],
   pull_request_closed: ['pullRequest'],
   spec_status_set: ['status'],
@@ -354,6 +359,7 @@ export const approvalState = async (
     | 'specVersion'
     | 'headSha'
     | 'guards'
+    | 'splitProposed'
   >,
   facts: Pick<ProjectFacts, 'members' | 'names' | 'rawConfig'>
 ): Promise<ApprovalState | null> => {
@@ -363,7 +369,7 @@ export const approvalState = async (
   const gate = task.stage;
   const subject = gateSubject(task, gate);
   // Until the approval chooser has planned this subject, nobody can approve it yet.
-  if (!subject || task.approvalPlans[gate]?.subject !== subject)
+  if (!subject || !gatePlanned(task, gate))
     return { gate, planned: false, pending: [], waived: [], approvedBy: [], canApprove: [] };
   const approvals = await listApprovedSubjects(pool, task.id);
   const context = policyContext(config.config, task, gate, { members: facts.members, subject });
@@ -508,15 +514,17 @@ const waitingOn = (
       };
     case 'spec_review':
     case 'verifying': {
-      // A proposed split is never planned or approved as a spec: people decide on the split.
-      if (row.splitProposed)
-        return { kind: 'people', label: 'A maintainer decides on the proposed split', me: false };
       if (approval && !approval.planned)
         return { kind: 'agent', label: 'Deciding who approves', me: false };
       const pending = approval?.pending ?? [];
       const plan = row.approvalPlans[row.stage];
       const asked = plan?.verifiers.some((verifier) => verifier.memberId === viewer.memberId);
-      const noun = row.stage === 'spec_review' ? 'Plan approval' : 'A check of the result';
+      const noun =
+        row.stage === 'verifying'
+          ? 'A check of the result'
+          : row.splitProposed
+            ? 'Approval of the proposed split'
+            : 'Plan approval';
       return {
         kind: 'people',
         label: pending.length
@@ -607,8 +615,7 @@ const gateActions = (
   viewer: BoardViewer,
   facts: Pick<ProjectFacts, 'config' | 'members'>
 ): BoardAction[] => {
-  if (!isGate(row.stage) || row.approvalPlans[row.stage]?.subject !== gateSubject(row, row.stage))
-    return [];
+  if (!isGate(row.stage) || !gatePlanned(row, row.stage)) return [];
   const member = viewerMember(viewer);
   const approves = can(member, GATE_ACTIONS[row.stage]);
   // Nobody writes on a task they may not read, so they cannot send it back either.
@@ -618,7 +625,8 @@ const gateActions = (
     canRequestChanges(row, { config: facts.config, members: facts.members }, member);
   return [
     ...(approves ? (['approve'] as const) : []),
-    ...(sendsBack ? (['changes'] as const) : [])
+    ...(sendsBack ? (['changes'] as const) : []),
+    ...(sendsBack && row.splitProposed ? (['keep_whole'] as const) : [])
   ];
 };
 
