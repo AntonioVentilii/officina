@@ -1,4 +1,4 @@
-import { errorText, NO_USAGE, type AgentOutput } from '@officina/core';
+import { errorText, NO_USAGE, type AgentOutput, type RunUsage } from '@officina/core';
 import { appendRunEvent, finishRun, setRunExternalId } from '@officina/db';
 import { executeRun, type RunReport, type RunnerRole } from '@officina/runner';
 import type { ClaimedStep } from './claim';
@@ -58,8 +58,11 @@ export const learnerRun = async (
 ): Promise<StepResult> => {
   const { pool } = deps;
   const { runId } = step;
+  // Kept for the catch: what the session used still counts when what follows it fails.
+  let usage: RunUsage = NO_USAGE;
   try {
     const report = await runLearner(deps, step, await input.brief(), input.validate);
+    usage = report.usage;
     if (report.outcome.kind !== 'result') {
       await input.lose();
       await finishRun(pool, runId, {
@@ -81,7 +84,7 @@ export const learnerRun = async (
     await input.lose();
     await finishRun(pool, runId, {
       status: 'failed',
-      usage: NO_USAGE,
+      usage,
       result: { error: errorText(error) }
     });
     throw error;

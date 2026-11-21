@@ -119,8 +119,11 @@ const outcomeOf = async (
   return { output: outcome.output, roleOutput, usage };
 };
 
-/** From the session to the applied result, for a run already claimed. */
-const runClaimed = async (step: Step): Promise<StepResult> => {
+/**
+ * From the session to the applied result, for a run already claimed. `reported` hears what the
+ * session used as soon as it ends, so a failure after it still records that.
+ */
+const runClaimed = async (step: Step, reported: (usage: RunUsage) => void): Promise<StepResult> => {
   const inputs = await gatherInputs(step);
   // Before the token is minted: nothing can push until then, and nothing is left to revoke if
   // reading the refs fails.
@@ -128,6 +131,7 @@ const runClaimed = async (step: Step): Promise<StepResult> => {
   let report: RunReport;
   try {
     report = await withRunToken(step, (token, live) => runSession(step, inputs, token, live));
+    reported(report.usage);
   } catch (error) {
     // A session that throws may have pushed somewhere too, and its retry starts from the refs as
     // they are then: they are checked now or never.
@@ -180,8 +184,9 @@ export const runAgentStep = async (
     taskBranch: branchForTask(claimed.step.context.number),
     builds: isBuildRole(role)
   };
+  let usage: RunUsage = NO_USAGE;
   try {
-    return await runClaimed(step);
+    return await runClaimed(step, (used) => (usage = used));
   } catch (error) {
     // Failed already, by whoever stopped it, with the reason recorded on the run.
     if (error instanceof RunStoppedError) return { status: 'discarded', reason: error.message };
@@ -196,7 +201,7 @@ export const runAgentStep = async (
     ).catch(() => {});
     await finishRun(deps.pool, step.runId, {
       status: 'failed',
-      usage: NO_USAGE,
+      usage,
       result: { error: message }
     });
     throw error;

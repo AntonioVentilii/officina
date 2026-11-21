@@ -1401,6 +1401,40 @@ describe.skipIf(!url)('engine', () => {
     expect(github.calls.filter((call) => call.method === 'runToken')).toEqual([]);
   });
 
+  test('a build that fails after its session still records what the session used', async () => {
+    const github = fakeGitHub();
+    const taskId = await taskInBuilding(github);
+    const port = {
+      ...github.port,
+      pushFacts: async () => {
+        throw new Error('GitHub 502 on the compare');
+      }
+    };
+    await expect(
+      runAgentStep(
+        { pool, github: port, agents: createFakePort(succeed), publicUrl: PUBLIC_URL },
+        taskId,
+        'builder'
+      )
+    ).rejects.toThrow('GitHub 502 on the compare');
+    const run = await pool.query(
+      `select status, list_cost_cents, input_tokens::int, output_tokens::int,
+         cache_read_tokens::int, cache_write_tokens::int
+       from runs where task_id = $1 and agent_role = 'builder'`,
+      [taskId]
+    );
+    expect(run.rows).toEqual([
+      {
+        status: 'failed',
+        list_cost_cents: 12,
+        input_tokens: 40,
+        output_tokens: 1_500,
+        cache_read_tokens: 90_000,
+        cache_write_tokens: 12_000
+      }
+    ]);
+  });
+
   test("a token GitHub fails to revoke is tried again, and the build's result still applies", async () => {
     const github = fakeGitHub();
     const agents = createFakePort(succeed);
