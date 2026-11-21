@@ -8,7 +8,7 @@ import {
   type LearningPullRequestState
 } from './learning-pull-requests';
 import { RUN_IS_ACTIVE } from './run-status';
-import { startRun, type NewRun } from './runs';
+import { startRun, type NewRun, type StartRunRefusal } from './runs';
 import { inTransaction } from './store';
 
 type Queryable = Pool | PoolClient;
@@ -189,7 +189,7 @@ export const startLearningRewriteRun = (
   run: Omit<NewRun, 'learningId'>,
   learningId: string,
   attempts: number
-): Promise<{ ok: true; runId: string } | { ok: false; error: 'already_running' | 'settled' }> =>
+): Promise<{ ok: true; runId: string } | { ok: false; error: StartRunRefusal | 'settled' }> =>
   inTransaction(pool, async (db) => {
     const waiting = await lockWaitingRewrite(db, learningId);
     if (!waiting) return { ok: false, error: 'settled' };
