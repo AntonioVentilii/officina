@@ -1,4 +1,11 @@
-import { BUILD_ROLES, ENGINE, branchForLearning, branchForTask } from '@officina/core';
+import {
+  BUILD_ROLES,
+  ENGINE,
+  NO_USAGE,
+  branchForLearning,
+  branchForTask,
+  type RunUsage
+} from '@officina/core';
 import {
   applyCommand,
   finishRun,
@@ -221,7 +228,7 @@ export const recordStartingRefs = async (step: Step, nowMs: number): Promise<Run
 export const guardRefs = async (
   step: RefStep,
   before: RunRefs,
-  run: { readonly costCents: number | null; readonly result: Record<string, unknown> }
+  run: { readonly usage: RunUsage; readonly result: Record<string, unknown> }
 ): Promise<Extract<StepResult, { status: 'blocked' }> | null> => {
   const changes = await step.deps.github
     .refSnapshot(step.repoRef)
@@ -244,7 +251,7 @@ export const guardRefs = async (
   });
   await finishRun(pool, step.runId, {
     status: 'failed',
-    costCents: run.costCents,
+    usage: run.usage,
     result: { ...run.result, refsChanged: changes }
   });
   await markRefsChecked(pool, step.runId);
@@ -277,7 +284,7 @@ export const guardOrphanedBuilds = async (
       context
     };
     const result = run.result !== null && typeof run.result === 'object' ? run.result : {};
-    const moved = await guardRefs(step, run, { costCents: null, result: { ...result } });
+    const moved = await guardRefs(step, run, { usage: NO_USAGE, result: { ...result } });
     if (moved) blocked.push({ runId: run.runId, reason: moved.reason });
   }
   return blocked;

@@ -1,3 +1,5 @@
+import type { RunTokens } from './types';
+
 const UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
   ['day', 86_400_000],
   ['hour', 3_600_000],
@@ -41,6 +43,20 @@ export const duration = (from: string | null, to: string | null, now = Date.now(
 
 export const money = (cents: number | null | undefined): string =>
   cents === null || cents === undefined ? '' : `$${(cents / 100).toFixed(2)}`;
+
+const TOKEN_COUNT = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 });
+
+/** Each kind of token with the word the board gives it, in the order the API reports them. */
+const TOKEN_KINDS = [
+  ['input', 'in'],
+  ['output', 'out'],
+  ['cacheRead', 'cache read'],
+  ['cacheWrite', 'cache write']
+] as const satisfies readonly (readonly [keyof RunTokens, string])[];
+
+/** A run's tokens kind by kind, as people read them ("13.7M cache read"); none for no tokens. */
+export const tokenParts = (tokens: RunTokens | null): string[] =>
+  tokens ? TOKEN_KINDS.map(([kind, word]) => `${TOKEN_COUNT.format(tokens[kind])} ${word}`) : [];
 
 export const dateTime = (iso: string) =>
   new Date(iso).toLocaleString(undefined, {

@@ -1,4 +1,4 @@
-import { TERMINAL_STAGES, redactDeep } from '@officina/core';
+import { TERMINAL_STAGES, redactDeep, type RunUsage } from '@officina/core';
 import type { StoredTaskContext } from './types';
 import type { Pool, PoolClient } from 'pg';
 import { runJson } from './run-json';
@@ -183,24 +183,35 @@ export const appendRunEvent = async (pool: Pool, runId: string, type: string, pa
 /**
  * Records how a run ended. A run already ended outside its step (taken over, orphaned, or long past
  * its deadline) keeps that status, so a step that finishes after it cannot undo it: what the step
- * ends with is added to its result, beside the reason, and its cost is recorded.
+ * ends with is added to its result, beside the reason, and what its session used is recorded.
  */
 export const finishRun = async (
   pool: Pool,
   runId: string,
   input: {
     status: Exclude<RunStatus, 'running'>;
-    costCents: number | null;
+    usage: RunUsage;
     result: unknown;
   }
 ) => {
+  const { costCents, tokens } = input.usage;
   await pool.query(
-    `update runs set list_cost_cents = $3,
+    `update runs set list_cost_cents = $3, input_tokens = $5, output_tokens = $6,
+       cache_read_tokens = $7, cache_write_tokens = $8,
        status = case when status ${RUN_IS_ACTIVE} then $2 else status end,
        result = case when status ${RUN_IS_ACTIVE} then $4::jsonb else coalesce(result, '{}'::jsonb) || $4::jsonb end,
        finished_at = case when status ${RUN_IS_ACTIVE} then now() else finished_at end
      where id = $1`,
-    [runId, input.status, input.costCents, runJson(input.result)]
+    [
+      runId,
+      input.status,
+      costCents,
+      runJson(input.result),
+      tokens?.input ?? null,
+      tokens?.output ?? null,
+      tokens?.cacheRead ?? null,
+      tokens?.cacheWrite ?? null
+    ]
   );
 };
 
