@@ -159,6 +159,20 @@ const apply = async (demo: Demo, taskId: string, command: Command, actor: Actor)
   return result.task;
 };
 
+/**
+ * What a demo session used, in the proportions of a real build: each cent of list cost is about
+ * 130 output tokens, 24,000 cache reads and 480 cache writes.
+ */
+const demoUsage = (costCents: number) => ({
+  costCents,
+  tokens: {
+    input: 40,
+    output: costCents * 130,
+    cacheRead: costCents * 24_000,
+    cacheWrite: costCents * 480
+  }
+});
+
 const run = async (
   demo: Demo,
   taskId: string,
@@ -199,7 +213,7 @@ const run = async (
   });
   await finishRun(demo.pool, claim.runId, {
     status: 'succeeded',
-    costCents: options.cost ?? 60,
+    usage: demoUsage(options.cost ?? 60),
     result: options.result ?? {}
   });
   await setDemoRunDuration(demo.pool, claim.runId);

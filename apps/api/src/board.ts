@@ -4,8 +4,10 @@ import {
   GATE_ACTIONS,
   GUARD_LABELS,
   HANDOFF_NEEDS,
+  NO_TOKENS,
   REVIEWER_ROLES,
   TERMINAL_STAGES,
+  addTokens,
   applicableRequirements,
   branchForTask,
   buildWait,
@@ -134,6 +136,9 @@ const AGENTS_PAGE: readonly { readonly role: AgentRole; readonly does: string }[
 const costOf = (runs: readonly RunView[]) =>
   runs.reduce((sum, run) => sum + (run.costCents ?? 0), 0);
 
+const tokensOf = (runs: readonly RunView[]) =>
+  runs.reduce((sum, run) => addTokens(sum, run.tokens), NO_TOKENS);
+
 /** The share of a role's finished runs that succeeded, in percent; none before one finishes. */
 const successRate = (runs: readonly RunView[]) => {
   const finished = runs.filter((run) => run.status === 'succeeded' || run.status === 'failed');
@@ -141,7 +146,10 @@ const successRate = (runs: readonly RunView[]) => {
   return finished.length ? Math.round((succeeded / finished.length) * 100) : null;
 };
 
-/** The Agents page: each role it lists with its numbers over the runs the page shows, and their cost. */
+/**
+ * The Agents page: each role it lists with its numbers over the runs the page shows (their cost
+ * and tokens, so roles, models and efforts can be compared), and their cost in all.
+ */
 export const agentsView = (runs: readonly RunView[]) => ({
   agents: AGENTS_PAGE.map(({ role, does }) => {
     const own = runs.filter((run) => run.role === role);
@@ -152,7 +160,8 @@ export const agentsView = (runs: readonly RunView[]) => ({
       running: own.some(stillRunning),
       runs: own.length,
       success: successRate(own),
-      costCents: costOf(own)
+      costCents: costOf(own),
+      tokens: tokensOf(own)
     };
   }),
   costCents: costOf(runs)
@@ -918,6 +927,7 @@ const runView = (run: RunRow, consoleWorkspace: string | undefined) => ({
   effort: run.effort,
   modelReason: run.modelReason,
   costCents: run.costCents,
+  tokens: run.tokens,
   startedAt: run.startedAt,
   finishedAt: run.finishedAt,
   eventCount: run.eventCount,

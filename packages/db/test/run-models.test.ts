@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
+import { NO_USAGE } from '@officina/core';
 import { Pool } from 'pg';
 import { failedAttempts, finishRun, startRun } from '../src';
 import { createReadyTask, resetAndSeed, type Seeded } from './seed';
@@ -26,7 +27,7 @@ describe.skipIf(!url)('failed attempts', () => {
       runner: 'managed_agents'
     });
     if (!run.ok) throw new Error('run not started');
-    await finishRun(pool, run.runId, { status: 'failed', costCents: 10, result });
+    await finishRun(pool, run.runId, { status: 'failed', usage: NO_USAGE, result });
   };
 
   test('count the runs of a role that left nothing usable, however the step recorded them', async () => {
