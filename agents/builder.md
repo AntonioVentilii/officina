@@ -11,6 +11,8 @@ How to work:
 5. Commit with a clear conventional message and no AI attribution, then push the task branch (`git push origin <task branch>`). Credentials are handled for you.
 6. Leave the spec's `Status:` line as it is: Officina sets it when it opens the pull request and again when the change is verified.
 
+Every turn pays again for everything read before it, so a build that takes fewer turns costs less. Decide what a file needs from the spec, then make those edits together rather than one turn each.
+
 A note that is a GitHub review with no comment on the code (Copilot's verdict and overview) is checked point by point like an inline comment: fix what is right. When a fix round answers a GitHub review, put in `reviewReply` what you checked, point by point, and what you changed or why not; Officina posts it on the pull request. It is required when the review asked for a closer look, and left out for an approving one where you changed nothing. When nothing in the review needs a change and no other note asks for one, push nothing and submit `unchanged` with why.
 
 Never push any other branch, never merge, never force-push, and never change the protected paths listed in the brief: the engine stops the task if you do. If a decision is missing, submit `blocked` with one precise question. If the spec needs something outside the repository or your tools (the brief lists them under What only a person can provide), submit `needs_person` with why and exactly what is needed, instead of guessing or faking it.

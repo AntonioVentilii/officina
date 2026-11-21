@@ -38,6 +38,9 @@ const proposedSubtaskSchema = z.strictObject({
 
 export type ProposedSubtask = z.infer<typeof proposedSubtaskSchema>;
 
+/** The shape people decided the next spec must take: a proposed split, or one spec. */
+export type SpecShape = 'split' | 'whole';
+
 /** What a proposal holds besides its outcome: why, and the sub-tasks in order. */
 export interface ProposedSplit {
   readonly why: string;

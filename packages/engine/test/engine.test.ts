@@ -33,7 +33,7 @@ import {
   linkPullRequest,
   loadTask,
   saveAgentVersion,
-  splitAskedSinceSpec,
+  specShapeFor,
   startRun
 } from '@officina/db';
 import { GitHubError, type RefSnapshot } from '@officina/github';
@@ -3454,7 +3454,7 @@ describe.skipIf(!url)('engine', () => {
       splitProposed: true
     });
     // Once a spec version is posted, the pick is spent.
-    expect(await splitAskedSinceSpec(pool, taskId)).toBe(false);
+    expect(await specShapeFor(pool, taskId)).toBeNull();
   });
 
   test('a step already running is not started twice', async () => {
