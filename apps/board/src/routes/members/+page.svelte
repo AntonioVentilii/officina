@@ -6,7 +6,8 @@
   import MemberName from '#lib/components/MemberName.svelte';
   import { ago, dateTime } from '#lib/format.ts';
   import { latestOnly } from '#lib/latest.ts';
-  import { live, refreshesProject } from '#lib/state/live.svelte.ts';
+  import { refreshesProject } from '#lib/live-events.ts';
+  import { live } from '#lib/state/live.svelte.ts';
   import { board } from '#lib/state/board.svelte.ts';
   import { clock } from '#lib/state/clock.svelte.ts';
   import { session } from '#lib/state/session.svelte.ts';

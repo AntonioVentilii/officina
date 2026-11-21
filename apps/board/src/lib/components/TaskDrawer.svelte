@@ -3,14 +3,16 @@
   import { ExternalLink, GitPullRequest, X } from '@lucide/svelte';
   import { goto } from '$app/navigation';
   import { ApiError, get, post } from '#lib/api.ts';
+  import { coalesce } from '#lib/coalesce.ts';
   import { closesDrawer, focusAfterDrawer } from '#lib/drawer.ts';
   import { ago, dateTime, money } from '#lib/format.ts';
   import { inertAround } from '#lib/inert.ts';
   import { latestOnly } from '#lib/latest.ts';
+  import { refreshesTask } from '#lib/live-events.ts';
   import { STAGE_LABELS } from '#lib/stages.ts';
   import { board } from '#lib/state/board.svelte.ts';
   import { clock } from '#lib/state/clock.svelte.ts';
-  import { coalesce, live, refreshesProject } from '#lib/state/live.svelte.ts';
+  import { live } from '#lib/state/live.svelte.ts';
   import { session } from '#lib/state/session.svelte.ts';
   import { toasts } from '#lib/state/toasts.svelte.ts';
   import type { TaskDetail } from '#lib/types.ts';
@@ -67,14 +69,12 @@
     }
   };
 
-  const loadSoon = coalesce(() => void load(), 250);
+  const loadSoon = coalesce(() => load(), 250);
 
   $effect(() => {
     void load();
     return live.subscribe((event) => {
-      const ofThisTask =
-        'number' in event && event.projectId === session.projectId && event.number === number;
-      if (ofThisTask || refreshesProject(event, session.projectId)) loadSoon();
+      if (refreshesTask(event, session.projectId, number)) loadSoon();
     });
   });
 
@@ -196,6 +196,7 @@
         <nav class="tabs" aria-label="Task sections">
           {#each tabs as [id, label, badge] (id)}
             <button
+              class="tab"
               class:on={tab === id}
               onclick={() => (tab = id)}
               aria-current={tab === id ? 'page' : undefined}
@@ -335,6 +336,7 @@
                   <div class="versions">
                     {#each task.specs as item (item.version)}
                       <button
+                        class="tab"
                         class:on={item.version === spec.version}
                         onclick={() => (specVersion = item.version)}
                       >
@@ -482,22 +484,7 @@
     align-items: baseline;
     gap: 6px;
     padding: 6px 0 8px;
-    border: 0;
-    border-bottom: 3px solid transparent;
     margin-bottom: -1px;
-    background: none;
-    color: var(--text-2);
-    font-weight: 600;
-    font-size: 14px;
-  }
-
-  .tabs button:hover {
-    color: var(--text);
-  }
-
-  .tabs button.on {
-    color: var(--text);
-    border-bottom-color: var(--rule);
   }
 
   .count {
@@ -593,17 +580,7 @@
 
   .versions button {
     padding: 2px 0 4px;
-    border: 0;
-    border-bottom: 3px solid transparent;
-    background: none;
-    color: var(--text-2);
-    font-weight: 600;
     font-size: 13px;
-  }
-
-  .versions button.on {
-    color: var(--text);
-    border-bottom-color: var(--rule);
   }
 
   .spec {

@@ -75,10 +75,17 @@
         <input bind:value={query} placeholder="Filter tasks" aria-label="Filter tasks" />
       </label>
       <div class="tabs" role="group" aria-label="Show">
-        <button class:on={!onlyMine} aria-pressed={!onlyMine} onclick={() => (onlyMine = false)}
-          >All</button
+        <button
+          class="tab"
+          class:on={!onlyMine}
+          aria-pressed={!onlyMine}
+          onclick={() => (onlyMine = false)}>All</button
         >
-        <button class:on={onlyMine} aria-pressed={onlyMine} onclick={() => (onlyMine = true)}
+        <button
+          class="tab"
+          class:on={onlyMine}
+          aria-pressed={onlyMine}
+          onclick={() => (onlyMine = true)}
           >Waiting on me{#if board.waitingOnMe.length}<span class="tab-count num"
               >{board.waitingOnMe.length}</span
             >{/if}</button
@@ -88,7 +95,7 @@
         <div class="lanes" role="group" aria-label="Risk">
           {#each ['green', 'standard', 'red'] as const as lane (lane)}
             <button
-              class="lane"
+              class="tab lane"
               class:on={lanes.includes(lane)}
               aria-pressed={lanes.includes(lane)}
               onclick={() => toggleLane(lane)}
@@ -232,28 +239,6 @@
   .lanes {
     display: flex;
     gap: 18px;
-  }
-
-  .tabs button,
-  .lane {
-    padding: 4px 0;
-    border: 0;
-    border-bottom: 3px solid transparent;
-    background: none;
-    color: var(--text-2);
-    font-size: 14px;
-    font-weight: 600;
-  }
-
-  .tabs button:hover,
-  .lane:hover {
-    color: var(--text);
-  }
-
-  .tabs button.on,
-  .lane.on {
-    color: var(--text);
-    border-bottom-color: var(--rule);
   }
 
   .lane {
