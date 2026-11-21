@@ -20,6 +20,8 @@ export interface AllowanceOffer {
   readonly lines: number;
   readonly lane: Lane;
   readonly option: string;
+  /** The head the check held, which allowing its size takes in; absent on older questions. */
+  readonly headSha?: string;
 }
 
 /**
@@ -60,8 +62,9 @@ export const diffHold = (
   config: ProjectConfig,
   task: Pick<Task, 'diffAllowance'>,
   lane: Lane,
-  lines: number
+  head: { readonly headSha: string; readonly diffLines: number }
 ): DiffHold | null => {
+  const lines = head.diffLines;
   const laneLimit = config.lanes[lane].diffLines;
   const allowance = allowanceIn(task, lane);
   const limit = Math.max(laneLimit, allowance?.lines ?? 0);
@@ -74,7 +77,7 @@ export const diffHold = (
     { label: 'Reduce the change' },
     {
       label: `Allow ${lines} lines for this task`,
-      detail: `Later heads of this task pass the size check up to ${lines} lines; every other task keeps the ${lane} lane limit of ${laneLimit}. Only ${ALLOWED_BY[ALLOWS_DIFF[lane]]} may choose this.`
+      detail: `This head goes to review as it is, and later heads of this task pass the size check up to ${lines} lines; every other task keeps the ${lane} lane limit of ${laneLimit}. Only ${ALLOWED_BY[ALLOWS_DIFF[lane]]} may choose this.`
     }
   ];
   return {
@@ -82,7 +85,7 @@ export const diffHold = (
       question: `The change has ${lines} lines, ${over}. Split the spec, reduce the change, or allow ${lines} lines for this task.`,
       askedOf: { role: 'maintainer' },
       options,
-      allowance: { lines, lane, option: optionKey(options.length - 1) }
+      allowance: { lines, lane, option: optionKey(options.length - 1), headSha: head.headSha }
     },
     details: `${lines} > ${limit}`
   };

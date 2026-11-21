@@ -892,16 +892,6 @@ const landPush = (
     ]);
   }
 
-  const tooLarge = diffHold(context.config, task, lane, head.diffLines);
-  if (tooLarge) {
-    const { blocked, details } = tooLarge;
-    return ok({ ...task, lane, blocked }, [
-      ...pushed,
-      { type: 'guardrail_tripped', guardrail: 'diff_too_large', details },
-      { type: 'blocked', blocked }
-    ]);
-  }
-
   // A new shared file nobody listed is the duplication of tomorrow: the builder lists it first.
   const unlisted = unlistedFiles(
     context.config.docs.standards.catalogs,
@@ -914,6 +904,17 @@ const landPush = (
       guardrail: 'unlisted_files',
       details: describeUnlisted(unlisted)
     });
+  }
+
+  // Last, so a head whose size a person allows has passed everything else and can go to review.
+  const tooLarge = diffHold(context.config, task, lane, head);
+  if (tooLarge) {
+    const { blocked, details } = tooLarge;
+    return ok({ ...task, lane, blocked }, [
+      ...pushed,
+      { type: 'guardrail_tripped', guardrail: 'diff_too_large', details },
+      { type: 'blocked', blocked }
+    ]);
   }
 
   const [moved, stageEvent] = moveTo(task, 'reviewing', {
@@ -939,6 +940,16 @@ export const GITHUB_REVIEWABLE: ReadonlySet<Stage> = new Set([
 export const WITH_PULL_REQUEST: ReadonlySet<Stage> = new Set(['building', ...GITHUB_REVIEWABLE]);
 
 /**
+ * Allowing the size of the head the size check held takes that head in: it passed every other
+ * check first, so it goes to review as pushed instead of being built again.
+ */
+const allowedHeadIn = (task: Task, offer: AllowanceOffer | null, events: DomainEvent[]) => {
+  if (!offer?.headSha || task.stage !== 'building') return ok(task, events);
+  const [moved, stageEvent] = moveTo(task, 'reviewing', { headSha: offer.headSha, reviews: {} });
+  return ok(moved, [...events, stageEvent]);
+};
+
+/**
  * Answers the task's question. Picking the size check's option to allow more lines also grants that
  * allowance, which only whoever may allow it in the lane can pick.
  */
@@ -957,17 +968,12 @@ const answered = (
   const allowance: DiffAllowance | null = offer
     ? { lines: offer.lines, lane: offer.lane, memberId: member.id }
     : null;
-  const [unblocked, guardEvents] = guardedByWords(
-    { ...task, blocked: null, ...(allowance ? { diffAllowance: allowance } : {}) },
-    context,
-    member,
-    command.text
-  );
-  return ok(unblocked, [
+  const unblocked = { ...task, blocked: null, ...(allowance ? { diffAllowance: allowance } : {}) };
+  const events: DomainEvent[] = [
     { type: 'unblocked', answer: command.text },
-    ...(allowance ? [{ type: 'diff_allowed' as const, ...allowance }] : []),
-    ...guardEvents
-  ]);
+    ...(allowance ? [{ type: 'diff_allowed' as const, ...allowance }] : [])
+  ];
+  return withWordsOf(allowedHeadIn(unblocked, offer, events), context, member, command.text);
 };
 
 const ALLOWED_WHILE_HELD: ReadonlySet<Command['type']> = new Set([

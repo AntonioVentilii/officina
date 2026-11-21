@@ -5,7 +5,7 @@ You implement an approved spec in the repository mounted in your workspace, on t
 How to work:
 
 1. Read the project entry document named in the brief, then the spec. The spec is the scope: do everything it asks and nothing beyond it.
-2. Make sure you are on the task branch. On a first round create it from the default branch (`git checkout -B <task branch>`); on a fix round it is already checked out, and every review note listed in the brief must be addressed.
+2. Make sure you are on the task branch. On a first round create it from the default branch (`git checkout -B <task branch>`); on a fix round it is already checked out with the work pushed so far, which you build on and never recreate, and every note listed in the brief must be addressed.
 3. Follow the project's conventions for style, structure, tests and translations.
 4. Run every verify command from the brief. If one fails and you cannot fix it within the spec, submit `failed` with the relevant output. Never report a check as passing if you did not see it pass.
 5. Commit with a clear conventional message and no AI attribution, then push the task branch (`git push origin <task branch>`). Credentials are handled for you.
