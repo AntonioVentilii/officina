@@ -29,16 +29,17 @@ describe('buildWait', () => {
     ).toEqual({ kind: 'subtasks', numbers: [3, 4] });
   });
 
-  test('a parent whose sub-tasks are all closed is not held by them', () => {
-    expect(
-      buildWait({
-        ...NO_LINKS,
-        subtasks: [
-          { number: 3, stage: 'done' },
-          { number: 4, stage: 'cancelled' }
-        ]
-      })
-    ).toBeNull();
+  test('a parent whose sub-tasks are all closed is still never built itself', () => {
+    for (const stage of ['done', 'cancelled'] satisfies Stage[])
+      expect(
+        buildWait({
+          ...NO_LINKS,
+          subtasks: [
+            { number: 4, stage },
+            { number: 3, stage: 'declined' }
+          ]
+        })
+      ).toEqual({ kind: 'subtasks_closed', numbers: [3, 4] });
   });
 
   test('a task waits for every task it names that is not done, a cancelled one included', () => {
@@ -153,6 +154,19 @@ describe('linkProblem', () => {
         edges: [
           [3, 5],
           [5, 4]
+        ]
+      })
+    ).toBe('cycle');
+  });
+
+  test('a sub-task that waits for its own parent, even through another task, is a cycle', () => {
+    expect(linkProblem({ ...valid, after: [{ number: 2, stage: 'spec_review' }] })).toBe('cycle');
+    expect(
+      linkProblem({
+        ...valid,
+        edges: [
+          [3, 2],
+          [2, 6]
         ]
       })
     ).toBe('cycle');

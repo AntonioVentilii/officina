@@ -115,7 +115,10 @@ export const setTaskLinks = async (
     await client.query<{ task: number; waited: number }>(
       `select t.number as task, w.number as waited from task_dependencies d
          join tasks t on t.id = d.task_id join tasks w on w.id = d.depends_on
-        where t.project_id = $1 and d.task_id <> $2`,
+        where t.project_id = $1 and d.task_id <> $2
+       union all
+       select p.number, c.number from tasks c join tasks p on p.id = c.parent_id
+        where c.project_id = $1 and c.id <> $2`,
       [input.projectId, task.id]
     )
   ).rows.map((edge) => [edge.task, edge.waited] as const);

@@ -21,9 +21,13 @@ export interface BuildLinks {
   readonly paths: readonly string[];
 }
 
-/** Why a task may not be built yet, with the numbers of the tasks it waits on, ascending. */
+/**
+ * Why a task may not be built yet, with the numbers of the tasks it waits on, ascending.
+ * `subtasks_closed` is a parent whose sub-tasks are all closed: it is never built itself, so it
+ * waits to close with them, or, when they were all dropped, for a person to cancel it.
+ */
 export interface BuildWait {
-  readonly kind: 'subtasks' | 'after' | 'shared_paths';
+  readonly kind: 'subtasks' | 'subtasks_closed' | 'after' | 'shared_paths';
   readonly numbers: readonly number[];
 }
 
@@ -32,8 +36,8 @@ const numbersOf = (tasks: readonly LinkedTask[]): number[] =>
 
 /**
  * What the task waits for before it may be built, or `null` when nothing holds it: a parent is built
- * through its open sub-tasks, a task waits for every task it names until that one is done, and a
- * sub-task waits for a sibling in flight that changes one of its files.
+ * through its sub-tasks and never itself, a task waits for every task it names until that one is
+ * done, and a sub-task waits for a sibling in flight that changes one of its files.
  */
 export const buildWait = (links: BuildLinks): BuildWait | null => {
   const own = new Set(links.paths);
@@ -42,6 +46,7 @@ export const buildWait = (links: BuildLinks): BuildWait | null => {
       kind: 'subtasks',
       numbers: numbersOf(links.subtasks.filter((task) => !TERMINAL_STAGES.has(task.stage)))
     },
+    { kind: 'subtasks_closed', numbers: numbersOf(links.subtasks) },
     { kind: 'after', numbers: numbersOf(links.after.filter((task) => task.stage !== 'done')) },
     {
       kind: 'shared_paths',
@@ -76,7 +81,10 @@ export interface LinkPlan {
     readonly hasParent: boolean;
   } | null;
   readonly after: readonly LinkedTask[];
-  /** Every other wait link in the project as [task, waited-for task], without this task's own. */
+  /**
+   * Every other wait in the project as [task, waited-for task], without this task's own links: the
+   * tasks each one waits for, and each parent waiting for its sub-tasks, since it closes with them.
+   */
   readonly edges: readonly (readonly [number, number])[];
 }
 
@@ -117,7 +125,8 @@ const problemWithParent = (
 /**
  * Why the links asked for may not be set, or `null` when they may. Links change only before a
  * build starts, on one level (a parent has no parent), never towards a task already dropped, and
- * never into a cycle, which would wait forever.
+ * never into a cycle, which would wait forever: a sub-task that waits, even through other tasks, for
+ * its own parent is one, since the parent closes only after it.
  */
 export const linkProblem = (plan: LinkPlan): LinkProblem | null => {
   const { task, parent, after } = plan;
@@ -129,5 +138,8 @@ export const linkProblem = (plan: LinkPlan): LinkProblem | null => {
   if (after.some((other) => other.stage === 'declined' || other.stage === 'cancelled'))
     return 'dependency_closed';
   const waited = after.map((other) => other.number);
-  return reaches(plan.edges, waited, task.number) ? 'cycle' : null;
+  const waitsOnItself = [task.number, ...(parent ? [parent.number] : [])].some((number) =>
+    reaches(plan.edges, waited, number)
+  );
+  return waitsOnItself ? 'cycle' : null;
 };

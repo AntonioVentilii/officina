@@ -438,6 +438,8 @@ export const buildWaitLabel = (wait: BuildWait): string => {
   switch (wait.kind) {
     case 'subtasks':
       return `Built through its sub-tasks: ${tasksInWords(wait.numbers)}`;
+    case 'subtasks_closed':
+      return `Never built itself: its sub-tasks (${tasksInWords(wait.numbers)}) are closed`;
     case 'after':
       return mergedFirst(wait.numbers);
     case 'shared_paths':

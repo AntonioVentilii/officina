@@ -81,6 +81,17 @@ describe.skipIf(!url)('task links', () => {
     expect(await dependencies()).toEqual([{ task: second.number, waited: first.number }]);
   });
 
+  test('a sub-task that waits for its parent through another task is refused', async () => {
+    const parent = await createReadyTask(pool, seeded, 'Settings', ['src/a.ts']);
+    const other = await createReadyTask(pool, seeded, 'Title', ['src/b.ts']);
+    const sub = await createReadyTask(pool, seeded, 'Copy', ['src/c.ts']);
+    await link(other.id, null, [parent.id]);
+
+    expect(await link(sub.id, parent.id, [other.id])).toEqual({ changed: false, problem: 'cycle' });
+    await link(sub.id, parent.id, []);
+    expect(await link(other.id, null, [sub.id])).toEqual({ changed: true, problem: null });
+  });
+
   test("a task's files are its current spec's paths, and a sibling in flight adds what it pushed", async () => {
     const parent = await createReadyTask(pool, seeded, 'Settings', ['src/a.ts']);
     const built = await createReadyTask(pool, seeded, 'Title', ['src/title.ts']);

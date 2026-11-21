@@ -57,7 +57,7 @@ const agent = (
 
 /**
  * Creates a task and takes it to `ready`, its spec predicting `paths` and stored as the spec agent's
- * is, so the order of sub-tasks reads them.
+ * spec is, so the order of sub-tasks reads them.
  */
 export const createReadyTask = async (
   pool: Pool,

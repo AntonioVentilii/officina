@@ -205,7 +205,7 @@ describe.skipIf(!url)('board api', () => {
     const shared = 'src/routes/settings/+page.svelte';
     await createReadyTask(pool, seeded, 'Settings', [shared]);
     const first = await createReadyTask(pool, seeded, 'Title', [shared]);
-    await createReadyTask(pool, seeded, 'Copy', [shared]);
+    const second = await createReadyTask(pool, seeded, 'Copy', [shared]);
     await createReadyTask(pool, seeded, 'Icon', ['src/lib/icon.ts']);
     await linkTask(pool, { number: 2, parent: 1, after: [] });
     await linkTask(pool, { number: 3, parent: 1, after: [] });
@@ -230,6 +230,14 @@ describe.skipIf(!url)('board api', () => {
       expect(task.waitingOn).toEqual({ kind: 'agent', label: label(number), me: false });
       expect(task.actions).not.toContain('claim');
     }
+
+    for (const { id } of [first, second])
+      await applyOrThrow(pool, id, { type: 'cancel', reason: 'Dropped' }, seeded.owner);
+    const parent = await json(await call(cookie, `/api/projects/${seeded.projectId}/tasks/1`));
+    expect(parent.waitingOn.label).toBe(
+      'Never built itself: its sub-tasks (task 2 and task 3) are closed'
+    );
+    expect(parent.actions).not.toContain('claim');
   });
 
   test('a verifier records checks on the board, and the task page shows each with who and how', async () => {

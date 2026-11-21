@@ -14,7 +14,7 @@ describe('LINK_SENTENCES', () => {
 
   test('a parent closed by its sub-tasks names the ones that merged', () => {
     expect(LINK_SENTENCES.subtasks_merged!({ subtasks: [3, 4] })).toBe(
-      'closed it: every sub-task merged (tasks 3, 4)'
+      'closed it: no sub-task left open, tasks 3, 4 merged'
     );
   });
 });

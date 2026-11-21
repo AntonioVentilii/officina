@@ -19,5 +19,6 @@ const linked = (payload: Payload): string => {
 /** The timeline's sentence for a change to a task's links, and for a parent its sub-tasks closed. */
 export const LINK_SENTENCES: Readonly<Record<string, (payload: Payload) => string>> = {
   links_changed: linked,
-  subtasks_merged: (payload) => `closed it: every sub-task merged (${tasks(payload.subtasks)})`
+  subtasks_merged: (payload) =>
+    `closed it: no sub-task left open, ${tasks(payload.subtasks)} merged`
 };
