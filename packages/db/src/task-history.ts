@@ -1,4 +1,4 @@
-import type { Actor, ProposedSplit } from '@officina/core';
+import type { Actor, ProposedSplit, SpecShape } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
 
 type Queryable = Pool | PoolClient;
@@ -53,14 +53,20 @@ export const predictedPaths = async (db: Queryable, taskId: string): Promise<str
   ).rows[0]?.paths ?? [];
 
 /**
- * Whether people picked the size check's Split since the task's latest spec version, so the spec
- * now due must be a proposed split.
+ * The shape the spec now due must take, or `null` when the spec agent judges it: one spec for a
+ * sub-task, since links go one level deep, or for a split people kept whole; a split when people
+ * picked the size check's Split. A decision counts until the next spec version is posted.
  */
-export const splitAskedSinceSpec = async (db: Queryable, taskId: string): Promise<boolean> =>
-  (
-    await db.query<{ type: string }>(
-      `select type from task_events where task_id = $1 and type in ('split_asked', 'spec_versioned')
-        order by id desc limit 1`,
-      [taskId]
-    )
-  ).rows[0]?.type === 'split_asked';
+export const specShapeFor = async (db: Queryable, taskId: string): Promise<SpecShape | null> => {
+  const { rows } = await db.query<{ parent: string | null; type: string | null }>(
+    `select t.parent_id as parent,
+            (select e.type from task_events e
+              where e.task_id = t.id and e.type in ('split_asked', 'kept_whole', 'spec_versioned')
+              order by e.id desc limit 1) as type
+       from tasks t where t.id = $1`,
+    [taskId]
+  );
+  const row = rows[0];
+  if (row?.parent || row?.type === 'kept_whole') return 'whole';
+  return row?.type === 'split_asked' ? 'split' : null;
+};

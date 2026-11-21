@@ -9,8 +9,10 @@ import {
   HAND_IN_LEASE,
   insertLearnings,
   listLearnings,
+  lockTaskLinks,
   recordRunModel,
   renameMember,
+  specShapeFor,
   startRun
 } from '@officina/db';
 import { ENGINE, parseProjectConfig } from '@officina/core';
@@ -28,6 +30,7 @@ import {
   resetAndSeed,
   type Seeded
 } from '../../../packages/db/test/seed';
+import { backendPid, untilWaitingOn } from '../../../packages/db/test/locks';
 import { createApp } from '../src/app';
 import { agentsView, logEntries, RUN_LOG_PAGE } from '../src/board';
 import { invite, loginLink } from '../src/people';
@@ -218,10 +221,11 @@ describe.skipIf(!url)('board api', () => {
     });
   });
 
-  test('a proposed split shows as the latest version, waiting on a maintainer, with nothing to approve', async () => {
+  test('a maintainer approves a proposed split on the board, which opens its sub-tasks in order', async () => {
     const cookie = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
     await createTaskWithSplit(pool, seeded);
-    const task = await json(await call(cookie, `/api/projects/${seeded.projectId}/tasks/1`));
+    const path = `/api/projects/${seeded.projectId}/tasks`;
+    const task = await json(await call(cookie, `${path}/1`));
     expect(task.specs).toEqual([
       expect.objectContaining({
         version: 1,
@@ -229,12 +233,60 @@ describe.skipIf(!url)('board api', () => {
         body: expect.stringContaining('**Proposed split into 2 sub-tasks.**')
       })
     ]);
-    expect(task.waitingOn).toEqual({
-      kind: 'people',
-      label: 'A maintainer decides on the proposed split',
-      me: false
+    expect(task.waitingOn).toMatchObject({ kind: 'people', me: true });
+    expect(task.waitingOn.label).toStartWith('Approval of the proposed split');
+    expect(task.actions).toEqual(expect.arrayContaining(['approve', 'changes', 'keep_whole']));
+    const cli = await describeTask(pool, { number: 1 });
+    expect(cli).toContain('A proposed split: approving it opens its sub-tasks.');
+    expect(cli).toContain('Next: read the proposed split, then: task approve --number 1');
+
+    expect(await json(await call(cookie, `${path}/1/actions`, { type: 'approve' }))).toMatchObject({
+      stage: 'ready'
     });
-    expect(task.actions).not.toContain('approve');
+    const { rows } = await pool.query<{ number: number; stage: string; parent: number | null }>(
+      `select t.number, t.stage, p.number as parent from tasks t
+         left join tasks p on p.id = t.parent_id order by t.number`
+    );
+    expect(rows).toEqual([
+      { number: 1, stage: 'ready', parent: null },
+      { number: 2, stage: 'speccing', parent: 1 },
+      { number: 3, stage: 'speccing', parent: 1 }
+    ]);
+    const second = await json(await call(cookie, `${path}/3`));
+    expect(second.request.body).toContain('Sub-task 2 of 2 of task 1, from its approved split.');
+    expect(second.events.map((event: { type: string }) => event.type)).toContain('links_changed');
+    const parent = await json(await call(cookie, `${path}/1`));
+    expect(parent.waitingOn.label).toBe('Built through its sub-tasks: task 2 and task 3');
+    expect(parent.events.map((event: { type: string }) => event.type)).toEqual(
+      expect.arrayContaining(['split_approved', 'subtasks_opened'])
+    );
+    // A sub-task is built as one: links go one level deep.
+    expect(await specShapeFor(pool, (await findTaskIdByNumber(pool, seeded.projectId, 3))!)).toBe(
+      'whole'
+    );
+  });
+
+  test('approving a split waits for a link change in flight instead of deadlocking with it', async () => {
+    const cookie = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    const parentId = await createTaskWithSplit(pool, seeded);
+    const linking = await pool.connect();
+    try {
+      await linking.query('begin');
+      await lockTaskLinks(linking, seeded.projectId);
+      const approving = call(cookie, `/api/projects/${seeded.projectId}/tasks/1/actions`, {
+        type: 'approve'
+      });
+      await untilWaitingOn(pool, await backendPid(linking));
+      // A link change locks the task it links to after the link lock, as `setTaskLinks` does.
+      await linking.query('select id from tasks where id = $1 for update', [parentId]);
+      await linking.query('commit');
+      expect((await approving).status).toBe(200);
+    } finally {
+      linking.release();
+    }
+    expect(
+      (await pool.query('select 1 from tasks where parent_id = $1', [parentId])).rowCount
+    ).toBe(2);
   });
 
   test('a ready task that waits for other tasks says which, and offers no claim', async () => {

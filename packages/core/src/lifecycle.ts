@@ -297,6 +297,8 @@ export type Command =
   /** The member withdraws an approval a connected app proposed for them. */
   | { readonly type: 'discard_proposal' }
   | { readonly type: 'request_changes'; readonly note: string }
+  /** A proposed split, sent back for one spec: the request is built as one task. */
+  | { readonly type: 'keep_whole' }
   | {
       readonly type: 'dispatch';
       readonly assignee: Assignee;
@@ -415,6 +417,10 @@ export type DomainEvent =
   | ({ readonly type: 'diff_allowed' } & DiffAllowance)
   /** A person picked the size check's Split: the next spec must be a proposed split. */
   | { readonly type: 'split_asked' }
+  /** People approved the proposed split of this spec version; its sub-tasks open with it. */
+  | { readonly type: 'split_approved'; readonly version: number }
+  /** People sent a proposed split back to be specced as one task. */
+  | { readonly type: 'kept_whole' }
   | { readonly type: 'paused' }
   | { readonly type: 'resumed' }
   | { readonly type: 'closed'; readonly stage: 'declined' | 'cancelled'; readonly reason: string }
@@ -526,6 +532,21 @@ export const gateSubject = (
   gate: Gate
 ): string | null =>
   gate === 'spec_review' ? `spec:${task.specVersion}` : task.headSha && `sha:${task.headSha}`;
+
+/**
+ * Whether people may approve the gate's subject now: once the approval chooser planned it, or, for
+ * a proposed split, at once, since a split is never planned and its lane's policy says who decides.
+ */
+export const gatePlanned = (
+  task: Pick<Task, 'specVersion' | 'headSha' | 'approvalPlans' | 'splitProposed'>,
+  gate: Gate
+): boolean => {
+  const subject = gateSubject(task, gate);
+  if (subject === null) return false;
+  return (
+    (gate === 'spec_review' && task.splitProposed) || task.approvalPlans[gate]?.subject === subject
+  );
+};
 
 /**
  * The lane's policy for a gate plus whatever the approval chooser added to it, each requirement
@@ -1048,7 +1069,7 @@ const approvalFor = (
   const subject = gateSubject(task, gate);
   if (subject === null) return { ok: false, error: 'no_head' };
   // Nobody can approve before the approval chooser has said who needs to.
-  if (task.approvalPlans[gate]?.subject !== subject) return { ok: false, error: 'not_planned' };
+  if (!gatePlanned(task, gate)) return { ok: false, error: 'not_planned' };
   return { ok: true, gate, subject, member };
 };
 
@@ -1148,7 +1169,23 @@ export const decide = (
       };
       if (!result.satisfied) return ok(task, [recorded]);
       const [moved, stageEvent] = moveTo(task, gate === 'spec_review' ? 'ready' : 'merging');
-      return ok(moved, [recorded, stageEvent]);
+      // An approved split opens its sub-tasks (the store does, with the event); the task is then
+      // built through them and never itself.
+      const opens: DomainEvent[] =
+        gate === 'spec_review' && task.splitProposed
+          ? [{ type: 'split_approved', version: task.specVersion }]
+          : [];
+      return ok(moved, [recorded, ...opens, stageEvent]);
+    }
+
+    case 'keep_whole': {
+      if (task.stage !== 'spec_review' || !task.splitProposed) return fail('wrong_stage');
+      const member = memberFor(actor, context);
+      // Keeping it whole sends the work back, so it is for whoever may ask for changes.
+      if (member === undefined || !canRequestChanges(task, context, member))
+        return fail('not_allowed');
+      const [moved, stageEvent] = moveTo(task, 'speccing');
+      return ok(moved, [{ type: 'kept_whole' }, stageEvent]);
     }
 
     case 'propose_approval': {

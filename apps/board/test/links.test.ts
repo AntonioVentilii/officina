@@ -17,4 +17,10 @@ describe('LINK_SENTENCES', () => {
       'closed it: no sub-task left open, tasks 3, 4 merged'
     );
   });
+
+  test('a parent whose split was approved names the sub-tasks it opened', () => {
+    expect(LINK_SENTENCES.subtasks_opened!({ subtasks: [7, 8] })).toBe(
+      'opened its sub-tasks from the split: tasks 7, 8'
+    );
+  });
 });

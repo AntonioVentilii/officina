@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { parseAgentOutput } from '@officina/core';
-import { planProblems, splitProblems } from '../src/validators';
+import { planProblems, shapeProblems } from '../src/validators';
 
 const plan = (checklist: string[]) => {
   const parsed = parseAgentOutput('chooser', {
@@ -29,7 +29,7 @@ describe('the approval plan check', () => {
   });
 });
 
-describe('the split check', () => {
+describe('the shape check', () => {
   const spec = (outcome: 'specced' | 'split') => {
     const parsed = parseAgentOutput(
       'spec',
@@ -49,11 +49,15 @@ describe('the split check', () => {
     return parsed.output;
   };
 
-  test('after people picked Split, one spec goes back to the spec agent and a split passes', () => {
-    expect(splitProblems(true)(spec('specced'))).toEqual([
+  test('a spec people decided the shape of goes back to the agent in any other shape', () => {
+    expect(shapeProblems('split')(spec('specced'))).toEqual([
       'a maintainer picked Split when the size check held the build: submit `split`, not one spec'
     ]);
-    expect(splitProblems(true)(spec('split'))).toEqual([]);
-    expect(splitProblems(false)(spec('specced'))).toEqual([]);
+    expect(shapeProblems('split')(spec('split'))).toEqual([]);
+    expect(shapeProblems('whole')(spec('split'))).toEqual([
+      'this task is built as one (a sub-task, or a split people kept whole): submit one spec, not `split`'
+    ]);
+    expect(shapeProblems('whole')(spec('specced'))).toEqual([]);
+    expect(shapeProblems(null)(spec('split'))).toEqual([]);
   });
 });

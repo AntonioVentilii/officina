@@ -65,6 +65,16 @@ export const buildLinksOf = async (db: Queryable, taskId: string): Promise<Build
   return { subtasks, after, siblings, paths: own.rows[0]?.paths ?? [] };
 };
 
+/**
+ * Serializes changes to a project's links until the transaction ends. It is taken before any task
+ * row, so a writer that will link tasks under a task's row lock (approving a split) takes it first.
+ */
+export const lockTaskLinks = async (client: PoolClient, projectId: string): Promise<void> => {
+  await client.query("select pg_advisory_xact_lock(hashtextextended('task_links:' || $1, 0))", [
+    projectId
+  ]);
+};
+
 interface LinkInput {
   readonly projectId: string;
   readonly taskId: string;
@@ -99,9 +109,7 @@ export const setTaskLinks = async (
   client: PoolClient,
   input: LinkInput
 ): Promise<{ changed: boolean; problem: LinkProblem | null }> => {
-  await client.query("select pg_advisory_xact_lock(hashtextextended('task_links:' || $1, 0))", [
-    input.projectId
-  ]);
+  await lockTaskLinks(client, input.projectId);
   const task = await lockLinkRow(client, input.taskId);
   const parent = input.parentId === null ? null : await lockLinkRow(client, input.parentId);
   const afterIds = [...new Set(input.after)];
