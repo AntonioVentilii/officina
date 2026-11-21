@@ -6,7 +6,8 @@ import {
   can,
   checksSchema,
   connectionRef,
-  interviewsByDefault
+  interviewOffer,
+  parseProjectConfig
 } from '@officina/core';
 import type { HandInPort } from '@officina/engine';
 import {
@@ -18,6 +19,7 @@ import {
   endSession,
   listConnectorGrants,
   listMemberProjects,
+  loadProjectConfig,
   loadRun,
   loginLinkMember,
   markNotificationRead,
@@ -469,12 +471,18 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
           },
           // What the member may do in each project, from the permission matrix, so the board
           // shows only what the API would accept.
-          projects: signed.projects.map((project) => ({
-            ...project,
-            can: allowedActions(project),
-            // What the new request form starts with; the person can still tick or untick it.
-            interviews: interviewsByDefault(project)
-          })),
+          projects: await Promise.all(
+            signed.projects.map(async (project) => ({
+              ...project,
+              can: allowedActions(project),
+              // What the new request form offers: the interview's default for this member, which
+              // they can still change, or `null` where the project interviews nobody.
+              interviews: interviewOffer(
+                parseProjectConfig(await loadProjectConfig(pool, project.id)),
+                project
+              )
+            }))
+          ),
           github: login ? { login } : null,
           githubAvailable: Boolean(deps.githubLogin),
           // The address members add to Claude, the same one every connector token is issued for.

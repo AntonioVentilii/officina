@@ -20,7 +20,9 @@
   let request = $state(untrack(() => draft?.request ?? ''));
   let busy = $state(false);
   // Starts as the API's default for this member: a maintainer's own request skips the interview.
-  let interview = $state(untrack(() => session.project?.interviews ?? true));
+  // `null` means the project interviews nobody, so there is no choice to offer or send.
+  const offer = untrack(() => session.project?.interviews ?? null);
+  let interview = $state(offer ?? false);
   // One per form: sending it again, after an error that hid a request already opened, opens nothing new.
   const requestId = crypto.randomUUID();
 
@@ -37,7 +39,7 @@
       const created = await post<{ number: number }>(`/api/projects/${session.projectId}/tasks`, {
         title: title.trim(),
         request: request.trim(),
-        interview,
+        ...(offer === null ? {} : { interview }),
         requestId
       });
       toasts.show('ok', `Request #${created.number} opened`);
@@ -74,10 +76,12 @@
         placeholder="What should people see or be able to do afterwards? Plain words are fine."
         required></textarea>
     </label>
-    <label class="check">
-      <input type="checkbox" bind:checked={interview} />
-      <span>Let an agent ask me a few questions first</span>
-    </label>
+    {#if offer !== null}
+      <label class="check">
+        <input type="checkbox" bind:checked={interview} />
+        <span>Let an agent ask me a few questions first</span>
+      </label>
+    {/if}
   </form>
   {#snippet footer()}
     <button class="btn ghost" type="button" onclick={onclose}>Cancel</button>

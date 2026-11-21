@@ -398,6 +398,11 @@ describe.skipIf(!url)('board api', () => {
       'verify_result'
     ]);
     expect(me.projects[0].interviews).toBe(true);
+    await pool.query(
+      `update projects set config = jsonb_set(config, '{intake}', '{"interview": false}') where id = $1`,
+      [seeded.projectId]
+    );
+    expect((await json(await call(tim, '/api/me'))).projects[0].interviews).toBeNull();
     expect((await json(await call(watcher, '/api/me'))).projects[0].can).toEqual(['see']);
 
     const task = await json(await call(tim, `/api/projects/${seeded.projectId}/tasks/1`));

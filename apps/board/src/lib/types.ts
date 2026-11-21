@@ -67,8 +67,11 @@ export interface Project {
   readonly domains: readonly string[];
   readonly look: Look;
   readonly can: readonly Permission[];
-  /** Whether a new request from this member is interviewed unless they say otherwise. */
-  readonly interviews: boolean;
+  /**
+   * Whether a new request from this member is interviewed unless they say otherwise; `null` when
+   * the project interviews nobody, so the form offers no choice.
+   */
+  readonly interviews: boolean | null;
 }
 
 export type Look = 'fucina' | 'modernista' | 'tecnica';

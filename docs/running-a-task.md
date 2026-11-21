@@ -87,7 +87,8 @@ back another person's build the same way.
    ```
 
    A request from someone who may triage (a maintainer or the owner, as the CLI acts without
-   `--as`) goes straight to triage: they would send it on anyway, so no interviewer session runs.
+   `--as`) skips the interview: they would send it on anyway, so no interviewer session runs. It
+   goes straight to triage, unless its words guard it and the owner must answer first.
    Add `--interview` to have one anyway, or `--skip-interview` to skip it for anyone.
 
    In an interview, the interviewer reads the request and the code it is about, then asks up to `MAX_INTERVIEW_QUESTIONS` (`packages/engine/src/brief.ts`) questions, one at a

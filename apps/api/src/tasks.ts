@@ -214,7 +214,7 @@ export const createRequestAs = async (
     });
     if (input.requestId) await nameRequestedTask(client, task.id, input.requestId);
     const interview = interviewsRequest(
-      !config.ok || config.config.intake.interview,
+      config,
       member,
       input.skipInterview === undefined ? undefined : !input.skipInterview
     );
