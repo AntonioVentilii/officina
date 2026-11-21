@@ -7,9 +7,11 @@ import {
 } from '@officina/core';
 import {
   answeredOverviewLast,
-  applyCommand,
+  applyCommandIn,
+  expectedHead,
   heldGitHubReviews,
   holdGitHubReview,
+  inTransaction,
   loadTaskContext,
   markBotCommentsHandled,
   markHeldReviewHandled,
@@ -51,7 +53,9 @@ export const overviewNotes = (what: string, by: string, body: string): string =>
  * Sends a task back to its builder with feedback left on GitHub, once per answer: an overview by a
  * bot whose last overview the builder already answered is not sent back again, so a bot that
  * reviews every push cannot loop the task. Auto-merge goes off if the task leaves merging. A review
- * refused because the task is blocked or paused is kept for `forwardHeldReviews`.
+ * refused because the task is blocked or paused is kept for `forwardHeldReviews`, in the same
+ * transaction as the refusal. Auto-merge is left as it is while such a review waits: holding it
+ * for a task held at merging is a follow-up of its own.
  */
 export const forwardFeedback = async (
   pool: Pool,
@@ -69,27 +73,31 @@ export const forwardFeedback = async (
   const { taskId, review } = input;
   if (review.overviewOnly && (await answeredOverviewLast(pool, taskId, input.by)))
     return { ok: false, error: 'overview_already_answered' };
-  const result = await applyCommand(pool, {
-    taskId,
-    command: {
-      type: 'github_review',
-      headSha: input.headSha,
-      by: input.by,
-      source: input.source,
-      notes: review.notes,
-      overviewOnly: review.overviewOnly
-    },
-    actor: ENGINE
-  });
-  if (!result.ok && HELD.has(result.error) && 'reviewId' in input.source)
-    await holdGitHubReview(pool, taskId, {
-      reviewId: input.source.reviewId,
-      pullRequest: input.pullRequest,
-      headSha: input.headSha,
-      by: input.by,
-      notes: review.notes,
-      overviewOnly: review.overviewOnly
+  const { source } = input;
+  const result = await inTransaction(pool, async (client) => {
+    const applied = await applyCommandIn(client, {
+      taskId,
+      command: {
+        type: 'github_review',
+        headSha: input.headSha,
+        by: input.by,
+        source,
+        notes: review.notes,
+        overviewOnly: review.overviewOnly
+      },
+      actor: ENGINE
     });
+    if (!applied.ok && HELD.has(applied.error) && 'reviewId' in source)
+      await holdGitHubReview(client, taskId, {
+        reviewId: source.reviewId,
+        pullRequest: input.pullRequest,
+        headSha: input.headSha,
+        by: input.by,
+        notes: review.notes,
+        overviewOnly: review.overviewOnly
+      });
+    return applied;
+  });
   if (github) await stopAutoMergeOnLeaving(pool, github, input, result);
   return result.ok ? { ok: true } : { ok: false, error: result.error };
 };
@@ -189,23 +197,53 @@ export const forwardSettledComments = async (
 ): Promise<TaskFailure[]> =>
   eachTaskOnItsOwn(taskIds, (taskId) => forwardSettledCommentsOf(pool, github, taskId));
 
+type HeldReviewPort = Pick<GitHubClient, 'cancelAutoMerge' | 'pullRequest'>;
+
+/** A task on a repository Officina is installed on, neither blocked nor paused. */
+const freeOfHold = (
+  context: StoredTaskContext | null
+): context is StoredTaskContext & { installationId: number } =>
+  context !== null &&
+  context.installationId !== null &&
+  !context.task.blocked &&
+  !context.task.paused;
+
+/**
+ * Whether the pull request still holds the head Officina expects of the task. `adoptOutsidePushes`
+ * skips a held task and may fail on a pass, so a push made during the hold may not be taken in
+ * yet; a review accepted against the old head would send the task to building, where pushes from
+ * outside are no longer taken in. Outside the review window the lifecycle drops the review anyway.
+ */
+const holdsExpectedHead = async (
+  pool: Pool,
+  github: HeldReviewPort,
+  context: StoredTaskContext,
+  ref: RepoRef & { readonly pullRequest: number }
+): Promise<boolean> => {
+  if (!GITHUB_REVIEWABLE.has(context.task.stage)) return true;
+  const expected = await expectedHead(pool, context.task.id);
+  return !expected || (await github.pullRequest(ref)).head.sha === expected;
+};
+
 /**
  * Sends on the reviews kept while the task was held, oldest first, once it is neither blocked nor
- * paused, as if each had just arrived: the same overview guard, window, head check and auto-merge
- * stop. Each is then recorded as dealt with, sent or no longer applying, and never sent again; one
- * that finds the task held again waits with the rest. As with reviews arriving together, once one
- * sends the task to building the later ones meet the wrong stage and are dropped.
+ * paused and its pull request holds the head Officina expects, as if each had just arrived: the
+ * same overview guard, window, head check and auto-merge stop. A head that moved waits for a later
+ * pass to take it in, which drops the reviews of the old one. Each is then recorded as dealt with,
+ * sent or no longer applying, and never sent again; one that finds the task held again waits with
+ * the rest. As with reviews arriving together, once one sends the task to building the later ones
+ * meet the wrong stage and are dropped.
  */
-const forwardHeldReviewsOf = async (
-  pool: Pool,
-  github: Pick<GitHubClient, 'cancelAutoMerge'>,
-  taskId: string
-) => {
+const forwardHeldReviewsOf = async (pool: Pool, github: HeldReviewPort, taskId: string) => {
   const context = await loadTaskContext(pool, taskId);
-  if (!context || context.task.blocked || context.task.paused) return;
+  if (!freeOfHold(context)) return;
   const { installationId, repo } = context;
-  if (installationId === null) return;
-  for (const held of await heldGitHubReviews(pool, taskId)) {
+  const reviews = await heldGitHubReviews(pool, taskId);
+  const [first] = reviews;
+  if (!first) return;
+  const ref = { installationId, repo, pullRequest: first.pullRequest };
+  if (!(await holdsExpectedHead(pool, github, context, ref))) return;
+  for (const held of reviews) {
     const forwarded = await forwardFeedback(pool, github, {
       taskId,
       ref: { installationId, repo },
@@ -227,7 +265,7 @@ const forwardHeldReviewsOf = async (
 /** Each task on its own; the failures are returned for the log and tried again on the next pass. */
 export const forwardHeldReviews = async (
   pool: Pool,
-  github: Pick<GitHubClient, 'cancelAutoMerge'>,
+  github: HeldReviewPort,
   taskIds: readonly string[]
 ): Promise<TaskFailure[]> =>
   eachTaskOnItsOwn(taskIds, (taskId) => forwardHeldReviewsOf(pool, github, taskId));

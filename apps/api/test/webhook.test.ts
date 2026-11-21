@@ -686,7 +686,13 @@ describe.skipIf(!url)('api', () => {
     const github = {
       cancelAutoMerge: async () => {
         calls.push('cancelAutoMerge');
-      }
+      },
+      pullRequest: async () => ({
+        node_id: 'PR_42',
+        state: 'open',
+        merged: false,
+        head: { sha: 'abc' }
+      })
     };
     const reviewing = createApp({
       pool,
