@@ -24,6 +24,7 @@ export interface TaskRow {
   approval_plans: Task['approvalPlans'];
   guards: Task['guards'];
   diff_allowance: Task['diffAllowance'];
+  split_proposed: boolean;
   version: number;
 }
 
@@ -45,6 +46,7 @@ export const toStored = (row: TaskRow): StoredTask => ({
     reviews: row.reviews,
     approvalPlans: row.approval_plans,
     guards: row.guards,
-    diffAllowance: row.diff_allowance
+    diffAllowance: row.diff_allowance,
+    splitProposed: row.split_proposed
   }
 });

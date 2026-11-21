@@ -7,7 +7,8 @@ import {
   latestPushedPaths,
   listProjectMemberProfiles,
   listTaskComments,
-  setRunExternalId
+  setRunExternalId,
+  splitAskedSinceSpec
 } from '@officina/db';
 import { executeRun, type RunnerRole } from '@officina/runner';
 import { buildBrief, type ChooserContext } from './brief';
@@ -19,6 +20,7 @@ import {
   interviewProblems,
   planProblems,
   reviewProblems,
+  splitProblems,
   titleProblems,
   type GitHubReview
 } from './validators';
@@ -27,6 +29,8 @@ import {
 export interface StepInputs {
   readonly members: Awaited<ReturnType<typeof listProjectMemberProfiles>>;
   readonly questionsAsked: number;
+  /** For the spec agent: people picked the size check's Split, so it must propose a split. */
+  readonly splitAsked: boolean;
   readonly githubReviews: readonly GitHubReview[];
   /** The template a build writes its pull request body in, `null` when there is none to read. */
   readonly prTemplate: PrTemplate | null;
@@ -39,6 +43,7 @@ export const gatherInputs = async (step: Step): Promise<StepInputs> => ({
       : [],
   questionsAsked:
     step.role === 'interviewer' ? await countInterviewQuestions(step.deps.pool, step.taskId) : 0,
+  splitAsked: step.role === 'spec' && (await splitAskedSinceSpec(step.deps.pool, step.taskId)),
   githubReviews: step.builds ? await githubReviewsSinceLastPush(step.deps.pool, step.taskId) : [],
   prTemplate: step.builds
     ? await readPrTemplate(step.deps.github, step.repoRef, {
@@ -97,7 +102,11 @@ const briefFor = async (step: Step, inputs: StepInputs) => {
     prTemplate: inputs.prTemplate?.path ?? null,
     chooser: role === 'chooser' ? await chooserContext(step, inputs) : undefined,
     questionsAsked: inputs.questionsAsked,
-    standards: role === 'onboarder' ? config.docs.standards : undefined
+    standards: role === 'onboarder' ? config.docs.standards : undefined,
+    sizeLimits:
+      role === 'spec'
+        ? { lanes: config.lanes, lane: context.task.lane, splitAsked: inputs.splitAsked }
+        : undefined
   });
 };
 
@@ -114,6 +123,7 @@ const validatorFor = (step: Step, inputs: StepInputs) => {
   if (step.role === 'chooser') {
     return planProblems(gateOf(step), new Set(inputs.members.map((member) => member.id)));
   }
+  if (step.role === 'spec') return splitProblems(inputs.splitAsked);
   return step.role === 'interviewer' ? interviewProblems(inputs.questionsAsked) : undefined;
 };
 
