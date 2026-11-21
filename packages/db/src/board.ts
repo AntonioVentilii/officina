@@ -2,7 +2,7 @@ import type { Actor, DomainEvent, ProposedSplit, Task } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
 import { autoMergeIsOn, wasAutoVerified } from './github';
 import { HAND_IN_CLAIM_LIVE } from './hand-in-claims';
-import { learningPullRequestsOf, type LearningPullRequest } from './learnings';
+import { learningPullRequestsOf, type LearningPullRequest } from './learning-pull-requests';
 import { RUN_IS_ACTIVE } from './run-status';
 
 type Queryable = Pool | PoolClient;

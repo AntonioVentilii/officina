@@ -1,6 +1,12 @@
 import type { LearningDecision, LearningTarget } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
 import { DECISION_CLAIM_LIVE } from './learning-decisions';
+import {
+  DUPLICATE_OF,
+  prStateOf,
+  type LearningDuplicate,
+  type LearningPullRequestState
+} from './learning-pull-requests';
 import { RUN_IS_ACTIVE } from './run-status';
 import { startRun, type NewRun } from './runs';
 import { inTransaction } from './store';
@@ -8,33 +14,6 @@ import { inTransaction } from './store';
 type Queryable = Pool | PoolClient;
 
 export type LearningStatus = 'proposed' | 'accepted' | 'rejected' | 'applied';
-
-/**
- * Where a learning's pull request stands on GitHub, as the webhooks and the catch-up last read it:
- * a merge makes the learning applied, a close without merging records when it was closed.
- */
-export type LearningPullRequestState = 'open' | 'merged' | 'closed';
-
-/** A pull request Officina opened for a learning of a task. */
-export interface LearningPullRequest {
-  readonly number: number;
-  readonly url: string;
-  readonly state: LearningPullRequestState;
-}
-
-/** The `LearningPullRequestState` of learning `l`, the one place it is derived. */
-const PR_STATE = `case when l.status = 'applied' then 'merged'
-  when l.pr_closed_at is not null then 'closed' else 'open' end`;
-
-/**
- * The pull requests opened for the learnings of the task with id `taskId` (a column of the outer
- * query), oldest first, as a JSON list of `LearningPullRequest`.
- */
-export const learningPullRequestsOf = (taskId: string) => `coalesce(
-  (select json_agg(json_build_object('number', l.pr_number, 'url', l.pr_url, 'state', ${PR_STATE})
-     order by l.pr_number)
-   from learnings l where l.task_id = ${taskId} and l.pr_number is not null),
-  '[]'::json)`;
 
 /** Where the learner is with rewriting an edit that no longer applies; null when none was asked. */
 export type LearningRewrite = 'requested' | 'failed';
@@ -66,6 +45,11 @@ export interface LearningRow {
   readonly decidingSince: Date | null;
   readonly decidingFor: LearningDecision | null;
   readonly decidingBy: string | null;
+  /**
+   * For a proposed learning, the other learning with the same edit whose pull request is open or
+   * merged.
+   */
+  readonly duplicateOf: LearningDuplicate | null;
   readonly createdAt: Date;
 }
 
@@ -74,12 +58,12 @@ const COLUMNS = `
   t.title as "taskTitle", l.title, l.text as lesson, l.evidence->>'text' as evidence, l.target,
   l.file, l.find, l.proposed_change as text, l.status, l.decided_by as "decidedBy",
   l.decided_at as "decidedAt", l.decision_note as "decisionNote", l.pr_number as "prNumber",
-  l.pr_url as "prUrl", case when l.pr_number is null then null else ${PR_STATE} end as "prState",
+  l.pr_url as "prUrl", case when l.pr_number is null then null else ${prStateOf('l')} end as "prState",
   l.rewrite, l.rewritten_at as "rewrittenAt",
   case when ${DECISION_CLAIM_LIVE} then l.decision_claimed_at end as "decidingSince",
   case when ${DECISION_CLAIM_LIVE} then l.decision_claimed_for end as "decidingFor",
   case when ${DECISION_CLAIM_LIVE} then l.decision_claimed_by end as "decidingBy",
-  l.created_at as "createdAt"`;
+  ${DUPLICATE_OF} as "duplicateOf", l.created_at as "createdAt"`;
 
 export interface NewLearning {
   readonly title: string;

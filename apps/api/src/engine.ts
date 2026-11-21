@@ -1,5 +1,6 @@
 import {
   adoptOutsidePushes,
+  forwardHeldReviews,
   forwardSettledComments,
   collectDueSteps,
   createLiveRuns,
@@ -38,7 +39,7 @@ import {
 import type { Pool } from 'pg';
 import { collectEachProject, startScheduler, type Scheduler } from './scheduler';
 import { setupAgents } from './setup';
-import { catchUpLearningPullRequests, catchUpPullRequests } from './catch-up';
+import { catchUpLearningPullRequests, catchUpLeftAccepts, catchUpPullRequests } from './catch-up';
 
 const PURGE_INTERVAL_MS = 60 * 60 * 1000;
 
@@ -148,6 +149,12 @@ export const startEngine = async (input: {
     for (const failure of await adoptOutsidePushes(input.pool, input.github, active)) {
       input.log('outside push check failed', { projectId, ...failure });
     }
+    // After the outside pushes, so a review of a head taken in is dropped (one not taken in yet
+    // makes the reviews wait), and before the due steps and the merge work, so nothing starts or
+    // merges on a head the review sends back.
+    for (const failure of await forwardHeldReviews(input.pool, input.github, active)) {
+      input.log('held review forwarding failed', { projectId, ...failure });
+    }
     for (const failure of await forwardSettledComments(input.pool, input.github, active)) {
       input.log('bot comment forwarding failed', { projectId, ...failure });
     }
@@ -185,6 +192,12 @@ export const startEngine = async (input: {
     );
     for (const failure of unapplied) {
       input.log('learning pull request catch-up failed', { projectId, ...failure });
+    }
+    const unrecorded = await catchUpLeftAccepts(input.pool, input.github, projectId).catch(
+      (error: unknown) => [{ error: (error as Error).message }]
+    );
+    for (const failure of unrecorded) {
+      input.log('learning accept catch-up failed', { projectId, ...failure });
     }
     const unopened = await openMissingPullRequests(
       input.pool,

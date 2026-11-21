@@ -24,6 +24,7 @@ const learning = (overrides: Partial<Learning> = {}): Learning => ({
   prState: null,
   rewrite: null,
   rewrittenAt: null,
+  duplicateOf: null,
   createdAt: '2026-11-17T10:00:00Z',
   canDecide: true,
   deciding: null,
