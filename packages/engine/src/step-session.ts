@@ -1,4 +1,4 @@
-import { type AgentOutput } from '@officina/core';
+import { type AgentOutput, type SpecShape } from '@officina/core';
 import {
   appendRunEvent,
   countInterviewQuestions,
@@ -8,7 +8,7 @@ import {
   listProjectMemberProfiles,
   listTaskComments,
   setRunExternalId,
-  splitAskedSinceSpec
+  specShapeFor
 } from '@officina/db';
 import { executeRun, type RunnerRole } from '@officina/runner';
 import { buildBrief, listsChangedPaths, type ChooserContext } from './brief';
@@ -20,7 +20,7 @@ import {
   interviewProblems,
   planProblems,
   reviewProblems,
-  splitProblems,
+  shapeProblems,
   titleProblems,
   type GitHubReview
 } from './validators';
@@ -29,8 +29,8 @@ import {
 export interface StepInputs {
   readonly members: Awaited<ReturnType<typeof listProjectMemberProfiles>>;
   readonly questionsAsked: number;
-  /** For the spec agent: people picked the size check's Split, so it must propose a split. */
-  readonly splitAsked: boolean;
+  /** For the spec agent: the shape its spec must take, when it is not its own call. */
+  readonly specShape: SpecShape | null;
   readonly githubReviews: readonly GitHubReview[];
   /** The template a build writes its pull request body in, `null` when there is none to read. */
   readonly prTemplate: PrTemplate | null;
@@ -43,7 +43,7 @@ export const gatherInputs = async (step: Step): Promise<StepInputs> => ({
       : [],
   questionsAsked:
     step.role === 'interviewer' ? await countInterviewQuestions(step.deps.pool, step.taskId) : 0,
-  splitAsked: step.role === 'spec' && (await splitAskedSinceSpec(step.deps.pool, step.taskId)),
+  specShape: step.role === 'spec' ? await specShapeFor(step.deps.pool, step.taskId) : null,
   githubReviews: step.builds ? await githubReviewsSinceLastPush(step.deps.pool, step.taskId) : [],
   prTemplate: step.builds
     ? await readPrTemplate(step.deps.github, step.repoRef, {
@@ -107,7 +107,7 @@ const briefFor = async (step: Step, inputs: StepInputs) => {
     standards: role === 'onboarder' ? config.docs.standards : undefined,
     sizeLimits:
       role === 'spec'
-        ? { lanes: config.lanes, lane: context.task.lane, splitAsked: inputs.splitAsked }
+        ? { lanes: config.lanes, lane: context.task.lane, shape: inputs.specShape }
         : undefined
   });
 };
@@ -125,7 +125,7 @@ const validatorFor = (step: Step, inputs: StepInputs) => {
   if (step.role === 'chooser') {
     return planProblems(gateOf(step), new Set(inputs.members.map((member) => member.id)));
   }
-  if (step.role === 'spec') return splitProblems(inputs.splitAsked);
+  if (step.role === 'spec') return shapeProblems(inputs.specShape);
   return step.role === 'interviewer' ? interviewProblems(inputs.questionsAsked) : undefined;
 };
 

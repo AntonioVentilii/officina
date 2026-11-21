@@ -83,6 +83,10 @@
         return `allowed this task up to ${p.lines} lines, over the ${p.lane} lane limit`;
       case 'split_asked':
         return 'sent it back to be split into smaller tasks';
+      case 'split_approved':
+        return `approved the split of spec version ${p.version}`;
+      case 'kept_whole':
+        return 'kept it as one task: the next plan is one spec';
       case 'paused':
         return 'paused it';
       case 'resumed':
