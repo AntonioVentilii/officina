@@ -1,5 +1,6 @@
 export * from './roles';
 export * from './permissions';
+export * from './model-tiers';
 export * from './guards';
 export * from './handoffs';
 export * from './lanes';

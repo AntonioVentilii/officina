@@ -61,6 +61,7 @@ export type BoardAction =
   | 'answer'
   | 'close_merged'
   | 'cancel'
+  | 'force_model'
   | 'comment';
 
 export interface Project {
@@ -101,6 +102,12 @@ export interface WaitingOn {
   readonly me: boolean;
 }
 
+/** A model tier with its name, as the API sends it; the API alone knows the tiers. */
+export interface ModelTierOption {
+  readonly tier: string;
+  readonly label: string;
+}
+
 export interface RunningAgent {
   readonly role: string;
   readonly label: string;
@@ -123,6 +130,8 @@ export interface Card {
   readonly pullRequest: number | null;
   /** Only for maintainers and owners; `null` for everyone else. */
   readonly costCents: number | null;
+  /** The tier a maintainer forced for every agent step; `null` when the rule picks, or not shown. */
+  readonly forcedModel: ModelTierOption | null;
   readonly running: readonly RunningAgent[];
   readonly fixRounds: number;
   readonly specVersion: number;
@@ -218,6 +227,8 @@ export interface TaskDetail extends Card {
   })[];
   readonly events: readonly TaskEvent[];
   readonly runs: readonly Run[];
+  /** The tiers that may be forced, from the cheapest; empty for viewers who do not see the runs. */
+  readonly modelTiers: readonly ModelTierOption[];
   readonly plan: {
     readonly gate: 'spec_review' | 'verifying';
     readonly current: boolean;

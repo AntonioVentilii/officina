@@ -31,11 +31,15 @@ import { checklistLines } from '../checklist-view';
 import { checklistCheckSchema, recordCheckAs } from '../checks';
 import { reviewFindingsFor, reviewLines, SENT_BACK } from '../review-findings';
 import {
+  BY_RULE,
+  MODEL_CHOICES,
   TaskCommandError,
   actOnTaskAs,
   commentAs,
   createRequestAs,
+  forcedTierFrom,
   handInAs,
+  modelLine,
   type TaskAction
 } from '../tasks';
 
@@ -472,6 +476,8 @@ After it is opened, tell the person the task link and what happens next, as the 
         ...peopleLines(task)
       ];
       if (task.pullRequestUrl) lines.push(`Pull request: ${task.pullRequestUrl}`);
+      // The tiers come only to whoever sees the agent runs, and so the model they run on.
+      if (task.modelTiers.length) lines.push(modelLine(task.forcedModel?.tier ?? null));
       lines.push(...learningPullRequestLines(task));
       if (task.blocked) lines.push(...questionLines(task.blocked));
       lines.push(...allowanceLines(task));
@@ -765,6 +771,18 @@ Always call show_task first, show the person the plan or the list of what to che
     run: async (context, input) => {
       const project = await actOnTaskFor(context, input, { type: 'resume' });
       return `Resumed; the work on task ${input.number} goes on from where it stopped: ${taskUrl(context.publicUrl, project.id, input.number)}`;
+    }
+  }),
+  tool({
+    name: 'force_model',
+    title: "Force the model a task's agents run on",
+    description: `Forces the model tier every agent step on a task runs on (haiku, the cheapest, sonnet, or opus, the strongest), over the tier Officina's rule picks for each step from the change (its lane, its size, what it touches, earlier failed attempts). "${BY_RULE}" gives the choice back to the rule. The rule still sets how hard each step thinks, and the code reviewer never runs below sonnet. It applies from the next agent step; a step already running keeps its model. Use it when the person asks for a stronger model on hard work or a cheaper one on simple work. Forcing needs the right to steer the work (maintainers and owners). It acts at once: it is not an approval, and nothing is confirmed on the board. Call show_task first to check the task.`,
+    input: z.object({ project: PROJECT, number: NUMBER, tier: z.enum(MODEL_CHOICES) }),
+    readOnly: false,
+    run: async (context, input) => {
+      const tier = forcedTierFrom(input.tier);
+      const project = await actOnTaskFor(context, input, { type: 'force_model', tier });
+      return `${modelLine(tier)}, from the next agent step on task ${input.number}: ${taskUrl(context.publicUrl, project.id, input.number)}`;
     }
   })
 ] as const;

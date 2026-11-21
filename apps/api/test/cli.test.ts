@@ -43,6 +43,19 @@ describe('cli arguments', () => {
       reason: 'Not now.'
     });
     expect(() => taskActionFor('changes', {})).toThrow('missing --note');
+    expect(taskActionFor('force-model', { tier: 'opus' })).toEqual({
+      type: 'force_model',
+      tier: 'opus'
+    });
+    expect(taskActionFor('force-model', { tier: 'rule' })).toEqual({
+      type: 'force_model',
+      tier: null
+    });
+    expect(() => taskActionFor('force-model', { tier: 'gpt' })).toThrow(
+      'the tier is one of haiku, sonnet, opus, rule'
+    );
+    expect(() => taskActionFor('force-model', {})).toThrow('missing --tier');
+    expect(taskActionFor('constructor', {})).toBeNull();
     expect(taskActionFor('release', {})).toBeNull();
     expect(taskActionFor('list', {})).toBeNull();
   });

@@ -434,6 +434,30 @@ describe.skipIf(!url)('engine', () => {
     ]);
   });
 
+  test("a tier a maintainer forced on the task runs every step after it, at the rule's effort", async () => {
+    const github = fakeGitHub();
+    const agents = createFakePort(succeed);
+    const taskId = await taskInReady(github, agents);
+    await applyOrThrow(pool, taskId, { type: 'force_model', tier: 'haiku' }, seeded.owner);
+    const models: ModelResolver = {
+      resolve: async (tier) => ({ id: `claude-${tier}-test`, source: 'env' })
+    };
+    await tick(
+      { pool, github: github.port, agents, models, publicUrl: PUBLIC_URL },
+      seeded.projectId
+    );
+
+    const build = agents.sessions.find((session) => session.metadata.role === 'builder')!;
+    expect(build.model).toEqual({ id: 'claude-haiku-test', effort: 'medium' });
+    const recorded = await pool.query(
+      'select model, effort, model_reason from runs where id = $1',
+      [build.metadata.run_id]
+    );
+    expect(recorded.rows).toEqual([
+      { model: 'claude-haiku-test', effort: 'medium', model_reason: 'forced by a maintainer' }
+    ]);
+  });
+
   const linkedPullRequest = async (taskId: string) =>
     (
       await pool.query<{ github_pr: number | null }>('select github_pr from tasks where id = $1', [

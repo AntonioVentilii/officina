@@ -5,9 +5,7 @@
  * worker the builder and the correctness reviewer hand exploration to.
  */
 
-/** The tiers from the cheapest to the strongest; a step escalates to the next one. */
-export const MODEL_TIERS = ['haiku', 'sonnet', 'opus'] as const;
-export type ModelTier = (typeof MODEL_TIERS)[number];
+import type { ModelTier } from '@officina/core';
 
 /** Used when the Models API cannot be read or lists nothing for the tier. */
 export const PINNED_MODELS: Readonly<Record<ModelTier, string>> = {

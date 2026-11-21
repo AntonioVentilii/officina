@@ -85,7 +85,7 @@ export const trialBranch = (taskNumber: number, arm: TrialArm, attempt: number):
 
 /**
  * The model a first build of the task gets today, as `chooseModel` picks it with nothing pushed
- * yet, so a trial measures what production would run rather than the role's default.
+ * yet and the tier a maintainer forced on the task, if any, so a trial measures what production would run rather than the role's default.
  */
 export const firstBuildChoice = (
   context: StoredTaskContext,
@@ -100,7 +100,8 @@ export const firstBuildChoice = (
     diffLines: null,
     strongPaths: config.models.strongPaths,
     fixRounds: 0,
-    failedAttempts: 0
+    failedAttempts: 0,
+    forcedTier: context.task.forcedModel
   });
 
 const FULL_SHA = /^[0-9a-f]{40}$/;

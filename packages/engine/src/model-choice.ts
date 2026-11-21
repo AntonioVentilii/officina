@@ -1,12 +1,10 @@
 import { Glob } from 'bun';
-import type { Guard, Lane } from '@officina/core';
+import { MODEL_TIERS, type Guard, type Lane, type ModelTier } from '@officina/core';
 import {
   AGENT_EFFORTS,
-  MODEL_TIERS,
   ROLE_MODELS,
   type AgentEffort,
   type ModelChoice,
-  type ModelTier,
   type RunnerRole
 } from '@officina/runner';
 
@@ -25,6 +23,8 @@ export interface StepSignals {
   readonly fixRounds: number;
   /** Earlier runs of this role on the task that left no usable result. */
   readonly failedAttempts: number;
+  /** The tier a maintainer forced on the task (`forcedModel`), over the rule; `null` when none. */
+  readonly forcedTier: ModelTier | null;
 }
 
 /** A step's model, with why in a few words for its run's record. */
@@ -60,6 +60,9 @@ const CHANGE_ROLES: ReadonlySet<RunnerRole> = new Set([
 const TIER_FLOORS: Readonly<Partial<Record<RunnerRole, ModelTier>>> = {
   reviewer_correctness: 'sonnet'
 };
+
+/** Why a step runs on the tier it does when a maintainer chose it. */
+const FORCED_REASON = 'forced by a maintainer';
 
 /** What a risky change runs on. */
 const STRONGEST: ModelChoice = { tier: 'opus', effort: 'high' };
@@ -141,9 +144,15 @@ const withFloor = (role: RunnerRole, choice: StepModel): StepModel => {
  * The model and effort a step runs at, by rule: the role's own (`ROLE_MODELS`), the strongest for a
  * risky change (red lane, a guard, a strong path, a large or cross-package change), the cheapest
  * for the spec review of a small one, and one tier up, once, after a failed or rejected attempt.
+ * A tier a maintainer forced on the task replaces the rule's tier, never its effort, and a role's
+ * floor still holds under it.
  */
 export const chooseModel = (signals: StepSignals): StepModel => {
   const chosen = upFront(signals);
   const evidence = evidenceOf(signals);
-  return withFloor(signals.role, evidence ? escalate(chosen, evidence) : chosen);
+  const ruled = evidence ? escalate(chosen, evidence) : chosen;
+  const forced = signals.forcedTier
+    ? { tier: signals.forcedTier, effort: ruled.effort, reason: FORCED_REASON }
+    : ruled;
+  return withFloor(signals.role, forced);
 };
