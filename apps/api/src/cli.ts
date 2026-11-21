@@ -1,11 +1,13 @@
 import { parseArgs } from 'node:util';
 import { createGitHubClient } from '@officina/github';
-import { PROMPTS_DIR, anthropicAuthFrom, createModelResolver } from '@officina/runner';
+import { TrialError } from '@officina/engine';
+import { PROMPTS_DIR, anthropicAuthFrom } from '@officina/runner';
 import { Pool } from 'pg';
 import { createAgentsPort } from './engine';
 import { USAGE } from './cli-usage';
 import { accessLogText, invite, loginLink, membersText } from './people';
-import { SetupError, addProject, setupAgents } from './setup';
+import { SetupError, addProject, resolveModels, setupAgents } from './setup';
+import { trialCommand } from './trial';
 import {
   TaskCommandError,
   actOnTask,
@@ -134,6 +136,12 @@ const main = async () => {
       after: { type: 'string', multiple: true },
       'skip-interview': { type: 'boolean' },
       interview: { type: 'boolean' },
+      base: { type: 'string' },
+      arm: { type: 'string' },
+      attempt: { type: 'string' },
+      'budget-usd': { type: 'string' },
+      session: { type: 'string' },
+      run: { type: 'boolean' },
       help: { type: 'boolean', short: 'h' }
     }
   });
@@ -257,18 +265,18 @@ const main = async () => {
 
     if (command === 'setup-agents') {
       const port = agentsPort();
-      const resolver = createModelResolver({
-        listModels: () => port.listModels(),
-        env: process.env,
-        log: (message, details) => console.log(message, JSON.stringify(details ?? {}))
-      });
-      const { changed } = await setupAgents(pool, port, PROMPTS_DIR, {
-        opus: (await resolver.resolve('opus')).id,
-        haiku: (await resolver.resolve('haiku')).id
-      });
+      const { changed } = await setupAgents(pool, port, PROMPTS_DIR, await resolveModels(port));
       console.log(
         changed.length ? `agents created or updated: ${changed.join(', ')}` : 'agents up to date'
       );
+      return;
+    }
+
+    if (command === 'trial-build' || command === 'trial-measure') {
+      const agents = agentsPort();
+      const deps = { agents, github: githubClient, models: () => resolveModels(agents) };
+      const report = await trialCommand(pool, deps, command, values);
+      console.log(JSON.stringify(report, null, 2));
       return;
     }
 
@@ -306,11 +314,12 @@ const main = async () => {
   }
 };
 
+/** Errors that say what to fix, printed as their message alone. */
+const EXPECTED_ERRORS = [SetupError, TaskCommandError, TrialError];
+
 if (import.meta.main) {
   main().catch((error: Error) => {
-    console.error(
-      error instanceof SetupError || error instanceof TaskCommandError ? error.message : error
-    );
+    console.error(EXPECTED_ERRORS.some((type) => error instanceof type) ? error.message : error);
     process.exit(1);
   });
 }

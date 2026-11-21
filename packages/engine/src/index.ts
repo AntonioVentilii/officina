@@ -31,3 +31,12 @@ export {
   type ReviewNotes
 } from './github-feedback';
 export { TASK_BUDGET_CENTS } from './spend';
+export {
+  planTrialBuild,
+  runTrialBuild,
+  trialBranch,
+  TrialError,
+  type TrialGitHub,
+  type TrialPlan,
+  type TrialReport
+} from './trial';

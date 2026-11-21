@@ -9,16 +9,18 @@ export interface SyncedAgent {
 }
 
 /**
- * The version of a role's reader to pin: the one found by name when it was written from the same
- * definition, else a new version of it, or a new agent when none has that name.
+ * The version of an agent to pin, kept by name rather than in the database: the one found by name
+ * when it was written from the same definition, else a new version of it, or a new agent when none
+ * has that name. A role's reader is kept this way, and so is every trial agent.
  */
-const syncReader = async (
+export const syncByName = async (
   port: ManagedAgentsPort,
-  reader: AgentShape
+  agent: AgentShape,
+  roster: readonly AgentVersionRef[] = []
 ): Promise<AgentVersionRef> => {
-  const found = await port.findAgentByName(reader.name);
-  if (found?.hash === reader.hash) return { id: found.id, version: found.version };
-  const write = { ...reader, roster: [] };
+  const found = await port.findAgentByName(agent.name);
+  if (found?.hash === agent.hash) return { id: found.id, version: found.version };
+  const write = { ...agent, roster };
   const saved = found ? await port.updateAgent(found.id, write) : await port.createAgent(write);
   return { id: saved.id, version: saved.version };
 };
@@ -45,7 +47,7 @@ export const syncAgents = async (
   const readerFor = (reader: AgentShape) => {
     let pending = readers.get(reader.name);
     if (!pending) {
-      pending = syncReader(port, reader);
+      pending = syncByName(port, reader);
       readers.set(reader.name, pending);
     }
     return pending;

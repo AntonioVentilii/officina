@@ -1,7 +1,15 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { Pool } from 'pg';
-import type { Command } from '@officina/core';
-import { applyCommand, createTask, runWasPaused, startRun, type NewRun } from '../src';
+import { NO_USAGE, type Command } from '@officina/core';
+import {
+  applyCommand,
+  createTask,
+  finishRun,
+  runWasPaused,
+  startRun,
+  tasksBuildingNow,
+  type NewRun
+} from '../src';
 import { backendPid, untilWaitingOn } from './locks';
 import { resetAndSeed, type Seeded } from './seed';
 
@@ -85,5 +93,37 @@ describe.skipIf(!url)('starting a run', () => {
     const claim = await startRun(pool, { ...run, stage: 'done', role: 'learner' });
     expect(claim.ok).toBe(true);
     expect(await runsOf(run.taskId)).toEqual([{ status: 'running' }]);
+  });
+});
+
+describe.skipIf(!url)('builds still running', () => {
+  const pool = new Pool({ connectionString: url });
+
+  afterAll(async () => {
+    await pool.end();
+  });
+
+  test('names the tasks of a project with a build run not finished, and none once it ends', async () => {
+    const seeded = await resetAndSeed(pool);
+    const open = (title: string) =>
+      createTask(pool, { projectId: seeded.projectId, title, requesterId: seeded.ownerId });
+    const [{ task: built }, { task: interviewed }] = [await open('Built'), await open('Asked')];
+    const start = async (taskId: string, role: NewRun['role']) => {
+      const claim = await startRun(pool, {
+        taskId,
+        stage: 'request',
+        role,
+        agentVersion: 1,
+        runner: 'managed_agents'
+      });
+      if (!claim.ok) throw new Error('claim failed');
+      return claim.runId;
+    };
+    const build = await start(built.id, 'builder');
+    await start(interviewed.id, 'interviewer');
+
+    expect(await tasksBuildingNow(pool, seeded.projectId)).toEqual([1]);
+    await finishRun(pool, build, { status: 'succeeded', usage: NO_USAGE, result: {} });
+    expect(await tasksBuildingNow(pool, seeded.projectId)).toEqual([]);
   });
 });

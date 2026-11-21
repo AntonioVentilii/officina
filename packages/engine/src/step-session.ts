@@ -1,4 +1,4 @@
-import { type AgentOutput, type SpecShape } from '@officina/core';
+import { type AgentOutput, type ProjectConfig, type SpecShape } from '@officina/core';
 import {
   appendRunEvent,
   countInterviewQuestions,
@@ -8,7 +8,8 @@ import {
   listProjectMemberProfiles,
   listTaskComments,
   setRunExternalId,
-  specShapeFor
+  specShapeFor,
+  type StoredTaskContext
 } from '@officina/db';
 import { executeRun, type RunnerRole } from '@officina/runner';
 import { buildBrief, listsChangedPaths, type ChooserContext } from './brief';
@@ -87,30 +88,35 @@ const chooserContext = async (step: Step, inputs: StepInputs): Promise<ChooserCo
   };
 };
 
+/** What every brief on a task says about the task and its project, whatever the role and round. */
+export const taskBriefFields = (context: StoredTaskContext, config: ProjectConfig) => ({
+  taskNumber: context.number,
+  title: context.title,
+  repo: context.repo,
+  defaultBranch: context.defaultBranch,
+  docsEntry: config.docs.entry,
+  specTemplate: config.docs.specTemplate,
+  specVersion: context.task.specVersion,
+  spec: context.latestSpec,
+  verify: config.verify,
+  protectedPaths: config.lanes.red.paths,
+  confidentialPaths: config.guards.confidential,
+  prTitlePattern: config.pullRequest.titlePattern
+});
+
 const briefFor = async (step: Step, inputs: SessionInputs) => {
   const { context, config, role, taskId } = step;
   const { pool } = step.deps;
   return buildBrief({
+    ...taskBriefFields(context, config),
     role,
-    taskNumber: context.number,
-    title: context.title,
-    repo: context.repo,
-    defaultBranch: context.defaultBranch,
     taskBranch: step.taskBranch,
-    docsEntry: config.docs.entry,
-    specTemplate: config.docs.specTemplate,
-    specVersion: context.task.specVersion,
-    spec: context.latestSpec,
-    verify: config.verify,
-    protectedPaths: config.lanes.red.paths,
-    confidentialPaths: config.guards.confidential,
     requestThread:
       role === 'spec' || role === 'interviewer'
         ? (await listTaskComments(pool, taskId)).map((comment) => comment.body)
         : [],
     feedback: step.builds ? await feedbackSinceLastPush(pool, taskId) : [],
     firstRound: !onTaskBranch(step, inputs),
-    prTitlePattern: config.pullRequest.titlePattern,
     prTemplate: inputs.prTemplate?.path ?? null,
     changedPaths: listsChangedPaths(role, gateOf(step))
       ? await latestPushedPaths(pool, taskId)

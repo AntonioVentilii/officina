@@ -1,4 +1,5 @@
 import {
+  BUILD_ROLES,
   READS_PROPOSALS,
   openProposals,
   type Actor,
@@ -10,6 +11,7 @@ import {
 } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
 import { findProjectsByRepo } from './projects';
+import { RUN_IS_ACTIVE } from './run-status';
 
 type Queryable = Pool | PoolClient;
 
@@ -202,3 +204,17 @@ export const listProjectMembers = async (db: Queryable, projectId: string) =>
       [projectId]
     )
   ).rows;
+
+/**
+ * The tasks of a project with a build run an agent still holds. Its ref check counts every branch
+ * Officina's identity moves meanwhile, so nothing else may push as the App until it ends.
+ */
+export const tasksBuildingNow = async (db: Queryable, projectId: string): Promise<number[]> =>
+  (
+    await db.query<{ number: number }>(
+      `select distinct t.number from runs r join tasks t on t.id = r.task_id
+       where t.project_id = $1 and r.agent_role = any($2::text[]) and r.status ${RUN_IS_ACTIVE}
+       order by t.number`,
+      [projectId, BUILD_ROLES]
+    )
+  ).rows.map((row) => row.number);

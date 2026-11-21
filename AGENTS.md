@@ -16,6 +16,7 @@ Officina: a collaborative agent workshop. The design lives in [`docs/architectur
 - `bun run check:board`, `bun run build:board`: svelte-check and the static build of the board
 - `DATABASE_URL=... bun packages/db/src/migrate.ts`: apply migrations
 - `bun apps/api/src/cli.ts setup-agents`: sync the role agents from `agents/*.md`
+- `bun apps/api/src/cli.ts trial-build --number <n> --base <sha> --arm reader|solo --budget-usd <cap> [--run]`: replay a past build on trial agents to measure it ([workflow](./docs/ai/workflows/trial.md))
 - `bun apps/api/src/cli.ts add-project --workspace <name> --repo <owner/name> --owner-email <email> --owner-name <name> [--config-file <path>]`: register a repository
 
 ## Layout
@@ -45,6 +46,7 @@ The agent docs in [`docs/ai/`](./docs/ai/README.md) are read off this code; [`do
 | Add or change an agent role                            | [`docs/ai/workflows/agent-role.md`](./docs/ai/workflows/agent-role.md)                     |
 | Change the database schema                             | [`docs/ai/workflows/migration.md`](./docs/ai/workflows/migration.md)                       |
 | Show something new on the board                        | [`docs/ai/workflows/board-field.md`](./docs/ai/workflows/board-field.md)                   |
+| Measure an agent change on past tasks                  | [`docs/ai/workflows/trial.md`](./docs/ai/workflows/trial.md)                               |
 
 **Truth hierarchy:** the code, then CI, then `CODEOWNERS` (this repository has none yet), then `docs/ai/**` and `docs/architecture.md`, then this file, then tool layers such as `CLAUDE.md`; the [code standard](https://github.com/AntonioVentilii/officina/blob/main/standards/code.md#truth-hierarchy) says what to do on a contradiction. **Meta-update rule:** a change that adds a pattern, a shared piece, a convention or a workflow updates the matching page in the same pull request; [`docs/ai/governance.md`](./docs/ai/governance.md#meta-update-map) says which.
 
