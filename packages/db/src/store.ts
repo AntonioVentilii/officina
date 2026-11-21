@@ -19,6 +19,7 @@ import {
   type Task
 } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
+import { markRunsPaused } from './run-recovery';
 import { appendTaskEvent, saveSpecVersion } from './task-history';
 import { buildLinksOf } from './task-links';
 import { toStored, type StoredTask, type TaskRow } from './task-row';
@@ -327,6 +328,7 @@ export const applyCommandIn = async (
 
   for (const event of decision.events) {
     await insertEvent(client, task.id, input.actor, event);
+    if (event.type === 'paused') await markRunsPaused(client, task.id);
     if (event.type === 'approval_recorded') {
       await client.query(
         `insert into approvals (task_id, member_id, gate, subject, decision)
