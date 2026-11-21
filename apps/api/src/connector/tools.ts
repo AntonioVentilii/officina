@@ -211,6 +211,7 @@ const WHAT_TO_DO: Record<string, string> = {
   approve:
     'propose your approval, after reading what to check, to confirm on the board (review with decision "approve")',
   changes: 'ask for changes, saying what is wrong (review with decision "changes")',
+  keep_whole: 'keep the proposed split as one task (review with decision "keep_whole")',
   comment: 'add a comment (comment)',
   accept: 'accept or decline it on the board',
   claim: 'claim the build, to build it yourself (claim_build)',
@@ -300,6 +301,22 @@ const tool = <T extends z.ZodType>(definition: Tool<T>) => ({
     return { text: redactSecrets(await definition.run(context, parsed.data)), isError: false };
   }
 });
+
+/** What each decision of the `review` tool does: an approval from Claude is only proposed. */
+const REVIEW_ACTIONS: Readonly<
+  Record<'approve' | 'changes' | 'keep_whole', (note: string) => TaskAction>
+> = {
+  approve: () => ({ type: 'propose_approval' }),
+  changes: (note) => ({ type: 'changes', note }),
+  keep_whole: () => ({ type: 'keep_whole' })
+};
+
+const REVIEW_OUTCOMES: Readonly<Record<keyof typeof REVIEW_ACTIONS, string>> = {
+  approve:
+    "Approval proposed: it counts once you confirm it on the task's page on the board, with the approve button where it says it is your turn, and where you can also discard it.",
+  changes: 'Changes requested; the agents work on it again.',
+  keep_whole: 'Kept as one task; the agents write one plan for it.'
+};
 
 export const TOOLS = [
   tool({
@@ -686,14 +703,16 @@ Call it once an item was really checked, by the person or by you for them, never
     description: `Records the person's decision at one of the two moments people decide:
 - a plan to approve (before anything is built);
 - a result to check (after it is built), the "Looks good" button.
+A plan may be a proposed split: sub-tasks instead of one change. Approving it opens them, each with its own plan to approve later.
 "approve" from here is only a proposal: it waits on the board until the person confirms it there with the approve button in the box on the task's page that says it is their turn ("Approve plan" or "Looks good"), or discards it, and only then counts, sends the plan to be built or the result towards merging. Tell them so and give them the task link.
-"changes" sends it back to the agents with the note, which must say what is wrong or missing.
+"changes" sends it back to the agents with the note, which must say what is wrong or missing; for a proposed split, what to change in it (titles, scopes, order, a piece to add or drop).
+"keep_whole", only for a proposed split, sends it back for one plan: the request is built as one task. It acts at once.
 
 Always call show_task first, show the person the plan or the list of what to check, and only approve when they say they read the plan or checked the items. Record each item checked with check_item before; an item left unchecked shows as not checked on the pull request. Never approve on their behalf without that.`,
     input: z.object({
       project: PROJECT,
       number: NUMBER,
-      decision: z.enum(['approve', 'changes']),
+      decision: z.enum(['approve', 'changes', 'keep_whole']),
       note: z
         .string()
         .trim()
@@ -712,15 +731,9 @@ Always call show_task first, show the person the plan or the list of what to che
         memberId: context.memberId,
         via: context.via,
         number: input.number,
-        action:
-          input.decision === 'approve'
-            ? { type: 'propose_approval' }
-            : { type: 'changes', note: input.note! }
+        action: REVIEW_ACTIONS[input.decision](input.note ?? '')
       });
-      const outcome =
-        input.decision === 'changes'
-          ? 'Changes requested; the agents work on it again.'
-          : "Approval proposed: it counts once you confirm it on the task's page on the board, with the approve button where it says it is your turn, and where you can also discard it.";
+      const outcome = REVIEW_OUTCOMES[input.decision];
       return `${outcome} Task ${input.number}: ${taskUrl(context.publicUrl, project.id, input.number)}`;
     }
   }),

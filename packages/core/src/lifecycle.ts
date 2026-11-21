@@ -308,6 +308,8 @@ export type Command =
   /** The member withdraws an approval a connected app proposed for them. */
   | { readonly type: 'discard_proposal' }
   | { readonly type: 'request_changes'; readonly note: string }
+  /** A proposed split, sent back for one spec: the request is built as one task. */
+  | { readonly type: 'keep_whole' }
   | {
       readonly type: 'dispatch';
       readonly assignee: Assignee;
@@ -426,6 +428,10 @@ export type DomainEvent =
   | ({ readonly type: 'diff_allowed' } & DiffAllowance)
   /** A person picked the size check's Split: the next spec must be a proposed split. */
   | { readonly type: 'split_asked' }
+  /** People approved the proposed split of this spec version; its sub-tasks open with it. */
+  | { readonly type: 'split_approved'; readonly version: number }
+  /** People sent a proposed split back to be specced as one task. */
+  | { readonly type: 'kept_whole' }
   | { readonly type: 'paused' }
   | { readonly type: 'resumed' }
   | { readonly type: 'closed'; readonly stage: 'declined' | 'cancelled'; readonly reason: string }
@@ -537,6 +543,21 @@ export const gateSubject = (
   gate: Gate
 ): string | null =>
   gate === 'spec_review' ? `spec:${task.specVersion}` : task.headSha && `sha:${task.headSha}`;
+
+/**
+ * Whether people may approve the gate's subject now: once the approval chooser planned it, or, for
+ * a proposed split, at once, since a split is never planned and its lane's policy says who decides.
+ */
+export const gatePlanned = (
+  task: Pick<Task, 'specVersion' | 'headSha' | 'approvalPlans' | 'splitProposed'>,
+  gate: Gate
+): boolean => {
+  const subject = gateSubject(task, gate);
+  if (subject === null) return false;
+  return (
+    (gate === 'spec_review' && task.splitProposed) || task.approvalPlans[gate]?.subject === subject
+  );
+};
 
 /**
  * The lane's policy for a gate plus whatever the approval chooser added to it, each requirement
@@ -925,16 +946,6 @@ const landPush = (
     ]);
   }
 
-  const tooLarge = diffHold(context.config, task, lane, head.diffLines);
-  if (tooLarge) {
-    const { blocked, details } = tooLarge;
-    return ok({ ...task, lane, blocked }, [
-      ...pushed,
-      { type: 'guardrail_tripped', guardrail: 'diff_too_large', details },
-      { type: 'blocked', blocked }
-    ]);
-  }
-
   // A new shared file nobody listed is the duplication of tomorrow: the builder lists it first.
   const unlisted = unlistedFiles(
     context.config.docs.standards.catalogs,
@@ -947,6 +958,17 @@ const landPush = (
       guardrail: 'unlisted_files',
       details: describeUnlisted(unlisted)
     });
+  }
+
+  // Last, so a head whose size a person allows has passed everything else and can go to review.
+  const tooLarge = diffHold(context.config, task, lane, head);
+  if (tooLarge) {
+    const { blocked, details } = tooLarge;
+    return ok({ ...task, lane, blocked }, [
+      ...pushed,
+      { type: 'guardrail_tripped', guardrail: 'diff_too_large', details },
+      { type: 'blocked', blocked }
+    ]);
   }
 
   const [moved, stageEvent] = moveTo(task, 'reviewing', {
@@ -970,6 +992,18 @@ export const GITHUB_REVIEWABLE: ReadonlySet<Stage> = new Set([
 
 /** Stages where the task's pull request may exist: from the first push until it is merged. */
 export const WITH_PULL_REQUEST: ReadonlySet<Stage> = new Set(['building', ...GITHUB_REVIEWABLE]);
+
+/**
+ * Allowing the size of the head the size check held takes that head in: it passed every other
+ * check first, so it goes to review as pushed instead of being built again.
+ */
+const allowedHeadIn = (task: Task, offer: AllowanceOffer | null, events: DomainEvent[]) => {
+  // Words in the answer that hold the task for the owner keep the head out too, so no pull request
+  // opens for it before the owner has looked.
+  if (task.blocked || !offer?.headSha || task.stage !== 'building') return ok(task, events);
+  const [moved, stageEvent] = moveTo(task, 'reviewing', { headSha: offer.headSha, reviews: {} });
+  return ok(moved, [...events, stageEvent]);
+};
 
 /**
  * Answers the task's question. Picking the size check's option to allow more lines also grants that
@@ -1033,11 +1067,12 @@ const unblockedBy = (
     member,
     command.text
   );
-  return ok(unblocked, [
+  const events: DomainEvent[] = [
     { type: 'unblocked', answer: command.text },
     ...(allowance ? [{ type: 'diff_allowed' as const, ...allowance }] : []),
     ...guardEvents
-  ]);
+  ];
+  return allowedHeadIn(unblocked, offer, events);
 };
 
 const ALLOWED_WHILE_HELD: ReadonlySet<Command['type']> = new Set([
@@ -1074,7 +1109,7 @@ const approvalFor = (
   const subject = gateSubject(task, gate);
   if (subject === null) return { ok: false, error: 'no_head' };
   // Nobody can approve before the approval chooser has said who needs to.
-  if (task.approvalPlans[gate]?.subject !== subject) return { ok: false, error: 'not_planned' };
+  if (!gatePlanned(task, gate)) return { ok: false, error: 'not_planned' };
   return { ok: true, gate, subject, member };
 };
 
@@ -1174,7 +1209,23 @@ export const decide = (
       };
       if (!result.satisfied) return ok(task, [recorded]);
       const [moved, stageEvent] = moveTo(task, gate === 'spec_review' ? 'ready' : 'merging');
-      return ok(moved, [recorded, stageEvent]);
+      // An approved split opens its sub-tasks (the store does, with the event); the task is then
+      // built through them and never itself.
+      const opens: DomainEvent[] =
+        gate === 'spec_review' && task.splitProposed
+          ? [{ type: 'split_approved', version: task.specVersion }]
+          : [];
+      return ok(moved, [recorded, ...opens, stageEvent]);
+    }
+
+    case 'keep_whole': {
+      if (task.stage !== 'spec_review' || !task.splitProposed) return fail('wrong_stage');
+      const member = memberFor(actor, context);
+      // Keeping it whole sends the work back, so it is for whoever may ask for changes.
+      if (member === undefined || !canRequestChanges(task, context, member))
+        return fail('not_allowed');
+      const [moved, stageEvent] = moveTo(task, 'speccing');
+      return ok(moved, [{ type: 'kept_whole' }, stageEvent]);
     }
 
     case 'propose_approval': {
