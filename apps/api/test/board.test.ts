@@ -21,6 +21,7 @@ import {
   createReadyTask,
   createTaskInMerging,
   createTaskInVerifying,
+  createTaskWithSplit,
   PLAN,
   recordChooserChecklist,
   resetAndSeed,
@@ -211,6 +212,25 @@ describe.skipIf(!url)('board api', () => {
       label: 'Builds once the agent docs of task 2 are merged',
       me: false
     });
+  });
+
+  test('a proposed split shows as the latest version, waiting on a maintainer, with nothing to approve', async () => {
+    const cookie = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    await createTaskWithSplit(pool, seeded);
+    const task = await json(await call(cookie, `/api/projects/${seeded.projectId}/tasks/1`));
+    expect(task.specs).toEqual([
+      expect.objectContaining({
+        version: 1,
+        split: true,
+        body: expect.stringContaining('**Proposed split into 2 sub-tasks.**')
+      })
+    ]);
+    expect(task.waitingOn).toEqual({
+      kind: 'people',
+      label: 'A maintainer decides on the proposed split',
+      me: false
+    });
+    expect(task.actions).not.toContain('approve');
   });
 
   test('a ready task that waits for other tasks says which, and offers no claim', async () => {

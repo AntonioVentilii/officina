@@ -86,6 +86,7 @@ const ERROR_TEXT: Record<StoreError, string> = {
   paused: 'the task is paused',
   awaiting_onboarding: 'the project waits for its agent docs to be merged first',
   awaiting_tasks: 'the task waits for other tasks to be merged first; task show says which',
+  split_proposed: 'its spec proposes a split into sub-tasks, which is not approved as a spec',
   already_blocked: 'the task already has an open question',
   not_blocked: 'the task has no open question',
   already_paused: 'the task is already paused',
