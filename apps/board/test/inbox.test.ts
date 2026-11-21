@@ -43,13 +43,14 @@ describe('inboxGroups', () => {
       card(9, 'reviewing'),
       card(10, 'done', {
         learningPullRequests: [{ number: 41, url: 'https://github.com/x/pull/41', state: 'open' }]
-      })
+      }),
+      card(11, 'speccing', { paused: true, blocked: { question: 'Which name?', needs: [] } })
     ];
     expect(
       inboxGroups(cards).map((group) => [group.id, group.cards.map((item) => item.number)])
     ).toEqual([
       ['questions', [1]],
-      ['paused', [2]],
+      ['paused', [2, 11]],
       ['triage', [3]],
       ['specs', [4]],
       ['claim', [5]],

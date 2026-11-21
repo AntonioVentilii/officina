@@ -487,7 +487,9 @@ describe.skipIf(!url)('connector for Claude', () => {
       'hand_in_build',
       'hand_back_build',
       'check_item',
-      'review'
+      'review',
+      'pause_task',
+      'resume_task'
     ]);
     const open = list.result.tools.find((tool: { name: string }) => tool.name === 'open_request');
     expect(open.inputSchema.required).toEqual(['title', 'request']);
@@ -670,6 +672,92 @@ describe.skipIf(!url)('connector for Claude', () => {
       [taskId]
     );
     expect(requested.rows).toEqual([{ note: 'Cover Italian too.' }]);
+  });
+
+  test("Claude pauses and resumes a task for whoever may steer, and a paused question is nobody's turn", async () => {
+    await invite(pool, {
+      publicUrl: PUBLIC_URL,
+      email: 'gio@example.com',
+      name: 'Gio',
+      role: 'contributor',
+      domains: []
+    });
+    const owner = (await connect()).tokens.access_token as string;
+    const gio = (await connect('gio@example.com')).tokens.access_token as string;
+    const gioId = (
+      await pool.query<{ id: string }>("select id from members where email = 'gio@example.com'")
+    ).rows[0]!.id;
+    await tool(owner, 'open_request', { title: 'Rename the Wager button', request: 'Say it.' });
+    const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
+    const asked = await applyCommand(pool, {
+      taskId,
+      actor: { kind: 'agent', role: 'interviewer', version: 1 },
+      command: { type: 'block', question: 'Which word instead?', askedOf: { memberId: gioId } }
+    });
+    expect(asked.ok).toBe(true);
+    const text = async (token: string, name: string, args: Record<string, unknown> = {}) =>
+      (await tool(token, name, args)).content[0]!.text as string;
+    const isPaused = async () =>
+      (await pool.query<{ paused: boolean }>('select paused from tasks where id = $1', [taskId]))
+        .rows[0]!.paused;
+    const question = 'Task 1: Rename the Wager button';
+
+    const gioInbox = await text(gio, 'whats_waiting_on_me');
+    expect(gioInbox).toContain(question);
+    expect(gioInbox).toContain('Now: A question for Gio.');
+
+    const refused = await tool(gio, 'pause_task', { number: 1 });
+    expect(refused.isError).toBe(true);
+    expect(refused.content[0]!.text).toContain('you do not have the role needed for that');
+    expect(await isPaused()).toBe(false);
+
+    const paused = await tool(owner, 'pause_task', { number: 1 });
+    expect(paused.isError).toBe(false);
+    expect(paused.content[0]!.text).toStartWith('Paused');
+    expect(await isPaused()).toBe(true);
+    const events = async (type: string) =>
+      (
+        await pool.query<{ actor: Record<string, unknown> }>(
+          'select actor from task_events where task_id = $1 and type = $2',
+          [taskId, type]
+        )
+      ).rows;
+    const [pausedEvent] = await events('paused');
+    expect(pausedEvent!.actor).toMatchObject({ kind: 'member', memberId: seeded.ownerId });
+    expect(pausedEvent!.actor.via).toBeDefined();
+    expect(await events('approval_proposed')).toEqual([]);
+    const again = await tool(owner, 'pause_task', { number: 1 });
+    expect(again.isError).toBe(true);
+    expect(again.content[0]!.text).toContain('the task is already paused');
+
+    const shown = await text(owner, 'show_task', { number: 1 });
+    expect(shown).toContain('Now: Paused (your turn).');
+    expect(shown).toContain('Open question for Gio:');
+    expect(shown).toContain('Which word instead?');
+    expect(await text(owner, 'list_tasks')).toContain('Now: Paused.');
+    const ownerInbox = await text(owner, 'whats_waiting_on_me');
+    expect(ownerInbox).toContain(question);
+    expect(ownerInbox).toContain('Now: Paused.');
+
+    expect(await text(gio, 'whats_waiting_on_me')).toContain('Nothing is waiting on you.');
+    const gioSees = await text(gio, 'show_task', { number: 1 });
+    expect(gioSees).toContain('Now: Paused.');
+    expect(gioSees).not.toContain('(your turn)');
+
+    expect((await tool(gio, 'resume_task', { number: 1 })).isError).toBe(true);
+    expect(await isPaused()).toBe(true);
+
+    const resumed = await tool(owner, 'resume_task', { number: 1 });
+    expect(resumed.isError).toBe(false);
+    expect(resumed.content[0]!.text).toStartWith('Resumed');
+    expect(await isPaused()).toBe(false);
+    const twice = await tool(owner, 'resume_task', { number: 1 });
+    expect(twice.isError).toBe(true);
+    expect(twice.content[0]!.text).toContain('the task is not paused');
+
+    const askedAgain = await text(gio, 'whats_waiting_on_me');
+    expect(askedAgain).toContain(question);
+    expect(askedAgain).toContain('Now: A question for Gio.');
   });
 
   test('a done task with a learning pull request still open is named by show_task and waits on the owner', async () => {

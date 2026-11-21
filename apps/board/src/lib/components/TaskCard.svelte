@@ -46,13 +46,13 @@
 
   <h3 class="title">{card.title}</h3>
 
-  {#if card.blocked && card.waitingOn.me}
+  {#if card.blocked && !card.paused && card.waitingOn.me}
     <div class="you">
       {#if tecnica}<strong>Question</strong><span>Your answer is needed</span>{:else}<strong
           >You</strong
         ><span>answer the question</span>{/if}
     </div>
-  {:else if card.blocked}
+  {:else if card.blocked && !card.paused}
     <div class="waiting"><CircleHelp size={14} /><span>{card.waitingOn.label}</span></div>
   {:else if card.handingIn}
     <!-- In ink, not the yellow of "your turn": the build is at work, nothing waits on anyone. -->

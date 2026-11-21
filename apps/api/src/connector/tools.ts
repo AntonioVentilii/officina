@@ -30,7 +30,14 @@ import {
 import { checklistLines } from '../checklist-view';
 import { checklistCheckSchema, recordCheckAs } from '../checks';
 import { reviewFindingsFor, reviewLines, SENT_BACK } from '../review-findings';
-import { TaskCommandError, actOnTaskAs, commentAs, createRequestAs, handInAs } from '../tasks';
+import {
+  TaskCommandError,
+  actOnTaskAs,
+  commentAs,
+  createRequestAs,
+  handInAs,
+  type TaskAction
+} from '../tasks';
 
 /**
  * The connector's tools. Each one is a thin call into what the board's API already does
@@ -245,6 +252,23 @@ const afterOpening = async (
   return row && heldForOwner(row.blocked)
     ? 'It touches something only an owner may allow, so it waits for an owner to decide before any agent reads it; show_task says where it stands.'
     : 'An agent reads it now and may ask a few questions; they show up in whats_waiting_on_me and on the board.';
+};
+
+/** Takes one action on a task of the named project, as the member, through the connector. */
+const actOnTaskFor = async (
+  context: ToolContext,
+  input: { readonly project?: string | undefined; readonly number: number },
+  action: TaskAction
+): Promise<MemberProject> => {
+  const project = projectFor(context, input.project);
+  await actOnTaskAs(context.pool, {
+    projectId: project.id,
+    memberId: context.memberId,
+    via: context.via,
+    number: input.number,
+    action
+  });
+  return project;
 };
 
 interface Tool<T extends z.ZodType> {
@@ -693,6 +717,30 @@ Always call show_task first, show the person the plan or the list of what to che
           ? 'Changes requested; the agents work on it again.'
           : "Approval proposed: it counts once you confirm it on the task's page on the board, with the approve button where it says it is your turn, and where you can also discard it.";
       return `${outcome} Task ${input.number}: ${taskUrl(context.publicUrl, project.id, input.number)}`;
+    }
+  }),
+  tool({
+    name: 'pause_task',
+    title: 'Pause a task',
+    description:
+      'Pauses a task: no new agent step starts on it until someone resumes it with resume_task. An agent step already running is not stopped: its result is dropped if the task is still paused when the result is applied, and applied as usual if the task has been resumed by then. Use it to hold a task that must wait, for example until another task is merged, instead of answering its question with "wait", which sets the agent going again. An open question is kept, and nobody needs to answer it while the task is paused. Pausing needs the right to steer the work (maintainers and owners). It acts at once: it is not an approval, and nothing is confirmed on the board. Call show_task first to check the task.',
+    input: z.object({ project: PROJECT, number: NUMBER }),
+    readOnly: false,
+    run: async (context, input) => {
+      const project = await actOnTaskFor(context, input, { type: 'pause' });
+      return `Paused; no new agent step starts on task ${input.number} until it is resumed (resume_task), and an agent step already running is not stopped. Any open question is kept. ${taskUrl(context.publicUrl, project.id, input.number)}`;
+    }
+  }),
+  tool({
+    name: 'resume_task',
+    title: 'Resume a task',
+    description:
+      'Resumes a task paused with pause_task: the agents go on with it from where they stopped, and a question still open waits again for whoever it is asked of. Resuming needs the right to steer the work (maintainers and owners). It acts at once: it is not an approval, and nothing is confirmed on the board. Call show_task first to check the task.',
+    input: z.object({ project: PROJECT, number: NUMBER }),
+    readOnly: false,
+    run: async (context, input) => {
+      const project = await actOnTaskFor(context, input, { type: 'resume' });
+      return `Resumed; the work on task ${input.number} goes on from where it stopped: ${taskUrl(context.publicUrl, project.id, input.number)}`;
     }
   })
 ] as const;

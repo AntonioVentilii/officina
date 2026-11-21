@@ -470,6 +470,7 @@ const waitingOn = (
 ): WaitingOn => {
   const member = viewerMember(viewer);
   if (TERMINAL_STAGES.has(row.stage)) return afterTheTask(row, viewer);
+  if (row.paused) return { kind: 'people', label: 'Paused', me: can(member, 'steer') };
   if (row.blocked) {
     const who = askedOfLabel(row.blocked.askedOf, facts.names);
     const needs = handoffNeeds(row.blocked);
@@ -481,7 +482,6 @@ const waitingOn = (
       me: readsTask(viewer, row) && canAnswer(member, row.blocked.askedOf)
     };
   }
-  if (row.paused) return { kind: 'people', label: 'Paused', me: can(member, 'steer') };
   // A hand-in under way waits on nobody, from its first GitHub read to the pull request it opens
   // once the task has moved on to review: it is at work, on every board.
   if (row.handingInSince) return handingInWait(row, facts.names);
@@ -633,6 +633,8 @@ const actionsFor = (
   const actions: BoardAction[] = [];
   const requester = row.requesterId === viewer.memberId;
   if (canSubmitRequest(row, member)) actions.push('submit');
+  // A paused task's question stays answerable: the lifecycle accepts an answer while paused, and
+  // waitingOn alone says the task waits on whoever may resume it.
   if (row.blocked) {
     if (writes && canAnswer(member, row.blocked.askedOf)) actions.push('answer');
   } else if (!row.paused) {
