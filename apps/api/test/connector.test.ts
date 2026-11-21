@@ -494,7 +494,8 @@ describe.skipIf(!url)('connector for Claude', () => {
       'review',
       'pause_task',
       'resume_task',
-      'force_model'
+      'force_model',
+      'hand_question'
     ]);
     const open = list.result.tools.find((tool: { name: string }) => tool.name === 'open_request');
     expect(open.inputSchema.required).toEqual(['title', 'request']);
@@ -722,6 +723,51 @@ describe.skipIf(!url)('connector for Claude', () => {
     expect(await text(owner, 'show_task', { number: 1 })).toContain(
       'Model: chosen by rule for each agent step'
     );
+  });
+
+  test('Claude hands a waiting question to the member an owner names, and it reaches their inbox', async () => {
+    await invite(pool, {
+      publicUrl: PUBLIC_URL,
+      email: 'tim@example.com',
+      name: 'Tim',
+      role: 'contributor',
+      domains: ['product']
+    });
+    const owner = (await connect()).tokens.access_token as string;
+    const tim = (await connect('tim@example.com')).tokens.access_token as string;
+    await tool(owner, 'open_request', { title: 'Book a call', request: 'Investors book a call.' });
+    const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
+    const asked = await applyCommand(pool, {
+      taskId,
+      actor: ENGINE,
+      command: {
+        type: 'block',
+        question: 'How investors book a call is a product choice.',
+        askedOf: { role: 'owner' },
+        handoff: { needs: ['decision'] }
+      }
+    });
+    expect(asked.ok).toBe(true);
+    const text = async (token: string, name: string, args: Record<string, unknown> = {}) =>
+      (await tool(token, name, args)).content[0]!.text as string;
+
+    expect(await text(owner, 'show_task', { number: 1 })).toContain(
+      'It can be handed to (hand_question): Tim.'
+    );
+    expect(await text(tim, 'whats_waiting_on_me')).not.toContain('Task 1: Book a call');
+
+    const refused = await tool(tim, 'hand_question', { number: 1, member: 'Tim' });
+    expect(refused.isError).toBe(true);
+    const unknown = await tool(owner, 'hand_question', { number: 1, member: 'Gio' });
+    expect(unknown.isError).toBe(true);
+    expect(unknown.content[0]!.text).toContain('It can be handed to: Tim.');
+
+    const handed = await tool(owner, 'hand_question', { number: 1, member: 'tim' });
+    expect(handed.isError).toBe(false);
+    expect(handed.content[0]!.text).toStartWith('Handed to Tim');
+    const inbox = await text(tim, 'whats_waiting_on_me');
+    expect(inbox).toContain('Task 1: Book a call');
+    expect(inbox).toContain('needs Tim for');
   });
 
   test("Claude pauses and resumes a task for whoever may steer, and a paused question is nobody's turn", async () => {

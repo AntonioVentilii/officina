@@ -1,10 +1,7 @@
 <script lang="ts">
   import { ago, dateTime } from '#lib/format.ts';
-  import { CLOSING_SENTENCES } from '#lib/closing.ts';
-  import { LINK_SENTENCES } from '#lib/links.ts';
-  import { MODEL_SENTENCES } from '#lib/model-forced.ts';
   import { STAGE_LABELS } from '#lib/stages.ts';
-  import { eventDetail } from '#lib/timeline.ts';
+  import { EVENT_SENTENCES, eventDetail } from '#lib/timeline.ts';
   import type { Comment, Stage, TaskEvent } from '#lib/types.ts';
   import AgentAvatar from './AgentAvatar.svelte';
   import Markdown from './Markdown.svelte';
@@ -21,7 +18,6 @@
 
   const stage = (value: unknown) => STAGE_LABELS[value as Stage] ?? String(value);
   const GATES: Record<string, string> = { spec_review: 'the spec', verifying: 'the result' };
-  const SENTENCES = { ...LINK_SENTENCES, ...CLOSING_SENTENCES, ...MODEL_SENTENCES };
 
   const sentence = (event: TaskEvent): string | null => {
     const p = event.payload;
@@ -132,7 +128,7 @@
       case 'checklist_checked':
         return `checked item ${Number(p.item) + 1} of the checklist: ${p.outcome}`;
       default:
-        return SENTENCES[event.type]?.(p) ?? event.type.replaceAll('_', ' ');
+        return EVENT_SENTENCES[event.type]?.(p) ?? event.type.replaceAll('_', ' ');
     }
   };
 

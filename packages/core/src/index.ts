@@ -3,6 +3,7 @@ export * from './permissions';
 export * from './model-tiers';
 export * from './guards';
 export * from './handoffs';
+export * from './hand-question';
 export * from './lanes';
 export * from './allowance';
 export * from './config';

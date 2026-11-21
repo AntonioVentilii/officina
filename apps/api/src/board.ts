@@ -26,6 +26,7 @@ import {
   gatePlanned,
   gateSubject,
   humanBuildReason,
+  isAskedOf,
   isGate,
   mergedEarlyText,
   openProposals,
@@ -36,6 +37,7 @@ import {
   readsTask,
   sameRequirement,
   seesQuestion,
+  takesQuestion,
   type Actor,
   type ConnectedApp,
   type AgentRole,
@@ -105,6 +107,7 @@ export type BoardAction =
   | 'close_merged'
   | 'cancel'
   | 'force_model'
+  | 'hand_question'
   | 'comment';
 
 export interface BoardViewer {
@@ -280,6 +283,7 @@ const PUBLIC_FIELDS: Readonly<Record<string, readonly string[]>> = {
   checklist_posted: ['pullRequest'],
   checklist_checked: ['item', 'outcome', 'channel'],
   links_changed: ['parent', 'after'],
+  question_handed: ['from', 'memberId'],
   subtasks_merged: ['subtasks']
 };
 
@@ -664,6 +668,48 @@ const gateActions = (
   ];
 };
 
+/**
+ * What a member may do with a task's waiting question. An early merge's hold is not answered: it is
+ * closed as done, or the task cancelled, and it is never handed on.
+ */
+const questionActions = (
+  row: BoardTaskRow,
+  blocked: Blocked,
+  member: Member,
+  writes: boolean
+): BoardAction[] => {
+  if (row.mergedEarly) return writes && canAnswer(member, blocked.askedOf) ? ['close_merged'] : [];
+  return [
+    ...(writes && canAnswer(member, blocked.askedOf) ? (['answer'] as const) : []),
+    ...(can(member, 'hand_question') ? (['hand_question'] as const) : [])
+  ];
+};
+
+/**
+ * Whom an owner may hand the waiting question to: every member who can take it (`takesQuestion`)
+ * and is not asked it already. Empty for anyone who may not hand it.
+ */
+const handToView = (
+  row: BoardTaskRow,
+  blocked: Blocked,
+  viewer: BoardViewer,
+  facts: ProjectFacts
+) =>
+  can(viewerMember(viewer), 'hand_question') && !row.mergedEarly
+    ? facts.members
+        .filter((member) => takesQuestion(member, row) && !isAskedOf(member, blocked.askedOf))
+        .map((member) => ({ id: member.id, name: facts.names.get(member.id) ?? 'a member' }))
+    : [];
+
+/** An event's payload with the name of the member it names, so the timeline can say who. */
+const withMemberName = (
+  payload: Record<string, unknown>,
+  names: ReadonlyMap<string, string>
+): Record<string, unknown> =>
+  typeof payload.memberId === 'string' && names.has(payload.memberId)
+    ? { ...payload, memberName: names.get(payload.memberId) }
+    : payload;
+
 const actionsFor = (
   row: BoardTaskRow,
   viewer: BoardViewer,
@@ -682,9 +728,7 @@ const actionsFor = (
   // A paused task's question stays answerable: the lifecycle accepts an answer while paused, and
   // waitingOn alone says the task waits on whoever may resume it.
   if (row.blocked) {
-    // An early merge's hold is not answered: it is closed as done, or the task cancelled.
-    if (writes && canAnswer(member, row.blocked.askedOf))
-      actions.push(row.mergedEarly ? 'close_merged' : 'answer');
+    actions.push(...questionActions(row, row.blocked, member, writes));
   } else if (!row.paused) {
     if (row.stage === 'triage' && can(member, 'triage')) actions.push('accept', 'decline');
     actions.push(...buildActions(row, viewer, wait), ...gateActions(row, viewer, facts));
@@ -1082,7 +1126,8 @@ export const taskView = async (
           options: shown.value(optionsFor(viewerMember(viewer), row.blocked)) ?? [],
           // An option picked from this question holds only for the version it was read at.
           version: row.version,
-          askedOf: askedOfLabel(row.blocked.askedOf, facts.names)
+          askedOf: askedOfLabel(row.blocked.askedOf, facts.names),
+          handTo: handToView(row, row.blocked, viewer, facts)
         }
       : null,
     repo: context?.repo ?? null,
@@ -1125,7 +1170,9 @@ export const taskView = async (
       actorKind: event.actor.kind,
       actorRole: event.actor.kind === 'agent' ? event.actor.role : null,
       via: viaView(event.actor),
-      payload: shown.payload(payloadFor(viewer, event.type, event.payload)),
+      payload: shown.payload(
+        withMemberName(payloadFor(viewer, event.type, event.payload), facts.names)
+      ),
       at: event.createdAt
     })),
     runs: seesTechnical(viewer) ? runs.map((run) => runView(run, consoleWorkspace)) : [],

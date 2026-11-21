@@ -62,6 +62,7 @@ export type BoardAction =
   | 'close_merged'
   | 'cancel'
   | 'force_model'
+  | 'hand_question'
   | 'comment';
 
 export interface Project {
@@ -203,6 +204,8 @@ export interface TaskDetail extends Card {
         readonly options: readonly QuestionOption[];
         /** The task version the question was read at; a picked option sends it back. */
         readonly version: number;
+        /** Whom an owner may hand the question to; empty for anyone who may not hand it on. */
+        readonly handTo: readonly { readonly id: string; readonly name: string }[];
       })
     | null;
   readonly repo: string | null;

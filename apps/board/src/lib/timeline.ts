@@ -1,4 +1,16 @@
+import { CLOSING_SENTENCES } from './closing';
+import { LINK_SENTENCES } from './links';
+import { MODEL_SENTENCES } from './model-forced';
+import { QUESTION_SENTENCES } from './question-handed';
 import type { TaskEvent } from './types';
+
+/** The sentences of the events whose words live beside the feature they belong to. */
+export const EVENT_SENTENCES = {
+  ...LINK_SENTENCES,
+  ...CLOSING_SENTENCES,
+  ...MODEL_SENTENCES,
+  ...QUESTION_SENTENCES
+};
 
 /** The payload field each event's text below its sentence comes from. */
 const DETAIL_FIELDS: Readonly<Record<string, string>> = {

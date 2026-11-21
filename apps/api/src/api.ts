@@ -164,7 +164,9 @@ const actionSchema = z.discriminatedUnion('type', [
   // A task whose pull request merged before it was verified is closed as done, with why.
   z.strictObject({ type: z.literal('close_merged'), reason }),
   // A maintainer forces the tier the task's agent steps run on; `null` gives it back to the rule.
-  z.strictObject({ type: z.literal('force_model'), tier: z.enum(MODEL_TIERS).nullable() })
+  z.strictObject({ type: z.literal('force_model'), tier: z.enum(MODEL_TIERS).nullable() }),
+  // An owner hands the waiting question to one member of the project.
+  z.strictObject({ type: z.literal('hand_question'), memberId: z.uuid() })
 ]);
 
 const handInSchema = z.strictObject({

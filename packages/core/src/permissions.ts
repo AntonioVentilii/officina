@@ -24,7 +24,8 @@ export const ACTIONS = [
   'see_confidential',
   'publish',
   'manage_members',
-  'see_access_log'
+  'see_access_log',
+  'hand_question'
 ] as const;
 export type Action = (typeof ACTIONS)[number];
 
@@ -49,7 +50,8 @@ export const PERMISSIONS = {
   see_confidential: 'maintainer',
   publish: 'owner',
   manage_members: 'owner',
-  see_access_log: 'owner'
+  see_access_log: 'owner',
+  hand_question: 'owner'
 } as const satisfies Readonly<Record<Action, Role>>;
 
 /**
@@ -85,7 +87,8 @@ export const ACTION_LABELS: Readonly<Record<Action, string>> = {
     "read and approve tasks that touch the project's confidential content (also anyone with the `confidential` domain)",
   publish: 'approve anything that publishes, deploys, changes access or touches secrets',
   manage_members: 'invite members and change their roles',
-  see_access_log: 'see who signed in, who sent sign-in links and which apps each member connected'
+  see_access_log: 'see who signed in, who sent sign-in links and which apps each member connected',
+  hand_question: 'hand a waiting question to another member, who then answers it'
 };
 
 /** The action a member takes at each human gate. */
@@ -115,7 +118,7 @@ export const allowedActions = (
 type Person = Pick<Member, 'id' | 'role'> & Partial<Pick<Member, 'domains'>>;
 
 /** Whether a question is asked of this member: by name, or of a role they hold. */
-const isAskedOf = (member: Person, askedOf: Blocked['askedOf']): boolean =>
+export const isAskedOf = (member: Person, askedOf: Blocked['askedOf']): boolean =>
   'memberId' in askedOf ? askedOf.memberId === member.id : hasRole(member, askedOf.role);
 
 /**
@@ -140,6 +143,12 @@ export const readsTask = (
   member: Pick<Member, 'role'> & Partial<Pick<Member, 'domains'>>,
   task: { readonly guards: readonly Guard[] }
 ): boolean => !task.guards.includes('confidential') || can(member, 'see_confidential');
+
+/** Whether a member can take a question handed to them: they may answer and read the task. */
+export const takesQuestion = (
+  member: Pick<Member, 'role'> & Partial<Pick<Member, 'domains'>>,
+  task: { readonly guards: readonly Guard[] }
+): boolean => can(member, 'answer') && readsTask(member, task);
 
 /**
  * Whether a member may build a task: claim it, and hand in what they built for as long as they hold
