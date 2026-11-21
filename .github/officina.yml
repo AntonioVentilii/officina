@@ -49,6 +49,19 @@ guards:
     - 'apps/api/src/people.ts'
     - 'apps/api/src/token-box.ts'
 
+# The task lifecycle and the engine's step: a change here runs the steps whose work grows with the
+# change (spec, build, onboarding, both reviews) on the strongest model (docs/architecture.md
+# section 6); the interviewer, the chooser and the learner keep their own. Red paths and guarded
+# tasks already do.
+models:
+  strong_paths:
+    - 'packages/core/src/lifecycle.ts'
+    - 'packages/core/src/steps.ts'
+    - 'packages/core/src/policies.ts'
+    - 'packages/engine/src/step*.ts'
+    - 'packages/engine/src/claim.ts'
+    - 'packages/engine/src/tick.ts'
+
 lanes:
   # Agents never build in the red lane: the spec agent writes the plan, a person builds it and hands it in.
   red:

@@ -4,6 +4,8 @@ import {
   GATE_ACTIONS,
   GUARD_LABELS,
   HANDOFF_NEEDS,
+  MODEL_TIERS,
+  MODEL_TIER_LABELS,
   NO_TOKENS,
   REVIEWER_ROLES,
   TERMINAL_STAGES,
@@ -44,6 +46,7 @@ import {
   type Gate,
   type Eligibility,
   type Member,
+  type ModelTier,
   type Policy,
   type ProjectConfig,
   type Requirement,
@@ -101,6 +104,7 @@ export type BoardAction =
   | 'answer'
   | 'close_merged'
   | 'cancel'
+  | 'force_model'
   | 'comment';
 
 export interface BoardViewer {
@@ -221,6 +225,13 @@ const viewerMember = (viewer: BoardViewer): Member => ({
  * access to the repository at all, so they get the decisions and the trail, not the code or money.
  */
 export const seesTechnical = (viewer: BoardViewer): boolean => can(viewer, 'see_runs');
+
+/** A model tier with its name, as the board shows and offers it. */
+const tierView = (tier: ModelTier) => ({ tier, label: MODEL_TIER_LABELS[tier] });
+
+/** The tier forced on a task, for viewers who see the runs it decides: the model is technical. */
+const forcedModelView = (row: Pick<BoardTaskRow, 'forcedModel'>, viewer: BoardViewer) =>
+  seesTechnical(viewer) && row.forcedModel ? tierView(row.forcedModel) : null;
 
 /**
  * What contributors and watchers read of each event's payload: what the timeline says about the
@@ -679,6 +690,7 @@ const actionsFor = (
     actions.push(...buildActions(row, viewer, wait), ...gateActions(row, viewer, facts));
   }
   if (can(member, 'steer') || (requester && can(member, 'request'))) actions.push('cancel');
+  if (can(member, 'steer')) actions.push('force_model');
   if (writes && can(member, 'comment')) actions.push('comment');
   return actions;
 };
@@ -743,6 +755,7 @@ const cardView = (
   // Its pull request shows the confidential change itself.
   pullRequest: readsTask(viewer, row) ? row.pullRequest : null,
   costCents: seesTechnical(viewer) ? row.costCents : null,
+  forcedModel: forcedModelView(row, viewer),
   running: row.runningRoles.map((role) => ({ role, label: roleLabel(role) })),
   fixRounds: row.fixRounds,
   specVersion: row.specVersion,
@@ -958,6 +971,7 @@ const runView = (run: RunRow, consoleWorkspace: string | undefined) => ({
   agentVersion: run.agentVersion,
   stage: run.stage,
   status: run.status,
+  model: run.model,
   costCents: run.costCents,
   tokens: run.tokens,
   startedAt: run.startedAt,
@@ -1115,6 +1129,8 @@ export const taskView = async (
       at: event.createdAt
     })),
     runs: seesTechnical(viewer) ? runs.map((run) => runView(run, consoleWorkspace)) : [],
+    // The tiers a maintainer may force, from the cheapest; the rule picks when none is.
+    modelTiers: seesTechnical(viewer) ? MODEL_TIERS.map(tierView) : [],
     plan: shown.value(planView(row, facts)),
     people: peopleView(row, viewer, facts, { approvals, events }),
     approval: approval && {
@@ -1172,12 +1188,24 @@ export type LogEntry = LogBase &
     | { readonly kind: 'submitted'; readonly outcome: string }
     | { readonly kind: 'feedback' | 'error'; readonly text: string }
     | { readonly kind: 'status'; readonly status: string }
+    | {
+        readonly kind: 'thread';
+        readonly direction: 'question' | 'answer';
+        readonly thread: string;
+        readonly agent: string | null;
+        readonly text: string;
+      }
     | { readonly kind: 'officina'; readonly type: string; readonly payload: unknown }
   );
 
+const agentName = (value: unknown): string | null => (typeof value === 'string' ? value : null);
+
 /**
  * A run's session events as a readable log. Model spans and usage are dropped; tool output is
- * truncated, since the full session stays one click away in the Console.
+ * truncated, since the full session stays one click away in the Console. What the role asks a
+ * worker in another thread of the session (the reader) and what it answers are kept, keyed by the
+ * thread so the board can pair them; the threads' own status changes are dropped, since a question
+ * left without an answer already says a worker stopped.
  */
 export const logEntries = (events: readonly RunEventRow[]): LogEntry[] =>
   events.flatMap((event): LogEntry[] => {
@@ -1213,6 +1241,28 @@ export const logEntries = (events: readonly RunEventRow[]): LogEntry[] =>
               (payload.input as { result?: { outcome?: string } } | undefined)?.result?.outcome ??
                 'result'
             )
+          }
+        ];
+      case 'agent.thread_message_sent':
+        return [
+          {
+            ...base,
+            kind: 'thread' as const,
+            direction: 'question' as const,
+            thread: String(payload.to_session_thread_id ?? ''),
+            agent: agentName(payload.to_agent_name),
+            text: text(payload.content, 20_000)
+          }
+        ];
+      case 'agent.thread_message_received':
+        return [
+          {
+            ...base,
+            kind: 'thread' as const,
+            direction: 'answer' as const,
+            thread: String(payload.from_session_thread_id ?? ''),
+            agent: agentName(payload.from_agent_name),
+            text: text(payload.content, 20_000)
           }
         ];
       case 'user.message':

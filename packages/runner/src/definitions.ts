@@ -1,8 +1,14 @@
 import { createHash } from 'node:crypto';
-import { AGENT_ROLES, OUTPUT_SCHEMAS, isBuildRole, type AgentRole } from '@officina/core';
+import {
+  AGENT_ROLES,
+  OUTPUT_SCHEMAS,
+  isBuildRole,
+  type AgentRole,
+  type ModelTier
+} from '@officina/core';
 import type { AgentCreateParams } from '@anthropic-ai/sdk/resources/beta/agents/agents';
 import { z } from 'zod';
-import { PINNED_MODELS } from './models';
+import { PINNED_MODELS, type TierModels } from './models';
 import { READER_NAME, READER_PROMPT, withReader } from './reader';
 import { loadPrompt, loadStandard, withStandard } from './standard';
 
@@ -27,18 +33,42 @@ const WRITE_TOOLS_OFF: AgentToolConfig[] = [
   { name: 'edit', type: 'edit', enabled: false }
 ];
 
-export type AgentEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+/** The effort levels from the least thinking to the most. */
+export const AGENT_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type AgentEffort = (typeof AGENT_EFFORTS)[number];
 
 export interface AgentModel {
   readonly id: string;
   readonly effort: AgentEffort;
 }
 
+/** A model by its tier, before the tier is resolved to an id. */
+export interface ModelChoice {
+  readonly tier: ModelTier;
+  readonly effort: AgentEffort;
+}
+
 /**
- * Set explicitly because the default moves between releases (Opus 5.5 dropped it to medium), and
- * every role's output feeds a decision people rely on.
+ * What each role runs on when nothing about the task says otherwise: the agent's own model, and
+ * where the engine's choice for a step starts (`chooseModel` in the engine). Effort is set
+ * explicitly because the default moves between releases (Opus 5.5 dropped it to medium).
  */
-export const AGENT_EFFORT: AgentEffort = 'high';
+export const ROLE_MODELS: Readonly<Record<RunnerRole, ModelChoice>> = {
+  interviewer: { tier: 'haiku', effort: 'low' },
+  spec: { tier: 'sonnet', effort: 'medium' },
+  builder: { tier: 'sonnet', effort: 'medium' },
+  reviewer_spec: { tier: 'sonnet', effort: 'medium' },
+  reviewer_correctness: { tier: 'sonnet', effort: 'medium' },
+  chooser: { tier: 'haiku', effort: 'low' },
+  learner: { tier: 'haiku', effort: 'low' },
+  onboarder: { tier: 'sonnet', effort: 'medium' }
+};
+
+/** A choice with its tier resolved to the id `models` names for it. */
+export const modelFor = (choice: ModelChoice, models: TierModels): AgentModel => ({
+  id: models[choice.tier],
+  effort: choice.effort
+});
 
 /** What every agent the runner syncs is made of. */
 export interface AgentShape {
@@ -120,7 +150,7 @@ export const resultToolInputSchema = (role: RunnerRole) => {
 export const buildDefinition = (
   role: RunnerRole,
   system: string,
-  modelId: string = PINNED_MODELS.opus,
+  models: TierModels = PINNED_MODELS,
   reader: AgentShape | null = null
 ): AgentDefinition => {
   const disabled: AgentToolConfig[] = [
@@ -145,7 +175,7 @@ export const buildDefinition = (
     }
   ];
   const name = `officina-${role.replaceAll('_', '-')}`;
-  const model: AgentModel = { id: modelId, effort: AGENT_EFFORT };
+  const model = modelFor(ROLE_MODELS[role], models);
   const hash = hashOf(
     reader ? { name, model, system, tools, reader: reader.hash } : { name, model, system, tools }
   );
@@ -154,22 +184,22 @@ export const buildDefinition = (
 
 /**
  * Reads `agents/<role>.md` prompts from a directory and builds every runner role's definition, each
- * prompt followed by the code standard. The roles in `READER_ROLES` also get the reader, built from
- * `agents/reader.md` on `readerModelId`, and the rules for handing it work before the standard.
+ * on its own tier of `models` and its prompt followed by the code standard. The roles in
+ * `READER_ROLES` also get the reader, built from `agents/reader.md` on the Haiku tier, and the
+ * rules for handing it work before the standard.
  */
 export const loadDefinitions = async (
   promptsDir: string,
-  modelId: string = PINNED_MODELS.opus,
-  readerModelId: string = PINNED_MODELS.haiku
+  models: TierModels = PINNED_MODELS
 ): Promise<AgentDefinition[]> => {
   const standard = await loadStandard();
-  const reader = buildReaderDefinition(await loadPrompt(promptsDir, READER_PROMPT), readerModelId);
+  const reader = buildReaderDefinition(await loadPrompt(promptsDir, READER_PROMPT), models.haiku);
   return Promise.all(
     RUNNER_ROLES.map(async (role) => {
       const prompt = await loadPrompt(promptsDir, role);
       return hasReader(role)
-        ? buildDefinition(role, withStandard(withReader(prompt), standard), modelId, reader)
-        : buildDefinition(role, withStandard(prompt, standard), modelId);
+        ? buildDefinition(role, withStandard(withReader(prompt), standard), models, reader)
+        : buildDefinition(role, withStandard(prompt, standard), models);
     })
   );
 };

@@ -1,6 +1,11 @@
 import { parseArgs } from 'node:util';
 import { createGitHubClient } from '@officina/github';
-import { PROMPTS_DIR, anthropicAuthFrom, createModelResolver } from '@officina/runner';
+import {
+  PROMPTS_DIR,
+  anthropicAuthFrom,
+  createModelResolver,
+  resolveTiers
+} from '@officina/runner';
 import { Pool } from 'pg';
 import { createAgentsPort } from './engine';
 import { USAGE } from './cli-usage';
@@ -11,6 +16,7 @@ import {
   actOnTask,
   createRequest,
   describeTask,
+  forcedTierFrom,
   handIn,
   linkTask,
   listTasksText,
@@ -44,6 +50,7 @@ interface ActionFlags {
   readonly reason?: string | undefined;
   readonly option?: string | undefined;
   readonly version?: string | undefined;
+  readonly tier?: string | undefined;
 }
 
 /** An answer in words, or an option picked from the question as `task show` gave it. */
@@ -55,29 +62,31 @@ const answerFor = (flags: ActionFlags): TaskAction => {
   return { type: 'answer', text: flags.text ?? '', option: flags.option, version };
 };
 
+/** The `task` subcommands that apply a decision, each from the flags it takes. */
+const TASK_ACTIONS: Readonly<Record<string, (flags: ActionFlags) => TaskAction>> = {
+  submit: () => ({ type: 'submit' }),
+  accept: () => ({ type: 'accept' }),
+  claim: () => ({ type: 'claim' }),
+  approve: () => ({ type: 'approve' }),
+  'hand-back': () => ({ type: 'release' }),
+  changes: (flags) => ({ type: 'changes', note: need(flags.note, 'note') }),
+  answer: answerFor,
+  decline: (flags) => ({ type: 'decline', reason: need(flags.reason, 'reason') }),
+  cancel: (flags) => ({ type: 'cancel', reason: need(flags.reason, 'reason') }),
+  'force-model': (flags) => ({
+    type: 'force_model',
+    tier: forcedTierFrom(need(flags.tier, 'tier'))
+  })
+};
+
 /** The decision a `task` subcommand applies, or null for a subcommand that applies none. */
 export const taskActionFor = (
   subcommand: string | undefined,
   flags: ActionFlags
 ): TaskAction | null => {
-  switch (subcommand) {
-    case 'submit':
-    case 'accept':
-    case 'claim':
-    case 'approve':
-      return { type: subcommand };
-    case 'hand-back':
-      return { type: 'release' };
-    case 'changes':
-      return { type: 'changes', note: need(flags.note, 'note') };
-    case 'answer':
-      return answerFor(flags);
-    case 'decline':
-    case 'cancel':
-      return { type: subcommand, reason: need(flags.reason, 'reason') };
-    default:
-      return null;
-  }
+  // Only the table's own keys: a name like `constructor` is no subcommand.
+  if (subcommand === undefined || !Object.hasOwn(TASK_ACTIONS, subcommand)) return null;
+  return TASK_ACTIONS[subcommand]!(flags);
 };
 
 /** A task number a flag names, refused unless it is a positive integer. */
@@ -124,6 +133,7 @@ const main = async () => {
       reason: { type: 'string' },
       option: { type: 'string' },
       version: { type: 'string' },
+      tier: { type: 'string' },
       as: { type: 'string' },
       email: { type: 'string' },
       name: { type: 'string' },
@@ -257,15 +267,14 @@ const main = async () => {
 
     if (command === 'setup-agents') {
       const port = agentsPort();
-      const resolver = createModelResolver({
-        listModels: () => port.listModels(),
-        env: process.env,
-        log: (message, details) => console.log(message, JSON.stringify(details ?? {}))
-      });
-      const { changed } = await setupAgents(pool, port, PROMPTS_DIR, {
-        opus: (await resolver.resolve('opus')).id,
-        haiku: (await resolver.resolve('haiku')).id
-      });
+      const models = await resolveTiers(
+        createModelResolver({
+          listModels: () => port.listModels(),
+          env: process.env,
+          log: (message, details) => console.log(message, JSON.stringify(details ?? {}))
+        })
+      );
+      const { changed } = await setupAgents(pool, port, PROMPTS_DIR, models);
       console.log(
         changed.length ? `agents created or updated: ${changed.join(', ')}` : 'agents up to date'
       );

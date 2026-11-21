@@ -1,5 +1,6 @@
 import { ROLES, branchForTask } from '@officina/core';
 import { INVITE_TTL_DAYS, SIGN_IN_TTL_MINUTES } from './people';
+import { BY_RULE, MODEL_CHOICES } from './tasks';
 
 /** What the CLI takes, printed with `--help` and with every mistake in its arguments. */
 export const USAGE = `usage (on your machine, prefix with scripts/officina; on the server, with bun apps/api/src/cli.ts):
@@ -29,6 +30,9 @@ export const USAGE = `usage (on your machine, prefix with scripts/officina; on t
                                                and version task show gives, with --text as a note
     task decline  --number <n> --reason "<why>"
     task cancel   --number <n> --reason "<why>"
+    task force-model --number <n> --tier ${MODEL_CHOICES.join('|')}
+                                               with steer: every agent step on the task runs on that
+                                               tier instead of the one the rule picks; ${BY_RULE} gives it back
     task link     --number <n> [--parent <p>] [--after <m> ...]   sets the task's parent and the tasks it waits for, replacing earlier links; with neither, it removes them
 
     Every task command also takes --repo <owner/name> (optional with a single project)

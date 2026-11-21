@@ -10,6 +10,7 @@ import {
   insertLearnings,
   listLearnings,
   lockTaskLinks,
+  recordRunModel,
   renameMember,
   specShapeFor,
   startRun
@@ -82,6 +83,87 @@ describe('run log', () => {
     expect((entries[2] as { text: string }).text).toContain('1000 more characters');
     expect(entries[3]).toMatchObject({ outcome: 'pushed' });
   });
+
+  test("keeps what a role asks its reading worker and the answer, on the worker's thread", () => {
+    const at = new Date();
+    const entries = logEntries([
+      {
+        id: '1',
+        type: 'agent.thread_message_sent',
+        payload: {
+          to_session_thread_id: 'sthr_1',
+          to_agent_name: 'officina-reader',
+          content: [{ type: 'text', text: 'Where is `clip` defined?' }]
+        },
+        createdAt: at
+      },
+      {
+        id: '2',
+        type: 'session.thread_created',
+        payload: { session_thread_id: 'sthr_1', agent_name: 'officina-reader' },
+        createdAt: at
+      },
+      {
+        id: '3',
+        type: 'session.thread_status_running',
+        payload: { session_thread_id: 'sthr_1', agent_name: 'officina-reader' },
+        createdAt: at
+      },
+      {
+        id: '4',
+        type: 'agent.thread_message_received',
+        payload: {
+          from_session_thread_id: 'sthr_1',
+          from_agent_name: 'officina-reader',
+          content: [{ type: 'text', text: 'y'.repeat(21_000) }]
+        },
+        createdAt: at
+      },
+      {
+        id: '5',
+        type: 'session.thread_status_idle',
+        payload: { session_thread_id: 'sthr_1', agent_name: 'officina-reader' },
+        createdAt: at
+      },
+      {
+        id: '6',
+        type: 'agent.thread_message_sent',
+        payload: {
+          to_session_thread_id: 'sthr_2',
+          content: [{ type: 'text', text: 'And tests?' }]
+        },
+        createdAt: at
+      }
+    ]);
+    expect(entries).toEqual([
+      {
+        id: '1',
+        at,
+        kind: 'thread',
+        direction: 'question',
+        thread: 'sthr_1',
+        agent: 'officina-reader',
+        text: 'Where is `clip` defined?'
+      },
+      expect.objectContaining({
+        id: '4',
+        kind: 'thread',
+        direction: 'answer',
+        thread: 'sthr_1',
+        agent: 'officina-reader'
+      }),
+      {
+        id: '6',
+        at,
+        kind: 'thread',
+        direction: 'question',
+        thread: 'sthr_2',
+        agent: null,
+        text: 'And tests?'
+      }
+    ]);
+    expect((entries[1] as { text: string }).text).toContain('1000 more characters');
+  });
 });
 
 describe('agents page', () => {
@@ -94,6 +176,7 @@ describe('agents page', () => {
     agentVersion: 1,
     stage: 'building',
     status,
+    model: null,
     costCents,
     // In proportion to the cost, so each role's totals are easy to read off.
     tokens:
@@ -440,7 +523,7 @@ describe.skipIf(!url)('board api', () => {
     ]);
     expect(task.events.map((event: { type: string }) => event.type)).toContain('stage_changed');
     expect(task.waitingOn).toMatchObject({ kind: 'agent', me: false });
-    expect(task.actions).toEqual(['cancel', 'comment']);
+    expect(task.actions).toEqual(['cancel', 'force_model', 'comment']);
   });
 
   test('every member sees every task in the project, with who asked and who approves', async () => {
@@ -1620,6 +1703,59 @@ describe.skipIf(!url)('board api', () => {
       expect(view.waitingOn).toEqual({ kind: 'people', label: 'A question for Gio', me: true });
   });
 
+  test('a forced model tier is set from the board by whoever may steer, and only they read it', async () => {
+    const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    const contributor = await signIn(
+      await invite(pool, {
+        publicUrl: PUBLIC_URL,
+        email: 'gio@example.com',
+        name: 'Gio',
+        role: 'contributor',
+        domains: []
+      })
+    );
+    await createRequest(pool, { title: 'Rename the Wager button', request: 'Say Prediction.' });
+    const project = `/api/projects/${seeded.projectId}`;
+    const force = (cookie: string, tier: string | null) =>
+      call(cookie, `${project}/tasks/1/actions`, { type: 'force_model', tier });
+    const views = async (cookie: string) => {
+      const task = await json(await call(cookie, `${project}/tasks/1`));
+      const card = (await json(await call(cookie, `${project}/board`))).tasks.find(
+        (item: { number: number }) => item.number === 1
+      );
+      return { task, card };
+    };
+
+    expect((await force(contributor, 'opus')).status).toBe(409);
+    expect((await force(owner, 'gpt')).status).toBe(400);
+    expect((await force(owner, 'opus')).status).toBe(200);
+
+    const forOwner = await views(owner);
+    expect(forOwner.card.forcedModel).toEqual({ tier: 'opus', label: 'Opus' });
+    expect(forOwner.task.forcedModel).toEqual({ tier: 'opus', label: 'Opus' });
+    expect(forOwner.task.modelTiers.map((option: { tier: string }) => option.tier)).toEqual([
+      'haiku',
+      'sonnet',
+      'opus'
+    ]);
+    expect(forOwner.task.actions).toContain('force_model');
+    expect(
+      forOwner.task.events.find((event: { type: string }) => event.type === 'model_forced')?.payload
+    ).toEqual({ from: null, to: 'opus' });
+
+    const forContributor = await views(contributor);
+    expect(forContributor.card.forcedModel).toBeNull();
+    expect(forContributor.task.modelTiers).toEqual([]);
+    expect(forContributor.task.actions).not.toContain('force_model');
+    expect(
+      forContributor.task.events.find((event: { type: string }) => event.type === 'model_forced')
+        ?.payload
+    ).toEqual({});
+
+    expect((await force(owner, null)).status).toBe(200);
+    expect((await views(owner)).card.forcedModel).toBeNull();
+  });
+
   test("an owner of one project cannot read, act on or decide another project's work", async () => {
     const cookie = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
     // A real second project in the same workspace, owned by someone else, with a task, a run and a learning.
@@ -1782,6 +1918,31 @@ describe.skipIf(!url)('board api', () => {
     const task = await json(await call(owner, `/api/projects/${seeded.projectId}/tasks/1`));
     expect(task.learningPullRequests).toMatchObject([{ number: 1498, state: 'merged' }]);
     expect(task.waitingOn.kind).toBe('nobody');
+  });
+
+  test('a run shows the model its session ran at, the effort and why', async () => {
+    const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    await createRequest(pool, {
+      title: 'Rename settings',
+      request: 'Call it Preferences.',
+      skipInterview: true
+    });
+    const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
+    const run = await startRun(pool, {
+      taskId,
+      stage: 'speccing',
+      role: 'spec',
+      agentVersion: 1,
+      runner: 'managed_agents'
+    });
+    if (!run.ok) throw new Error('run not started');
+    await recordRunModel(pool, run.runId, {
+      model: 'claude-opus-5-5',
+      effort: 'high',
+      reason: 'red lane'
+    });
+    const { runs } = await json(await call(owner, `/api/projects/${seeded.projectId}/runs`));
+    expect(runs[0].model).toEqual({ id: 'claude-opus-5-5', effort: 'high', reason: 'red lane' });
   });
 
   test('contributors get the decisions and the trail, not agent runs, costs or learnings', async () => {

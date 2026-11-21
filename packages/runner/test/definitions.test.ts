@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import { isBuildRole } from '@officina/core';
 import {
+  PINNED_MODELS,
   READER_NAME,
   READER_ROLES,
   RESULT_TOOL,
@@ -58,10 +59,23 @@ describe('agent definitions', () => {
     expect(buildDefinition('spec', 'a').hash).toBe(buildDefinition('spec', 'a').hash);
   });
 
-  test('the model carries an explicit effort, and a new model id means a new version', () => {
-    const definition = buildDefinition('builder', 'prompt', 'claude-opus-6');
-    expect(definition.model).toEqual({ id: 'claude-opus-6', effort: 'high' });
-    expect(definition.hash).not.toBe(buildDefinition('builder', 'prompt', 'claude-opus-5-5').hash);
+  test("each role's agent runs on its own tier at an explicit effort, and a new id means a new version", () => {
+    const models = { haiku: 'claude-haiku-6', sonnet: 'claude-sonnet-6', opus: 'claude-opus-6' };
+    expect(buildDefinition('builder', 'prompt', models).model).toEqual({
+      id: 'claude-sonnet-6',
+      effort: 'medium'
+    });
+    expect(buildDefinition('chooser', 'prompt', models).model).toEqual({
+      id: 'claude-haiku-6',
+      effort: 'low'
+    });
+    expect(buildDefinition('builder', 'prompt', models).hash).not.toBe(
+      buildDefinition('builder', 'prompt', PINNED_MODELS).hash
+    );
+    // A tier the role does not run on changes nothing.
+    expect(
+      buildDefinition('builder', 'prompt', { ...PINNED_MODELS, opus: 'claude-opus-7' }).hash
+    ).toBe(buildDefinition('builder', 'prompt', PINNED_MODELS).hash);
   });
 
   test('every runner role has a checked-in prompt', async () => {
@@ -83,11 +97,10 @@ describe('agent definitions', () => {
   });
 
   test('the builder and the correctness reviewer hand reading to the reader, the rest read alone', async () => {
-    const definitions = await loadDefinitions(
-      join(import.meta.dir, '..', '..', '..', 'agents'),
-      'claude-opus-5-5',
-      'claude-haiku-6'
-    );
+    const definitions = await loadDefinitions(join(import.meta.dir, '..', '..', '..', 'agents'), {
+      ...PINNED_MODELS,
+      haiku: 'claude-haiku-6'
+    });
     expect(definitions.filter((definition) => definition.reader).map((d) => d.role)).toEqual([
       ...READER_ROLES
     ]);
@@ -117,11 +130,11 @@ describe('agent definitions', () => {
   test('a changed reader is a new version of the roles that use it, and of no other', () => {
     const one = buildReaderDefinition('v1');
     const two = buildReaderDefinition('v2');
-    expect(buildDefinition('builder', 'p', 'm', one).hash).not.toBe(
-      buildDefinition('builder', 'p', 'm', two).hash
+    expect(buildDefinition('builder', 'p', PINNED_MODELS, one).hash).not.toBe(
+      buildDefinition('builder', 'p', PINNED_MODELS, two).hash
     );
-    expect(buildDefinition('builder', 'p', 'm', one).hash).not.toBe(
-      buildDefinition('builder', 'p', 'm').hash
+    expect(buildDefinition('builder', 'p', PINNED_MODELS, one).hash).not.toBe(
+      buildDefinition('builder', 'p', PINNED_MODELS).hash
     );
     expect(buildDefinition('spec', 'p').reader).toBeNull();
   });
@@ -193,8 +206,8 @@ describe('syncAgents', () => {
 describe('syncAgents with a reader', () => {
   const reader = buildReaderDefinition('read v1');
   const leads = (shared = reader) => [
-    buildDefinition('builder', 'b', 'claude-opus-5-5', shared),
-    buildDefinition('reviewer_correctness', 'r', 'claude-opus-5-5', shared),
+    buildDefinition('builder', 'b', PINNED_MODELS, shared),
+    buildDefinition('reviewer_correctness', 'r', PINNED_MODELS, shared),
     buildDefinition('spec', 's')
   ];
 

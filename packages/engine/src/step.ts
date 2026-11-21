@@ -14,6 +14,7 @@ import { type GitHubClient } from '@officina/github';
 import {
   describeOutcome,
   type ManagedAgentsPort,
+  type ModelResolver,
   type RunnerRole,
   type RunReport
 } from '@officina/runner';
@@ -45,6 +46,8 @@ export interface EngineDependencies {
   readonly pool: Pool;
   readonly github: GitHubPort;
   readonly agents: ManagedAgentsPort;
+  /** The id behind each model tier; without one, the pinned ids (`PINNED_RESOLVER`). */
+  readonly models?: ModelResolver | undefined;
   /** Where people open a task, e.g. `https://officina.example`; task links in pull requests use it. */
   readonly publicUrl: string;
   /** Officina's own role prompts, so the learner's edits to them can be checked before people see them. */

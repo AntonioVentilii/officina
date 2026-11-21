@@ -30,6 +30,7 @@ export interface BoardTaskRow {
   readonly diffAllowance: Task['diffAllowance'];
   readonly mergedEarly: Task['mergedEarly'];
   readonly splitProposed: boolean;
+  readonly forcedModel: Task['forcedModel'];
   readonly pullRequest: number | null;
   readonly costCents: number;
   readonly runningRoles: readonly string[];
@@ -54,7 +55,7 @@ const BOARD_COLUMNS = `
   m.display_name as "requesterName", t.spec_version as "specVersion", t.head_sha as "headSha",
   t.fix_rounds as "fixRounds", t.approval_plans as "approvalPlans", t.guards,
   t.diff_allowance as "diffAllowance", t.merged_early as "mergedEarly",
-  t.split_proposed as "splitProposed",
+  t.split_proposed as "splitProposed", t.forced_model as "forcedModel",
   t.github_pr as "pullRequest",
   coalesce((select sum(r.list_cost_cents) from runs r where r.task_id = t.id), 0)::int as "costCents",
   coalesce(
@@ -167,6 +168,8 @@ export interface RunRow {
   readonly role: string;
   readonly agentVersion: number;
   readonly status: string;
+  /** What the session ran at and why; `null` for runs from before the engine chose per step. */
+  readonly model: { readonly id: string; readonly effort: string; readonly reason: string } | null;
   readonly costCents: number | null;
   /** None for a run whose session usage was never read. */
   readonly tokens: RunTokens | null;
@@ -181,6 +184,8 @@ export interface RunRow {
 const RUN_COLUMNS = `
   r.id, r.task_id as "taskId", t.number as "taskNumber", t.title as "taskTitle", r.stage,
   r.agent_role as role, r.agent_version as "agentVersion", r.status,
+  case when r.model is null then null
+    else json_build_object('id', r.model, 'effort', r.effort, 'reason', r.model_reason) end as model,
   r.list_cost_cents as "costCents", r.external_id as "sessionId", r.result,
   case when r.input_tokens is not null then json_build_object(
     'input', r.input_tokens, 'output', r.output_tokens,
@@ -295,12 +300,19 @@ export const listProjectMemberProfiles = async (db: Queryable, projectId: string
     )
   ).rows;
 
-/** The changed paths of the task's latest push, as the engine read them from GitHub. */
-export const latestPushedPaths = async (db: Queryable, taskId: string): Promise<string[]> =>
+/** The paths and size of the task's latest push, as the engine read them from GitHub. */
+export const latestPush = async (
+  db: Queryable,
+  taskId: string
+): Promise<{ changedPaths: string[]; diffLines: number } | null> =>
   (
-    await db.query<{ paths: string[] }>(
-      `select payload->'changedPaths' as paths from task_events
-       where task_id = $1 and type = 'pushed' order by id desc limit 1`,
+    await db.query<{ changedPaths: string[]; diffLines: number }>(
+      `select payload->'changedPaths' as "changedPaths", (payload->>'diffLines')::int as "diffLines"
+       from task_events where task_id = $1 and type = 'pushed' order by id desc limit 1`,
       [taskId]
     )
-  ).rows[0]?.paths ?? [];
+  ).rows[0] ?? null;
+
+/** The changed paths of the task's latest push, as the engine read them from GitHub. */
+export const latestPushedPaths = async (db: Queryable, taskId: string): Promise<string[]> =>
+  (await latestPush(db, taskId))?.changedPaths ?? [];

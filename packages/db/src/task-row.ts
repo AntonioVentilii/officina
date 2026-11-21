@@ -26,6 +26,7 @@ export interface TaskRow {
   diff_allowance: Task['diffAllowance'];
   merged_early: Task['mergedEarly'];
   split_proposed: boolean;
+  forced_model: Task['forcedModel'];
   version: number;
 }
 
@@ -49,6 +50,7 @@ export const toStored = (row: TaskRow): StoredTask => ({
     guards: row.guards,
     diffAllowance: row.diff_allowance,
     mergedEarly: row.merged_early,
-    splitProposed: row.split_proposed
+    splitProposed: row.split_proposed,
+    forcedModel: row.forced_model
   }
 });

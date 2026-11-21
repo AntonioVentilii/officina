@@ -1,27 +1,30 @@
 /*
  * The one place that knows which model id stands behind each tier. Each tier follows the newest
  * model of its family the Models API lists, so a new release reaches the agents on the next boot
- * without editing ids anywhere. Opus runs the roles; Haiku runs the reading worker they hand
- * exploration to.
+ * without editing ids anywhere. The engine picks a tier for each step; Haiku also runs the reading
+ * worker the builder and the correctness reviewer hand exploration to.
  */
 
-export type ModelTier = 'opus' | 'haiku';
+import type { ModelTier } from '@officina/core';
 
 /** Used when the Models API cannot be read or lists nothing for the tier. */
 export const PINNED_MODELS: Readonly<Record<ModelTier, string>> = {
-  opus: 'claude-opus-5-5',
-  haiku: 'claude-haiku-5-5'
+  haiku: 'claude-haiku-5-5',
+  sonnet: 'claude-sonnet-5-5',
+  opus: 'claude-opus-5-5'
 };
 
 const TIER_PREFIX: Readonly<Record<ModelTier, string>> = {
-  opus: 'claude-opus-',
-  haiku: 'claude-haiku-'
+  haiku: 'claude-haiku-',
+  sonnet: 'claude-sonnet-',
+  opus: 'claude-opus-'
 };
 
 /** An explicit id here wins over the lookup, e.g. to hold a new release back while it is checked. */
 export const MODEL_OVERRIDE_ENV: Readonly<Record<ModelTier, string>> = {
-  opus: 'ANTHROPIC_MODEL',
-  haiku: 'ANTHROPIC_HAIKU_MODEL'
+  haiku: 'ANTHROPIC_HAIKU_MODEL',
+  sonnet: 'ANTHROPIC_SONNET_MODEL',
+  opus: 'ANTHROPIC_MODEL'
 };
 
 export interface ListedModel {
@@ -37,6 +40,24 @@ export interface ResolvedModel {
 export interface ModelResolver {
   resolve(tier: ModelTier): Promise<ResolvedModel>;
 }
+
+/** The id of every tier, for the agents a sync writes. */
+export type TierModels = Readonly<Record<ModelTier, string>>;
+
+/** A resolver that never asks: every tier is its pinned id, for tests and local runs. */
+export const PINNED_RESOLVER: ModelResolver = {
+  resolve: async (tier) => ({ id: PINNED_MODELS[tier], source: 'pinned' })
+};
+
+/** Every tier's id, resolved through `resolver`. */
+export const resolveTiers = async (resolver: ModelResolver): Promise<TierModels> => {
+  const [haiku, sonnet, opus] = await Promise.all([
+    resolver.resolve('haiku'),
+    resolver.resolve('sonnet'),
+    resolver.resolve('opus')
+  ]);
+  return { haiku: haiku.id, sonnet: sonnet.id, opus: opus.id };
+};
 
 /** The most recently created model whose id starts with `prefix`, or null when none is listed. */
 export const newestModel = (models: readonly ListedModel[], prefix: string): string | null => {
