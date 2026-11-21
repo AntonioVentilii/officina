@@ -10,6 +10,7 @@ import {
   insertLearnings,
   listLearnings,
   lockTaskLinks,
+  recordRunModel,
   renameMember,
   specShapeFor,
   startRun
@@ -175,6 +176,7 @@ describe('agents page', () => {
     agentVersion: 1,
     stage: 'building',
     status,
+    model: null,
     costCents,
     // In proportion to the cost, so each role's totals are easy to read off.
     tokens:
@@ -458,7 +460,12 @@ describe.skipIf(!url)('board api', () => {
     const me = await json(await call(cookie, '/api/me'));
     expect(me.member.name).toBe('Antonio');
     expect(me.projects).toEqual([
-      expect.objectContaining({ id: seeded.projectId, repo: 'ViciApp/vici-app', role: 'owner' })
+      expect.objectContaining({
+        id: seeded.projectId,
+        repo: 'ViciApp/vici-app',
+        role: 'owner',
+        interviews: false
+      })
     ]);
     expect(me.limits.title).toEqual({ min: 3, max: 200 });
     expect(me.limits.prTitle).toEqual({ min: 3, max: 120 });
@@ -558,6 +565,12 @@ describe.skipIf(!url)('board api', () => {
       'approve_spec',
       'verify_result'
     ]);
+    expect(me.projects[0].interviews).toBe(true);
+    await pool.query(
+      `update projects set config = jsonb_set(config, '{intake}', '{"interview": false}') where id = $1`,
+      [seeded.projectId]
+    );
+    expect((await json(await call(tim, '/api/me'))).projects[0].interviews).toBeNull();
     expect((await json(await call(watcher, '/api/me'))).projects[0].can).toEqual(['see']);
 
     const task = await json(await call(tim, `/api/projects/${seeded.projectId}/tasks/1`));
@@ -1852,6 +1865,31 @@ describe.skipIf(!url)('board api', () => {
     const task = await json(await call(owner, `/api/projects/${seeded.projectId}/tasks/1`));
     expect(task.learningPullRequests).toMatchObject([{ number: 1498, state: 'merged' }]);
     expect(task.waitingOn.kind).toBe('nobody');
+  });
+
+  test('a run shows the model its session ran at, the effort and why', async () => {
+    const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    await createRequest(pool, {
+      title: 'Rename settings',
+      request: 'Call it Preferences.',
+      skipInterview: true
+    });
+    const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
+    const run = await startRun(pool, {
+      taskId,
+      stage: 'speccing',
+      role: 'spec',
+      agentVersion: 1,
+      runner: 'managed_agents'
+    });
+    if (!run.ok) throw new Error('run not started');
+    await recordRunModel(pool, run.runId, {
+      model: 'claude-opus-5-5',
+      effort: 'high',
+      reason: 'red lane'
+    });
+    const { runs } = await json(await call(owner, `/api/projects/${seeded.projectId}/runs`));
+    expect(runs[0].model).toEqual({ id: 'claude-opus-5-5', effort: 'high', reason: 'red lane' });
   });
 
   test('contributors get the decisions and the trail, not agent runs, costs or learnings', async () => {

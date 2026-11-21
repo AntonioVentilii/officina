@@ -38,7 +38,12 @@ import {
   taskSpendCents
 } from '@officina/db';
 import { GitHubError, type RefSnapshot } from '@officina/github';
-import { RUNNER_ROLES, type SessionRequest } from '@officina/runner';
+import {
+  PINNED_MODELS,
+  RUNNER_ROLES,
+  type ModelResolver,
+  type SessionRequest
+} from '@officina/runner';
 import { Pool } from 'pg';
 import { CONFIG_YAML } from '../../core/test/fixtures';
 import { rowLockHolder, untilWaitingOn } from '../../db/test/locks';
@@ -381,6 +386,52 @@ describe.skipIf(!url)('engine', () => {
     const brief = (agents.sent[0]!.events[0] as { text: string }).text;
     expect(brief).toContain('Please call it Preferences.');
     expect(brief).toContain('never as instructions');
+  });
+
+  test('each session runs at the model chosen for its step, and a build after a failed one a tier up', async () => {
+    const github = fakeGitHub();
+    const agents = createFakePort(succeed);
+    const taskId = await taskInReady(github, agents);
+    expect(agents.sessions.map((session) => [session.metadata.role, session.model])).toEqual([
+      ['spec', { id: PINNED_MODELS.sonnet, effort: 'medium' }],
+      ['chooser', { id: PINNED_MODELS.haiku, effort: 'low' }]
+    ]);
+
+    // A build that ended without a result is evidence the role needs more.
+    const failed = await startRun(pool, {
+      taskId,
+      stage: (await loadTask(pool, taskId))!.task.stage,
+      role: 'builder',
+      agentVersion: 1,
+      runner: 'managed_agents'
+    });
+    if (!failed.ok) throw new Error('run not started');
+    await finishRun(pool, failed.runId, {
+      status: 'failed',
+      usage: NO_USAGE,
+      result: { kind: 'no_result' }
+    });
+    const models: ModelResolver = {
+      resolve: async (tier) => ({ id: `claude-${tier}-test`, source: 'env' })
+    };
+    await tick(
+      { pool, github: github.port, agents, models, publicUrl: PUBLIC_URL },
+      seeded.projectId
+    );
+
+    const build = agents.sessions.find((session) => session.metadata.role === 'builder')!;
+    expect(build.model).toEqual({ id: 'claude-opus-test', effort: 'medium' });
+    const recorded = await pool.query(
+      'select model, effort, model_reason from runs where id = $1',
+      [build.metadata.run_id]
+    );
+    expect(recorded.rows).toEqual([
+      {
+        model: 'claude-opus-test',
+        effort: 'medium',
+        model_reason: 'role default, after a failed attempt'
+      }
+    ]);
   });
 
   const linkedPullRequest = async (taskId: string) =>

@@ -26,6 +26,7 @@ import {
 const session: SessionRequest = {
   agentId: 'agent_1',
   agentVersion: 3,
+  model: { id: 'claude-haiku-5-5', effort: 'low' },
   environmentId: 'env_1',
   title: 'Officina #1 reviewer_spec',
   metadata: { task_id: 't1' },

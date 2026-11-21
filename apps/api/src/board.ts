@@ -958,6 +958,7 @@ const runView = (run: RunRow, consoleWorkspace: string | undefined) => ({
   agentVersion: run.agentVersion,
   stage: run.stage,
   status: run.status,
+  model: run.model,
   costCents: run.costCents,
   tokens: run.tokens,
   startedAt: run.startedAt,

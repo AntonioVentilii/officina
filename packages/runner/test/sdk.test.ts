@@ -81,12 +81,13 @@ describe('the SDK port', () => {
     return { port: createSdkPort(client), calls };
   };
 
-  test('creates a session on the agent version, the repository branch and a budget in cents', async () => {
+  test('creates a session on the agent version at the chosen model, the repository branch and a budget in cents', async () => {
     const { port, calls } = fakeClient();
     expect(
       await port.createSession({
         agentId: 'agent_builder',
         agentVersion: 3,
+        model: { id: 'claude-sonnet-5-5', effort: 'medium' },
         environmentId: 'env_1',
         title: 'Officina #7 builder',
         metadata: { task_id: 't1', run_id: 'r1', role: 'builder' },
@@ -103,7 +104,13 @@ describe('the SDK port', () => {
         method: 'POST',
         path: '/v1/sessions',
         body: {
-          agent: { type: 'agent', id: 'agent_builder', version: 3 },
+          // The model replaces the agent's for this session only, effort included.
+          agent: {
+            type: 'agent_with_overrides',
+            id: 'agent_builder',
+            version: 3,
+            model: { id: 'claude-sonnet-5-5', effort: 'medium' }
+          },
           environment_id: 'env_1',
           title: 'Officina #7 builder',
           metadata: { task_id: 't1', run_id: 'r1', role: 'builder' },

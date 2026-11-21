@@ -1,8 +1,9 @@
 import type { ChecklistView } from './checklist';
 import type { LearningPullRequest } from './learning-types';
+import type { Run } from './run-types';
 
 export type * from './learning-types';
-export type * from './log-types';
+export type * from './run-types';
 
 export type Stage =
   | 'request'
@@ -70,6 +71,11 @@ export interface Project {
   readonly domains: readonly string[];
   readonly look: Look;
   readonly can: readonly Permission[];
+  /**
+   * Whether a new request from this member is interviewed unless they say otherwise; `null` when
+   * the project interviews nobody, so the form offers no choice.
+   */
+  readonly interviews: boolean | null;
 }
 
 export type Look = 'fucina' | 'modernista' | 'tecnica';
@@ -139,46 +145,6 @@ export interface Card {
   readonly waitingOn: WaitingOn;
   /** What the task touches that only the owner may let through, in words. */
   readonly guards: readonly string[];
-}
-
-/** What a run's session read and wrote, in tokens; cache writes of every lifetime are one count. */
-export interface RunTokens {
-  readonly input: number;
-  readonly output: number;
-  readonly cacheRead: number;
-  readonly cacheWrite: number;
-}
-
-/** A role on the Agents page, with its numbers over the runs the page lists. */
-export interface AgentRoleInfo {
-  readonly role: string;
-  readonly label: string;
-  readonly does: string;
-  readonly running: boolean;
-  readonly runs: number;
-  /** The share of its finished runs that succeeded, in percent; null before one finishes. */
-  readonly success: number | null;
-  readonly costCents: number;
-  readonly tokens: RunTokens;
-}
-
-export interface Run {
-  readonly id: string;
-  readonly taskNumber: number;
-  readonly taskTitle: string;
-  readonly role: string;
-  readonly label: string;
-  readonly agentVersion: number;
-  readonly stage: string;
-  readonly status: 'running' | 'succeeded' | 'failed' | 'cancelled';
-  readonly costCents: number | null;
-  /** None while the run is going, or when its session's usage could not be read. */
-  readonly tokens: RunTokens | null;
-  readonly startedAt: string | null;
-  readonly finishedAt: string | null;
-  readonly eventCount: number;
-  readonly consoleUrl: string | null;
-  readonly result: unknown;
 }
 
 export interface TaskEvent {

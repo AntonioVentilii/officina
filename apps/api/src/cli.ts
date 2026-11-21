@@ -1,6 +1,11 @@
 import { parseArgs } from 'node:util';
 import { createGitHubClient } from '@officina/github';
-import { PROMPTS_DIR, anthropicAuthFrom, createModelResolver } from '@officina/runner';
+import {
+  PROMPTS_DIR,
+  anthropicAuthFrom,
+  createModelResolver,
+  resolveTiers
+} from '@officina/runner';
 import { Pool } from 'pg';
 import { createAgentsPort } from './engine';
 import { USAGE } from './cli-usage';
@@ -133,6 +138,7 @@ const main = async () => {
       parent: { type: 'string' },
       after: { type: 'string', multiple: true },
       'skip-interview': { type: 'boolean' },
+      interview: { type: 'boolean' },
       help: { type: 'boolean', short: 'h' }
     }
   });
@@ -166,7 +172,7 @@ const main = async () => {
             ...target,
             title: need(values.title, 'title'),
             request: need(values.request, 'request'),
-            skipInterview: values['skip-interview']
+            skipInterview: values['skip-interview'] || (values.interview ? false : undefined)
           });
           console.log(
             created.stage === 'request'
@@ -256,15 +262,14 @@ const main = async () => {
 
     if (command === 'setup-agents') {
       const port = agentsPort();
-      const resolver = createModelResolver({
-        listModels: () => port.listModels(),
-        env: process.env,
-        log: (message, details) => console.log(message, JSON.stringify(details ?? {}))
-      });
-      const { changed } = await setupAgents(pool, port, PROMPTS_DIR, {
-        opus: (await resolver.resolve('opus')).id,
-        haiku: (await resolver.resolve('haiku')).id
-      });
+      const models = await resolveTiers(
+        createModelResolver({
+          listModels: () => port.listModels(),
+          env: process.env,
+          log: (message, details) => console.log(message, JSON.stringify(details ?? {}))
+        })
+      );
+      const { changed } = await setupAgents(pool, port, PROMPTS_DIR, models);
       console.log(
         changed.length ? `agents created or updated: ${changed.join(', ')}` : 'agents up to date'
       );
