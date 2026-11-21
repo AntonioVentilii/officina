@@ -1015,7 +1015,8 @@ const answered = (
 const merged = (
   task: Task,
   command: Extract<Command, { type: 'merged' }>,
-  actor: Actor
+  actor: Actor,
+  context: DecideContext
 ): Decision => {
   if (task.stage === 'merging') return mergedAtMerging(task, actor);
   if (actor.kind !== 'engine') return fail('not_allowed');
@@ -1023,7 +1024,8 @@ const merged = (
   // A redelivered webhook or a second catch-up finds it already recorded.
   if (task.mergedEarly) return fail('merged_early');
   const { pullRequest, by, at } = command;
-  return ok(...heldAfterEarlyMerge(task, { pullRequest, by, at, stage: task.stage }));
+  const merge = { pullRequest, by, at, stage: task.stage };
+  return ok(...heldAfterEarlyMerge(task, merge, ownerDecidesEarlyMerge(task, context)));
 };
 
 /** The task's own merge, the end of it, as before: a held or paused task waits for its hold. */
@@ -1036,19 +1038,31 @@ const mergedAtMerging = (task: Task, actor: Actor): Decision => {
 };
 
 /**
- * Records the early merge and holds the task, which stops every agent step, for the owner when the
- * task needs them at its gates, otherwise for any maintainer. A question it already held can no
- * longer be answered, so only its words are kept, after the merge's.
+ * Whether only the owner may close a task whose pull request merged early: the result's check it
+ * skipped asks for them (by the lane's policy, the chooser's plan or the task's guards), or the task
+ * already waits on them. Closing it stands in for that check, so nobody below it may.
  */
-const heldAfterEarlyMerge = (task: Task, mergedEarly: MergedEarly): [Task, DomainEvent[]] => {
+const ownerDecidesEarlyMerge = (task: Task, context: DecideContext): boolean =>
+  heldForOwner(task.blocked) ||
+  applicableRequirements(effectivePolicy(context.config, task, 'verifying'), task.userVisible).some(
+    (requirement) => 'role' in requirement && requirement.role === PERMISSIONS.publish
+  );
+
+/**
+ * Records the early merge and holds the task, which stops every agent step, for the owner when
+ * `forOwner`, otherwise for any maintainer. A question it already held can no longer be answered,
+ * so only its words are kept, after the merge's.
+ */
+const heldAfterEarlyMerge = (
+  task: Task,
+  mergedEarly: MergedEarly,
+  forOwner: boolean
+): [Task, DomainEvent[]] => {
   const question = [
     `${mergedEarlyText(mergedEarly)} Officina stopped the agents' work on it and never undoes a merge. Close the task as done with a reason, which records that it skipped verification, or cancel it.`,
     ...(task.blocked ? [task.blocked.question] : [])
   ].join('\n\n');
-  const askedOf: Blocked['askedOf'] =
-    needsOwner(task) || heldForOwner(task.blocked)
-      ? { role: PERMISSIONS.publish }
-      : { role: 'maintainer' };
+  const askedOf: Blocked['askedOf'] = { role: forOwner ? PERMISSIONS.publish : 'maintainer' };
   const blocked: Blocked = { question, askedOf };
   return [
     { ...task, mergedEarly, blocked },
@@ -1382,7 +1396,7 @@ export const decide = (
     }
 
     case 'merged':
-      return merged(task, command, actor);
+      return merged(task, command, actor, context);
 
     case 'close_merged':
       return closedMerged(task, command, memberFor(actor, context));

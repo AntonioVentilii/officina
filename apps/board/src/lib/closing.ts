@@ -11,8 +11,8 @@ const CLOSED_AS: Readonly<Record<string, string>> = {
 
 /**
  * The timeline's sentences for how a task closed: declined, cancelled or closed as done with a
- * reason, and a pull request merged on GitHub before people verified it, by whom and when when
- * GitHub said.
+ * reason, and a pull request merged on GitHub before people verified it, with who merged it and
+ * when, if GitHub said.
  */
 export const CLOSING_SENTENCES: Readonly<Record<string, (payload: Payload) => string>> = {
   closed: (payload) =>

@@ -130,7 +130,7 @@ back another person's build the same way.
 8. **Merge on GitHub.** Approve and merge the pull request as usual; the webhook closes the task.
    A pull request merged before the task reached this step (while it was still built, reviewed or
    verified) is not undone: the task stops there, says who merged it and when, and waits for a
-   maintainer (or the owner, on a task that needs them) to close it as done on the board with a
+   maintainer (or the owner, when the result's check asks for them) to close it as done on the board with a
    reason, which records that it skipped verification, or to cancel it.
 
 To stop a task at any time: `scripts/officina task cancel --number 1 --reason "Why"`.

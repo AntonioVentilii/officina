@@ -2185,20 +2185,21 @@ describe('guarded tasks', () => {
 
 describe('a pull request merged before its task reached merging', () => {
   const maintainer: Member = { id: 'marta', role: 'maintainer', domains: [] };
+  const contributor: Member = { id: 'cora', role: 'contributor', domains: [] };
   const MERGE = {
     type: 'merged',
     pullRequest: 42,
     by: 'octo-owner',
     at: '2026-11-20T12:35:07Z'
   } as const satisfies Command;
-  const team = () => createDriver([owner, maintainer, productContributor]);
+  const team = () => createDriver([owner, maintainer, contributor]);
   const pushed = (driver: Driver) =>
     driver.step(
-      dispatchAgent(driver, toReady(driver, PAGE_PATHS)),
+      dispatchAgent(driver, toReady(driver, COPY_PATHS)),
       {
         type: 'push',
         headSha: 'abc',
-        changedPaths: PAGE_PATHS,
+        changedPaths: COPY_PATHS,
         addedPaths: [],
         catalogPages: {},
         diffLines: 10
@@ -2246,9 +2247,9 @@ describe('a pull request merged before its task reached merging', () => {
     const reviewing = pushed(driver);
     const choosing = buildAndReview(
       driver,
-      dispatchAgent(driver, toReady(driver, PAGE_PATHS)),
+      dispatchAgent(driver, toReady(driver, COPY_PATHS)),
       'abc',
-      PAGE_PATHS
+      COPY_PATHS
     );
     expect(choosing.stage).toBe('choosing');
     const verifying = driver.step(
@@ -2264,7 +2265,7 @@ describe('a pull request merged before its task reached merging', () => {
       expect(held.blocked?.question).toContain(`(the task was at ${task.stage})`);
     }
     // Before the first push the task has no pull request that could have merged.
-    const building = dispatchAgent(driver, toReady(driver, PAGE_PATHS));
+    const building = dispatchAgent(driver, toReady(driver, COPY_PATHS));
     expect(driver.attempt(building, MERGE, engine)).toEqual({ ok: false, error: 'wrong_stage' });
   });
 
@@ -2291,12 +2292,35 @@ describe('a pull request merged before its task reached merging', () => {
     expect(merged.blocked?.askedOf).toEqual({ role: 'maintainer' });
   });
 
+  test('a task whose result check asks for the owner is asked of the owner', () => {
+    // The standard lane asks for the owner to check the result, so a maintainer may not stand in.
+    const driver = team();
+    const reviewing = driver.step(
+      dispatchAgent(driver, toReady(driver, PAGE_PATHS)),
+      {
+        type: 'push',
+        headSha: 'abc',
+        changedPaths: PAGE_PATHS,
+        addedPaths: [],
+        catalogPages: {},
+        diffLines: 10
+      },
+      asAgent('builder')
+    );
+    expect(reviewing.lane).toBe('standard');
+    const held = driver.step(reviewing, MERGE, engine);
+    expect(held.blocked?.askedOf).toEqual({ role: 'owner' });
+    expect(
+      driver.attempt(held, { type: 'close_merged', reason: 'shipped' }, asMember(maintainer))
+    ).toEqual({ ok: false, error: 'not_allowed' });
+  });
+
   test('a task held for the owner, or one that needs them, is asked of the owner', () => {
     const driver = team();
     const ownersHold = driver.step(
       pushed(driver),
       { type: 'guard_words', text: 'Make it public tonight.' },
-      asMember(productContributor)
+      asMember(contributor)
     );
     expect(ownersHold.blocked?.askedOf).toEqual({ role: 'owner' });
     const held = driver.step(ownersHold, MERGE, engine);
@@ -2326,7 +2350,7 @@ describe('a pull request merged before its task reached merging', () => {
     const driver = team();
     const held = driver.step(pushed(driver), MERGE, engine);
     const close = { type: 'close_merged', reason: 'Merged by hand, checked on main.' } as const;
-    expect(driver.attempt(held, close, asMember(productContributor))).toEqual({
+    expect(driver.attempt(held, close, asMember(contributor))).toEqual({
       ok: false,
       error: 'not_allowed'
     });
