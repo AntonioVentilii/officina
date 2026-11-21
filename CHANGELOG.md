@@ -1,5 +1,45 @@
 # Changelog
 
+## [1.17.0](https://github.com/AntonioVentilii/officina/compare/v1.16.0...v1.17.0) (2026-11-21)
+
+
+### Features
+
+* **core,api,board:** a maintainer's own request skips the interview unless they ask for one ([#323](https://github.com/AntonioVentilii/officina/issues/323)) ([0f5175a](https://github.com/AntonioVentilii/officina/commit/0f5175af65466ca1db90c7cfffbde77ca6fcd938))
+* **core,db,engine,api,board:** approve, change or keep whole a proposed split; approving opens its sub-tasks ([#328](https://github.com/AntonioVentilii/officina/issues/328)) ([d4b7773](https://github.com/AntonioVentilii/officina/commit/d4b77739a094c676bb796edd3ca998e083c04352))
+* **core,db,engine,api,board:** the spec agent proposes a split into ordered sub-tasks instead of one spec ([#317](https://github.com/AntonioVentilii/officina/issues/317)) ([ae56e42](https://github.com/AntonioVentilii/officina/commit/ae56e426c4fb535004a340dd5118ae6552db0c5b))
+* **core,db,github,api,board:** notice a task's pull request merged before its verification ([#316](https://github.com/AntonioVentilii/officina/issues/316)) ([f5ce7d7](https://github.com/AntonioVentilii/officina/commit/f5ce7d759295f810afad0e76d33915e17df4cf18))
+* **core,engine,api,board:** picking Split in the size check sends the task back for a proposed split ([#326](https://github.com/AntonioVentilii/officina/issues/326)) ([cfcdd7e](https://github.com/AntonioVentilii/officina/commit/cfcdd7e8067214180287807931cbe37e9fb5100c))
+* **core,engine:** plan a spec by rule when no chooser could change it ([#321](https://github.com/AntonioVentilii/officina/issues/321)) ([b71ec9c](https://github.com/AntonioVentilii/officina/commit/b71ec9c7a102c11ddd36afe8e0b961a23959771e))
+* **core,runner,engine,db,api,board:** pick each step's model and effort from the task by rule ([#324](https://github.com/AntonioVentilii/officina/issues/324)) ([d24f350](https://github.com/AntonioVentilii/officina/commit/d24f3504e411bab329128111c18e5bc1ced0c25b))
+* **engine:** cap each run by its role and hold a task whose runs spent $20 ([#314](https://github.com/AntonioVentilii/officina/issues/314)) ([07a4437](https://github.com/AntonioVentilii/officina/commit/07a4437e600ac3f68407a70519f851a0a793aff5))
+* **runner,api:** the builder and the correctness reviewer hand their reading to a Haiku reader ([#322](https://github.com/AntonioVentilii/officina/issues/322)) ([9e98a76](https://github.com/AntonioVentilii/officina/commit/9e98a766eafda3f5e6288410b31b77c6eec22df2))
+* **runner,db,board:** record each run's tokens and show them per run and per role ([#320](https://github.com/AntonioVentilii/officina/issues/320)) ([b8d1415](https://github.com/AntonioVentilii/officina/commit/b8d1415b760cec691103c37294194f7a4b520c18))
+
+
+### Bug Fixes
+
+* **core,engine:** an allowed size takes the held head in instead of building it again ([#312](https://github.com/AntonioVentilii/officina/issues/312)) ([4b78cd9](https://github.com/AntonioVentilii/officina/commit/4b78cd9fce614faa881be780788df9b1ba411aed))
+* **core:** a review asking for changes waits for the other verdicts, so none is thrown away ([#313](https://github.com/AntonioVentilii/officina/issues/313)) ([76f3b0d](https://github.com/AntonioVentilii/officina/commit/76f3b0d91a10fbd6e7f8d07c9c51ad037e80773d))
+* **db,engine,api:** pausing a task stops the agent step already running, even once resumed ([#319](https://github.com/AntonioVentilii/officina/issues/319)) ([4ecb7d9](https://github.com/AntonioVentilii/officina/commit/4ecb7d90c3fff301321d20a28736faad6e95e3ca))
+* **db,engine:** a claim never starts a run on a task paused while it was in flight ([#327](https://github.com/AntonioVentilii/officina/issues/327)) ([f409b90](https://github.com/AntonioVentilii/officina/commit/f409b908e4e3836f33b6c55610de48a094527583))
+* **runner:** a closed event stream is opened again instead of ending the run ([#315](https://github.com/AntonioVentilii/officina/issues/315)) ([5ded3dc](https://github.com/AntonioVentilii/officina/commit/5ded3dc83ccd30fa04bb7828d2e96f220455abdc))
+
+
+### Performance Improvements
+
+* **engine:** agents read the repository by range and start from the spec and the diff ([#318](https://github.com/AntonioVentilii/officina/issues/318)) ([49d660d](https://github.com/AntonioVentilii/officina/commit/49d660dad1fdc0d0944e0bf36a4f132289f48fc1))
+
+
+### Tests
+
+* db` (441 pass), `bun run check:board`. ([9e98a76](https://github.com/AntonioVentilii/officina/commit/9e98a766eafda3f5e6288410b31b77c6eec22df2))
+
+
+### Build System
+
+* board`. ([0f5175a](https://github.com/AntonioVentilii/officina/commit/0f5175af65466ca1db90c7cfffbde77ca6fcd938))
+
 ## [1.16.0](https://github.com/AntonioVentilii/officina/compare/v1.15.0...v1.16.0) (2026-11-21)
 
 
