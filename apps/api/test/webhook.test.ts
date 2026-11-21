@@ -8,21 +8,28 @@ import {
   feedbackSinceLastPush,
   githubReviewsSinceLastPush,
   linkPullRequest,
+  listTaskEvents,
   loadTask,
   markDeliveryHandled,
   purgeOldDeliveries,
-  releaseDelivery
+  releaseDelivery,
+  setProjectRole,
+  upsertMember
 } from '@officina/db';
+import type { Role } from '@officina/core';
 import { forwardHeldReviews } from '@officina/engine';
 import { Pool } from 'pg';
 import {
   applyOrThrow,
   createTaskInMerging,
+  createTaskInReviewing,
   resetAndSeed,
   type Seeded
 } from '../../../packages/db/test/seed';
 import { catchUpPullRequests, createApp, type PullRequestReader } from '../src';
 import { MAX_REQUEST_BYTES } from '../src/app';
+import { taskView, type BoardViewer } from '../src/board';
+import { actOnTaskAs } from '../src/tasks';
 
 const url = process.env.TEST_DATABASE_URL;
 const SECRET = 'test-webhook-secret-with-enough-length';
@@ -691,6 +698,8 @@ describe.skipIf(!url)('api', () => {
         node_id: 'PR_42',
         state: 'open',
         merged: false,
+        merged_by: null,
+        merged_at: null,
         head: { sha: 'abc' }
       })
     };
@@ -945,7 +954,7 @@ describe.skipIf(!url)('api', () => {
         reads.push(pullRequest);
         const pr = states[pullRequest]!;
         if (pr instanceof Error) throw pr;
-        return { node_id: 'PR', head: { sha: 'abc' }, ...pr };
+        return { node_id: 'PR', head: { sha: 'abc' }, merged_by: null, merged_at: null, ...pr };
       }
     };
     const tasks: Record<number, string> = {};
@@ -973,6 +982,149 @@ describe.skipIf(!url)('api', () => {
     expect(await Promise.all(ids.map(eventCount))).toEqual(events);
   });
 
+  describe('a pull request merged before its task reached merging', () => {
+    const MERGED_AT = '2026-11-20T12:35:07Z';
+    const earlyMerge = {
+      action: 'closed',
+      pull_request: {
+        merged: true,
+        number: 42,
+        merged_by: { login: 'octo-owner' },
+        merged_at: MERGED_AT
+      },
+      repository
+    };
+
+    /** A member of the seeded project with `role`, as the board sees them. */
+    const join = async (email: string, role: Role): Promise<BoardViewer> => {
+      const { rows } = await pool.query<{ workspace_id: string }>(
+        'select workspace_id from projects where id = $1',
+        [seeded.projectId]
+      );
+      const workspaceId = rows[0]!.workspace_id;
+      const memberId = await upsertMember(pool, { workspaceId, email, displayName: email });
+      await setProjectRole(pool, { projectId: seeded.projectId, memberId, role });
+      return { memberId, workspaceId, projectId: seeded.projectId, role, domains: [] };
+    };
+
+    const reviewingWithPullRequest = async () => {
+      const taskId = await createTaskInReviewing(pool, seeded);
+      await linkPullRequest(pool, taskId, 42);
+      return taskId;
+    };
+
+    test('the catch-up holds it, says who merged it and when, and a maintainer closes it as done', async () => {
+      await pool.query('update projects set github_installation_id = 99 where id = $1', [
+        seeded.projectId
+      ]);
+      const maintainer = await join('marta@example.com', 'maintainer');
+      const contributor = await join('gio@example.com', 'contributor');
+      const taskId = await reviewingWithPullRequest();
+      const reads: number[] = [];
+      const github: PullRequestReader = {
+        fileContent: async () => null,
+        cancelAutoMerge: async () => {},
+        pullRequest: async ({ pullRequest }) => {
+          reads.push(pullRequest);
+          return {
+            node_id: 'PR',
+            head: { sha: 'abc' },
+            state: 'closed',
+            merged: true,
+            merged_by: { login: 'octo-owner' },
+            merged_at: MERGED_AT
+          };
+        }
+      };
+
+      expect(await catchUpPullRequests(pool, github, [taskId])).toEqual([]);
+      const held = (await loadTask(pool, taskId))?.task;
+      expect(held).toMatchObject({
+        stage: 'reviewing',
+        mergedEarly: { pullRequest: 42, by: 'octo-owner', at: MERGED_AT, stage: 'reviewing' },
+        blocked: { askedOf: { role: 'maintainer' } }
+      });
+
+      const seen = (await taskView(pool, maintainer, 1))!;
+      expect(seen.mergedEarly?.text).toContain(
+        'Pull request #42 was merged on GitHub by @octo-owner at 2026-11-20 12:35 UTC'
+      );
+      expect(seen.waitingOn).toEqual({
+        kind: 'people',
+        label: 'Merged on GitHub before verification: a maintainer decides',
+        me: true
+      });
+      expect(seen.actions).toContain('close_merged');
+      expect(seen.actions).not.toContain('answer');
+      const contributorSees = (await taskView(pool, contributor, 1))!;
+      expect(contributorSees.mergedEarly?.text).toContain('@octo-owner');
+      expect(contributorSees.waitingOn.me).toBe(false);
+      expect(contributorSees.actions).not.toContain('close_merged');
+      expect(
+        contributorSees.events.find((event) => event.type === 'pull_request_merged_early')?.payload
+      ).toEqual({ pullRequest: 42, by: 'octo-owner', at: MERGED_AT, stage: 'reviewing' });
+
+      // Recorded once: later passes read nothing from GitHub and add nothing.
+      const events = await eventCount(taskId);
+      reads.length = 0;
+      expect(await catchUpPullRequests(pool, github, [taskId])).toEqual([]);
+      expect(reads).toEqual([]);
+      expect(await eventCount(taskId)).toBe(events);
+
+      const reason = 'Merged by hand; checked on main.';
+      await expect(
+        actOnTaskAs(pool, {
+          projectId: seeded.projectId,
+          memberId: contributor.memberId,
+          number: 1,
+          action: { type: 'close_merged', reason }
+        })
+      ).rejects.toThrow('you do not have the role needed for that');
+      expect(
+        await actOnTaskAs(pool, {
+          projectId: seeded.projectId,
+          memberId: maintainer.memberId,
+          number: 1,
+          action: { type: 'close_merged', reason }
+        })
+      ).toEqual({ stage: 'done' });
+      const history = await listTaskEvents(pool, taskId);
+      const types = history.map((event) => event.type);
+      expect(types.indexOf('pull_request_merged_early')).toBeLessThan(types.indexOf('closed'));
+      expect(history.find((event) => event.type === 'closed')).toMatchObject({
+        actor: { kind: 'member', memberId: maintainer.memberId },
+        payload: { stage: 'done', reason }
+      });
+    });
+
+    test('the webhook gives the same hold, and a redelivery changes nothing', async () => {
+      const taskId = await reviewingWithPullRequest();
+      const first = await deliver(app, {
+        event: 'pull_request',
+        payload: earlyMerge,
+        delivery: 'd-early'
+      });
+      expect(await first.json()).toEqual({ status: 'applied', outcomes: [{ taskId, ok: true }] });
+      expect((await loadTask(pool, taskId))?.task).toMatchObject({
+        stage: 'reviewing',
+        mergedEarly: { by: 'octo-owner', at: MERGED_AT },
+        blocked: { askedOf: { role: 'maintainer' } }
+      });
+
+      const events = await eventCount(taskId);
+      const again = await deliver(app, {
+        event: 'pull_request',
+        payload: earlyMerge,
+        delivery: 'd-early-again'
+      });
+      expect(await again.json()).toEqual({
+        status: 'applied',
+        outcomes: [{ taskId, ok: false, error: 'merged_early' }]
+      });
+      expect(await eventCount(taskId)).toBe(events);
+    });
+  });
+
   test('a pull request closed before the task reached merging is caught up too', async () => {
     await pool.query('update projects set github_installation_id = 99 where id = $1', [
       seeded.projectId
@@ -984,7 +1136,9 @@ describe.skipIf(!url)('api', () => {
         node_id: 'PR',
         head: { sha: 'abc' },
         state: 'closed',
-        merged: false
+        merged: false,
+        merged_by: null,
+        merged_at: null
       })
     };
     const ids: string[] = [];

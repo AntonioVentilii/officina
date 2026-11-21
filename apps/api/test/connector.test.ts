@@ -13,6 +13,7 @@ import {
   UNUSED_CLIENT_LIMIT,
   UNUSED_CLIENT_RETENTION
 } from '@officina/db';
+import { ENGINE } from '@officina/core';
 import { Pool } from 'pg';
 import {
   PLAN,
@@ -806,6 +807,24 @@ describe.skipIf(!url)('connector for Claude', () => {
       "Check the result: skipped: a low-risk change the agents and GitHub's checks reviewed."
     );
     expect(shown).toContain('Approve the plan: the requester');
+  });
+
+  test('show_task says a pull request merged before verification, by whom and when', async () => {
+    const token = (await connect()).tokens.access_token as string;
+    const taskId = await createTaskInVerifying(pool, seeded);
+    await applyOrThrow(
+      pool,
+      taskId,
+      { type: 'merged', pullRequest: 42, by: 'octo-owner', at: '2026-11-20T12:35:07Z' },
+      ENGINE
+    );
+
+    const shown = (await tool(token, 'show_task', { number: 1 })).content[0]!.text;
+    expect(shown).toContain(
+      'Now: Merged on GitHub before verification: a maintainer decides (your turn).\nPull request #42 was merged on GitHub by @octo-owner at 2026-11-20 12:35 UTC, before people verified it (the task was at verifying).'
+    );
+    expect(shown).toContain('close it as done with a reason, on the board');
+    expect(shown).not.toContain('answer the open question');
   });
 
   test('Claude records what was checked for an item, as the member via Claude, and show_task reads it back', async () => {

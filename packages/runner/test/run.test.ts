@@ -3,6 +3,7 @@ import { ERROR_TEXT_MAX, NO_USAGE, type RunUsage } from '@officina/core';
 import {
   describeOutcome,
   executeRun,
+  MAX_STREAM_REOPENS,
   unfinishedOutcomeSchema,
   type OutboundEvent,
   type RunOutcome,
@@ -10,8 +11,10 @@ import {
 } from '../src';
 import {
   createFakePort,
+  DROP,
   FAKE_USAGE,
   idle,
+  whileClosed,
   running,
   sessionError,
   terminated,
@@ -192,6 +195,69 @@ describe('executeRun', () => {
   test('a result submitted before the budget pause still counts', async () => {
     const { report } = run([toolUse(approve), idle('budget_reached')], { usage: NO_USAGE });
     expect(await report).toMatchObject({ usage: NO_USAGE, outcome: { kind: 'result' } });
+  });
+
+  test('a stream that closes while the session works is opened again, and its result counts', async () => {
+    const { port, report } = run([
+      running(),
+      DROP,
+      toolUse(approve),
+      idle('requires_action'),
+      idle('end_turn')
+    ]);
+    expect((await report).outcome).toEqual({ kind: 'result', output: approve });
+    // Opened again before the history is read, so nothing sent in between is missed.
+    expect(port.log.filter((line) => !line.startsWith('send'))).toEqual([
+      'create sesn_1',
+      'stream sesn_1',
+      'stream sesn_1',
+      'history sesn_1'
+    ]);
+  });
+
+  test('a result the session sent while the stream was closed is read from the history, once', async () => {
+    const port = createFakePort(() => [
+      running(),
+      DROP,
+      whileClosed(toolUse(approve)),
+      idle('requires_action'),
+      idle('end_turn')
+    ]);
+    const seen: string[] = [];
+    const report = await executeRun(port, {
+      role: 'reviewer_spec',
+      session,
+      brief: 'Review it.',
+      onEvent: (event) => {
+        seen.push(event.type);
+      }
+    });
+    expect(report.outcome).toEqual({ kind: 'result', output: approve });
+    expect(seen.filter((type) => type === 'agent.custom_tool_use')).toHaveLength(1);
+  });
+
+  test('each event reaches the run once, though the history repeats what the stream sent', async () => {
+    const port = createFakePort(() => [running(), DROP, idle('end_turn')]);
+    const seen: string[] = [];
+    await executeRun(port, {
+      role: 'reviewer_spec',
+      session,
+      brief: 'Review it.',
+      onEvent: (event) => {
+        seen.push(event.type);
+      }
+    });
+    expect(seen).toEqual(['session.status_running', 'session.status_idle']);
+  });
+
+  test('a stream that keeps closing before the session stops is given up on, without a result', async () => {
+    const { port, report } = run([running()]);
+    expect((await report).outcome).toEqual({ kind: 'no_result' });
+    expect(port.log.filter((line) => line === 'stream sesn_1')).toHaveLength(
+      MAX_STREAM_REOPENS + 1
+    );
+    // Nobody listens any more: the session is stopped rather than left to spend on its own.
+    expect(port.sent.at(-1)!.events).toEqual([{ type: 'user.interrupt' }]);
   });
 
   test('a stream that stops sending events past the deadline interrupts the session and fails', async () => {

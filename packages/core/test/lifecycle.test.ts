@@ -6,6 +6,7 @@ import {
   evaluatePolicy,
   humanBuildReason,
   memberActor,
+  mergedEarlyText,
   nextAgentRoles,
   ownerHold,
   type Command,
@@ -90,7 +91,7 @@ describe('solo owner', () => {
     task = driver.step(task, { type: 'approve' }, asMember(owner));
     expect(task.stage).toBe('merging');
 
-    task = driver.step(task, { type: 'merged' }, engine);
+    task = driver.step(task, { type: 'merged', pullRequest: 42, by: null, at: null }, engine);
     expect(task.stage).toBe('done');
   });
 
@@ -1643,7 +1644,7 @@ describe('onboarding', () => {
     expect(task.stage).toBe('verifying');
     task = driver.step(task, { type: 'approve' }, asMember(owner));
     expect(task.stage).toBe('merging');
-    task = driver.step(task, { type: 'merged' }, engine);
+    task = driver.step(task, { type: 'merged', pullRequest: 42, by: null, at: null }, engine);
     expect(task.stage).toBe('done');
   });
 
@@ -2470,6 +2471,243 @@ describe('guarded tasks', () => {
     );
     expect(exhausted.stage).toBe('ready');
     expect(exhausted.blocked?.askedOf).toEqual({ role: 'owner' });
+  });
+});
+
+describe('a pull request merged before its task reached merging', () => {
+  const maintainer: Member = { id: 'marta', role: 'maintainer', domains: [] };
+  const contributor: Member = { id: 'cora', role: 'contributor', domains: [] };
+  const MERGE = {
+    type: 'merged',
+    pullRequest: 42,
+    by: 'octo-owner',
+    at: '2026-11-20T12:35:07Z'
+  } as const satisfies Command;
+  const team = () => createDriver([owner, maintainer, contributor]);
+  const pushed = (driver: Driver) =>
+    driver.step(
+      dispatchAgent(driver, toReady(driver, COPY_PATHS)),
+      {
+        type: 'push',
+        headSha: 'abc',
+        changedPaths: COPY_PATHS,
+        addedPaths: [],
+        catalogPages: {},
+        diffLines: 10
+      },
+      asAgent('builder')
+    );
+
+  test('a task at reviewing is held for a maintainer, saying who merged it and when', () => {
+    const driver = team();
+    const reviewing = pushed(driver);
+    expect(reviewing.stage).toBe('reviewing');
+    expect(driver.attempt(reviewing, MERGE, asMember(owner))).toEqual({
+      ok: false,
+      error: 'not_allowed'
+    });
+
+    const held = driver.step(reviewing, MERGE, engine);
+    expect(held).toMatchObject({ stage: 'reviewing', headSha: 'abc', paused: false });
+    expect(held.mergedEarly).toEqual({
+      pullRequest: 42,
+      by: 'octo-owner',
+      at: '2026-11-20T12:35:07Z',
+      stage: 'reviewing'
+    });
+    expect(held.blocked?.askedOf).toEqual({ role: 'maintainer' });
+    expect(held.blocked?.question).toContain('@octo-owner at 2026-11-20 12:35 UTC');
+    expect(held.blocked?.question).toContain('before people verified it');
+    expect(driver.events().map((event) => event.type)).toEqual([
+      'pull_request_merged_early',
+      'blocked'
+    ]);
+    expect(driver.events()[0]).toEqual({
+      type: 'pull_request_merged_early',
+      pullRequest: 42,
+      by: 'octo-owner',
+      at: '2026-11-20T12:35:07Z',
+      stage: 'reviewing'
+    });
+    // Held, no agent runs on it: no reviews, no chooser, no build.
+    expect(nextAgentRoles(held)).toEqual([]);
+  });
+
+  test('the same holds at building with a head, at choosing and at verifying', () => {
+    const driver = team();
+    const reviewing = pushed(driver);
+    const choosing = buildAndReview(
+      driver,
+      dispatchAgent(driver, toReady(driver, COPY_PATHS)),
+      'abc',
+      COPY_PATHS
+    );
+    expect(choosing.stage).toBe('choosing');
+    const verifying = driver.step(
+      choosing,
+      { type: 'choose', userVisible: false, plan: PLAN },
+      asAgent('chooser')
+    );
+    expect(verifying.stage).toBe('verifying');
+    for (const task of [{ ...reviewing, stage: 'building' as const }, choosing, verifying]) {
+      const held = driver.step(task, MERGE, engine);
+      expect(held.stage).toBe(task.stage);
+      expect(held.mergedEarly?.stage).toBe(task.stage);
+      expect(held.blocked?.question).toContain(`(the task was at ${task.stage})`);
+    }
+    // Before the first push the task has no pull request that could have merged.
+    const building = dispatchAgent(driver, toReady(driver, COPY_PATHS));
+    expect(driver.attempt(building, MERGE, engine)).toEqual({ ok: false, error: 'wrong_stage' });
+  });
+
+  test('a paused or already held task is held too, its question kept after the merge', () => {
+    const driver = team();
+    const paused = driver.step(pushed(driver), { type: 'pause' }, asMember(owner));
+    const held = driver.step(paused, MERGE, engine);
+    expect(held).toMatchObject({ paused: true, blocked: { askedOf: { role: 'maintainer' } } });
+
+    const asked = driver.step(
+      pushed(driver),
+      {
+        type: 'block',
+        question: 'Which host?',
+        askedOf: { role: 'contributor' },
+        options: [{ label: 'Fly', detail: 'the usual one' }]
+      },
+      asMember(owner)
+    );
+    const merged = driver.step(asked, MERGE, engine);
+    expect(merged.blocked?.question).toMatch(/^Pull request #42 was merged/);
+    expect(merged.blocked?.question).toEndWith('\n\nWhich host?');
+    expect(merged.blocked).not.toHaveProperty('options');
+    expect(merged.blocked?.askedOf).toEqual({ role: 'maintainer' });
+  });
+
+  test('a task whose result check asks for the owner is asked of the owner', () => {
+    // The standard lane asks for the owner to check the result, so a maintainer may not stand in.
+    const driver = team();
+    const reviewing = driver.step(
+      dispatchAgent(driver, toReady(driver, PAGE_PATHS)),
+      {
+        type: 'push',
+        headSha: 'abc',
+        changedPaths: PAGE_PATHS,
+        addedPaths: [],
+        catalogPages: {},
+        diffLines: 10
+      },
+      asAgent('builder')
+    );
+    expect(reviewing.lane).toBe('standard');
+    const held = driver.step(reviewing, MERGE, engine);
+    expect(held.blocked?.askedOf).toEqual({ role: 'owner' });
+    expect(
+      driver.attempt(held, { type: 'close_merged', reason: 'shipped' }, asMember(maintainer))
+    ).toEqual({ ok: false, error: 'not_allowed' });
+  });
+
+  test('a task held for the owner, or one that needs them, is asked of the owner', () => {
+    const driver = team();
+    const ownersHold = driver.step(
+      pushed(driver),
+      { type: 'guard_words', text: 'Make it public tonight.' },
+      asMember(contributor)
+    );
+    expect(ownersHold.blocked?.askedOf).toEqual({ role: 'owner' });
+    const held = driver.step(ownersHold, MERGE, engine);
+    expect(held.blocked?.askedOf).toEqual({ role: 'owner' });
+    expect(held.blocked?.question).toContain(ownersHold.blocked!.question);
+
+    const guarded = driver.step({ ...pushed(driver), guards: ['publishing'] }, MERGE, engine);
+    expect(guarded.blocked?.askedOf).toEqual({ role: 'owner' });
+    expect(
+      driver.attempt(guarded, { type: 'close_merged', reason: 'shipped' }, asMember(maintainer))
+    ).toEqual({ ok: false, error: 'not_allowed' });
+    expect(
+      driver.step(guarded, { type: 'close_merged', reason: 'shipped' }, asMember(owner)).stage
+    ).toBe('done');
+  });
+
+  test('a second merge changes nothing, and the hold cannot be answered', () => {
+    const driver = team();
+    const held = driver.step(pushed(driver), MERGE, engine);
+    expect(driver.attempt(held, MERGE, engine)).toEqual({ ok: false, error: 'merged_early' });
+    expect(
+      driver.attempt(held, { type: 'answer', text: 'carry on' }, asMember(maintainer))
+    ).toEqual({ ok: false, error: 'merged_early' });
+  });
+
+  test('a maintainer closes it as done with a reason, a contributor cannot', () => {
+    const driver = team();
+    const held = driver.step(pushed(driver), MERGE, engine);
+    const close = { type: 'close_merged', reason: 'Merged by hand, checked on main.' } as const;
+    expect(driver.attempt(held, close, asMember(contributor))).toEqual({
+      ok: false,
+      error: 'not_allowed'
+    });
+    const done = driver.step(held, close, asMember(maintainer));
+    expect(done).toMatchObject({ stage: 'done', blocked: null, assignee: null });
+    expect(done.mergedEarly?.stage).toBe('reviewing');
+    expect(driver.events()).toEqual([
+      { type: 'stage_changed', from: 'reviewing', to: 'done' },
+      { type: 'closed', stage: 'done', reason: 'Merged by hand, checked on main.' }
+    ]);
+    expect(driver.attempt(done, close, asMember(maintainer))).toEqual({
+      ok: false,
+      error: 'terminal'
+    });
+  });
+
+  test('closing as done needs an early merge; cancelling still works on one', () => {
+    const driver = team();
+    const reviewing = pushed(driver);
+    const close = { type: 'close_merged', reason: 'done' } as const;
+    expect(driver.attempt(reviewing, close, asMember(owner))).toEqual({
+      ok: false,
+      error: 'wrong_stage'
+    });
+    const asked = driver.step(
+      reviewing,
+      { type: 'block', question: 'Which host?', askedOf: { role: 'maintainer' } },
+      asMember(owner)
+    );
+    expect(driver.attempt(asked, close, asMember(owner))).toEqual({
+      ok: false,
+      error: 'wrong_stage'
+    });
+    const held = driver.step(reviewing, MERGE, engine);
+    const cancelled = driver.step(held, { type: 'cancel', reason: 'not wanted' }, asMember(owner));
+    expect(cancelled).toMatchObject({ stage: 'cancelled', blocked: null });
+  });
+
+  test('at merging a merge closes the task as before, and a held one still waits', () => {
+    const driver = createDriver([owner]);
+    let task = dispatchAgent(driver, toReady(driver, COPY_PATHS, true));
+    task = buildAndReview(driver, task, 'abc', COPY_PATHS);
+    task = driver.step(task, { type: 'choose', userVisible: true, plan: PLAN }, asAgent('chooser'));
+    task = driver.step(task, { type: 'approve' }, asMember(owner));
+    expect(task.stage).toBe('merging');
+    const asked = driver.step(
+      task,
+      { type: 'block', question: 'Wait?', askedOf: { role: 'owner' } },
+      asMember(owner)
+    );
+    expect(driver.attempt(asked, MERGE, engine)).toEqual({ ok: false, error: 'blocked' });
+    const paused = driver.step(task, { type: 'pause' }, asMember(owner));
+    expect(driver.attempt(paused, MERGE, engine)).toEqual({ ok: false, error: 'paused' });
+    expect(driver.attempt(task, MERGE, asMember(owner))).toEqual({
+      ok: false,
+      error: 'not_allowed'
+    });
+    const done = driver.step(task, MERGE, engine);
+    expect(done).toMatchObject({ stage: 'done', mergedEarly: null });
+    expect(driver.events()).toEqual([{ type: 'stage_changed', from: 'merging', to: 'done' }]);
+  });
+
+  test('the words leave out who and when when GitHub did not say', () => {
+    expect(mergedEarlyText({ pullRequest: 7, by: null, at: null, stage: 'verifying' })).toBe(
+      'Pull request #7 was merged on GitHub, before people verified it (the task was at verifying).'
+    );
   });
 });
 

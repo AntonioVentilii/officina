@@ -314,8 +314,8 @@ export const applyCommandIn = async (
   const updated = await client.query<{ version: number }>(
     `update tasks set stage = $2, lane = $3, spec_version = $4, head_sha = $5, user_visible = $6,
          assignee = $7, blocked = $8, paused = $9, fix_rounds = $10, reviews = $11, approval_plans = $12,
-         guards = $13, diff_allowance = $14, split_proposed = $15, version = version + 1,
-         updated_at = now()
+         guards = $13, diff_allowance = $14, merged_early = $15, split_proposed = $16,
+         version = version + 1, updated_at = now()
        where id = $1 returning version`,
     [
       task.id,
@@ -332,6 +332,7 @@ export const applyCommandIn = async (
       json(task.approvalPlans),
       task.guards,
       json(task.diffAllowance),
+      json(task.mergedEarly),
       task.splitProposed
     ]
   );
