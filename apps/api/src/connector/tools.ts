@@ -194,6 +194,10 @@ const questionLines = (blocked: NonNullable<TaskView['blocked']>): string[] => {
       : `Open question for ${blocked.askedOf}:`,
     fence(blocked.question)
   ];
+  if (blocked.handTo.length)
+    lines.push(
+      `It can be handed to (hand_question): ${blocked.handTo.map((member) => member.name).join(', ')}.`
+    );
   if (!blocked.options.length) return lines;
   lines.push(
     '',
@@ -206,6 +210,29 @@ const questionLines = (blocked: NonNullable<TaskView['blocked']>): string[] => {
   return lines;
 };
 
+/** The member a question is handed to, named as `show_task` lists whom it can be handed to. */
+const handTarget = (
+  task: TaskView,
+  name: string
+): { readonly id: string; readonly name: string } => {
+  if (!task.blocked || !task.actions.includes('hand_question'))
+    throw new ToolError(
+      `Task ${task.number} has no question an owner can hand on: only an owner hands one, and only while it waits for an answer.`
+    );
+  const wanted = name.toLocaleLowerCase();
+  const matches = task.blocked.handTo.filter(
+    (member) => member.name.toLocaleLowerCase() === wanted
+  );
+  const [match] = matches;
+  if (match && matches.length === 1) return match;
+  const who = task.blocked.handTo.map((member) => member.name).join(', ');
+  throw new ToolError(
+    who
+      ? `"${name}" does not name one member who can take it. It can be handed to: ${who}.`
+      : 'Nobody else in the project can take this question.'
+  );
+};
+
 /** The size allowed for the task over its lane's limit, when one is in force. */
 const allowanceLines = (task: TaskView): string[] =>
   task.allowance ? ['', allowanceText(task.allowance)] : [];
@@ -216,6 +243,7 @@ const mergedEarlyLines = (task: { readonly mergedEarly: { readonly text: string 
 
 const WHAT_TO_DO: Record<string, string> = {
   answer: 'answer the open question (answer_question)',
+  hand_question: 'hand the open question to another member (hand_question)',
   approve:
     'propose your approval, after reading what to check, to confirm on the board (review with decision "approve")',
   changes: 'ask for changes, saying what is wrong (review with decision "changes")',
@@ -783,6 +811,31 @@ Always call show_task first, show the person the plan or the list of what to che
       const tier = forcedTierFrom(input.tier);
       const project = await actOnTaskFor(context, input, { type: 'force_model', tier });
       return `${modelLine(tier)}, from the next agent step on task ${input.number}: ${taskUrl(context.publicUrl, project.id, input.number)}`;
+    }
+  }),
+  tool({
+    name: 'hand_question',
+    title: 'Hand a question to another member',
+    description:
+      "Hands the open question on a task to one other member of the project, who then sees it in whats_waiting_on_me and on the board and answers it; owners can still answer it too. Use it when the question is someone else's to answer, for example a product decision for whoever holds the product domain. Only an owner may hand a question on, and only to a member who may answer questions and read the task: show_task lists who can take it. It acts at once and is recorded in the task's activity. Call show_task first to check the task and the person's choice.",
+    input: z.object({
+      project: PROJECT,
+      number: NUMBER,
+      member: z
+        .string()
+        .trim()
+        .min(1)
+        .max(INPUT_LIMITS.memberName)
+        .describe('The name of the member to hand it to, as show_task lists them.')
+    }),
+    readOnly: false,
+    run: async (context, input) => {
+      const project = projectFor(context, input.project);
+      const task = await taskView(context.pool, viewerFor(context, project), input.number);
+      if (!task) throw new ToolError(`There is no task ${input.number} in ${project.name}.`);
+      const to = handTarget(task, input.member);
+      await actOnTaskFor(context, input, { type: 'hand_question', memberId: to.id });
+      return `Handed to ${to.name}: the question on task ${input.number} now waits on them, in their whats_waiting_on_me and on the board. ${taskUrl(context.publicUrl, project.id, input.number)}`;
     }
   })
 ] as const;

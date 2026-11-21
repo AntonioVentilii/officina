@@ -112,7 +112,10 @@ const ERROR_TEXT: Record<StoreError, string> = {
   confirm_on_board:
     'an approval through a connected app is only a proposal; confirm it on the board',
   no_proposal: 'no approval proposed for you is waiting on this task',
-  merged_early: 'its pull request was already merged on GitHub; close the task as done or cancel it'
+  merged_early:
+    'its pull request was already merged on GitHub; close the task as done or cancel it',
+  not_answerer:
+    'that member cannot take the question: they must be able to answer questions and read the task'
 };
 
 const LINK_PROBLEM_TEXT: Record<LinkProblem, string> = {
@@ -334,7 +337,8 @@ export type TaskAction =
   | { readonly type: 'decline'; readonly reason: string }
   | { readonly type: 'close_merged'; readonly reason: string }
   /** `null` gives the choice of model back to the engine's rule. */
-  | { readonly type: 'force_model'; readonly tier: ModelTier | null };
+  | { readonly type: 'force_model'; readonly tier: ModelTier | null }
+  | { readonly type: 'hand_question'; readonly memberId: string };
 
 /** The word the CLI and the Claude connector take for "no tier forced: the rule picks". */
 export const BY_RULE = 'rule';
@@ -373,6 +377,8 @@ const toCommand = (action: TaskAction): Command => {
       return { type: action.type, reason: action.reason };
     case 'force_model':
       return { type: 'force_model', tier: action.tier };
+    case 'hand_question':
+      return { type: 'hand_question', memberId: action.memberId };
     // The rest carry nothing but the command they name.
     default:
       return { type: action.type };

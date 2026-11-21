@@ -19,6 +19,7 @@ import {
   withGuards,
   type Guard
 } from './guards';
+import { handedQuestion } from './hand-question';
 import type { HandoffNeed } from './handoffs';
 import { computeLane, redPaths, stricterLane, type Lane } from './lanes';
 import type { ModelTier } from './model-tiers';
@@ -422,6 +423,8 @@ export type Command =
   | { readonly type: 'cancel'; readonly reason: string }
   /** A maintainer forces the tier every agent step on the task runs on; `null` gives it back to the rule. */
   | { readonly type: 'force_model'; readonly tier: ModelTier | null }
+  /** An owner hands the task's waiting question to one member of the project. */
+  | { readonly type: 'hand_question'; readonly memberId: string }
   /** Every sub-task of the task is closed and these merged: the parent closes with them. */
   | { readonly type: 'close_parent'; readonly subtasks: readonly number[] };
 
@@ -494,6 +497,12 @@ export type DomainEvent =
       readonly from: ModelTier | null;
       readonly to: ModelTier | null;
     }
+  /** The waiting question, asked of `from`, now waits on the member `memberId`. */
+  | {
+      readonly type: 'question_handed';
+      readonly from: Blocked['askedOf'];
+      readonly memberId: string;
+    }
   | {
       readonly type: 'closed';
       readonly stage: 'declined' | 'cancelled' | 'done';
@@ -534,7 +543,9 @@ export type DecisionError =
   | 'split_proposed'
   | 'confirm_on_board'
   | 'no_proposal'
-  | 'merged_early';
+  | 'merged_early'
+  /** The member a question is handed to may not answer it, or may not read the task. */
+  | 'not_answerer';
 
 export type Decision =
   | { readonly ok: true; readonly task: Task; readonly events: readonly DomainEvent[] }
@@ -1240,6 +1251,7 @@ const ALLOWED_WHILE_HELD: ReadonlySet<Command['type']> = new Set([
   'pause',
   // Choosing the model for the steps to come waits on no answer.
   'force_model',
+  'hand_question',
   'pull_request_closed',
   'close_parent'
 ]);
@@ -1722,6 +1734,14 @@ export const decide = (
       return ok({ ...task, forcedModel: command.tier }, [
         { type: 'model_forced', from: task.forcedModel, to: command.tier }
       ]);
+    }
+
+    case 'hand_question': {
+      if (!memberCan(actor, context, 'hand_question')) return fail('not_allowed');
+      return handedQuestion(
+        task,
+        context.members.find((member) => member.id === command.memberId)
+      );
     }
 
     case 'cancel': {

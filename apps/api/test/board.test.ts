@@ -1118,6 +1118,73 @@ describe.skipIf(!url)('board api', () => {
     expect((await call(tim, `${path}/actions`, pick)).status).toBe(200);
   });
 
+  test('an owner hands a waiting question to a member, who then has it in their inbox', async () => {
+    const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    const tim = await signIn(
+      await invite(pool, {
+        publicUrl: PUBLIC_URL,
+        email: 'tim@example.com',
+        name: 'Tim',
+        role: 'contributor',
+        domains: ['product']
+      })
+    );
+    await createRequest(pool, {
+      title: 'Book a call',
+      request: 'Let investors book a call with the founders.',
+      skipInterview: true
+    });
+    const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
+    await applyCommand(pool, {
+      taskId,
+      command: {
+        type: 'block',
+        question: 'How investors book a call is a product choice.\n\nNeeded:\n- Choose a way',
+        askedOf: { role: 'owner' },
+        handoff: { needs: ['decision'] }
+      },
+      actor: { kind: 'engine' }
+    });
+    const path = `/api/projects/${seeded.projectId}/tasks/1`;
+
+    const asOwner = await json(await call(owner, path));
+    expect(asOwner.actions).toContain('hand_question');
+    expect(asOwner.blocked.handTo.map((member: { name: string }) => member.name)).toEqual(['Tim']);
+    const asTim = await json(await call(tim, path));
+    expect(asTim.actions).not.toContain('hand_question');
+    expect(asTim.blocked.handTo).toEqual([]);
+    expect(asTim.waitingOn.me).toBe(false);
+
+    const timId = asOwner.blocked.handTo[0].id;
+    const handOn = { type: 'hand_question', memberId: timId };
+    // Only an owner hands a question on.
+    expect((await call(tim, `${path}/actions`, handOn)).status).toBe(409);
+    expect((await call(owner, `${path}/actions`, handOn)).status).toBe(200);
+
+    const handed = await json(await call(tim, path));
+    expect(handed.waitingOn.me).toBe(true);
+    expect(handed.waitingOn.label).toStartWith('Agents cannot go on: needs Tim for');
+    expect(handed.actions).toContain('answer');
+    const inbox = await json(await call(tim, `/api/projects/${seeded.projectId}/board`));
+    expect(
+      inbox.tasks.filter((card: { waitingOn: { me: boolean } }) => card.waitingOn.me).length
+    ).toBe(1);
+    expect(handed.events.at(-1)).toMatchObject({
+      type: 'question_handed',
+      actor: 'Antonio',
+      payload: { memberId: timId, memberName: 'Tim' }
+    });
+    // Once it waits on Tim by name, the owner may hand it back to themself.
+    expect(
+      (await json(await call(owner, path))).blocked.handTo.map(
+        (member: { name: string }) => member.name
+      )
+    ).toEqual(['Antonio']);
+
+    await call(tim, `${path}/actions`, { type: 'answer', text: 'A Calendly link.' });
+    expect((await json(await call(tim, path))).blocked).toBeNull();
+  });
+
   test('what agents cannot do, and what a developer must build, waits on the right person', async () => {
     const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
     const contributor = await signIn(
@@ -1411,7 +1478,8 @@ describe.skipIf(!url)('board api', () => {
     ).toEqual({
       lines: 2449,
       lane: 'red',
-      memberId: seeded.ownerId
+      memberId: seeded.ownerId,
+      memberName: 'Antonio'
     });
   });
 

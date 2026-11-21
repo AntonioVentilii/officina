@@ -11,6 +11,7 @@
   import HandIn from './HandIn.svelte';
   import Markdown from './Markdown.svelte';
   import ProposalNotice from './ProposalNotice.svelte';
+  import QuestionHand from './QuestionHand.svelte';
   import QuestionOptions from './QuestionOptions.svelte';
   import Working from './Working.svelte';
 
@@ -251,6 +252,7 @@
         </div>
       </form>
     {/if}
+    {#if can('hand_question')}<QuestionHand {task} {onchanged} {busy} />{/if}
   </section>
 {:else if task.waitingOn.kind === 'agent'}
   <section class="next agent">
