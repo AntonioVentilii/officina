@@ -133,6 +133,7 @@ const main = async () => {
       parent: { type: 'string' },
       after: { type: 'string', multiple: true },
       'skip-interview': { type: 'boolean' },
+      interview: { type: 'boolean' },
       help: { type: 'boolean', short: 'h' }
     }
   });
@@ -166,7 +167,7 @@ const main = async () => {
             ...target,
             title: need(values.title, 'title'),
             request: need(values.request, 'request'),
-            skipInterview: values['skip-interview']
+            skipInterview: values['skip-interview'] || (values.interview ? false : undefined)
           });
           console.log(
             created.stage === 'request'

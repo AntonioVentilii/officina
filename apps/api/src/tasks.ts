@@ -3,6 +3,7 @@ import {
   can,
   guardsAddedBy,
   guardsInRequest,
+  interviewsRequest,
   ownerHold,
   readsTask,
   type Blocked,
@@ -152,7 +153,10 @@ const actorOf = (input: ProjectActor): Actor => memberActor(input.memberId, inpu
 interface RequestInput {
   readonly title: string;
   readonly request: string;
-  /** Skip the interviewer and go straight to triage; the project's config can also turn it off. */
+  /**
+   * Skip the interviewer and go straight to triage (`true`), or have it (`false`); left out, as
+   * `interviewsByDefault` decides for the requester. The project's config can turn it off for all.
+   */
   readonly skipInterview?: boolean | undefined;
   /**
    * The client's name for this request, the same each time it sends it again: a repeat from the
@@ -209,7 +213,11 @@ export const createRequestAs = async (
       ...(hold ? { hold } : {})
     });
     if (input.requestId) await nameRequestedTask(client, task.id, input.requestId);
-    const interview = !input.skipInterview && (!config.ok || config.config.intake.interview);
+    const interview = interviewsRequest(
+      !config.ok || config.config.intake.interview,
+      member,
+      input.skipInterview === undefined ? undefined : !input.skipInterview
+    );
     if (interview || hold) return task;
     const submitted = await applyCommandIn(client, {
       taskId: task.id,

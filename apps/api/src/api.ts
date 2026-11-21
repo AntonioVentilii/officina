@@ -5,7 +5,8 @@ import {
   allowedActions,
   can,
   checksSchema,
-  connectionRef
+  connectionRef,
+  interviewsByDefault
 } from '@officina/core';
 import type { HandInPort } from '@officina/engine';
 import {
@@ -470,7 +471,9 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
           // shows only what the API would accept.
           projects: signed.projects.map((project) => ({
             ...project,
-            can: allowedActions(project)
+            can: allowedActions(project),
+            // What the new request form starts with; the person can still tick or untick it.
+            interviews: interviewsByDefault(project)
           })),
           github: login ? { login } : null,
           githubAvailable: Boolean(deps.githubLogin),
@@ -570,7 +573,7 @@ export const createBoardApi = (deps: BoardApiDependencies) => {
           projectId: viewer.projectId,
           memberId: viewer.memberId,
           ...input,
-          skipInterview: interview === false
+          skipInterview: interview === undefined ? undefined : !interview
         });
       })
       .post('/api/projects/:projectId/tasks/:number/actions', async ({ request, params, body }) => {

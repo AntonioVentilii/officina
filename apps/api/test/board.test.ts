@@ -292,7 +292,12 @@ describe.skipIf(!url)('board api', () => {
     const me = await json(await call(cookie, '/api/me'));
     expect(me.member.name).toBe('Antonio');
     expect(me.projects).toEqual([
-      expect.objectContaining({ id: seeded.projectId, repo: 'ViciApp/vici-app', role: 'owner' })
+      expect.objectContaining({
+        id: seeded.projectId,
+        repo: 'ViciApp/vici-app',
+        role: 'owner',
+        interviews: false
+      })
     ]);
     expect(me.limits.title).toEqual({ min: 3, max: 200 });
     expect(me.limits.prTitle).toEqual({ min: 3, max: 120 });
@@ -392,6 +397,7 @@ describe.skipIf(!url)('board api', () => {
       'approve_spec',
       'verify_result'
     ]);
+    expect(me.projects[0].interviews).toBe(true);
     expect((await json(await call(watcher, '/api/me'))).projects[0].can).toEqual(['see']);
 
     const task = await json(await call(tim, `/api/projects/${seeded.projectId}/tasks/1`));

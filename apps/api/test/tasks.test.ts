@@ -96,6 +96,22 @@ describe.skipIf(!url)('task commands', () => {
     ).toMatchObject({ number: 2 });
   });
 
+  test("left out, the owner's request skips the interview and a contributor's gets it", async () => {
+    const { skipInterview: _skip, ...plain } = request;
+    expect(await createRequest(pool, plain)).toEqual({ number: 1, stage: 'triage' });
+    await invite(pool, {
+      publicUrl: 'x',
+      email: 'gio@example.com',
+      name: 'Gio',
+      role: 'contributor',
+      domains: []
+    });
+    expect(await createRequest(pool, { ...plain, asEmail: 'gio@example.com' })).toEqual({
+      number: 2,
+      stage: 'request'
+    });
+  });
+
   test('a watcher cannot open a request, and no task is left behind', async () => {
     const watcher = (
       await pool.query<{ id: string }>(
@@ -270,9 +286,11 @@ describe.skipIf(!url)('task commands', () => {
     ).rejects.toBeInstanceOf(TaskCommandError);
   });
 
-  test('without skipping, a request waits for the interviewer and can be submitted as is', async () => {
-    const { skipInterview: _skip, ...plain } = request;
-    expect(await createRequest(pool, plain)).toEqual({ number: 1, stage: 'request' });
+  test('a request that asks for the interview waits for it and can be submitted as is', async () => {
+    expect(await createRequest(pool, { ...request, skipInterview: false })).toEqual({
+      number: 1,
+      stage: 'request'
+    });
     expect(await describeTask(pool, { number: 1 })).toContain(
       'the interviewer is reading the request'
     );

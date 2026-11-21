@@ -355,7 +355,7 @@ After it is opened, tell the person the task link and what happens next, as the 
         .boolean()
         .optional()
         .describe(
-          'Only when the person explicitly says the request is complete and needs no questions.'
+          "true only when the person explicitly says the request is complete and needs no questions; false when they ask to be interviewed. Left out, a request from someone who may triage (a maintainer or the owner) skips the interview and anyone else's gets it."
         ),
       request_id: z
         .string()
@@ -376,7 +376,7 @@ After it is opened, tell the person the task link and what happens next, as the 
         via: context.via,
         title: input.title,
         request: input.request,
-        skipInterview: input.skip_interview === true,
+        skipInterview: input.skip_interview,
         requestId: input.request_id
       });
       const next = await afterOpening(context.pool, project.id, created);

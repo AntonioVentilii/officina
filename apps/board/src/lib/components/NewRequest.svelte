@@ -19,7 +19,8 @@
   let title = $state(untrack(() => draft?.title ?? ''));
   let request = $state(untrack(() => draft?.request ?? ''));
   let busy = $state(false);
-  let interview = $state(true);
+  // Starts as the API's default for this member: a maintainer's own request skips the interview.
+  let interview = $state(untrack(() => session.project?.interviews ?? true));
   // One per form: sending it again, after an error that hid a request already opened, opens nothing new.
   const requestId = crypto.randomUUID();
 

@@ -7,7 +7,10 @@ export const USAGE = `usage (on your machine, prefix with scripts/officina; on t
   Tasks
     task list
     task show     --number <n>
-    task create   --title "<title>" --request "<what you want, in plain words>" [--skip-interview]
+    task create   --title "<title>" --request "<what you want, in plain words>"
+                  [--skip-interview | --interview]
+                                               left out, a maintainer's or owner's request skips
+                                               the interview and anyone else's has it
     task submit   --number <n>                 send a request to triage without more questions
     task accept   --number <n>
     task claim    --number <n>                 build it yourself instead of the agent
