@@ -1,7 +1,7 @@
 <script lang="ts">
   import { isActive } from '#lib/runs.ts';
   import { ChevronRight, ExternalLink } from '@lucide/svelte';
-  import { duration, money } from '#lib/format.ts';
+  import { duration, money, tokenParts } from '#lib/format.ts';
   import { STAGE_LABELS } from '#lib/stages.ts';
   import { clock } from '#lib/state/clock.svelte.ts';
   import type { Run, Stage } from '#lib/types.ts';
@@ -45,6 +45,9 @@
     </span>
     <span class="time faint num">{duration(run.startedAt, run.finishedAt, clock.now)}</span>
     <span class="cost faint num">{money(run.costCents)}</span>
+    <span class="tokens faint num" title="Tokens the session used">
+      {tokenParts(run.tokens).join(' · ')}
+    </span>
     {#if run.consoleUrl}
       <a
         class="console btn ghost icon sm"
@@ -131,11 +134,22 @@
   }
 
   .time,
-  .cost {
+  .cost,
+  .tokens {
     font-size: 12.5px;
     font-stretch: 85%;
     min-width: 52px;
     text-align: right;
+  }
+
+  .tokens {
+    white-space: nowrap;
+  }
+
+  @media (max-width: 900px) {
+    .tokens {
+      display: none;
+    }
   }
 
   @media (max-width: 640px) {

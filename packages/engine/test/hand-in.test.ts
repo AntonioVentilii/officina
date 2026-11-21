@@ -516,7 +516,7 @@ describe.skipIf(!url)('a developer hands in a build', () => {
     if (!run.ok) throw new Error(run.error);
     await finishRun(pool, run.runId, {
       status: 'succeeded',
-      costCents: 1,
+      usage: { costCents: 1, tokens: null },
       result: {
         outcome: 'pushed',
         branch: 'officina/task-1',
