@@ -98,10 +98,18 @@ A change touching sensitive paths needs an owner's approval of the exact spec ve
 
 Pick one by its logo in the sidebar footer (on a phone, tap the logo in the tab bar to step to the next one), or set a project default with `board.look` in `.github/officina.yml`. **Fucina**, the default, is the lively one: every column has a colour and the agent who works there the same one, each agent is a small drawing that moves while it works (the builder hammers on the anvil), cards fly to their next column and an approved plan gets stamped. **Modernista** is a strict grid with big numerals and a shape for every agent. **Tecnica** treats every task as a work order on a technical drawing, with risk drawn as hatching. In all three, yellow means one thing only: it is your turn.
 
+The same moment of the demo workshop (`bun run dev`) in each look, light above and dark below:
+
 <table>
 <tr>
-<td width="50%"><img src="./docs/assets/tecnica-light.png" alt="The board in the Tecnica look, light: tasks as bordered work orders with title-block footers, numbered columns, hatched risk lanes and three-letter agent codes" /><br/><sub><b>Tecnica</b>, light</sub></td>
-<td width="50%"><img src="./docs/assets/tecnica-dark.png" alt="The board in the Tecnica look, dark" /><br/><sub><b>Tecnica</b>, dark</sub></td>
+<td width="33%"><img src="./docs/assets/fucina-light.png" alt="The board in the Fucina look, light: columns washed in their own colours, rounded cards with a stage chip in the column's colour, yellow blocks on the tasks waiting on you and a small drawing for each working agent" /><br/><sub><b>Fucina</b>, light</sub></td>
+<td width="33%"><img src="./docs/assets/modernista-light.png" alt="The board in the Modernista look, light: a strict black grid with big column counts and a shape for every agent" /><br/><sub><b>Modernista</b>, light</sub></td>
+<td width="33%"><img src="./docs/assets/tecnica-light.png" alt="The board in the Tecnica look, light: tasks as bordered work orders with title-block footers, numbered columns, hatched risk lanes and three-letter agent codes" /><br/><sub><b>Tecnica</b>, light</sub></td>
+</tr>
+<tr>
+<td width="33%"><img src="./docs/assets/fucina-dark.png" alt="The board in the Fucina look, dark" /><br/><sub><b>Fucina</b>, dark</sub></td>
+<td width="33%"><img src="./docs/assets/modernista-dark.png" alt="The board in the Modernista look, dark" /><br/><sub><b>Modernista</b>, dark</sub></td>
+<td width="33%"><img src="./docs/assets/tecnica-dark.png" alt="The board in the Tecnica look, dark" /><br/><sub><b>Tecnica</b>, dark</sub></td>
 </tr>
 </table>
 
