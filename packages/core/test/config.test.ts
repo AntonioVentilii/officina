@@ -232,9 +232,15 @@ describe('project config', () => {
     expect(result.errors.some((error) => error.startsWith('lanes'))).toBe(true);
   });
 
-  test('defaults the board look to modernista and rejects an unknown look', () => {
+  test('defaults the board look to fucina, keeps a named one and rejects an unknown look', () => {
     const plain = parseProjectConfig({ version: 1, docs: { entry: 'AGENTS.md' } });
-    expect(plain.ok && plain.config.board.look).toBe('modernista');
+    expect(plain.ok && plain.config.board.look).toBe('fucina');
+    const modernista = parseProjectConfig({
+      version: 1,
+      docs: { entry: 'AGENTS.md' },
+      board: { look: 'modernista' }
+    });
+    expect(modernista.ok && modernista.config.board.look).toBe('modernista');
     const tecnica = parseProjectConfig({
       version: 1,
       docs: { entry: 'AGENTS.md' },

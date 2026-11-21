@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { CLOSED, TRACK, trackIndex } from '#lib/stages.ts';
+  import { CLOSED, TRACK, stageHue, trackIndex } from '#lib/stages.ts';
   import type { Stage } from '#lib/types.ts';
 
   interface Props {
@@ -13,13 +13,14 @@
   const closed = $derived(CLOSED.includes(stage));
 </script>
 
-<ol class="track" class:closed aria-label="Progress">
+<ol class="track stage-track" class:closed aria-label="Progress">
   {#each TRACK as step, index (step.label)}
     {@const state =
       stage === 'done' || index < current ? 'past' : index === current ? 'current' : 'future'}
     <li
       class={state}
       class:working={state === 'current' && working}
+      style:--hue={step.stages[0] && stageHue(step.stages[0])}
       aria-current={state === 'current' ? 'step' : undefined}
     >
       <span class="bar"></span>
