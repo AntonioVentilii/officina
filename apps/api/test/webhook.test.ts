@@ -5,14 +5,22 @@ import {
   STALE_CLAIM,
   applyCommand,
   claimDelivery,
+  feedbackSinceLastPush,
+  githubReviewsSinceLastPush,
   linkPullRequest,
   loadTask,
   markDeliveryHandled,
   purgeOldDeliveries,
   releaseDelivery
 } from '@officina/db';
+import { forwardHeldReviews } from '@officina/engine';
 import { Pool } from 'pg';
-import { createTaskInMerging, resetAndSeed, type Seeded } from '../../../packages/db/test/seed';
+import {
+  applyOrThrow,
+  createTaskInMerging,
+  resetAndSeed,
+  type Seeded
+} from '../../../packages/db/test/seed';
 import { catchUpPullRequests, createApp, type PullRequestReader } from '../src';
 import { MAX_REQUEST_BYTES } from '../src/app';
 
@@ -671,6 +679,91 @@ describe.skipIf(!url)('api', () => {
       outcomes: [{ taskId, ok: false, error: 'overview_already_answered' }]
     });
     expect((await loadTask(pool, taskId))?.task).toMatchObject({ stage: 'reviewing' });
+  });
+
+  test('a Copilot review left while the task is blocked reaches the builder once the question is answered', async () => {
+    const calls: string[] = [];
+    const github = {
+      cancelAutoMerge: async () => {
+        calls.push('cancelAutoMerge');
+      },
+      pullRequest: async () => ({
+        node_id: 'PR_42',
+        state: 'open',
+        merged: false,
+        head: { sha: 'abc' }
+      })
+    };
+    const reviewing = createApp({
+      pool,
+      webhookSecret: SECRET,
+      github: { fileContent: async () => null, reviewComments: async () => [], ...github }
+    });
+    await pool.query('update projects set github_installation_id = 99 where id = $1', [
+      seeded.projectId
+    ]);
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    await applyOrThrow(
+      pool,
+      taskId,
+      { type: 'block', question: 'Which locale first?', askedOf: { role: 'maintainer' } },
+      seeded.owner
+    );
+    const forwarded = async () =>
+      (
+        await pool.query(
+          `select 1 from task_events
+           where task_id = $1 and type = 'review_recorded' and payload->>'reviewer' = 'github'`,
+          [taskId]
+        )
+      ).rowCount;
+
+    const response = await deliver(reviewing, {
+      event: 'pull_request_review',
+      delivery: 'h-1',
+      payload: {
+        action: 'submitted',
+        review: {
+          id: 11,
+          state: 'commented',
+          body: '### 🔵 Needs a closer look\n\nThe migration was not run, so the index is unverified.',
+          commit_id: 'abc',
+          author_association: 'NONE',
+          user: { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' }
+        },
+        pull_request: { number: 42 },
+        repository
+      }
+    });
+    expect(await response.json()).toEqual({
+      status: 'applied',
+      outcomes: [{ taskId, ok: false, error: 'blocked' }]
+    });
+    const held = (await loadTask(pool, taskId))?.task;
+    expect(held?.stage).toBe('merging');
+    expect(held?.blocked).not.toBeNull();
+    expect(await forwarded()).toBe(0);
+    expect(calls).toEqual([]);
+
+    // Still blocked: the review waits.
+    await forwardHeldReviews(pool, github, [taskId]);
+    expect((await loadTask(pool, taskId))?.task.stage).toBe('merging');
+    expect(await forwarded()).toBe(0);
+
+    await applyOrThrow(pool, taskId, { type: 'answer', text: 'English.' }, seeded.owner);
+    await forwardHeldReviews(pool, github, [taskId]);
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({ stage: 'building', fixRounds: 1 });
+    expect((await feedbackSinceLastPush(pool, taskId)).join('\n')).toContain(
+      'the index is unverified'
+    );
+    expect(await githubReviewsSinceLastPush(pool, taskId)).toEqual([
+      expect.objectContaining({ by: 'copilot-pull-request-reviewer[bot]' })
+    ]);
+    expect(calls).toEqual(['cancelAutoMerge']);
+
+    await forwardHeldReviews(pool, github, [taskId]);
+    expect(await forwarded()).toBe(1);
   });
 
   test('concurrent deliveries of one id are applied once', async () => {
