@@ -3,6 +3,7 @@ import { ERROR_TEXT_MAX } from '@officina/core';
 import {
   describeOutcome,
   executeRun,
+  MAX_STREAM_REOPENS,
   unfinishedOutcomeSchema,
   type OutboundEvent,
   type RunOutcome,
@@ -10,6 +11,7 @@ import {
 } from '../src';
 import {
   createFakePort,
+  DROP,
   idle,
   running,
   sessionError,
@@ -191,6 +193,46 @@ describe('executeRun', () => {
   test('a result submitted before the budget pause still counts', async () => {
     const { report } = run([toolUse(approve), idle('budget_reached')], { costCents: null });
     expect(await report).toMatchObject({ costCents: null, outcome: { kind: 'result' } });
+  });
+
+  test('a stream that closes while the session works is opened again, and its result counts', async () => {
+    const { port, report } = run([
+      running(),
+      DROP,
+      toolUse(approve),
+      idle('requires_action'),
+      idle('end_turn')
+    ]);
+    expect((await report).outcome).toEqual({ kind: 'result', output: approve });
+    // Opened again before the history is read, so nothing sent in between is missed.
+    expect(port.log.filter((line) => !line.startsWith('send'))).toEqual([
+      'create sesn_1',
+      'stream sesn_1',
+      'stream sesn_1',
+      'history sesn_1'
+    ]);
+  });
+
+  test('each event reaches the run once, though the history repeats what the stream sent', async () => {
+    const port = createFakePort(() => [running(), DROP, idle('end_turn')]);
+    const seen: string[] = [];
+    await executeRun(port, {
+      role: 'reviewer_spec',
+      session,
+      brief: 'Review it.',
+      onEvent: (event) => {
+        seen.push(event.type);
+      }
+    });
+    expect(seen).toEqual(['session.status_running', 'session.status_idle']);
+  });
+
+  test('a stream that keeps closing before the session stops is given up on, without a result', async () => {
+    const { port, report } = run([running()]);
+    expect((await report).outcome).toEqual({ kind: 'no_result' });
+    expect(port.log.filter((line) => line === 'stream sesn_1')).toHaveLength(
+      MAX_STREAM_REOPENS + 1
+    );
   });
 
   test('a stream that stops sending events past the deadline interrupts the session and fails', async () => {

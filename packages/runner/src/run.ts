@@ -65,6 +65,47 @@ const stopOutcome = (event: SessionEvent, error: SessionError | null): RunOutcom
   return null;
 };
 
+/** Whether the session stopped with this event: terminated, or idle for anything but our answer. */
+const stops = (event: SessionEvent): boolean =>
+  event.type === 'session.status_terminated' ||
+  (event.type === 'session.status_idle' && stopReason(event) !== 'requires_action');
+
+/** How many times a stream that closes before its session stops is opened again. */
+export const MAX_STREAM_REOPENS = 5;
+
+/**
+ * The session's events, each once, until it stops. A stream can close while the session still
+ * works; ending the run then would revoke its token under a builder still pushing. So it is opened
+ * again, first, and the history read next, which holds whatever was sent while it was closed.
+ */
+async function* untilStopped(
+  port: ManagedAgentsPort,
+  sessionId: string,
+  first: AsyncIterable<SessionEvent>
+): AsyncGenerator<SessionEvent> {
+  const seen = new Set<string>();
+  let stream = first;
+  const unseen = async function* (events: AsyncIterable<SessionEvent>) {
+    for await (const event of events) {
+      if (seen.has(event.id)) continue;
+      seen.add(event.id);
+      yield event;
+    }
+  };
+  for (let reopened = 0; ; reopened++) {
+    for await (const event of unseen(stream)) {
+      yield event;
+      if (stops(event)) return;
+    }
+    if (reopened === MAX_STREAM_REOPENS) return;
+    stream = await port.openStream(sessionId);
+    for await (const event of unseen(port.listEvents(sessionId))) {
+      yield event;
+      if (stops(event)) return;
+    }
+  }
+}
+
 /**
  * The stream's events until `deadlineMs` passes, then none: `passed()` says whether the deadline
  * ended them. A stream closed early is closed at its source too, except one that is hung past the
@@ -130,7 +171,10 @@ export const executeRun = async (
   let lastErrors: readonly string[] = [];
   let outcome: RunOutcome | null = null;
   let sessionError: SessionError | null = null;
-  const bounded = untilDeadline(stream, input.deadlineMs ?? SESSION_DEADLINE_MS);
+  const bounded = untilDeadline(
+    untilStopped(port, sessionId, stream),
+    input.deadlineMs ?? SESSION_DEADLINE_MS
+  );
 
   for await (const event of bounded.events) {
     await input.onEvent?.(event);

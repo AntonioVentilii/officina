@@ -7,8 +7,12 @@ import type {
   SessionRequest
 } from '../src';
 
-/** A scripted step: an event to emit, or an action to run at that point in the session. */
-export type ScriptItem = SessionEvent | (() => Promise<void>);
+/**
+ * A scripted step: an event to emit, an action to run at that point in the session, or `DROP`, where
+ * the stream closes as a dropped connection would while the session goes on.
+ */
+export type ScriptItem = SessionEvent | (() => Promise<void>) | typeof DROP;
+export const DROP = 'drop';
 
 let eventCounter = 0;
 const nextId = () => `sevt_${++eventCounter}`;
@@ -50,6 +54,20 @@ export const createFakePort = (
   const agentWrites: FakePort['agentWrites'] = [];
   const environments = new Map<string, EnvironmentWrite & { id: string }>();
   let agentVersion = 0;
+  // Each session's script runs once, across every stream opened on it; what it sent is its history.
+  const played = new Map<
+    string,
+    { script: readonly ScriptItem[]; next: number; sent: SessionEvent[] }
+  >();
+  const playOf = (sessionId: string) => {
+    let play = played.get(sessionId);
+    if (!play) {
+      const request = sessions[Number(sessionId.split('_')[1]) - 1]!;
+      play = { script: scriptFor(request), next: 0, sent: [] };
+      played.set(sessionId, play);
+    }
+    return play;
+  };
 
   return {
     sessions,
@@ -77,14 +95,22 @@ export const createFakePort = (
     },
     async openStream(sessionId) {
       log.push(`stream ${sessionId}`);
-      const request = sessions[Number(sessionId.split('_')[1]) - 1]!;
-      const script = scriptFor(request);
+      const play = playOf(sessionId);
       return (async function* () {
-        for (const item of script) {
+        while (play.next < play.script.length) {
+          const item = play.script[play.next++]!;
+          if (item === DROP) return;
           if (typeof item === 'function') await item();
-          else yield item;
+          else {
+            play.sent.push(item);
+            yield item;
+          }
         }
       })();
+    },
+    async *listEvents(sessionId) {
+      log.push(`history ${sessionId}`);
+      yield* [...playOf(sessionId).sent];
     },
     async send(sessionId, events) {
       log.push(`send ${sessionId} ${events.map((event) => event.type).join(',')}`);
