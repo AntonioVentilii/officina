@@ -24,14 +24,41 @@ describe('webhook signatures', () => {
 describe('webhook events', () => {
   const repository = { full_name: 'ViciApp/vici-app' };
 
-  test('a merged pull request', () => {
+  test('a merged pull request says who merged it and when', () => {
     expect(
       parseWebhookEvent('pull_request', {
         action: 'closed',
-        pull_request: { merged: true, number: 42 },
+        pull_request: {
+          merged: true,
+          number: 42,
+          merged_by: { login: 'octo-owner' },
+          merged_at: '2026-11-20T12:35:07Z'
+        },
         repository
       })
-    ).toEqual({ kind: 'pull_request_merged', repo: 'ViciApp/vici-app', prNumber: 42 });
+    ).toEqual({
+      kind: 'pull_request_merged',
+      repo: 'ViciApp/vici-app',
+      prNumber: 42,
+      by: 'octo-owner',
+      at: '2026-11-20T12:35:07Z'
+    });
+  });
+
+  test('a merged pull request whose merger and time GitHub left out names nobody', () => {
+    expect(
+      parseWebhookEvent('pull_request', {
+        action: 'closed',
+        pull_request: { merged: true, number: 42, merged_by: null },
+        repository
+      })
+    ).toEqual({
+      kind: 'pull_request_merged',
+      repo: 'ViciApp/vici-app',
+      prNumber: 42,
+      by: null,
+      at: null
+    });
   });
 
   test('a pull request closed without a merge is told apart from a merged one', () => {

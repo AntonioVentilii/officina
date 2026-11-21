@@ -10,7 +10,7 @@ import {
   type AcceptToCheck
 } from '@officina/db';
 import { eachTaskOnItsOwn, type TaskFailure } from '@officina/engine';
-import type { GitHubClient } from '@officina/github';
+import type { GitHubClient, WebhookAction } from '@officina/github';
 import type { Pool } from 'pg';
 import { handleWebhookAction, type ConfigReader } from './webhooks';
 
@@ -24,6 +24,8 @@ export type PullRequestReader = ConfigReader & Pick<GitHubClient, 'pullRequest'>
 const catchUpPullRequest = async (pool: Pool, github: PullRequestReader, taskId: string) => {
   const context = await loadTaskContext(pool, taskId);
   if (!context || !WITH_PULL_REQUEST.has(context.task.stage)) return;
+  // Its early merge is recorded already: GitHub has nothing more to say about it.
+  if (context.task.mergedEarly) return;
   if (!context.pullRequest || !context.installationId) return;
   const prNumber = context.pullRequest;
   const pr = await github.pullRequest({
@@ -32,17 +34,28 @@ const catchUpPullRequest = async (pool: Pool, github: PullRequestReader, taskId:
     pullRequest: prNumber
   });
   if (pr.state !== 'closed') return;
-  const kind = pr.merged ? 'pull_request_merged' : 'pull_request_closed';
-  await handleWebhookAction(pool, { kind, repo: context.repo, prNumber }, github);
+  const repo = context.repo;
+  const action: WebhookAction = pr.merged
+    ? {
+        kind: 'pull_request_merged',
+        repo,
+        prNumber,
+        by: pr.merged_by?.login ?? null,
+        at: pr.merged_at
+      }
+    : { kind: 'pull_request_closed', repo, prNumber };
+  await handleWebhookAction(pool, action, github);
 };
 
 /**
  * Catches up a pull request merged or closed whose webhook never arrived (a deploy restart, a
  * handler error): GitHub redelivers only when a person asks, and the task would wait forever for
  * a pull request that is gone. It reads the pull request of each task from building up to merging
- * and applies what the webhook would have, which is also how a merge Officina made straight away (`mergeWhenReady` answering
- * `merged`) reaches its task. Each task is tried on its own; the failures are returned for the log
- * and tried again on the next pass.
+ * and applies what the webhook would have, which is also how a merge Officina made straight away
+ * (`mergeWhenReady` answering `merged`) reaches its task. A merge before the task reached merging
+ * is recorded and holds the task for a person, after which its pull request is not read again.
+ * Each task is tried on its own; the failures are returned for the log and tried again on the next
+ * pass.
  */
 export const catchUpPullRequests = async (
   pool: Pool,
