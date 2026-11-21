@@ -2,6 +2,7 @@ export { migrate } from './migrate';
 export * from './store';
 export * from './task-history';
 export * from './task-links';
+export * from './split-subtasks';
 export * from './github';
 export * from './runs';
 export * from './run-refs';

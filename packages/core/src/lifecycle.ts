@@ -100,6 +100,7 @@ export const buildRoleFor = (kind: TaskKind): BuildRole =>
 /** Every one of these must approve the same head commit before a task leaves review. */
 export const REVIEWER_ROLES = ['reviewer_spec', 'reviewer_correctness'] as const;
 export type ReviewerRole = (typeof REVIEWER_ROLES)[number];
+export type ReviewVerdict = 'approve' | 'changes';
 
 /**
  * The connected app a member acted through: one OAuth grant of the Claude connector. `name` is the
@@ -217,7 +218,11 @@ export interface Task {
   readonly paused: boolean;
   /** Times work went back to building since the last dispatch. */
   readonly fixRounds: number;
-  readonly reviews: Readonly<Partial<Record<ReviewerRole, 'approve'>>>;
+  /**
+   * The verdicts on the head under review so far: each agent reviewer's, and `github` once a review
+   * left on the pull request asked for changes while they still ran.
+   */
+  readonly reviews: Readonly<Partial<Record<ReviewerRole | 'github', ReviewVerdict>>>;
   /** The approval chooser's decision for each human gate. */
   readonly approvalPlans: Readonly<Partial<Record<Gate, ApprovalPlan>>>;
   /** What the task touches that no agent may handle alone (`GUARDS`); set by rule, only grows. */
@@ -303,6 +308,8 @@ export type Command =
   /** The member withdraws an approval a connected app proposed for them. */
   | { readonly type: 'discard_proposal' }
   | { readonly type: 'request_changes'; readonly note: string }
+  /** A proposed split, sent back for one spec: the request is built as one task. */
+  | { readonly type: 'keep_whole' }
   | {
       readonly type: 'dispatch';
       readonly assignee: Assignee;
@@ -313,7 +320,7 @@ export type Command =
   | ({ readonly type: 'push' } & PushedHead)
   /** The builder answered a GitHub review and found nothing to change, so the head stays. */
   | { readonly type: 'unchanged'; readonly note: string }
-  | { readonly type: 'review'; readonly verdict: 'approve' | 'changes'; readonly notes: string }
+  | { readonly type: 'review'; readonly verdict: ReviewVerdict; readonly notes: string }
   | { readonly type: 'plan_approval'; readonly userVisible: boolean; readonly plan: PlanInput }
   | { readonly type: 'choose'; readonly userVisible: boolean; readonly plan: PlanInput }
   | { readonly type: 'merged' }
@@ -406,7 +413,7 @@ export type DomainEvent =
       readonly type: 'review_recorded';
       /** `github` is a review left on the pull request, such as Copilot's, sent back to the builder. */
       readonly reviewer: ReviewerRole | 'member' | 'github';
-      readonly verdict: 'approve' | 'changes';
+      readonly verdict: ReviewVerdict;
       readonly notes: string;
       readonly by?: string;
       readonly githubReviewId?: number;
@@ -421,6 +428,10 @@ export type DomainEvent =
   | ({ readonly type: 'diff_allowed' } & DiffAllowance)
   /** A person picked the size check's Split: the next spec must be a proposed split. */
   | { readonly type: 'split_asked' }
+  /** People approved the proposed split of this spec version; its sub-tasks open with it. */
+  | { readonly type: 'split_approved'; readonly version: number }
+  /** People sent a proposed split back to be specced as one task. */
+  | { readonly type: 'kept_whole' }
   | { readonly type: 'paused' }
   | { readonly type: 'resumed' }
   | { readonly type: 'closed'; readonly stage: 'declined' | 'cancelled'; readonly reason: string }
@@ -532,6 +543,21 @@ export const gateSubject = (
   gate: Gate
 ): string | null =>
   gate === 'spec_review' ? `spec:${task.specVersion}` : task.headSha && `sha:${task.headSha}`;
+
+/**
+ * Whether people may approve the gate's subject now: once the approval chooser planned it, or, for
+ * a proposed split, at once, since a split is never planned and its lane's policy says who decides.
+ */
+export const gatePlanned = (
+  task: Pick<Task, 'specVersion' | 'headSha' | 'approvalPlans' | 'splitProposed'>,
+  gate: Gate
+): boolean => {
+  const subject = gateSubject(task, gate);
+  if (subject === null) return false;
+  return (
+    (gate === 'spec_review' && task.splitProposed) || task.approvalPlans[gate]?.subject === subject
+  );
+};
 
 /**
  * The lane's policy for a gate plus whatever the approval chooser added to it, each requirement
@@ -794,7 +820,26 @@ const backToBuilding = (task: Task, context: DecideContext, ...why: DomainEvent[
   return ok(moved, [...why, stageEvent]);
 };
 
-/** Records a review: changes send the work back, and the last approval moves it on to choosing. */
+/**
+ * Records verdicts on the head under review and moves on once every agent reviewer has given one:
+ * back to the build when any asked for changes, a GitHub review's included, so one fix round answers
+ * them all and no reviewer's paid run is thrown away while it still works; else to the chooser.
+ */
+const verdictsIn = (
+  task: Task,
+  context: DecideContext,
+  reviews: Task['reviews'],
+  events: DomainEvent[]
+): Decision => {
+  if (REVIEWER_ROLES.some((role) => reviews[role] === undefined)) {
+    return ok({ ...task, reviews }, events);
+  }
+  if (Object.values(reviews).includes('changes')) return backToBuilding(task, context, ...events);
+  const [moved, stageEvent] = moveTo(task, 'choosing', { reviews });
+  return ok(moved, [...events, stageEvent]);
+};
+
+/** Records a review. A maintainer's own review stands in for the agent reviewers and decides at once. */
 const reviewed = (
   task: Task,
   context: DecideContext,
@@ -807,15 +852,11 @@ const reviewed = (
     verdict: command.verdict,
     notes: command.notes
   };
+  if (reviewer !== 'member') {
+    return verdictsIn(task, context, { ...task.reviews, [reviewer]: command.verdict }, [recorded]);
+  }
   if (command.verdict === 'changes') return backToBuilding(task, context, recorded);
-
-  // A maintainer's own review stands in for the agent reviewers.
-  const reviews =
-    reviewer === 'member' ? task.reviews : { ...task.reviews, [reviewer]: 'approve' as const };
-  const complete =
-    reviewer === 'member' || REVIEWER_ROLES.every((role) => reviews[role] === 'approve');
-  if (!complete) return ok({ ...task, reviews }, [recorded]);
-  const [moved, stageEvent] = moveTo(task, 'choosing', { reviews });
+  const [moved, stageEvent] = moveTo(task, 'choosing');
   return ok(moved, [recorded, stageEvent]);
 };
 
@@ -905,16 +946,6 @@ const landPush = (
     ]);
   }
 
-  const tooLarge = diffHold(context.config, task, lane, head.diffLines);
-  if (tooLarge) {
-    const { blocked, details } = tooLarge;
-    return ok({ ...task, lane, blocked }, [
-      ...pushed,
-      { type: 'guardrail_tripped', guardrail: 'diff_too_large', details },
-      { type: 'blocked', blocked }
-    ]);
-  }
-
   // A new shared file nobody listed is the duplication of tomorrow: the builder lists it first.
   const unlisted = unlistedFiles(
     context.config.docs.standards.catalogs,
@@ -927,6 +958,17 @@ const landPush = (
       guardrail: 'unlisted_files',
       details: describeUnlisted(unlisted)
     });
+  }
+
+  // Last, so a head whose size a person allows has passed everything else and can go to review.
+  const tooLarge = diffHold(context.config, task, lane, head);
+  if (tooLarge) {
+    const { blocked, details } = tooLarge;
+    return ok({ ...task, lane, blocked }, [
+      ...pushed,
+      { type: 'guardrail_tripped', guardrail: 'diff_too_large', details },
+      { type: 'blocked', blocked }
+    ]);
   }
 
   const [moved, stageEvent] = moveTo(task, 'reviewing', {
@@ -950,6 +992,18 @@ export const GITHUB_REVIEWABLE: ReadonlySet<Stage> = new Set([
 
 /** Stages where the task's pull request may exist: from the first push until it is merged. */
 export const WITH_PULL_REQUEST: ReadonlySet<Stage> = new Set(['building', ...GITHUB_REVIEWABLE]);
+
+/**
+ * Allowing the size of the head the size check held takes that head in: it passed every other
+ * check first, so it goes to review as pushed instead of being built again.
+ */
+const allowedHeadIn = (task: Task, offer: AllowanceOffer | null, events: DomainEvent[]) => {
+  // Words in the answer that hold the task for the owner keep the head out too, so no pull request
+  // opens for it before the owner has looked.
+  if (task.blocked || !offer?.headSha || task.stage !== 'building') return ok(task, events);
+  const [moved, stageEvent] = moveTo(task, 'reviewing', { headSha: offer.headSha, reviews: {} });
+  return ok(moved, [...events, stageEvent]);
+};
 
 /**
  * Answers the task's question. Picking the size check's option to allow more lines also grants that
@@ -1013,11 +1067,12 @@ const unblockedBy = (
     member,
     command.text
   );
-  return ok(unblocked, [
+  const events: DomainEvent[] = [
     { type: 'unblocked', answer: command.text },
     ...(allowance ? [{ type: 'diff_allowed' as const, ...allowance }] : []),
     ...guardEvents
-  ]);
+  ];
+  return allowedHeadIn(unblocked, offer, events);
 };
 
 const ALLOWED_WHILE_HELD: ReadonlySet<Command['type']> = new Set([
@@ -1054,7 +1109,7 @@ const approvalFor = (
   const subject = gateSubject(task, gate);
   if (subject === null) return { ok: false, error: 'no_head' };
   // Nobody can approve before the approval chooser has said who needs to.
-  if (task.approvalPlans[gate]?.subject !== subject) return { ok: false, error: 'not_planned' };
+  if (!gatePlanned(task, gate)) return { ok: false, error: 'not_planned' };
   return { ok: true, gate, subject, member };
 };
 
@@ -1154,7 +1209,23 @@ export const decide = (
       };
       if (!result.satisfied) return ok(task, [recorded]);
       const [moved, stageEvent] = moveTo(task, gate === 'spec_review' ? 'ready' : 'merging');
-      return ok(moved, [recorded, stageEvent]);
+      // An approved split opens its sub-tasks (the store does, with the event); the task is then
+      // built through them and never itself.
+      const opens: DomainEvent[] =
+        gate === 'spec_review' && task.splitProposed
+          ? [{ type: 'split_approved', version: task.specVersion }]
+          : [];
+      return ok(moved, [recorded, ...opens, stageEvent]);
+    }
+
+    case 'keep_whole': {
+      if (task.stage !== 'spec_review' || !task.splitProposed) return fail('wrong_stage');
+      const member = memberFor(actor, context);
+      // Keeping it whole sends the work back, so it is for whoever may ask for changes.
+      if (member === undefined || !canRequestChanges(task, context, member))
+        return fail('not_allowed');
+      const [moved, stageEvent] = moveTo(task, 'speccing');
+      return ok(moved, [{ type: 'kept_whole' }, stageEvent]);
     }
 
     case 'propose_approval': {
@@ -1381,7 +1452,7 @@ export const decide = (
       if (actor.kind !== 'engine') return fail('not_allowed');
       // A review of an earlier head was about code that is no longer there.
       if (command.headSha !== task.headSha) return fail('stale_head');
-      return backToBuilding(task, context, {
+      const recorded: DomainEvent = {
         type: 'review_recorded',
         reviewer: 'github',
         verdict: 'changes',
@@ -1391,7 +1462,11 @@ export const decide = (
           ? { githubReviewId: command.source.reviewId }
           : { githubCommentId: command.source.commentId }),
         overviewOnly: command.overviewOnly
-      });
+      };
+      // While the agent reviewers still run, it waits for their verdicts and joins the same fix round.
+      return task.stage === 'reviewing'
+        ? verdictsIn(task, context, { ...task.reviews, github: 'changes' }, [recorded])
+        : backToBuilding(task, context, recorded);
     }
 
     case 'outside_push': {
