@@ -128,13 +128,18 @@ describe.skipIf(!url)('setup', () => {
     expect(result.projectId).toBeString();
   });
 
-  test('agent setup syncs every role once and then reports no changes', async () => {
+  test('agent setup syncs every role and the reader once and then reports no changes', async () => {
     const agents = createFakePort(() => []);
     const promptsDir = join(import.meta.dir, '..', '..', '..', 'agents');
-    expect((await setupAgents(pool, agents, promptsDir, 'claude-opus-5-5')).changed).toHaveLength(
+    const models = { opus: 'claude-opus-5-5', haiku: 'claude-haiku-5-5' };
+    expect((await setupAgents(pool, agents, promptsDir, models)).changed).toHaveLength(
       RUNNER_ROLES.length
     );
     expect(await loadAgentVersions(pool)).toHaveLength(RUNNER_ROLES.length);
-    expect((await setupAgents(pool, agents, promptsDir, 'claude-opus-5-5')).changed).toEqual([]);
+    expect(agents.agentWrites.map((write) => write.agent.model.id).sort()).toEqual(
+      [...RUNNER_ROLES.map(() => models.opus), models.haiku].sort()
+    );
+    expect((await setupAgents(pool, agents, promptsDir, models)).changed).toEqual([]);
+    expect(agents.agentWrites).toHaveLength(RUNNER_ROLES.length + 1);
   });
 });

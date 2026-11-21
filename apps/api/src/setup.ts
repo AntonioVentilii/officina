@@ -15,7 +15,8 @@ import {
   ensureEnvironment,
   loadDefinitions,
   syncAgents,
-  type ManagedAgentsPort
+  type ManagedAgentsPort,
+  type ModelTier
 } from '@officina/runner';
 import type { Pool } from 'pg';
 import { CONFIG_PATH } from './webhooks';
@@ -26,16 +27,17 @@ export type SetupGitHub = Pick<
 >;
 
 /**
- * Syncs every role agent from its checked-in prompt on the given model and records the versions the
- * engine will use. Unchanged definitions are left alone, so running it on every boot is cheap.
+ * Syncs every role agent from its checked-in prompt on the given models (the roles on Opus, their
+ * reading worker on Haiku) and records the versions the engine will use. Unchanged definitions are
+ * left alone, so running it on every boot is cheap.
  */
 export const setupAgents = async (
   pool: Pool,
   agents: ManagedAgentsPort,
   promptsDir: string,
-  modelId: string
+  models: Readonly<Record<ModelTier, string>>
 ): Promise<{ changed: string[] }> => {
-  const definitions = await loadDefinitions(promptsDir, modelId);
+  const definitions = await loadDefinitions(promptsDir, models.opus, models.haiku);
   const { changed } = await syncAgents(
     agents,
     definitions,

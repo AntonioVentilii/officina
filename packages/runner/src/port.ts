@@ -38,11 +38,26 @@ import type { RunUsage } from '@officina/core';
 import type { AgentModel, AgentTools } from './definitions';
 import type { ListedModel } from './models';
 
+/** A stored agent's exact version, as a roster pins it. */
+export interface AgentVersionRef {
+  readonly id: string;
+  readonly version: number;
+}
+
 export interface AgentWrite {
   readonly name: string;
   readonly model: AgentModel;
   readonly system: string;
   readonly tools: AgentTools;
+  /** The definition hash, kept on the agent so a later sync can tell whether it changed. */
+  readonly hash: string;
+  /** Agents this one may hand work to in its sessions; none when it works alone. */
+  readonly roster: readonly AgentVersionRef[];
+}
+
+/** An agent found by name: its latest version and the definition hash that version was written from. */
+export interface FoundAgent extends AgentVersionRef {
+  readonly hash: string | null;
 }
 
 export interface EnvironmentWrite {
@@ -62,7 +77,7 @@ export interface ManagedAgentsPort {
   /** The session's list cost and its tokens, read together. */
   sessionUsage(sessionId: string): Promise<RunUsage>;
   /** An agent with this name, so one created but never recorded is reused rather than duplicated. */
-  findAgentByName(name: string): Promise<{ id: string } | null>;
+  findAgentByName(name: string): Promise<FoundAgent | null>;
   createAgent(agent: AgentWrite): Promise<{ id: string; version: number }>;
   updateAgent(agentId: string, agent: AgentWrite): Promise<{ id: string; version: number }>;
   listModels(): Promise<ListedModel[]>;

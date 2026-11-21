@@ -18,6 +18,7 @@ import {
   running,
   sessionError,
   terminated,
+  threadEvent,
   toolUse,
   type ScriptItem
 } from './fake-port';
@@ -63,6 +64,22 @@ const toolResults = (sent: { events: readonly OutboundEvent[] }[]) =>
 const hang = () => new Promise<void>(() => {});
 
 describe('executeRun', () => {
+  test("the reader's thread going idle does not end the run; the session going idle does", async () => {
+    const { port, report } = run([
+      running(),
+      threadEvent('session.thread_created'),
+      threadEvent('agent.thread_message_sent', { content: [{ type: 'text', text: 'Where?' }] }),
+      threadEvent('session.thread_status_running'),
+      threadEvent('session.thread_status_idle', { stop_reason: { type: 'end_turn' } }),
+      threadEvent('agent.thread_message_received', { content: [{ type: 'text', text: 'a.ts:3' }] }),
+      toolUse(approve),
+      idle('requires_action'),
+      idle('end_turn')
+    ]);
+    expect((await report).outcome).toEqual({ kind: 'result', output: approve });
+    expect(toolResults(port.sent)).toHaveLength(1);
+  });
+
   test('opens the stream before sending the brief, accepts a valid result and reports what it used', async () => {
     const { port, report } = run([
       running(),

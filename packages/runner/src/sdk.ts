@@ -70,11 +70,31 @@ export async function* portEvents(
   for await (const event of stream) if ('id' in event) yield { ...event };
 }
 
+/** The agent metadata key that holds the definition hash an agent version was written from. */
+const HASH_KEY = 'officina_definition_hash';
+
+/**
+ * The older `coordinator` form: it delegates only to the listed agents and never starts workflow
+ * runs, so a role cannot fan its session out into extra spend. `null` clears a roster a role no
+ * longer has.
+ */
+const multiagentParams = (
+  agent: AgentWrite
+): NonNullable<AgentCreateParams['multiagent']> | null =>
+  agent.roster.length === 0
+    ? null
+    : {
+        type: 'coordinator',
+        agents: agent.roster.map(({ id, version }) => ({ type: 'agent', id, version }))
+      };
+
 const agentParams = (agent: AgentWrite): AgentCreateParams => ({
   name: agent.name,
   model: { id: agent.model.id, effort: agent.model.effort },
   system: agent.system,
-  tools: agent.tools
+  tools: agent.tools,
+  metadata: { [HASH_KEY]: agent.hash },
+  multiagent: multiagentParams(agent)
 });
 
 /** Deny-by-default egress: package registries plus the hosts a project explicitly allows. */
@@ -145,7 +165,9 @@ export const createSdkPort = (client: Anthropic): ManagedAgentsPort => ({
   },
   async findAgentByName(name) {
     for await (const agent of client.beta.agents.list()) {
-      if (agent.name === name) return { id: agent.id };
+      if (agent.name === name) {
+        return { id: agent.id, version: agent.version, hash: agent.metadata[HASH_KEY] ?? null };
+      }
     }
     return null;
   },

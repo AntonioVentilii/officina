@@ -129,6 +129,7 @@ Each role is a versioned prompt in [`agents/`](./agents), synced to Claude Manag
 | 🧭 [Chooser](./agents/chooser.md)                           | Decides who approves and how closely; it can only raise the bar                             |           no            |
 | 🎓 [Learner](./agents/learner.md)                           | Looks back at a merged task and proposes what the project should learn                      |           no            |
 | 🗂️ [Onboarder](./agents/onboarder.md)                       | Writes a new project's agent docs (`AGENTS.md`, `docs/ai/**`) before anything else is built | the docs, on its branch |
+| 📖 [Reader](./agents/reader.md)                             | Finds and quotes code and docs for the builder and the correctness reviewer, on Haiku       |           no            |
 
 ---
 
