@@ -860,6 +860,13 @@ describe.skipIf(!url)('engine', () => {
       },
       { kind: 'engine' }
     );
+    // The review arrived while the agent reviewers had not run: it waits for their verdicts.
+    expect(await runAgentStep(deps, taskId, 'builder')).toEqual({
+      status: 'skipped',
+      reason: 'not_due'
+    });
+    await runAgentStep(deps, taskId, 'reviewer_spec');
+    await runAgentStep(deps, taskId, 'reviewer_correctness');
 
     expect(await runAgentStep(deps, taskId, 'builder')).toEqual({ status: 'applied' });
     expect((await loadTask(pool, taskId))?.task).toMatchObject({
@@ -3257,27 +3264,21 @@ describe.skipIf(!url)('engine', () => {
       headSha: 'sha1'
     });
 
-    // While the spec reviewer reads sha1, the other reviewer sends it back and the builder pushes sha2.
+    // While the spec reviewer reads sha1, a push from outside Officina replaces it with sha2.
     const agents = createFakePort(() => [
       async () => {
         await applyOrThrow(
           pool,
           taskId,
-          { type: 'review', verdict: 'changes', notes: 'Wrong key.' },
-          { kind: 'agent', role: 'reviewer_correctness', version: 1 }
-        );
-        await applyOrThrow(
-          pool,
-          taskId,
           {
-            type: 'push',
+            type: 'outside_push',
             headSha: 'sha2',
             changedPaths: [COPY],
             addedPaths: [],
             catalogPages: {},
             diffLines: 3
           },
-          { kind: 'agent', role: 'builder', version: 1 }
+          { kind: 'engine' }
         );
       },
       toolUse(RESULTS.reviewer_spec),
