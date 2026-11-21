@@ -25,6 +25,12 @@
     if (kind) stamp = { kind, at: Date.now() };
   });
 
+  // The stamp is Fucina's: switching look mid-stamp drops it, so it never shows in another look,
+  // nor plays again on coming back.
+  $effect(() => {
+    if (look.current !== 'fucina') stamp = null;
+  });
+
   const ANVIL = 'M8 13h13l3-3h2v4l-3 2H19v3l3 5H10l3-5v-3H8z';
   const RAYS = Array.from({ length: 10 }, (_, index) => index * 36);
   // Confetti in every hue of the palette, thrown on a golden-angle spiral so no two pieces meet.
@@ -41,10 +47,10 @@
   });
 </script>
 
-{#if stamp}
+{#if stamp && look.current === 'fucina'}
   {#key stamp.at}
     <div class="stamp" style:--stamp={HUES.green} aria-hidden="true">
-      <svg class="seal" viewBox="0 0 150 150">
+      <svg class="seal" viewBox="0 0 150 150" onanimationend={() => (stamp = null)}>
         <circle class="disc" cx="75" cy="75" r="66" />
         <circle class="ring" cx="75" cy="75" r="56" />
         <path transform="translate(43 38) scale(2)" d={ANVIL} />
