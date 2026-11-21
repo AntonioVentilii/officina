@@ -24,6 +24,7 @@ import {
   createTask,
   expectedHead,
   failOrphanedRuns,
+  failPausedRuns,
   failTakenOverRuns,
   feedbackSinceLastPush,
   finishRun,
@@ -1178,6 +1179,99 @@ describe.skipIf(!url)('engine', () => {
     expect(await runStatuses(taken)).toContainEqual({ agent_role: 'builder', status: 'failed' });
     expect(await runStatuses(handedIn)).toContainEqual({ agent_role: 'builder', status: 'failed' });
     expect(await runStatuses(kept)).toContainEqual({ agent_role: 'builder', status: 'running' });
+  });
+
+  test('a build paused and resumed before its result is applied drops the result, and the builder runs again', async () => {
+    let taskId = '';
+    let pausedOnce = false;
+    const github = fakeGitHub();
+    const agents = createFakePort((request) =>
+      request.metadata.role === 'builder' && !pausedOnce
+        ? [
+            async () => {
+              // Paused and resumed while the build runs, before its result is applied.
+              pausedOnce = true;
+              await applyOrThrow(pool, taskId, { type: 'pause' }, seeded.owner);
+              await applyOrThrow(pool, taskId, { type: 'resume' }, seeded.owner);
+            },
+            ...succeed(request)
+          ]
+        : succeed(request)
+    );
+    taskId = await taskInReady(github, agents);
+    const deps = { pool, github: github.port, agents, publicUrl: PUBLIC_URL };
+
+    const first = await tick(deps, seeded.projectId);
+    expect(first.steps.find((step) => step.role === 'builder')?.result).toMatchObject({
+      status: 'discarded'
+    });
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({
+      stage: 'building',
+      assignee: { kind: 'agent', role: 'builder' },
+      headSha: null,
+      blocked: null,
+      paused: false
+    });
+    expect((await runStatuses(taskId)).at(-1)).toEqual({ agent_role: 'builder', status: 'failed' });
+    // The step ended its run itself, so the scheduler has nothing left to stop.
+    expect(await failPausedRuns(pool)).toEqual([]);
+
+    const second = await tick(deps, seeded.projectId);
+    expect(second.steps.find((step) => step.role === 'builder')?.result).toEqual({
+      status: 'applied'
+    });
+    expect((await loadTask(pool, taskId))?.task.stage).toBe('reviewing');
+  });
+
+  test('a run in progress when its task is paused is stopped on the next pass even once resumed, once, and only on its task', async () => {
+    const paused = await taskInReady();
+    const kept = await taskInReady();
+    const runs: Record<string, string> = {};
+    for (const taskId of [paused, kept]) {
+      await applyOrThrow(
+        pool,
+        taskId,
+        { type: 'dispatch', assignee: { kind: 'agent', role: 'builder' }, openInLane: 0 },
+        { kind: 'engine' }
+      );
+      const run = await startRun(pool, {
+        taskId,
+        stage: 'building',
+        role: 'builder',
+        agentVersion: 1,
+        runner: 'managed-agents'
+      });
+      if (!run.ok) throw new Error(run.error);
+      runs[taskId] = run.runId;
+    }
+    await pool.query("update runs set external_id = 'sesn_paused' where id = $1", [runs[paused]]);
+    await applyOrThrow(pool, paused, { type: 'pause' }, seeded.owner);
+    await applyOrThrow(pool, paused, { type: 'resume' }, seeded.owner);
+
+    expect(await failPausedRuns(pool)).toEqual([{ id: runs[paused]!, externalId: 'sesn_paused' }]);
+    expect(await failPausedRuns(pool)).toEqual([]);
+    const { rows } = await pool.query<{ status: string; error: string }>(
+      "select status, result->>'error' as error from runs where id = $1",
+      [runs[paused]]
+    );
+    expect(rows).toEqual([
+      { status: 'failed', error: 'the task was paused while this run was in progress' }
+    ]);
+    expect(await runStatuses(kept)).toEqual([
+      { agent_role: 'spec', status: 'succeeded' },
+      { agent_role: 'chooser', status: 'succeeded' },
+      { agent_role: 'builder', status: 'running' }
+    ]);
+    // The role can be claimed again, and a run started after the resume is not stopped.
+    const again = await startRun(pool, {
+      taskId: paused,
+      stage: 'building',
+      role: 'builder',
+      agentVersion: 1,
+      runner: 'managed-agents'
+    });
+    expect(again.ok).toBe(true);
+    expect(await failPausedRuns(pool)).toEqual([]);
   });
 
   test('a push to any other branch blocks the task and opens no pull request', async () => {
