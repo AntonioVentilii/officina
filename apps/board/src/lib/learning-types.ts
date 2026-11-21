@@ -26,6 +26,16 @@ export interface LearningDeciding {
   readonly since: string;
 }
 
+/** Another learning with the same edit, accepted with its pull request open or merged. */
+export interface LearningDuplicate {
+  readonly id: string;
+  readonly title: string;
+  readonly taskNumber: number | null;
+  readonly prNumber: number;
+  readonly prUrl: string;
+  readonly prState: LearningPullRequestState;
+}
+
 export interface Learning {
   readonly id: string;
   readonly title: string;
@@ -48,6 +58,8 @@ export interface Learning {
   /** The learner is rewriting an edit the default branch moved past, or could not. */
   readonly rewrite: 'requested' | 'failed' | null;
   readonly rewrittenAt: string | null;
+  /** A proposed learning repeating one already accepted: it can only be rejected. */
+  readonly duplicateOf: LearningDuplicate | null;
   readonly createdAt: string;
   readonly canDecide: boolean;
   /** A decision someone is making now; every board shows the learning at work until it lands. */

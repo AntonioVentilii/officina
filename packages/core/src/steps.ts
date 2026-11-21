@@ -15,8 +15,10 @@ export const nextAgentRoles = (task: Task): AgentRole[] => {
     case 'speccing':
       return ['spec'];
     case 'spec_review':
-      // The approval chooser decides who must approve each spec version before anyone can.
-      return task.approvalPlans.spec_review?.subject === gateSubject(task, 'spec_review')
+      // The approval chooser decides who must approve each spec version before anyone can. A
+      // proposed split is not approved as a spec, so nobody plans it: people decide on the split.
+      return task.splitProposed ||
+        task.approvalPlans.spec_review?.subject === gateSubject(task, 'spec_review')
         ? []
         : ['chooser'];
     case 'building':

@@ -51,6 +51,9 @@ export const ERROR_TEXT_MAX = 500;
 export const errorText = (error: unknown): string =>
   clip(error instanceof Error ? error.message : String(error), ERROR_TEXT_MAX);
 
+/** The longest spec body, a proposed split's included: it is stored, shown and quoted whole. */
+export const SPEC_BODY_MAX = 40_000;
+
 /**
  * What the approval chooser's checklist for verification may hold: its items and the rows of its
  * before/after table. Posted together as one comment, they stay under GitHub's limit at these sizes.

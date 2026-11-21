@@ -11,8 +11,11 @@ import {
   holdLearningDecision,
   loadLearning,
   loadProject,
+  markAcceptAttempt,
   releaseLearningDecision,
   requestLearningRewrite,
+  type AcceptMark,
+  type LearningDuplicate,
   type LearningRow
 } from '@officina/db';
 import type { Pool } from 'pg';
@@ -37,6 +40,21 @@ const REWRITE_BLOCKS = {
     'the learner is rewriting this edit against the current file; decide it once it is back',
   failed: 'the edit no longer applies and the learner could not rewrite it; reject it instead'
 } as const;
+
+/** Why a learning repeating one already accepted with its pull request cannot be accepted. */
+const repeats = ({ title, prNumber }: LearningDuplicate) =>
+  `this learning repeats "${title}", already accepted with pull request #${prNumber}; reject it instead`;
+
+/** Why a learning cannot be accepted while another copy of its edit is being accepted. */
+const COPY_UNDER_WAY =
+  'another learning with the same edit is being accepted right now; look at it again shortly';
+
+/**
+ * Why an edit the default branch moved past is not handed to the learner while an earlier accept
+ * may have left its pull request on the edit's branch: the catch-up reads that branch first.
+ */
+const ATTEMPT_UNCHECKED =
+  'an earlier accept of this learning is still being checked; look at it again shortly';
 
 /** Said when the claim of a decision was taken over, after its lease ran out, by another one. */
 const TAKEN_OVER = 'someone else decided this learning meanwhile; look at it again';
@@ -63,6 +81,19 @@ const holding =
       throw new TaskCommandError(TAKEN_OVER);
   };
 
+/** Throws why an accept was not marked, if it was not. */
+const refuseUnmarked = async (
+  pool: Pool,
+  target: Target,
+  learning: LearningRow,
+  mark: AcceptMark
+): Promise<void> => {
+  if (mark === 'taken_over') throw new TaskCommandError(TAKEN_OVER);
+  if (mark !== 'repeated') return;
+  const now = await loadLearning(pool, target.projectId, learning.id);
+  throw new TaskCommandError(now?.duplicateOf ? repeats(now.duplicateOf) : COPY_UNDER_WAY);
+};
+
 /**
  * Opens the pull request of a project learning being accepted, or hands an edit the default branch
  * has moved past back to the learner to be rewritten, and then returns null.
@@ -74,6 +105,12 @@ const acceptIntoPullRequest = async (
   const { learning } = claimed;
   if (learning.rewrite) throw new TaskCommandError(REWRITE_BLOCKS[learning.rewrite]);
   if (!github) throw new TaskCommandError('the GitHub App is not configured');
+  const mark = await markAcceptAttempt(pool, {
+    id: learning.id,
+    claim: claimed.claim,
+    memberId: target.memberId
+  });
+  await refuseUnmarked(pool, target, learning, mark);
   const project = (await loadProject(pool, target.projectId))!;
   const opened = await openLearningPullRequest(github, project, learning, {
     publicUrl: target.publicUrl,
@@ -84,6 +121,7 @@ const acceptIntoPullRequest = async (
   // The learner works per task; a learning without one cannot be rewritten.
   if (learning.taskId === null)
     throw new TaskCommandError(`the edit no longer applies (${opened.why}); reject it instead`);
+  if (mark === 'remarked') throw new TaskCommandError(ATTEMPT_UNCHECKED);
   if (!(await requestLearningRewrite(pool, learning.id, claimed.claim)))
     throw new TaskCommandError(TAKEN_OVER);
   return null;
@@ -129,12 +167,15 @@ interface DecisionInput {
 
 /**
  * The learning a decision is about, if it can still be decided as asked: still proposed, and for an
- * accept, the edit the person read, never one rewritten since.
+ * accept, not a repeat of an edit already accepted with its pull request, and the edit the person
+ * read, never one rewritten since.
  */
 const decidable = (learning: LearningRow | null, input: DecisionInput): LearningRow => {
   if (!learning) throw new TaskCommandError('learning not found');
   if (learning.status !== 'proposed')
     throw new TaskCommandError('this learning was already decided');
+  if (input.decision === 'accept' && learning.duplicateOf)
+    throw new TaskCommandError(repeats(learning.duplicateOf));
   const read = learning.rewrittenAt?.toISOString() ?? null;
   if (input.decision === 'accept' && read !== input.rewrittenAt)
     throw new TaskCommandError('the edit was rewritten since you read it; read it again first');

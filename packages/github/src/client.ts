@@ -430,6 +430,10 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     }
   };
 
+  /** The `head` filter GitHub lists pull requests by, for one of the repository's own branches. */
+  const headOf = (ref: RepoRef & { readonly branch: string }) =>
+    encodeURIComponent(`${ref.repo.split('/')[0]!}:${ref.branch}`);
+
   /**
    * The pull requests open from one of the repository's own branches, to any base or to one. Every
    * page is read before anything acts on them, so closing some cannot shift the pages still unread.
@@ -438,13 +442,11 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     ref: RepoRef & { readonly branch: string; readonly base?: string },
     token: string
   ) => {
-    const owner = ref.repo.split('/')[0]!;
     const base = ref.base === undefined ? '' : `&base=${encodeURIComponent(ref.base)}`;
-    const head = encodeURIComponent(`${owner}:${ref.branch}`);
     const pulls: { number: number; html_url: string }[] = [];
     for (let page = 1; ; page++) {
       const batch = await request<typeof pulls>(
-        `/repos/${ref.repo}/pulls?state=open&head=${head}${base}&per_page=100&page=${page}`,
+        `/repos/${ref.repo}/pulls?state=open&head=${headOf(ref)}${base}&per_page=100&page=${page}`,
         { token }
       );
       pulls.push(...batch);
@@ -480,6 +482,27 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
       if (!open[0]) throw error;
       return { number: open[0].number, url: open[0].html_url };
     }
+  };
+
+  /**
+   * The pull request from a branch to a base: the one open, else the newest, merged or closed
+   * unmerged; null when the branch never had one. GitHub lists the newest first, and a branch
+   * Officina opens pull requests from has a handful at most, so the first page holds them.
+   */
+  const pullRequestFrom = async (
+    ref: RepoRef & { readonly branch: string; readonly base: string }
+  ): Promise<{ number: number; url: string; state: 'open' | 'merged' | 'closed' } | null> => {
+    const pulls = await request<
+      { number: number; html_url: string; state: string; merged_at: string | null }[]
+    >(
+      `/repos/${ref.repo}/pulls?state=all&head=${headOf(ref)}&base=${encodeURIComponent(ref.base)}` +
+        '&sort=created&direction=desc&per_page=100',
+      { token: await installationToken(ref) }
+    );
+    const pull = pulls.find((each) => each.state === 'open') ?? pulls[0];
+    if (!pull) return null;
+    const state = pull.state === 'open' ? 'open' : pull.merged_at === null ? 'closed' : 'merged';
+    return { number: pull.number, url: pull.html_url, state };
   };
 
   /** Closes every pull request still open from a branch; none open is not an error. */
@@ -693,6 +716,7 @@ export const createGitHubClient = (options: GitHubClientOptions) => {
     isOnBranch,
     commitChanges,
     openPullRequest,
+    pullRequestFrom,
     closePullRequestsFrom,
     commentOnIssue,
     editComment,

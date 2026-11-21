@@ -511,6 +511,41 @@ describe('GitHub client', () => {
     await expect(opening).rejects.toThrow('GitHub 422');
   });
 
+  test('finds the pull request from a branch to a base: the open one, else the newest, or none', async () => {
+    const pull = (number: number, state: string, merged_at: string | null = null) => ({
+      number,
+      html_url: `https://github.com/ViciApp/vici-app/pull/${number}`,
+      state,
+      merged_at
+    });
+    let pulls = [pull(51, 'closed'), pull(50, 'open')];
+    const { fetchImpl, calls } = fakeGitHub({
+      'POST /app/installations/99/access_tokens': tokenRoute('2099-01-01T00:00:00Z'),
+      'GET /repos/ViciApp/vici-app/pulls': () => json(pulls)
+    });
+    const client = createGitHubClient({ appId: '1', privateKeyPem, fetch: fetchImpl });
+    const input = { ...ref, branch: 'officina/learning-1', base: 'main' };
+    expect(await client.pullRequestFrom(input)).toEqual({
+      number: 50,
+      url: 'https://github.com/ViciApp/vici-app/pull/50',
+      state: 'open'
+    });
+    const listed = new URLSearchParams(calls.at(-1)!.query);
+    expect(calls.at(-1)!.url).toBe('/repos/ViciApp/vici-app/pulls');
+    expect(listed.get('state')).toBe('all');
+    expect(listed.get('head')).toBe('ViciApp:officina/learning-1');
+    expect(listed.get('base')).toBe('main');
+    expect(listed.get('sort')).toBe('created');
+    expect(listed.get('direction')).toBe('desc');
+
+    pulls = [pull(52, 'closed', '2026-01-01T00:00:00Z'), pull(51, 'closed')];
+    expect(await client.pullRequestFrom(input)).toMatchObject({ number: 52, state: 'merged' });
+    pulls = [pull(51, 'closed')];
+    expect(await client.pullRequestFrom(input)).toMatchObject({ number: 51, state: 'closed' });
+    pulls = [];
+    expect(await client.pullRequestFrom(input)).toBeNull();
+  });
+
   test('closes every pull request still open from a branch, and none open is not an error', async () => {
     let open = [
       { number: 7, html_url: 'https://github.com/ViciApp/vici-app/pull/7' },
