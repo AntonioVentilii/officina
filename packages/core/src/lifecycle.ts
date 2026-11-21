@@ -5,6 +5,7 @@ import {
   allowsDiff,
   diffHold,
   pickedAllowance,
+  pickedSplit,
   type AllowanceOffer,
   type DiffAllowance
 } from './allowance';
@@ -192,6 +193,8 @@ export interface Blocked {
   readonly options?: readonly QuestionOption[];
   /** Set on the size check's question: the size its own option allows for this task. */
   readonly allowance?: AllowanceOffer;
+  /** Set on the size check's question: its own option that sends the task back for a split. */
+  readonly split?: { readonly option: string };
 }
 
 export interface Task {
@@ -410,6 +413,8 @@ export type DomainEvent =
   | { readonly type: 'blocked'; readonly blocked: Blocked }
   | { readonly type: 'unblocked'; readonly answer: string }
   | ({ readonly type: 'diff_allowed' } & DiffAllowance)
+  /** A person picked the size check's Split: the next spec must be a proposed split. */
+  | { readonly type: 'split_asked' }
   | { readonly type: 'paused' }
   | { readonly type: 'resumed' }
   | { readonly type: 'closed'; readonly stage: 'declined' | 'cancelled'; readonly reason: string }
@@ -944,6 +949,32 @@ export const WITH_PULL_REQUEST: ReadonlySet<Stage> = new Set(['building', ...GIT
  * Answers the task's question. Picking the size check's option to allow more lines also grants that
  * allowance, which only whoever may allow it in the lane can pick.
  */
+/**
+ * The size check's Split, picked: the build stops and the task goes back to the spec agent for a
+ * proposed split. Its branch and head stay as they are, so nothing pushed is lost.
+ */
+const splitAsked = (
+  task: Task,
+  command: Extract<Command, { type: 'answer' }>,
+  member: Member,
+  context: DecideContext
+): Decision => {
+  const [moved, stageEvent] = moveTo(task, 'speccing', {
+    blocked: null,
+    assignee: null,
+    reviews: {},
+    fixRounds: 0
+  });
+  const [guarded, guardEvents] = guardedByWords(moved, context, member, command.text);
+  return ok(guarded, [
+    { type: 'unblocked', answer: command.text },
+    { type: 'split_asked' },
+    ...(task.assignee ? [{ type: 'assigned' as const, assignee: null }] : []),
+    stageEvent,
+    ...guardEvents
+  ]);
+};
+
 const answered = (
   task: Task,
   command: Extract<Command, { type: 'answer' }>,
@@ -954,6 +985,17 @@ const answered = (
   if (member === undefined || !canAnswer(member, task.blocked.askedOf)) return fail('not_allowed');
   // An answer is written in the thread, and nobody writes where they may not read.
   if (!readsTask(member, task)) return fail('not_allowed');
+  if (pickedSplit(task.blocked, command.option)) return splitAsked(task, command, member, context);
+  return unblockedBy({ ...task, blocked: task.blocked }, command, member, context);
+};
+
+/** An answer that only clears the question, or also grants the size check's allowance. */
+const unblockedBy = (
+  task: Task & { readonly blocked: Blocked },
+  command: Extract<Command, { type: 'answer' }>,
+  member: Member,
+  context: DecideContext
+): Decision => {
   const offer = pickedAllowance(task.blocked, command.option);
   if (offer && !allowsDiff(member, offer.lane)) return fail('not_allowed');
   const allowance: DiffAllowance | null = offer

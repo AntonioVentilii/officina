@@ -405,6 +405,39 @@ describe('a size allowed for one task', () => {
     });
   });
 
+  test('picking Split stops the build and sends the task back to the spec agent for a split', () => {
+    const driver = createDriver([owner, maintainer, productContributor]);
+    const task = held(driver, PAGE_PATHS, 2449);
+    expect(task.blocked?.split).toEqual({ option: 'a' });
+    expect(driver.attempt(task, pick('a'), asMember(productContributor))).toEqual({
+      ok: false,
+      error: 'not_allowed'
+    });
+
+    const split = driver.step(task, pick('a'), asMember(maintainer));
+    expect(split).toMatchObject({
+      stage: 'speccing',
+      blocked: null,
+      assignee: null,
+      diffAllowance: null,
+      specVersion: task.specVersion
+    });
+    expect(driver.events()).toEqual([
+      { type: 'unblocked', answer: 'Option (a)' },
+      { type: 'split_asked' },
+      { type: 'assigned', assignee: null },
+      { type: 'stage_changed', from: 'building', to: 'speccing' }
+    ]);
+    expect(nextAgentRoles(split)).toEqual(['spec']);
+  });
+
+  test('picking Reduce only answers the question, as before', () => {
+    const driver = createDriver([owner, maintainer]);
+    const task = driver.step(held(driver, PAGE_PATHS, 2449), pick('b'), asMember(maintainer));
+    expect(task).toMatchObject({ stage: 'building', blocked: null, diffAllowance: null });
+    expect(driver.events().map((event) => event.type)).toEqual(['unblocked']);
+  });
+
   test('a maintainer allows it outside red, and a later head up to that size passes', () => {
     const driver = createDriver([owner, maintainer]);
     let task = driver.step(held(driver, PAGE_PATHS, 2449), pick('c'), asMember(maintainer));
