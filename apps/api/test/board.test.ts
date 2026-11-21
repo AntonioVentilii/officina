@@ -96,8 +96,6 @@ describe('agents page', () => {
     stage: 'building',
     status,
     model: null,
-    effort: null,
-    modelReason: null,
     costCents,
     // In proportion to the cost, so each role's totals are easy to read off.
     tokens:
@@ -622,6 +620,23 @@ describe.skipIf(!url)('board api', () => {
       requirements: []
     });
     expect(task.people.gates[0].skipped).toBeNull();
+  });
+
+  test('a result closed after an early merge reads its check as skipped and names no approvers', async () => {
+    const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    const taskId = await createTaskInVerifying(pool, seeded);
+    const merge = { pullRequest: 42, by: 'octo-owner', at: '2026-11-20T12:35:07Z' };
+    await applyOrThrow(pool, taskId, { type: 'merged', ...merge }, ENGINE);
+    await applyOrThrow(pool, taskId, { type: 'close_merged', reason: 'On main.' }, seeded.owner);
+
+    const task = await json(await call(owner, `/api/projects/${seeded.projectId}/tasks/1`));
+    expect(task.stage).toBe('done');
+    expect(task.people.gates[1]).toMatchObject({
+      gate: 'verifying',
+      skipped: 'skipped: the pull request was merged on GitHub before anyone verified it',
+      requirements: []
+    });
+    expect(task.mergedEarly).toMatchObject({ by: 'octo-owner', stage: 'verifying' });
   });
 
   test('the approval plan shows whom the chooser asked, and waits on them while approval is pending', async () => {
@@ -1751,7 +1766,9 @@ describe.skipIf(!url)('board api', () => {
     await handleWebhookAction(pool, {
       kind: 'pull_request_merged',
       repo: 'ViciApp/vici-app',
-      prNumber: 1498
+      prNumber: 1498,
+      by: null,
+      at: null
     });
     const task = await json(await call(owner, `/api/projects/${seeded.projectId}/tasks/1`));
     expect(task.learningPullRequests).toMatchObject([{ number: 1498, state: 'merged' }]);
@@ -1780,11 +1797,7 @@ describe.skipIf(!url)('board api', () => {
       reason: 'red lane'
     });
     const { runs } = await json(await call(owner, `/api/projects/${seeded.projectId}/runs`));
-    expect(runs[0]).toMatchObject({
-      model: 'claude-opus-5-5',
-      effort: 'high',
-      modelReason: 'red lane'
-    });
+    expect(runs[0].model).toEqual({ id: 'claude-opus-5-5', effort: 'high', reason: 'red lane' });
   });
 
   test('contributors get the decisions and the trail, not agent runs, costs or learnings', async () => {

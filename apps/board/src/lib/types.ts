@@ -57,6 +57,7 @@ export type BoardAction =
   | 'changes'
   | 'keep_whole'
   | 'answer'
+  | 'close_merged'
   | 'cancel'
   | 'comment';
 
@@ -170,9 +171,7 @@ export interface Run {
   readonly stage: string;
   readonly status: 'running' | 'succeeded' | 'failed' | 'cancelled';
   /** The model the session ran at, its effort and why; null for runs from before the choice. */
-  readonly model: string | null;
-  readonly effort: string | null;
-  readonly modelReason: string | null;
+  readonly model: { readonly id: string; readonly effort: string; readonly reason: string } | null;
   readonly costCents: number | null;
   /** None while the run is going, or when its session's usage could not be read. */
   readonly tokens: RunTokens | null;
@@ -237,6 +236,12 @@ export interface TaskDetail extends Card {
   readonly branch: string;
   readonly pullRequestUrl: string | null;
   readonly headSha: string | null;
+  /**
+   * Its pull request merged on GitHub before people verified it, in the words that say who merged
+   * it and when. The API also sends `by`, `at`, `stage` and `pullRequest`, which the board does not
+   * draw apart from these words.
+   */
+  readonly mergedEarly: { readonly text: string } | null;
   /** More lines than its lane allows, granted for this task alone; `null` when none was. */
   readonly allowance: Readonly<{ lines: number; lane: Lane; by: string; at: string | null }> | null;
   readonly request: Pick<Comment, 'author' | 'via' | 'body' | 'at'> | null;

@@ -28,6 +28,7 @@ export interface BoardTaskRow {
   readonly approvalPlans: Task['approvalPlans'];
   readonly guards: Task['guards'];
   readonly diffAllowance: Task['diffAllowance'];
+  readonly mergedEarly: Task['mergedEarly'];
   readonly splitProposed: boolean;
   readonly pullRequest: number | null;
   readonly costCents: number;
@@ -52,7 +53,8 @@ const BOARD_COLUMNS = `
   t.user_visible as "userVisible", t.assignee, t.requester_id as "requesterId",
   m.display_name as "requesterName", t.spec_version as "specVersion", t.head_sha as "headSha",
   t.fix_rounds as "fixRounds", t.approval_plans as "approvalPlans", t.guards,
-  t.diff_allowance as "diffAllowance", t.split_proposed as "splitProposed",
+  t.diff_allowance as "diffAllowance", t.merged_early as "mergedEarly",
+  t.split_proposed as "splitProposed",
   t.github_pr as "pullRequest",
   coalesce((select sum(r.list_cost_cents) from runs r where r.task_id = t.id), 0)::int as "costCents",
   coalesce(
@@ -166,9 +168,7 @@ export interface RunRow {
   readonly agentVersion: number;
   readonly status: string;
   /** What the session ran at and why; `null` for runs from before the engine chose per step. */
-  readonly model: string | null;
-  readonly effort: string | null;
-  readonly modelReason: string | null;
+  readonly model: { readonly id: string; readonly effort: string; readonly reason: string } | null;
   readonly costCents: number | null;
   /** None for a run whose session usage was never read. */
   readonly tokens: RunTokens | null;
@@ -183,7 +183,8 @@ export interface RunRow {
 const RUN_COLUMNS = `
   r.id, r.task_id as "taskId", t.number as "taskNumber", t.title as "taskTitle", r.stage,
   r.agent_role as role, r.agent_version as "agentVersion", r.status,
-  r.model, r.effort, r.model_reason as "modelReason",
+  case when r.model is null then null
+    else json_build_object('id', r.model, 'effort', r.effort, 'reason', r.model_reason) end as model,
   r.list_cost_cents as "costCents", r.external_id as "sessionId", r.result,
   case when r.input_tokens is not null then json_build_object(
     'input', r.input_tokens, 'output', r.output_tokens,

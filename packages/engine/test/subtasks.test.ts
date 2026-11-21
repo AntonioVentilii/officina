@@ -62,7 +62,12 @@ describe.skipIf(!url)('sub-tasks and their order', () => {
       agent('chooser')
     );
     await applyOrThrow(pool, taskId, { type: 'approve' }, seeded.owner);
-    await applyOrThrow(pool, taskId, { type: 'merged' }, ENGINE);
+    await applyOrThrow(
+      pool,
+      taskId,
+      { type: 'merged', pullRequest: 42, by: null, at: null },
+      ENGINE
+    );
   };
 
   test('a ready task with no links is dispatched as before', async () => {
