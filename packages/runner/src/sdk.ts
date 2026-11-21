@@ -1,6 +1,7 @@
 import type Anthropic from '@anthropic-ai/sdk';
 import type { AgentCreateParams } from '@anthropic-ai/sdk/resources/beta/agents/agents';
 import type {
+  BetaManagedAgentsSessionEvent,
   BetaManagedAgentsStreamSessionEvents,
   EventSendParams
 } from '@anthropic-ai/sdk/resources/beta/sessions/events';
@@ -64,7 +65,7 @@ const toSdkEvent = (event: OutboundEvent): EventSendParams['events'][number] => 
  * own and come only when the stream asks for them, which this port never does.
  */
 export async function* portEvents(
-  stream: AsyncIterable<BetaManagedAgentsStreamSessionEvents>
+  stream: AsyncIterable<BetaManagedAgentsStreamSessionEvents | BetaManagedAgentsSessionEvent>
 ): AsyncGenerator<SessionEvent> {
   for await (const event of stream) if ('id' in event) yield { ...event };
 }
@@ -132,6 +133,9 @@ export const createSdkPort = (client: Anthropic): ManagedAgentsPort => ({
   },
   async openStream(sessionId) {
     return portEvents(await client.beta.sessions.events.stream(sessionId));
+  },
+  listEvents(sessionId) {
+    return portEvents(client.beta.sessions.events.list(sessionId));
   },
   async send(sessionId, events) {
     await client.beta.sessions.events.send(sessionId, { events: events.map(toSdkEvent) });
