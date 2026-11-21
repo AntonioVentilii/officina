@@ -253,7 +253,8 @@ const seed = async (
         taskId: task.id,
         version: next.specVersion,
         body: spec(input.title, input.request),
-        createdBy: agent('spec')
+        createdBy: agent('spec'),
+        predictedPaths: input.paths
       });
       if (!plan) return run(demo, task.id, 'spec_review', 'chooser', { events: 5, running: true });
       await run(demo, task.id, 'spec_review', 'chooser', {

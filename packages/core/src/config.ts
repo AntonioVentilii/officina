@@ -3,11 +3,11 @@ import type { GuardPaths } from './guards';
 import { compileLaneMatcher, type Lane, type LaneMatcher } from './lanes';
 import { APPROVER_ROLES } from './roles';
 
-/** The board's two looks. A member's own pick wins over the project's default. */
-export const BOARD_LOOKS = ['modernista', 'tecnica'] as const;
+/** The board's three looks, the default first. A member's own pick wins over the project's default. */
+export const BOARD_LOOKS = ['fucina', 'modernista', 'tecnica'] as const;
 
 /** The look a project's board has when its config names none. */
-export const DEFAULT_BOARD_LOOK: (typeof BOARD_LOOKS)[number] = 'modernista';
+export const DEFAULT_BOARD_LOOK: (typeof BOARD_LOOKS)[number] = 'fucina';
 export type BoardLook = (typeof BOARD_LOOKS)[number];
 
 /** What merging into a project's default branch deploys. */
@@ -164,7 +164,7 @@ const projectConfigSchema = z
       .optional(),
     board: z
       .strictObject({
-        /** The look members see until they pick their own. Left out, it is modernista. */
+        /** The look members see until they pick their own. Left out, it is fucina. */
         look: z.enum(BOARD_LOOKS).optional()
       })
       .optional(),

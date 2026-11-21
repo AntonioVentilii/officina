@@ -1,5 +1,6 @@
 <script lang="ts">
   import { look } from '#lib/state/look.svelte.ts';
+  import AgentMark from './AgentMark.svelte';
   import { roleCode, roleShape } from './roles';
 
   interface Props {
@@ -25,6 +26,8 @@
 >
   {#if look.current === 'tecnica'}
     <span class="code">{roleCode(role)}</span>
+  {:else if look.current === 'fucina'}
+    <AgentMark {role} {running} />
   {:else}
     <span class="shape {shape}"></span>
   {/if}

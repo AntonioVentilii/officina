@@ -1,0 +1,248 @@
+/*
+ * Fucina's drawing of the board's shared components, in one place: each rule starts at the
+ * component's root class (task-card, board-column, stage-track, toasts, sidebar), so the components
+ * keep one copy of their markup and stay under the line limit. --hue is set by the component from
+ * stages.ts or roles.ts; yellow (--accent) and red (--danger) keep their meanings.
+ */
+
+/* Columns: a wash of the column's hue at the top, its number and count in that hue. */
+:root[data-look='fucina'] .board-column {
+  margin: 0 6px;
+  border-right: 0;
+  border-radius: 18px 18px 0 0;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--hue, var(--text)) 11%, transparent),
+    transparent 160px
+  );
+}
+
+:root[data-look='fucina'] .board-column .column-head {
+  align-items: center;
+  padding: 14px 14px 10px;
+  border-bottom: 0;
+}
+
+:root[data-look='fucina'] .board-column .column-no {
+  display: inline;
+  color: var(--hue, var(--text-2));
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 800;
+  font-stretch: 75%;
+}
+
+:root[data-look='fucina'] .board-column .column-title {
+  margin-right: auto;
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 700;
+  font-stretch: 90%;
+}
+
+:root[data-look='fucina'] .board-column .column-count {
+  padding: 0 9px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--hue, var(--text)) 22%, transparent);
+  font-size: 12px;
+  font-weight: 600;
+  font-stretch: normal;
+  line-height: 1.6;
+  animation: pop 0.5s cubic-bezier(0.3, 1.4, 0.5, 1);
+}
+
+/* An agent at work in the column: a flame instead of a blinking lamp. */
+:root[data-look='fucina'] .board-column .live-dot {
+  width: 9px;
+  height: 12px;
+  border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%;
+  background: radial-gradient(circle at 50% 70%, #ffffff, var(--hue, var(--text)) 70%);
+  transform-origin: 50% 100%;
+  animation: flicker 1.3s ease-in-out infinite;
+}
+
+:root[data-look='fucina'] .board-column .cards {
+  gap: 10px;
+  padding: 2px 8px 16px;
+}
+
+/* Cards: soft tiles that lift towards you in their hue. */
+:root[data-look='fucina'] .task-card {
+  overflow: hidden;
+  padding: 12px 14px 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel);
+  transition:
+    transform 0.2s var(--ease),
+    box-shadow 0.2s var(--ease),
+    border-color 0.2s;
+}
+
+:root[data-look='fucina'] .task-card:hover {
+  background: var(--panel);
+  border-color: color-mix(in srgb, var(--hue, var(--text)) 45%, var(--border));
+  box-shadow: 0 12px 24px -14px color-mix(in srgb, var(--hue, var(--text)) 70%, transparent);
+  transform: translateY(-2px);
+}
+
+:root[data-look='fucina'] .task-card.active {
+  background: var(--panel);
+  border-color: var(--hue, var(--rule));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--hue, var(--rule)) 25%, transparent);
+}
+
+:root[data-look='fucina'] .task-card.active::before {
+  content: none;
+}
+
+:root[data-look='fucina'] .task-card .stage {
+  padding: 0 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--hue, var(--text)) 20%, transparent);
+  color: var(--text);
+}
+
+:root[data-look='fucina'] .task-card .title {
+  font-size: 15px;
+}
+
+/* While an agent works, a hot strip runs along the card's foot in its hue. */
+:root[data-look='fucina'] .task-card.at-work::after {
+  content: '';
+  position: absolute;
+  inset: auto 0 0;
+  height: 3px;
+  background: linear-gradient(
+      90deg,
+      transparent,
+      var(--hue),
+      color-mix(in srgb, var(--hue) 35%, #ffffff),
+      var(--hue),
+      transparent
+    )
+    no-repeat;
+  background-size: 50% 100%;
+  animation: heat 1.8s linear infinite;
+}
+
+/* The track: round bars in each step's hue; the current one glows, and runs while agents work. */
+:root[data-look='fucina'] .stage-track li {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  font-stretch: normal;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+:root[data-look='fucina'] .stage-track .bar {
+  overflow: hidden;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--tint);
+}
+
+:root[data-look='fucina'] .stage-track .bar::before {
+  height: 100%;
+  background: none;
+}
+
+:root[data-look='fucina'] .stage-track .past .bar::before {
+  height: 100%;
+  background: var(--hue, var(--rule));
+}
+
+:root[data-look='fucina'] .stage-track .current .bar {
+  box-shadow: inset 0 0 0 1.5px var(--hue, var(--rule));
+}
+
+:root[data-look='fucina'] .stage-track .current .bar::before {
+  height: 100%;
+  background: color-mix(in srgb, var(--hue, var(--rule)) 35%, transparent);
+}
+
+:root[data-look='fucina'] .stage-track .working .bar::before {
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--hue, var(--rule)) 0 6px,
+    color-mix(in srgb, var(--hue, var(--rule)) 45%, #ffffff) 6px 12px
+  );
+  background-size: 34px 100%;
+  animation: stripes 0.7s linear infinite;
+}
+
+/* Toasts: rounded, and they spring in. */
+:root[data-look='fucina'] .toasts .toast {
+  align-items: center;
+  border-radius: 14px;
+  box-shadow: 0 16px 30px -12px rgba(0, 0, 0, 0.5);
+  font-weight: 500;
+  animation: spring-in 0.5s cubic-bezier(0.3, 1.4, 0.5, 1);
+}
+
+/* Sidebar: rounded rows, the page you are on lit as a tile. Only as a column: on a phone it is a
+   tab bar, sized by its own rules. */
+@media (min-width: 721px) {
+  :root[data-look='fucina'] .sidebar .nav a,
+  :root[data-look='fucina'] .sidebar .nav button {
+    margin: 1px 10px;
+    padding: 9px 12px;
+    border-left: 0;
+    border-radius: 10px;
+  }
+}
+
+:root[data-look='fucina'] .sidebar .nav a[aria-current='page'] {
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+:root[data-look='fucina'] .sidebar .badge {
+  border-radius: 999px;
+}
+
+:root[data-look='fucina'] .sidebar .looks .tile {
+  border-radius: 9px;
+}
+
+@keyframes pop {
+  40% {
+    transform: scale(1.4);
+  }
+}
+
+@keyframes flicker {
+  0%,
+  100% {
+    transform: scale(1) rotate(-3deg);
+  }
+  30% {
+    transform: scale(1.12, 0.92) rotate(4deg);
+  }
+  60% {
+    transform: scale(0.92, 1.08) rotate(-2deg);
+  }
+}
+
+@keyframes heat {
+  from {
+    background-position: -100% 0;
+  }
+  to {
+    background-position: 200% 0;
+  }
+}
+
+@keyframes stripes {
+  to {
+    background-position: 34px 0;
+  }
+}
+
+@keyframes spring-in {
+  from {
+    opacity: 0;
+    transform: translateY(20px) scale(0.9);
+  }
+}

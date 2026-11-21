@@ -1,13 +1,14 @@
 <script lang="ts">
   import { CircleHelp, Pause, UserRound } from '@lucide/svelte';
   import { initials, money, since } from '#lib/format.ts';
-  import { STAGE_LABELS } from '#lib/stages.ts';
+  import { STAGE_LABELS, stageHue } from '#lib/stages.ts';
   import { look } from '#lib/state/look.svelte.ts';
   import { session } from '#lib/state/session.svelte.ts';
   import type { Card } from '#lib/types.ts';
   import AgentAvatar from './AgentAvatar.svelte';
   import LaneChip from './LaneChip.svelte';
   import Loader from './Loader.svelte';
+  import { roleHue } from './roles';
 
   interface Props {
     card: Card;
@@ -20,11 +21,18 @@
 
   const working = $derived(card.running.length > 0);
   const tecnica = $derived(look.current === 'tecnica');
+  // The card shows its agents at work only when nothing else (a question, a pause, a hand-in) is first.
+  const atWork = $derived(working && !card.blocked && !card.handingIn && !card.paused);
+  // Fucina tints the card in its column's hue, or in its agent's while one works.
+  const lead = $derived(atWork ? card.running[0] : undefined);
+  const hue = $derived(lead ? roleHue(lead.role) : stageHue(card.stage));
 </script>
 
 <a
-  class="card"
+  class="card task-card"
   class:active
+  class:at-work={atWork}
+  style:--hue={hue}
   class:sensitive={card.lane === 'red'}
   href="/tasks/{card.number}"
   data-sveltekit-noscroll

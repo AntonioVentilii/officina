@@ -46,6 +46,7 @@ import {
 } from './policies';
 import type { QuestionOption } from './questions';
 import { hasRole, type ApproverRole, type Member, type Role } from './roles';
+import type { BuildWait } from './subtasks';
 
 export const STAGES = [
   'request',
@@ -350,7 +351,9 @@ export type Command =
   | { readonly type: 'guard_words'; readonly text: string }
   | { readonly type: 'pause' }
   | { readonly type: 'resume' }
-  | { readonly type: 'cancel'; readonly reason: string };
+  | { readonly type: 'cancel'; readonly reason: string }
+  /** Every sub-task of the task is closed and these merged: the parent closes with them. */
+  | { readonly type: 'close_parent'; readonly subtasks: readonly number[] };
 
 /** `unlisted_files` sends the work back to its builder; the others hold it for a person. */
 export type Guardrail =
@@ -409,6 +412,8 @@ export type DomainEvent =
   | { readonly type: 'paused' }
   | { readonly type: 'resumed' }
   | { readonly type: 'closed'; readonly stage: 'declined' | 'cancelled'; readonly reason: string }
+  /** A parent closed because its sub-tasks merged; `subtasks` are the merged ones' numbers. */
+  | { readonly type: 'subtasks_merged'; readonly subtasks: readonly number[] }
   /** The result went to merge without a person's check; `subject` is the head it covers. */
   | { readonly type: 'auto_verified'; readonly subject: string }
   | {
@@ -438,6 +443,7 @@ export type DecisionError =
   | 'not_planned'
   | 'stale_head'
   | 'awaiting_onboarding'
+  | 'awaiting_tasks'
   | 'confirm_on_board'
   | 'no_proposal';
 
@@ -460,6 +466,12 @@ export interface DecideContext {
    * proposing and discarding read them, so the store loads them for those commands alone.
    */
   readonly proposals?: readonly ApprovalProposal[];
+  /**
+   * What the task waits for before it may be built (`buildWait`): the tasks it waits for, its own
+   * open sub-tasks, or a sibling in flight that changes the same files. Only a dispatch or a claim
+   * of a `ready` task reads it, so the store loads it for those alone.
+   */
+  readonly buildWait?: BuildWait | null;
 }
 
 /** The commands that read `DecideContext.proposals`, the only ones the store loads them for. */
@@ -967,7 +979,8 @@ const ALLOWED_WHILE_HELD: ReadonlySet<Command['type']> = new Set([
   'block',
   'add_question',
   'pause',
-  'pull_request_closed'
+  'pull_request_closed',
+  'close_parent'
 ]);
 
 /**
@@ -1137,6 +1150,7 @@ export const decide = (
       if (task.lane === null) return fail('no_lane');
       // Agents build in a project only once its agent docs exist, so they reuse what is there.
       if (task.kind === 'request' && context.onboardingOpen) return fail('awaiting_onboarding');
+      if (context.buildWait) return fail('awaiting_tasks');
       const settings = context.config.lanes[task.lane];
       if (command.assignee.kind === 'agent') {
         if (command.assignee.role !== buildRoleFor(task.kind)) return fail('not_allowed');
@@ -1160,6 +1174,8 @@ export const decide = (
         return fail('not_allowed');
       const assignee: Assignee = { kind: 'member', memberId: actor.memberId };
       if (task.stage === 'ready') {
+        // Order holds for work people build too: a waiting task is claimed once it waits for nothing.
+        if (context.buildWait) return fail('awaiting_tasks');
         const [moved, stageEvent] = moveTo(task, 'building', { assignee });
         return ok(moved, [stageEvent, { type: 'assigned', assignee }]);
       }
@@ -1407,6 +1423,13 @@ export const decide = (
       if (!allowed) return fail('not_allowed');
       const [moved, event] = moveTo(task, 'cancelled', { assignee: null, blocked: null });
       return ok(moved, [event, { type: 'closed', stage: 'cancelled', reason: command.reason }]);
+    }
+
+    case 'close_parent': {
+      // Its work merged through its sub-tasks, so it closes even while held or paused.
+      if (actor.kind !== 'engine') return fail('not_allowed');
+      const [moved, stageEvent] = moveTo(task, 'done', { assignee: null, blocked: null });
+      return ok(moved, [{ type: 'subtasks_merged', subtasks: command.subtasks }, stageEvent]);
     }
   }
 };

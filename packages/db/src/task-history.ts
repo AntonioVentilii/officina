@@ -17,10 +17,24 @@ export const appendTaskEvent = async (
 /** Stores one version of a task's spec; every write to `spec_versions` goes through here. */
 export const saveSpecVersion = async (
   db: Queryable,
-  input: { taskId: string; version: number; body: string; createdBy: Actor }
+  input: {
+    taskId: string;
+    version: number;
+    body: string;
+    createdBy: Actor;
+    /** The paths the spec predicts the change touches, for the order of sub-tasks. */
+    predictedPaths?: readonly string[];
+  }
 ) => {
   await db.query(
-    'insert into spec_versions (task_id, version, body, created_by) values ($1, $2, $3, $4)',
-    [input.taskId, input.version, input.body, JSON.stringify(input.createdBy)]
+    `insert into spec_versions (task_id, version, body, created_by, predicted_paths)
+       values ($1, $2, $3, $4, $5)`,
+    [
+      input.taskId,
+      input.version,
+      input.body,
+      JSON.stringify(input.createdBy),
+      input.predictedPaths ?? []
+    ]
   );
 };
