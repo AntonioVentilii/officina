@@ -24,6 +24,7 @@ export { ensureOnboarding, openOnboardingIn } from './onboarding';
 export {
   COMMENT_SETTLE_SECONDS,
   forwardFeedback,
+  forwardHeldReviews,
   forwardSettledComments,
   overviewNotes,
   reviewBotsIn,

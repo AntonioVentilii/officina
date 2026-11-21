@@ -26,6 +26,7 @@ import {
   failTakenOverRuns,
   feedbackSinceLastPush,
   finishRun,
+  heldGitHubReviews,
   linkPullRequest,
   loadTask,
   saveAgentVersion,
@@ -50,6 +51,8 @@ import {
   cancelStaleAutoMerges,
   createLiveRuns,
   finishVerifiedSpecs,
+  forwardFeedback,
+  forwardHeldReviews,
   forwardSettledComments,
   guardOrphanedBuilds,
   openMissingPullRequests,
@@ -2919,6 +2922,244 @@ describe.skipIf(!url)('engine', () => {
     await markBotCommentsHandled(pool, taskId, [41]);
     await finishVerifiedSpecs(pool, github.port, [taskId]);
     expect(await awaiting()).toBe(1);
+  });
+
+  /** A review left on GitHub about `headSha`, as the webhook forwards it. */
+  const reviewOnGitHub = (
+    github: ReturnType<typeof fakeGitHub>,
+    taskId: string,
+    review: { reviewId: number; by: string; notes: string; overviewOnly: boolean }
+  ) =>
+    forwardFeedback(pool, github.port, {
+      taskId,
+      ref: { installationId: 99, repo: 'ViciApp/vici-app' },
+      pullRequest: 42,
+      by: review.by,
+      headSha: 'abc',
+      source: { reviewId: review.reviewId },
+      review: { notes: review.notes, overviewOnly: review.overviewOnly }
+    });
+
+  const githubReviewCount = async (taskId: string) =>
+    (
+      await pool.query(
+        `select 1 from task_events
+         where task_id = $1 and type = 'review_recorded' and payload->>'reviewer' = 'github'`,
+        [taskId]
+      )
+    ).rowCount;
+
+  const block = (taskId: string) =>
+    applyOrThrow(
+      pool,
+      taskId,
+      { type: 'block', question: 'Which locale first?', askedOf: { role: 'maintainer' } },
+      seeded.owner
+    );
+
+  const answer = (taskId: string) =>
+    applyOrThrow(pool, taskId, { type: 'answer', text: 'English.' }, seeded.owner);
+
+  test("a request for changes or a bot's inline comments left while the task is paused reach the builder once it is resumed", async () => {
+    const reviews = [
+      { reviewId: 21, by: 'alice', notes: 'Rename the flag before this lands.' },
+      { reviewId: 22, by: 'coderabbitai[bot]', notes: '`src/a.ts:3`: Typo in the key.' }
+    ];
+    for (const review of reviews) {
+      const taskId = await createTaskInMerging(pool, seeded);
+      await linkPullRequest(pool, taskId, 42);
+      const github = fakeGitHub({ branchHead: 'abc' });
+      await applyOrThrow(pool, taskId, { type: 'pause' }, seeded.owner);
+      expect(await reviewOnGitHub(github, taskId, { ...review, overviewOnly: false })).toEqual({
+        ok: false,
+        error: 'paused'
+      });
+      await forwardHeldReviews(pool, github.port, [taskId]);
+      expect((await loadTask(pool, taskId))?.task).toMatchObject({
+        stage: 'merging',
+        paused: true
+      });
+
+      await applyOrThrow(pool, taskId, { type: 'resume' }, seeded.owner);
+      await forwardHeldReviews(pool, github.port, [taskId]);
+      expect((await loadTask(pool, taskId))?.task).toMatchObject({
+        stage: 'building',
+        fixRounds: 1
+      });
+      expect(await feedbackSinceLastPush(pool, taskId)).toEqual([review.notes]);
+    }
+  });
+
+  test('a held review of a head the task no longer holds is dropped', async () => {
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    const github = fakeGitHub({ branchHead: 'new1' });
+    await block(taskId);
+    await reviewOnGitHub(github, taskId, {
+      reviewId: 23,
+      by: 'alice',
+      notes: 'Rename the flag.',
+      overviewOnly: false
+    });
+    await answer(taskId);
+    const handled = async () =>
+      (
+        await pool.query<{ outcome: string }>(
+          `select payload->>'outcome' as outcome from task_events
+           where task_id = $1 and type = 'github_review_handled'`,
+          [taskId]
+        )
+      ).rows;
+
+    // The new head is not taken in yet: the review waits rather than send the old head back.
+    await forwardHeldReviews(pool, github.port, [taskId]);
+    expect((await loadTask(pool, taskId))?.task.stage).toBe('merging');
+    expect(await handled()).toEqual([]);
+
+    await adoptOutsidePushes(pool, github.port, [taskId]);
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({
+      stage: 'reviewing',
+      headSha: 'new1'
+    });
+
+    await forwardHeldReviews(pool, github.port, [taskId]);
+    expect((await loadTask(pool, taskId))?.task.stage).toBe('reviewing');
+    expect(await handled()).toEqual([{ outcome: 'stale_head' }]);
+    expect(await githubReviewCount(taskId)).toBe(0);
+  });
+
+  test("a held overview that repeats the bot's last answered overview is not sent back", async () => {
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    const github = fakeGitHub({ branchHead: 'abc' });
+    const overview = { by: 'copilot-pull-request-reviewer[bot]', overviewOnly: true };
+    await reviewOnGitHub(github, taskId, { ...overview, reviewId: 24, notes: 'Check the index.' });
+    await applyOrThrow(
+      pool,
+      taskId,
+      { type: 'unchanged', note: 'The index is there.' },
+      { kind: 'agent', role: 'builder', version: 1 }
+    );
+    expect((await loadTask(pool, taskId))?.task.stage).toBe('reviewing');
+
+    await block(taskId);
+    await reviewOnGitHub(github, taskId, { ...overview, reviewId: 25, notes: 'Check the index.' });
+    await answer(taskId);
+    await forwardHeldReviews(pool, github.port, [taskId]);
+    expect((await loadTask(pool, taskId))?.task.stage).toBe('reviewing');
+    expect(await githubReviewCount(taskId)).toBe(1);
+  });
+
+  test('a held review reaches the builder once, not on a later hold, delivery or pass', async () => {
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    const github = fakeGitHub({ branchHead: 'abc' });
+    const review = { reviewId: 26, by: 'alice', notes: 'Rename the flag.', overviewOnly: false };
+    await block(taskId);
+    await reviewOnGitHub(github, taskId, review);
+    await answer(taskId);
+    await forwardHeldReviews(pool, github.port, [taskId]);
+    expect((await loadTask(pool, taskId))?.task.stage).toBe('building');
+    expect(await githubReviewCount(taskId)).toBe(1);
+
+    await block(taskId);
+    expect(await reviewOnGitHub(github, taskId, review)).toEqual({ ok: false, error: 'blocked' });
+    await answer(taskId);
+    await forwardHeldReviews(pool, github.port, [taskId]);
+    await forwardHeldReviews(pool, github.port, [taskId]);
+    expect(await githubReviewCount(taskId)).toBe(1);
+    const held = await pool.query(
+      `select 1 from task_events where task_id = $1 and type = 'github_review_held'`,
+      [taskId]
+    );
+    expect(held.rowCount).toBe(1);
+  });
+
+  test('a review delivered twice while the task is blocked is kept once and reaches the builder once', async () => {
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    const github = fakeGitHub({ branchHead: 'abc' });
+    const review = { reviewId: 28, by: 'alice', notes: 'Rename the flag.', overviewOnly: false };
+    await block(taskId);
+    expect(await reviewOnGitHub(github, taskId, review)).toEqual({ ok: false, error: 'blocked' });
+    expect(await reviewOnGitHub(github, taskId, review)).toEqual({ ok: false, error: 'blocked' });
+    const events = async (type: string) =>
+      (
+        await pool.query<{ payload: { outcome?: string } }>(
+          'select payload from task_events where task_id = $1 and type = $2 order by id',
+          [taskId, type]
+        )
+      ).rows.map((row) => row.payload);
+    expect(await events('github_review_held')).toHaveLength(1);
+
+    await answer(taskId);
+    await forwardHeldReviews(pool, github.port, [taskId]);
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({
+      stage: 'building',
+      fixRounds: 1
+    });
+    expect(await githubReviewCount(taskId)).toBe(1);
+    expect(await feedbackSinceLastPush(pool, taskId)).toEqual([review.notes]);
+    expect((await events('github_review_handled')).map((handled) => handled.outcome)).toEqual([
+      'forwarded'
+    ]);
+  });
+
+  test('a review already sent to the builder and delivered again during a hold is not kept', async () => {
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    const github = fakeGitHub({ branchHead: 'abc' });
+    const review = { reviewId: 29, by: 'alice', notes: 'Rename the flag.', overviewOnly: false };
+    expect(await reviewOnGitHub(github, taskId, review)).toEqual({ ok: true });
+
+    await block(taskId);
+    expect(await reviewOnGitHub(github, taskId, review)).toEqual({ ok: false, error: 'blocked' });
+    const held = await pool.query(
+      `select 1 from task_events where task_id = $1 and type = 'github_review_held'`,
+      [taskId]
+    );
+    expect(held.rowCount).toBe(0);
+  });
+
+  test('a held review waits while its pull request is merged or closed', async () => {
+    for (const prState of [
+      { state: 'closed', merged: true },
+      { state: 'closed', merged: false }
+    ]) {
+      const taskId = await createTaskInMerging(pool, seeded);
+      await linkPullRequest(pool, taskId, 42);
+      const github = fakeGitHub({ branchHead: 'abc', prState });
+      await block(taskId);
+      await reviewOnGitHub(github, taskId, {
+        reviewId: 30,
+        by: 'alice',
+        notes: 'Rename the flag.',
+        overviewOnly: false
+      });
+      await answer(taskId);
+      await forwardHeldReviews(pool, github.port, [taskId]);
+      expect((await loadTask(pool, taskId))?.task.stage).toBe('merging');
+      expect(await githubReviewCount(taskId)).toBe(0);
+      expect(await heldGitHubReviews(pool, taskId)).toHaveLength(1);
+    }
+  });
+
+  test('a review while the task is not held records no hold', async () => {
+    const taskId = await createTaskInMerging(pool, seeded);
+    await linkPullRequest(pool, taskId, 42);
+    expect(
+      await reviewOnGitHub(fakeGitHub(), taskId, {
+        reviewId: 27,
+        by: 'alice',
+        notes: 'Rename the flag.',
+        overviewOnly: false
+      })
+    ).toEqual({ ok: true });
+    const held = await pool.query(
+      `select 1 from task_events where task_id = $1 and type = 'github_review_held'`,
+      [taskId]
+    );
+    expect(held.rowCount).toBe(0);
   });
 
   test("Officina's own status commit on the verified head is not a push from outside", async () => {
