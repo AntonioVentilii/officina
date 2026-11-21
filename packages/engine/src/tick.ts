@@ -4,7 +4,9 @@ import {
   humanBuildReason,
   nextAgentRoles,
   parentCloses,
-  parseProjectConfig
+  parseProjectConfig,
+  ruledSpecPlan,
+  type Task
 } from '@officina/core';
 import {
   applyCommand,
@@ -12,12 +14,15 @@ import {
   countOpenAgentWork,
   listActiveTaskIds,
   listOpenParents,
+  listProjectMembers,
   listTasksAwaitingLearning,
   listTasksAwaitingRewrite,
-  loadTaskContext
+  loadProjectConfig,
+  loadTaskContext,
+  type StoredTaskContext
 } from '@officina/db';
 import { isRunnerRole, type RunnerRole } from '@officina/runner';
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import { heldForSpend } from './spend';
 import { runAgentStep, type EngineDependencies, type StepResult } from './step';
 
@@ -51,10 +56,42 @@ const closeMergedParents = async (pool: Pool, projectId: string) => {
   }
 };
 
+/** The rule's plan for a task with the project's config and members as `db` reads them now. */
+const ruledPlanIn = async (db: Pool | PoolClient, projectId: string, task: Task) => {
+  const config = parseProjectConfig(await loadProjectConfig(db, projectId));
+  return config.ok
+    ? ruledSpecPlan(config.config, task, await listProjectMembers(db, projectId))
+    : null;
+};
+
+/**
+ * Plans a spec by rule when no chooser could change the plan (`ruledSpecPlan`), so no chooser
+ * session is paid for it. Under the task's lock the rule is read again, from the config and the
+ * members the command is decided with, and must give the same plan. The task as planned, or
+ * `null` when the chooser still decides.
+ */
+const planByRule = async (
+  pool: Pool,
+  taskId: string,
+  context: StoredTaskContext
+): Promise<Task | null> => {
+  if (!nextAgentRoles(context.task).includes('chooser')) return null;
+  const plan = await ruledPlanIn(pool, context.projectId, context.task);
+  if (!plan) return null;
+  const result = await applyCommand(pool, {
+    taskId,
+    command: { type: 'plan_approval', userVisible: context.task.userVisible, plan },
+    actor: ENGINE,
+    guard: async (task, client) =>
+      Bun.deepEquals(await ruledPlanIn(client, context.projectId, task), plan)
+  });
+  return result.ok ? result.task : null;
+};
+
 /**
  * Closes parents whose sub-tasks have merged, then hands ready tasks to the builder agent within
- * lane limits and lists every agent step now due. Starting the steps is left to the caller, so a
- * scheduler can run long sessions without blocking.
+ * lane limits, plans the specs a rule settles, and lists every agent step now due. Starting the
+ * steps is left to the caller, so a scheduler can run long sessions without blocking.
  */
 export const collectDueSteps = async (
   deps: Pick<EngineDependencies, 'pool'>,
@@ -94,7 +131,8 @@ export const collectDueSteps = async (
       continue;
     }
 
-    const roles = nextAgentRoles(task);
+    // A plan made by rule runs no session, so it needs no spend allowance.
+    const roles = nextAgentRoles((await planByRule(deps.pool, taskId, context)) ?? task);
     // A task whose runs spent its budget starts none until a maintainer lets them go on.
     if (roles.length > 0 && (await heldForSpend(deps.pool, taskId))) continue;
     dueFor(taskId, roles);
