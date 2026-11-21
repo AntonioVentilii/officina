@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import Anthropic, { type ClientOptions } from '@anthropic-ai/sdk';
 import type { BetaManagedAgentsStreamSessionEvents } from '@anthropic-ai/sdk/resources/beta/sessions/events';
+import type { BetaManagedAgentsSessionUsage } from '@anthropic-ai/sdk/resources/beta/sessions/sessions';
 import { createSdkPort, portEvents } from '../src/sdk';
 
 const RUNNING = {
@@ -37,7 +38,7 @@ describe('the SDK port', () => {
    * A real Anthropic client whose requests never leave the test: its `fetch` records each one and
    * answers with fixed ids.
    */
-  const fakeClient = (usage?: { list_cost?: { amount: string; currency: string } }) => {
+  const fakeClient = (usage?: BetaManagedAgentsSessionUsage) => {
     const calls: { method: string; path: string; body: unknown }[] = [];
     const answers: Record<string, unknown> = {
       'POST /v1/sessions': { id: 'sesn_1' },
@@ -162,11 +163,30 @@ describe('the SDK port', () => {
     expect(await port.findAgentByName('officina-learner')).toBeNull();
   });
 
-  test("reads a session's cost in cents, and none when it has no list cost yet", async () => {
-    const priced = fakeClient({ list_cost: { amount: '2500', currency: 'USD' } });
-    expect(await priced.port.sessionCostCents('sesn_1')).toBe(2500);
-    expect(priced.calls).toEqual([{ method: 'GET', path: '/v1/sessions/sesn_1', body: undefined }]);
-    expect(await fakeClient().port.sessionCostCents('sesn_1')).toBeNull();
+  test("reads a session's cost in cents and its tokens in one call, cache writes of both lifetimes as one", async () => {
+    const used = fakeClient({
+      list_cost: { amount: '556', currency: 'USD' },
+      input_tokens: 164,
+      output_tokens: 72_500,
+      cache_read_input_tokens: 13_700_000,
+      cache_creation: { ephemeral_5m_input_tokens: 260_000, ephemeral_1h_input_tokens: 9_000 }
+    });
+    expect(await used.port.sessionUsage('sesn_1')).toEqual({
+      costCents: 556,
+      tokens: { input: 164, output: 72_500, cacheRead: 13_700_000, cacheWrite: 269_000 }
+    });
+    expect(used.calls).toEqual([{ method: 'GET', path: '/v1/sessions/sesn_1', body: undefined }]);
+  });
+
+  test('a session with no list cost yet has no cost, and one with no usage no tokens either', async () => {
+    expect(await fakeClient({ output_tokens: 10 }).port.sessionUsage('sesn_1')).toEqual({
+      costCents: null,
+      tokens: { input: 0, output: 10, cacheRead: 0, cacheWrite: 0 }
+    });
+    expect(await fakeClient().port.sessionUsage('sesn_1')).toEqual({
+      costCents: null,
+      tokens: null
+    });
   });
 
   test('an environment reaches package registries and the allowed hosts, and no MCP server', async () => {

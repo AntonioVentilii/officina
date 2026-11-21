@@ -3,7 +3,7 @@
   import { session } from '#lib/state/session.svelte.ts';
   import AgentAvatar from '#lib/components/AgentAvatar.svelte';
   import RunRow from '#lib/components/RunRow.svelte';
-  import { money } from '#lib/format.ts';
+  import { money, tokenParts } from '#lib/format.ts';
   import { board } from '#lib/state/board.svelte.ts';
 
   let open = $state<Record<string, boolean>>({});
@@ -41,6 +41,11 @@
               .filter(Boolean)
               .join('   ')}
           </span>
+          {#if agent.runs}
+            <span class="numbers tokens caps num" title="Tokens of the runs that reported them">
+              {tokenParts(agent.tokens).join('   ')}
+            </span>
+          {/if}
         </div>
       </div>
     {/each}
@@ -121,6 +126,12 @@
     margin-top: 6px;
     color: var(--text);
     white-space: pre;
+  }
+
+  .numbers.tokens {
+    margin-top: 0;
+    color: var(--text-2);
+    white-space: pre-wrap;
   }
 
   h2,

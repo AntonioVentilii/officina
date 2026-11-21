@@ -6,6 +6,7 @@ import {
   splitPaths,
   type AgentOutput,
   type RoleOutput,
+  type RunUsage,
   type Task
 } from '@officina/core';
 import {
@@ -15,6 +16,7 @@ import {
   finishRun,
   recordRunResult,
   runIsActive,
+  runWasPaused,
   saveSpecVersion,
   setTaskTitle
 } from '@officina/db';
@@ -42,13 +44,17 @@ const sameFields = (seen: Task, current: Task) =>
 
 /**
  * Only the state the agent saw may receive its result, or its failure, and only while its own run
- * is still in progress: a build a member took over meanwhile is theirs, and nothing the agent's run
- * ends with applies to it, even once the same role builds the task again after the member let go.
+ * is still in progress and its task was never paused meanwhile: a build a member took over is
+ * theirs, and nothing the agent's run ends with applies to it, even once the same role builds the
+ * task again after the member let go; a pause ends the run's part the same way, even once the task
+ * is resumed.
  */
 export const sameWork =
   (seen: Task, runId: string) =>
   async (current: Task, client: PoolClient): Promise<boolean> =>
-    sameFields(seen, current) && (await runIsActive(client, runId));
+    sameFields(seen, current) &&
+    (await runIsActive(client, runId)) &&
+    !(await runWasPaused(client, runId));
 
 /** A build result with the facts of what was really pushed, read from GitHub. */
 const pushedOutput = async (step: Step, built: PushedBuild): Promise<RoleOutput> => {
@@ -223,17 +229,17 @@ export const roleOutputOf = async (
   return pushedOutput(step, built);
 };
 
-/** A valid result, the command input it maps to, and what its session cost. */
+/** A valid result, the command input it maps to, and what its session used. */
 export interface StepOutcome {
   readonly output: AgentOutput<RunnerRole>;
   readonly roleOutput: RoleOutput;
-  readonly costCents: number | null;
+  readonly usage: RunUsage;
 }
 
 /** Applies a valid result to the work the agent saw, then mirrors it to GitHub. */
 export const applyResult = async (
   step: Step,
-  { output, roleOutput, costCents }: StepOutcome,
+  { output, roleOutput, usage }: StepOutcome,
   inputs: StepInputs
 ): Promise<StepResult> => {
   const { pool } = step.deps;
@@ -252,7 +258,7 @@ export const applyResult = async (
   if (!applied.ok) {
     await finishRun(pool, step.runId, {
       status: 'failed',
-      costCents,
+      usage,
       result: { discarded: applied.error, output }
     });
     return { status: 'discarded', reason: applied.error };
@@ -263,7 +269,7 @@ export const applyResult = async (
   if (pullRequest !== null) await redChecksAfter(step, output, applied.task);
   await finishRun(pool, step.runId, {
     status: 'succeeded',
-    costCents,
+    usage,
     result: output
   });
   return { status: 'applied' };

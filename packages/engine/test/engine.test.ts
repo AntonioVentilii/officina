@@ -4,6 +4,7 @@ import {
   branchForTask,
   ENGINE,
   HANDOFF_NEED_KEYS,
+  NO_USAGE,
   ownerHold,
   splitMarkdown,
   type Actor,
@@ -24,6 +25,7 @@ import {
   createTask,
   expectedHead,
   failOrphanedRuns,
+  failPausedRuns,
   failTakenOverRuns,
   feedbackSinceLastPush,
   finishRun,
@@ -31,6 +33,7 @@ import {
   linkPullRequest,
   loadTask,
   saveAgentVersion,
+  splitAskedSinceSpec,
   startRun
 } from '@officina/db';
 import { GitHubError, type RefSnapshot } from '@officina/github';
@@ -346,11 +349,22 @@ describe.skipIf(!url)('engine', () => {
     expect(spec.rows).toEqual([{ version: 1, body: '# Spec\nChange the settings title.' }]);
 
     const run = (
-      await pool.query('select status, external_id, list_cost_cents from runs where task_id = $1', [
-        taskId
-      ])
+      await pool.query(
+        `select status, external_id, list_cost_cents, input_tokens::int, output_tokens::int,
+           cache_read_tokens::int, cache_write_tokens::int
+         from runs where task_id = $1`,
+        [taskId]
+      )
     ).rows[0];
-    expect(run).toEqual({ status: 'succeeded', external_id: 'sesn_1', list_cost_cents: 12 });
+    expect(run).toEqual({
+      status: 'succeeded',
+      external_id: 'sesn_1',
+      list_cost_cents: 12,
+      input_tokens: 40,
+      output_tokens: 1_500,
+      cache_read_tokens: 90_000,
+      cache_write_tokens: 12_000
+    });
     expect((await pool.query('select 1 from run_events')).rowCount).toBeGreaterThan(0);
 
     expect(agents.sessions[0]!.repository).toEqual({
@@ -1180,6 +1194,99 @@ describe.skipIf(!url)('engine', () => {
     expect(await runStatuses(kept)).toContainEqual({ agent_role: 'builder', status: 'running' });
   });
 
+  test('a build paused and resumed before its result is applied drops the result, and the builder runs again', async () => {
+    let taskId = '';
+    let pausedOnce = false;
+    const github = fakeGitHub();
+    const agents = createFakePort((request) =>
+      request.metadata.role === 'builder' && !pausedOnce
+        ? [
+            async () => {
+              // Paused and resumed while the build runs, before its result is applied.
+              pausedOnce = true;
+              await applyOrThrow(pool, taskId, { type: 'pause' }, seeded.owner);
+              await applyOrThrow(pool, taskId, { type: 'resume' }, seeded.owner);
+            },
+            ...succeed(request)
+          ]
+        : succeed(request)
+    );
+    taskId = await taskInReady(github, agents);
+    const deps = { pool, github: github.port, agents, publicUrl: PUBLIC_URL };
+
+    const first = await tick(deps, seeded.projectId);
+    expect(first.steps.find((step) => step.role === 'builder')?.result).toMatchObject({
+      status: 'discarded'
+    });
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({
+      stage: 'building',
+      assignee: { kind: 'agent', role: 'builder' },
+      headSha: null,
+      blocked: null,
+      paused: false
+    });
+    expect((await runStatuses(taskId)).at(-1)).toEqual({ agent_role: 'builder', status: 'failed' });
+    // The step ended its run itself, so the scheduler has nothing left to stop.
+    expect(await failPausedRuns(pool)).toEqual([]);
+
+    const second = await tick(deps, seeded.projectId);
+    expect(second.steps.find((step) => step.role === 'builder')?.result).toEqual({
+      status: 'applied'
+    });
+    expect((await loadTask(pool, taskId))?.task.stage).toBe('reviewing');
+  });
+
+  test('a run in progress when its task is paused is stopped on the next pass even once resumed, once, and only on its task', async () => {
+    const paused = await taskInReady();
+    const kept = await taskInReady();
+    const runs: Record<string, string> = {};
+    for (const taskId of [paused, kept]) {
+      await applyOrThrow(
+        pool,
+        taskId,
+        { type: 'dispatch', assignee: { kind: 'agent', role: 'builder' }, openInLane: 0 },
+        { kind: 'engine' }
+      );
+      const run = await startRun(pool, {
+        taskId,
+        stage: 'building',
+        role: 'builder',
+        agentVersion: 1,
+        runner: 'managed-agents'
+      });
+      if (!run.ok) throw new Error(run.error);
+      runs[taskId] = run.runId;
+    }
+    await pool.query("update runs set external_id = 'sesn_paused' where id = $1", [runs[paused]]);
+    await applyOrThrow(pool, paused, { type: 'pause' }, seeded.owner);
+    await applyOrThrow(pool, paused, { type: 'resume' }, seeded.owner);
+
+    expect(await failPausedRuns(pool)).toEqual([{ id: runs[paused]!, externalId: 'sesn_paused' }]);
+    expect(await failPausedRuns(pool)).toEqual([]);
+    const { rows } = await pool.query<{ status: string; error: string }>(
+      "select status, result->>'error' as error from runs where id = $1",
+      [runs[paused]]
+    );
+    expect(rows).toEqual([
+      { status: 'failed', error: 'the task was paused while this run was in progress' }
+    ]);
+    expect(await runStatuses(kept)).toEqual([
+      { agent_role: 'spec', status: 'succeeded' },
+      { agent_role: 'chooser', status: 'succeeded' },
+      { agent_role: 'builder', status: 'running' }
+    ]);
+    // The role can be claimed again, and a run started after the resume is not stopped.
+    const again = await startRun(pool, {
+      taskId: paused,
+      stage: 'building',
+      role: 'builder',
+      agentVersion: 1,
+      runner: 'managed-agents'
+    });
+    expect(again.ok).toBe(true);
+    expect(await failPausedRuns(pool)).toEqual([]);
+  });
+
   test('a push to any other branch blocks the task and opens no pull request', async () => {
     const github = fakeGitHub();
     const agents = createFakePort((request) =>
@@ -1388,6 +1495,40 @@ describe.skipIf(!url)('engine', () => {
       runAgentStep({ pool, github: port, agents, publicUrl: PUBLIC_URL }, taskId, 'builder')
     ).rejects.toThrow('GitHub 502 on the refs');
     expect(github.calls.filter((call) => call.method === 'runToken')).toEqual([]);
+  });
+
+  test('a build that fails after its session still records what the session used', async () => {
+    const github = fakeGitHub();
+    const taskId = await taskInBuilding(github);
+    const port = {
+      ...github.port,
+      pushFacts: async () => {
+        throw new Error('GitHub 502 on the compare');
+      }
+    };
+    await expect(
+      runAgentStep(
+        { pool, github: port, agents: createFakePort(succeed), publicUrl: PUBLIC_URL },
+        taskId,
+        'builder'
+      )
+    ).rejects.toThrow('GitHub 502 on the compare');
+    const run = await pool.query(
+      `select status, list_cost_cents, input_tokens::int, output_tokens::int,
+         cache_read_tokens::int, cache_write_tokens::int
+       from runs where task_id = $1 and agent_role = 'builder'`,
+      [taskId]
+    );
+    expect(run.rows).toEqual([
+      {
+        status: 'failed',
+        list_cost_cents: 12,
+        input_tokens: 40,
+        output_tokens: 1_500,
+        cache_read_tokens: 90_000,
+        cache_write_tokens: 12_000
+      }
+    ]);
   });
 
   test("a token GitHub fails to revoke is tried again, and the build's result still applies", async () => {
@@ -1775,7 +1916,7 @@ describe.skipIf(!url)('engine', () => {
       runner: 'managed_agents'
     });
     if (!earlier.ok) throw new Error(earlier.error);
-    await finishRun(pool, earlier.runId, { status: 'succeeded', costCents: null, result: {} });
+    await finishRun(pool, earlier.runId, { status: 'succeeded', usage: NO_USAGE, result: {} });
     await tick({ pool, github: github.port, agents, publicUrl: PUBLIC_URL }, seeded.projectId);
 
     expect((await loadTask(pool, taskId))?.task.blocked?.question).toContain(
@@ -3245,6 +3386,44 @@ describe.skipIf(!url)('engine', () => {
       status: 'skipped',
       reason: 'not_due'
     });
+  });
+
+  test('after people picked Split, the spec agent is told so and one spec goes back to it', async () => {
+    const taskId = await taskInSpeccing();
+    await appendTaskEvent(pool, {
+      taskId,
+      actor: seeded.owner,
+      type: 'split_asked',
+      payload: {}
+    });
+    const split = {
+      outcome: 'split',
+      why: 'Too large for one change.',
+      userVisible: true,
+      subtasks: [
+        { title: 'Rename the title', scope: 'The copy.', paths: [COPY] },
+        { title: 'Add the page', scope: 'The page.', paths: ['src/page.svelte'], after: [1] }
+      ]
+    };
+    const agents = createFakePort(() => [
+      toolUse(RESULTS.spec),
+      idle('requires_action'),
+      toolUse(split),
+      idle('requires_action'),
+      idle('end_turn')
+    ]);
+    const deps = { pool, github: fakeGitHub().port, agents, publicUrl: PUBLIC_URL };
+    expect(await runAgentStep(deps, taskId, 'spec')).toEqual({ status: 'applied' });
+
+    const brief = (agents.sent[0]!.events[0] as { text: string }).text;
+    expect(brief).toContain('a maintainer picked Split: submit `split`');
+    expect(JSON.stringify(agents.sent)).toContain('submit `split`, not one spec');
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({
+      stage: 'spec_review',
+      splitProposed: true
+    });
+    // Once a spec version is posted, the pick is spent.
+    expect(await splitAskedSinceSpec(pool, taskId)).toBe(false);
   });
 
   test('a step already running is not started twice', async () => {

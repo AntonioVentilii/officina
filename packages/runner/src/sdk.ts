@@ -4,8 +4,12 @@ import type {
   BetaManagedAgentsStreamSessionEvents,
   EventSendParams
 } from '@anthropic-ai/sdk/resources/beta/sessions/events';
-import type { SessionCreateParams } from '@anthropic-ai/sdk/resources/beta/sessions/sessions';
+import type {
+  BetaManagedAgentsSessionUsage,
+  SessionCreateParams
+} from '@anthropic-ai/sdk/resources/beta/sessions/sessions';
 import type { EnvironmentCreateParams } from '@anthropic-ai/sdk/resources/beta/environments/environments';
+import type { RunTokens, RunUsage } from '@officina/core';
 import type { ListedModel } from './models';
 import type {
   AgentWrite,
@@ -14,6 +18,29 @@ import type {
   OutboundEvent,
   SessionEvent
 } from './port';
+
+/** A session's tokens; cache writes of both cache lifetimes are one count. */
+const tokensOf = (usage: BetaManagedAgentsSessionUsage): RunTokens => {
+  const written = usage.cache_creation ?? {};
+  return {
+    input: usage.input_tokens ?? 0,
+    output: usage.output_tokens ?? 0,
+    cacheRead: usage.cache_read_input_tokens ?? 0,
+    cacheWrite: (written.ephemeral_5m_input_tokens ?? 0) + (written.ephemeral_1h_input_tokens ?? 0)
+  };
+};
+
+/**
+ * A session's usage as the port reports it, the list cost's amount in cents. A session with no
+ * usage yet has no tokens either.
+ */
+const usageOf = (usage: BetaManagedAgentsSessionUsage | undefined): RunUsage => {
+  const amount = usage?.list_cost?.amount;
+  return {
+    costCents: amount === undefined ? null : Number(amount),
+    tokens: usage ? tokensOf(usage) : null
+  };
+};
 
 const toSdkEvent = (event: OutboundEvent): EventSendParams['events'][number] => {
   switch (event.type) {
@@ -129,10 +156,8 @@ export const createSdkPort = (client: Anthropic): ManagedAgentsPort => ({
   async send(sessionId, events) {
     await client.beta.sessions.events.send(sessionId, { events: events.map(toSdkEvent) });
   },
-  async sessionCostCents(sessionId) {
-    const session = await client.beta.sessions.retrieve(sessionId);
-    const amount = session.usage?.list_cost?.amount;
-    return amount === undefined ? null : Number(amount);
+  async sessionUsage(sessionId) {
+    return usageOf((await client.beta.sessions.retrieve(sessionId)).usage);
   },
   async findAgentByName(name) {
     for await (const agent of client.beta.agents.list()) {
