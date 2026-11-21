@@ -6,6 +6,7 @@ export * from './split-subtasks';
 export * from './github';
 export * from './runs';
 export * from './run-refs';
+export * from './run-spend';
 export * from './run-status';
 export * from './run-recovery';
 export * from './projects';

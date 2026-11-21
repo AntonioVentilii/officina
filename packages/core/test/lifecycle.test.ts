@@ -413,6 +413,36 @@ describe('guardrails', () => {
   });
 });
 
+describe('a task over its spend', () => {
+  const hold = { type: 'hold_for_spend', spentCents: 2140, limitCents: 2000 } as const;
+
+  test('the engine holds it for a maintainer, who answers to let the agents go on', () => {
+    const driver = createDriver([owner]);
+    const task = driver.step(dispatchAgent(driver, toReady(driver, PAGE_PATHS)), hold, engine);
+    expect(task.blocked).toMatchObject({ askedOf: { role: 'maintainer' } });
+    expect(task.blocked?.question).toContain('cost $21.40');
+    expect(driver.events()).toContainEqual({
+      type: 'guardrail_tripped',
+      guardrail: 'spend_limit',
+      details: '$21.40 spent, limit $20.00'
+    });
+    expect(nextAgentRoles(task)).toEqual([]);
+    const answered = driver.step(task, { type: 'answer', text: 'Go on.' }, asMember(owner));
+    expect(nextAgentRoles(answered)).toEqual(['builder']);
+  });
+
+  test('only the engine holds it, and never twice', () => {
+    const driver = createDriver([owner]);
+    const task = dispatchAgent(driver, toReady(driver, PAGE_PATHS));
+    expect(driver.attempt(task, hold, asMember(owner))).toEqual({
+      ok: false,
+      error: 'not_allowed'
+    });
+    const held = driver.step(task, hold, engine);
+    expect(driver.attempt(held, hold, engine)).toEqual({ ok: false, error: 'blocked' });
+  });
+});
+
 describe('a size allowed for one task', () => {
   const maintainer: Member = { id: 'marta', role: 'maintainer', domains: [] };
   const RED = ['src/satellite/room.ts'];

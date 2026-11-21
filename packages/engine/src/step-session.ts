@@ -12,6 +12,7 @@ import {
 } from '@officina/db';
 import { executeRun, type RunnerRole } from '@officina/runner';
 import { buildBrief, listsChangedPaths, type ChooserContext } from './brief';
+import { runBudgetCents } from './spend';
 import type { LiveRun } from './live-runs';
 import { bodyProblems, readPrTemplate, type PrTemplate } from './pr-template';
 import type { Step } from './step';
@@ -23,8 +24,6 @@ import {
   titleProblems,
   type GitHubReview
 } from './validators';
-
-const INTERVIEW_BUDGET_CENTS = 200;
 
 /** What the step gathered before the session that its checks and its follow-up still need. */
 export interface StepInputs {
@@ -181,11 +180,7 @@ export const runSession = async (
         token,
         branch: onTaskBranch(step, inputs) ? step.taskBranch : context.defaultBranch
       },
-      // A conversation is cheap; a lane's build budget would be far too generous for it.
-      budgetCents:
-        role === 'interviewer'
-          ? INTERVIEW_BUDGET_CENTS
-          : Math.round(config.lanes[lane].budgetUsd * 100)
+      budgetCents: runBudgetCents(role, config.lanes[lane].budgetUsd)
     },
     validate: validatorFor(step, inputs),
     onSessionCreated: (sessionId) => registerSession(step, sessionId, live),
