@@ -99,7 +99,8 @@ const briefFor = async (step: Step, inputs: StepInputs) => {
     prTemplate: inputs.prTemplate?.path ?? null,
     chooser: role === 'chooser' ? await chooserContext(step, inputs) : undefined,
     questionsAsked: inputs.questionsAsked,
-    standards: role === 'onboarder' ? config.docs.standards : undefined
+    standards: role === 'onboarder' ? config.docs.standards : undefined,
+    sizeLimits: role === 'spec' ? { lanes: config.lanes, lane: context.task.lane } : undefined
   });
 };
 

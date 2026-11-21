@@ -1,4 +1,4 @@
-import type { Actor } from '@officina/core';
+import type { Actor, ProposedSplit } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
 
 type Queryable = Pool | PoolClient;
@@ -24,17 +24,20 @@ export const saveSpecVersion = async (
     createdBy: Actor;
     /** The paths the spec predicts the change touches, for the order of sub-tasks. */
     predictedPaths?: readonly string[];
+    /** The sub-tasks it proposes instead of one change, when it is a proposed split. */
+    split?: ProposedSplit;
   }
 ) => {
   await db.query(
-    `insert into spec_versions (task_id, version, body, created_by, predicted_paths)
-       values ($1, $2, $3, $4, $5)`,
+    `insert into spec_versions (task_id, version, body, created_by, predicted_paths, split)
+       values ($1, $2, $3, $4, $5, $6)`,
     [
       input.taskId,
       input.version,
       input.body,
       JSON.stringify(input.createdBy),
-      input.predictedPaths ?? []
+      input.predictedPaths ?? [],
+      input.split ? JSON.stringify(input.split) : null
     ]
   );
 };

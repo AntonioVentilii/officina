@@ -9,6 +9,7 @@ export * from './agent-docs';
 export * from './policies';
 export * from './lifecycle';
 export * from './subtasks';
+export * from './split';
 export * from './limits';
 export * from './contracts';
 export * from './questions';

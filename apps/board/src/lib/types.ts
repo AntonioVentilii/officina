@@ -231,6 +231,8 @@ export interface TaskDetail extends Card {
   readonly comments: readonly Comment[];
   readonly specs: readonly (Pick<Comment, 'author' | 'body' | 'at'> & {
     readonly version: number;
+    /** The version proposes a split into sub-tasks instead of one spec. */
+    readonly split: boolean;
   })[];
   readonly events: readonly TaskEvent[];
   readonly runs: readonly Run[];

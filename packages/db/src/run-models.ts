@@ -19,7 +19,8 @@ export const recordRunModel = async (pool: Pool, runId: string, choice: RunModel
 
 /**
  * Earlier runs of a role on a task that left nothing usable: a result the contract kept refusing,
- * a session that stopped without one, or a result saying the agent failed. A session's own error
+ * a session that stopped without one, or a result saying the agent failed, whether recorded as it
+ * ended or under the refs a build moved (`guardRefs` keeps it in `outcome`). A session's own error
  * (the spend limit, a closed stream) says nothing about the model, so it does not count.
  */
 export const failedAttempts = async (db: Pool, taskId: string, role: string): Promise<number> =>
@@ -27,7 +28,10 @@ export const failedAttempts = async (db: Pool, taskId: string, role: string): Pr
     await db.query<{ count: number }>(
       `select count(*)::int as count from runs
        where task_id = $1 and agent_role = $2 and status <> 'running'
-         and (result->>'kind' in ('invalid_result', 'no_result') or result->>'outcome' = 'failed')`,
+         and (result->>'kind' in ('invalid_result', 'no_result')
+           or result->'outcome'->>'kind' in ('invalid_result', 'no_result')
+           or result->>'outcome' = 'failed'
+           or result->'outcome'->'output'->>'outcome' = 'failed')`,
       [taskId, role]
     )
   ).rows[0]!.count;

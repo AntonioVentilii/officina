@@ -165,8 +165,9 @@ const projectConfigSchema = z
     models: z
       .strictObject({
         /**
-         * Path globs where a change is hard enough that every agent step on it runs on the strongest
-         * model, e.g. the project's own state machine. Red paths and guarded tasks already do.
+         * Path globs where a change is hard enough that the steps whose work grows with it (spec,
+         * build, onboarding, both reviews) run on the strongest model, e.g. the project's own state
+         * machine. Red paths and guarded tasks already do.
          */
         strong_paths: z.array(z.string().min(1)).optional()
       })

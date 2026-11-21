@@ -507,6 +507,9 @@ const waitingOn = (
       };
     case 'spec_review':
     case 'verifying': {
+      // A proposed split is never planned or approved as a spec: people decide on the split.
+      if (row.splitProposed)
+        return { kind: 'people', label: 'A maintainer decides on the proposed split', me: false };
       if (approval && !approval.planned)
         return { kind: 'agent', label: 'Deciding who approves', me: false };
       const pending = approval?.pending ?? [];
@@ -1035,6 +1038,7 @@ export const taskView = async (
     })),
     specs: specs.map((spec) => ({
       version: spec.version,
+      split: spec.split !== null,
       body: shown.text(spec.body),
       author: label(spec.createdBy),
       at: spec.createdAt

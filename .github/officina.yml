@@ -49,8 +49,10 @@ guards:
     - 'apps/api/src/people.ts'
     - 'apps/api/src/token-box.ts'
 
-# The task lifecycle and the engine's step: a change here runs every agent step on the strongest
-# model (docs/architecture.md section 6). The red paths and guarded tasks already do.
+# The task lifecycle and the engine's step: a change here runs the steps whose work grows with the
+# change (spec, build, onboarding, both reviews) on the strongest model (docs/architecture.md
+# section 6); the interviewer, the chooser and the learner keep their own. Red paths and guarded
+# tasks already do.
 models:
   strong_paths:
     - 'packages/core/src/lifecycle.ts'
