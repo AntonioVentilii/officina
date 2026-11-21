@@ -327,7 +327,7 @@ describe('a task over its spend', () => {
     expect(driver.events()).toContainEqual({
       type: 'guardrail_tripped',
       guardrail: 'spend_limit',
-      details: '$21.40 > $20.00'
+      details: '$21.40 spent, limit $20.00'
     });
     expect(nextAgentRoles(task)).toEqual([]);
     const answered = driver.step(task, { type: 'answer', text: 'Go on.' }, asMember(owner));

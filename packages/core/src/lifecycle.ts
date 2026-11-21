@@ -1365,11 +1365,15 @@ export const decide = (
       const spent = dollars(command.spentCents);
       const limit = dollars(command.limitCents);
       const blocked: Blocked = {
-        question: `Agent runs on this task have cost ${spent} since a maintainer last let them go on, over the limit of ${limit} per task. Answer to let them spend up to that much again, or claim or cancel the task.`,
+        question: `Agent runs on this task have cost ${spent} since a maintainer last let them go on, over the limit of ${limit} per task. Answer to let them spend up to that much again, or cancel the task.`,
         askedOf: { role: 'maintainer' }
       };
       return ok({ ...task, blocked }, [
-        { type: 'guardrail_tripped', guardrail: 'spend_limit', details: `${spent} > ${limit}` },
+        {
+          type: 'guardrail_tripped',
+          guardrail: 'spend_limit',
+          details: `${spent} spent, limit ${limit}`
+        },
         { type: 'blocked', blocked }
       ]);
     }

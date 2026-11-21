@@ -181,7 +181,7 @@ sub-tasks have merged.
   to let the step run again, or cancel the task.
 - **The task's agent runs cost $20 since it was last held for its spend:** the task shows `BLOCKED`
   with what they cost. Look at its runs first: agents that keep doing the same work need a person,
-  not more budget. Answer it to let them spend $20 more, or claim or cancel the task.
+  not more budget. Answer it to let them spend $20 more, or cancel the task.
 - **`the task changed meanwhile`:** someone or something acted first. Run `task show` and retry.
 - **A red-lane task stops after the spec:** that is by design. Agents never build in the red lane; a
   person implements the approved spec.

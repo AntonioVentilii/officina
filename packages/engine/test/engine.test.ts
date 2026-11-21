@@ -30,7 +30,8 @@ import {
   linkPullRequest,
   loadTask,
   saveAgentVersion,
-  startRun
+  startRun,
+  taskSpendCents
 } from '@officina/db';
 import { GitHubError, type RefSnapshot } from '@officina/github';
 import { RUNNER_ROLES, type SessionRequest } from '@officina/runner';
@@ -576,6 +577,32 @@ describe.skipIf(!url)('engine', () => {
     await applyOrThrow(pool, taskId, { type: 'answer', text: 'Go on.' }, seeded.owner);
     expect((await tick(deps, seeded.projectId)).dispatched).toEqual([taskId]);
     expect(agents.sessions.length).toBeGreaterThan(sessions);
+  });
+
+  test('a run still going at the spend hold counts in the next window, and the learner never counts', async () => {
+    const github = fakeGitHub();
+    const agents = createFakePort(succeed);
+    const deps = { pool, github: github.port, agents, publicUrl: PUBLIC_URL };
+    const taskId = await taskInReady(github, agents);
+    const run = (role: string, cents: number, createdAgo: string, finishedAgo: string) =>
+      pool.query(
+        `insert into runs (task_id, stage, runner, agent_role, agent_version, status, list_cost_cents,
+                           created_at, finished_at)
+         values ($1, 'building', 'managed_agents', $2, 1, 'succeeded', $3,
+                 now() - $4::interval, now() - $5::interval)`,
+        [taskId, role, cents, createdAgo, finishedAgo]
+      );
+    await run('learner', TASK_BUDGET_CENTS, '2 hours', '2 hours');
+    expect(await taskSpendCents(pool, taskId)).toBe(24);
+
+    await run('builder', TASK_BUDGET_CENTS, '2 hours', '2 hours');
+    await tick(deps, seeded.projectId);
+    expect((await loadTask(pool, taskId))!.task.blocked).not.toBeNull();
+    await applyOrThrow(pool, taskId, { type: 'answer', text: 'Go on.' }, seeded.owner);
+    expect(await taskSpendCents(pool, taskId)).toBe(0);
+    // Started before the hold, it finished after it: its cost belongs to the new window.
+    await run('reviewer_spec', 300, '2 hours', '0 seconds');
+    expect(await taskSpendCents(pool, taskId)).toBe(300);
   });
 
   test('a checklist GitHub refuses is recorded on the run and neither fails it nor blocks the task', async () => {
