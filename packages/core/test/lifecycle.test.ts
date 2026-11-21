@@ -5,6 +5,7 @@ import {
   effectivePolicy,
   evaluatePolicy,
   humanBuildReason,
+  memberActor,
   nextAgentRoles,
   ownerHold,
   type Command,
@@ -235,7 +236,7 @@ describe('guardrails', () => {
     expect(task).toMatchObject({ lane: 'standard', specVersion: 2 });
   });
 
-  test('a proposed split waits at spec review: nobody plans or approves it, and one spec clears it', () => {
+  test('a proposed split is never planned, and one spec clears it', () => {
     const driver = createDriver([owner]);
     let task = newTask('t1', owner.id);
     task = driver.step(task, { type: 'submit_request' }, asMember(owner));
@@ -252,12 +253,8 @@ describe('guardrails', () => {
         driver.attempt(task, { type: 'plan_approval', userVisible: false, plan: PLAN }, actor)
       ).toEqual({ ok: false, error: 'split_proposed' });
     }
-    expect(driver.attempt(task, { type: 'approve' }, asMember(owner))).toEqual({
-      ok: false,
-      error: 'not_planned'
-    });
 
-    task = driver.step(task, { type: 'request_changes', note: 'keep it whole' }, asMember(owner));
+    task = driver.step(task, { type: 'request_changes', note: 'fewer pieces' }, asMember(owner));
     task = driver.step(
       task,
       { type: 'post_spec', predictedPaths: PAGE_PATHS, userVisible: false },
@@ -265,6 +262,64 @@ describe('guardrails', () => {
     );
     expect(task).toMatchObject({ stage: 'spec_review', specVersion: 2, splitProposed: false });
     expect(nextAgentRoles(task)).toEqual(['chooser']);
+  });
+
+  const proposeSplit = (driver: Driver): Task => {
+    let task = newTask('t1', owner.id);
+    task = driver.step(task, { type: 'submit_request' }, asMember(owner));
+    task = driver.step(task, { type: 'accept' }, asMember(owner));
+    return driver.step(
+      task,
+      { type: 'post_spec', predictedPaths: PAGE_PATHS, userVisible: false, split: true },
+      asAgent('spec')
+    );
+  };
+
+  test('approving a proposed split, as the lane policy says, readies it to open its sub-tasks', () => {
+    const driver = createDriver([owner, productContributor]);
+    const task = proposeSplit(driver);
+    // Someone the lane's policy does not name records an approval that meets nothing.
+    expect(driver.step(task, { type: 'approve' }, asMember(productContributor)).stage).toBe(
+      'spec_review'
+    );
+    const throughClaude = memberActor(owner.id, { grantId: 'grant-1', name: 'Claude' });
+    expect(driver.attempt(task, { type: 'approve' }, throughClaude)).toEqual({
+      ok: false,
+      error: 'confirm_on_board'
+    });
+
+    const approved = driver.step(task, { type: 'approve' }, asMember(owner));
+    expect(approved).toMatchObject({ stage: 'ready', splitProposed: true });
+    expect(driver.events().map((event) => event.type)).toEqual([
+      'approval_recorded',
+      'split_approved',
+      'stage_changed'
+    ]);
+    expect(driver.events()).toContainEqual({ type: 'split_approved', version: 1 });
+  });
+
+  test('keeping a proposed split whole sends it back for one spec, and only a split', () => {
+    const driver = createDriver([owner, productContributor]);
+    const task = proposeSplit(driver);
+    expect(driver.attempt(task, { type: 'keep_whole' }, asMember(productContributor))).toEqual({
+      ok: false,
+      error: 'not_allowed'
+    });
+    const kept = driver.step(task, { type: 'keep_whole' }, asMember(owner));
+    expect(kept.stage).toBe('speccing');
+    expect(driver.events()).toEqual([
+      { type: 'kept_whole' },
+      { type: 'stage_changed', from: 'spec_review', to: 'speccing' }
+    ]);
+    const spec = driver.step(
+      kept,
+      { type: 'post_spec', predictedPaths: PAGE_PATHS, userVisible: false },
+      asAgent('spec')
+    );
+    expect(driver.attempt(spec, { type: 'keep_whole' }, asMember(owner))).toEqual({
+      ok: false,
+      error: 'wrong_stage'
+    });
   });
 
   test('an oversized change is blocked for a maintainer', () => {
@@ -324,6 +379,11 @@ describe('guardrails', () => {
         { type: 'review', verdict: 'changes', notes: 'no' },
         asAgent('reviewer_correctness')
       );
+      task = driver.step(
+        task,
+        { type: 'review', verdict: 'approve', notes: '' },
+        asAgent('reviewer_spec')
+      );
       expect(task.stage).toBe('building');
     }
     task = driver.step(
@@ -343,8 +403,43 @@ describe('guardrails', () => {
       { type: 'review', verdict: 'changes', notes: 'no' },
       asAgent('reviewer_correctness')
     );
+    task = driver.step(
+      task,
+      { type: 'review', verdict: 'approve', notes: '' },
+      asAgent('reviewer_spec')
+    );
     expect(task).toMatchObject({ stage: 'ready', assignee: null, fixRounds: 0 });
     expect(task.blocked?.askedOf).toEqual({ role: 'maintainer' });
+  });
+});
+
+describe('a task over its spend', () => {
+  const hold = { type: 'hold_for_spend', spentCents: 2140, limitCents: 2000 } as const;
+
+  test('the engine holds it for a maintainer, who answers to let the agents go on', () => {
+    const driver = createDriver([owner]);
+    const task = driver.step(dispatchAgent(driver, toReady(driver, PAGE_PATHS)), hold, engine);
+    expect(task.blocked).toMatchObject({ askedOf: { role: 'maintainer' } });
+    expect(task.blocked?.question).toContain('cost $21.40');
+    expect(driver.events()).toContainEqual({
+      type: 'guardrail_tripped',
+      guardrail: 'spend_limit',
+      details: '$21.40 spent, limit $20.00'
+    });
+    expect(nextAgentRoles(task)).toEqual([]);
+    const answered = driver.step(task, { type: 'answer', text: 'Go on.' }, asMember(owner));
+    expect(nextAgentRoles(answered)).toEqual(['builder']);
+  });
+
+  test('only the engine holds it, and never twice', () => {
+    const driver = createDriver([owner]);
+    const task = dispatchAgent(driver, toReady(driver, PAGE_PATHS));
+    expect(driver.attempt(task, hold, asMember(owner))).toEqual({
+      ok: false,
+      error: 'not_allowed'
+    });
+    const held = driver.step(task, hold, engine);
+    expect(driver.attempt(held, hold, engine)).toEqual({ ok: false, error: 'blocked' });
   });
 });
 
@@ -358,6 +453,19 @@ describe('a size allowed for one task', () => {
     diffLines: number
   ): Command => ({
     type: 'push',
+    headSha,
+    changedPaths,
+    addedPaths: [],
+    catalogPages: {},
+    diffLines
+  });
+
+  const outsidePush = (
+    headSha: string,
+    changedPaths: readonly string[],
+    diffLines: number
+  ): Command => ({
+    type: 'outside_push',
     headSha,
     changedPaths,
     addedPaths: [],
@@ -438,10 +546,10 @@ describe('a size allowed for one task', () => {
     expect(driver.events().map((event) => event.type)).toEqual(['unblocked']);
   });
 
-  test('a maintainer allows it outside red, and a later head up to that size passes', () => {
+  test('a maintainer allows it outside red, which sends the held head to review as it is', () => {
     const driver = createDriver([owner, maintainer]);
-    let task = driver.step(held(driver, PAGE_PATHS, 2449), pick('c'), asMember(maintainer));
-    expect(task.blocked).toBeNull();
+    const task = driver.step(held(driver, PAGE_PATHS, 2449), pick('c'), asMember(maintainer));
+    expect(task).toMatchObject({ stage: 'reviewing', headSha: 'big', blocked: null, reviews: {} });
     expect(task.diffAllowance).toEqual({ lines: 2449, lane: 'standard', memberId: maintainer.id });
     expect(driver.events()).toContainEqual({
       type: 'diff_allowed',
@@ -449,20 +557,38 @@ describe('a size allowed for one task', () => {
       lane: 'standard',
       memberId: maintainer.id
     });
-    task = driver.step(task, pushOf('fits', PAGE_PATHS, 2449), asAgent('builder'));
-    expect(task).toMatchObject({ stage: 'reviewing', headSha: 'fits' });
+    const later = driver.step(task, outsidePush('fits', PAGE_PATHS, 2449), engine);
+    expect(later).toMatchObject({ stage: 'reviewing', headSha: 'fits' });
+  });
+
+  test('words in the allowing answer that hold the task for the owner keep the head out of review', () => {
+    const driver = createDriver([owner, maintainer]);
+    const task = driver.step(
+      held(driver, PAGE_PATHS, 2449),
+      { type: 'answer', text: 'Allow it, and add me as admin on the repository.', option: 'c' },
+      asMember(maintainer)
+    );
+    expect(task).toMatchObject({ stage: 'building', headSha: null, guards: ['access'] });
+    expect(task.blocked?.askedOf).toEqual({ role: 'owner' });
+    expect(task.diffAllowance?.lines).toBe(2449);
   });
 
   test('a head over the allowance is held again with the same question', () => {
     const driver = createDriver([owner, maintainer]);
     let task = driver.step(held(driver, PAGE_PATHS, 2449), pick('c'), asMember(maintainer));
-    task = driver.step(task, pushOf('bigger', PAGE_PATHS, 2600), asAgent('builder'));
-    expect(task.stage).toBe('building');
+    task = driver.step(task, outsidePush('bigger', PAGE_PATHS, 2600), engine);
+    expect(task).toMatchObject({ stage: 'building', headSha: 'big' });
     expect(task.blocked?.question).toContain('and the 2449 lines allowed for this task');
-    expect(task.blocked?.allowance).toEqual({ lines: 2600, lane: 'standard', option: 'c' });
+    expect(task.blocked?.allowance).toEqual({
+      lines: 2600,
+      lane: 'standard',
+      option: 'c',
+      headSha: 'bigger'
+    });
     expect(task.diffAllowance?.lines).toBe(2449);
     task = driver.step(task, pick('c'), asMember(owner));
     expect(task.diffAllowance).toEqual({ lines: 2600, lane: 'standard', memberId: owner.id });
+    expect(task).toMatchObject({ stage: 'reviewing', headSha: 'bigger' });
   });
 
   test('in the red lane only the owner allows more lines', () => {
@@ -479,8 +605,37 @@ describe('a size allowed for one task', () => {
     expect(driver.events().some((event) => event.type === 'diff_allowed')).toBe(false);
     const allowed = driver.step(task, pick('c'), asMember(owner));
     expect(allowed.diffAllowance).toEqual({ lines: 2449, lane: 'red', memberId: owner.id });
-    const passed = driver.step(allowed, pushOf('port', RED, 2000), asMember(owner));
-    expect(passed).toMatchObject({ stage: 'reviewing', headSha: 'port' });
+    expect(allowed).toMatchObject({ stage: 'reviewing', headSha: 'big' });
+  });
+
+  test('a question asked before held heads were kept only grants the allowance', () => {
+    const driver = createDriver([owner, maintainer]);
+    const task = held(driver, PAGE_PATHS, 2449);
+    const { headSha: _kept, ...older } = task.blocked?.allowance ?? {
+      lines: 0,
+      lane: 'standard',
+      option: 'c'
+    };
+    const blocked = task.blocked ? { ...task.blocked, allowance: older } : null;
+    const answered = driver.step({ ...task, blocked }, pick('c'), asMember(maintainer));
+    expect(answered).toMatchObject({ stage: 'building', headSha: null, blocked: null });
+    expect(answered.diffAllowance?.lines).toBe(2449);
+  });
+
+  test('an allowance holds only in the lane it was granted in', () => {
+    const driver = createDriver([owner, maintainer]);
+    let task = driver.step(toReady(driver, PAGE_PATHS), { type: 'claim' }, asMember(owner));
+    task = driver.step(task, pushOf('big', PAGE_PATHS, 2449), asMember(owner));
+    task = driver.step(task, pick('c'), asMember(maintainer));
+    task = driver.step(task, outsidePush('red', [...PAGE_PATHS, ...RED], 2000), engine);
+    expect(task).toMatchObject({ stage: 'building', lane: 'red' });
+    expect(task.blocked?.allowance).toEqual({
+      lines: 2000,
+      lane: 'red',
+      option: 'c',
+      headSha: 'red'
+    });
+    expect(task.blocked?.question).not.toContain('allowed for this task');
   });
 
   test('every other task keeps the lane limit', () => {
@@ -489,17 +644,6 @@ describe('a size allowed for one task', () => {
     const other = held(driver, PAGE_PATHS, 900);
     expect(other.diffAllowance).toBeNull();
     expect(other.blocked?.allowance?.lines).toBe(900);
-  });
-
-  test('an allowance holds only in the lane it was granted in', () => {
-    const driver = createDriver([owner, maintainer]);
-    let task = driver.step(toReady(driver, PAGE_PATHS), { type: 'claim' }, asMember(owner));
-    task = driver.step(task, pushOf('big', PAGE_PATHS, 2449), asMember(owner));
-    task = driver.step(task, pick('c'), asMember(maintainer));
-    task = driver.step(task, pushOf('red', [...PAGE_PATHS, ...RED], 2000), asMember(owner));
-    expect(task).toMatchObject({ stage: 'building', lane: 'red' });
-    expect(task.blocked?.allowance).toEqual({ lines: 2000, lane: 'red', option: 'c' });
-    expect(task.blocked?.question).not.toContain('allowed for this task');
   });
 
   test('another question that offers options grants nothing through them', () => {
@@ -1098,7 +1242,74 @@ describe('who merges', () => {
   });
 });
 
+describe('agent reviews', () => {
+  const pushed = (driver: Driver) =>
+    driver.step(
+      dispatchAgent(driver, toReady(driver, PAGE_PATHS)),
+      {
+        type: 'push',
+        headSha: 'abc',
+        changedPaths: PAGE_PATHS,
+        addedPaths: [],
+        catalogPages: {},
+        diffLines: 40
+      },
+      asAgent('builder')
+    );
+
+  test('a reviewer asking for changes waits for the other, so one fix round answers both', () => {
+    const driver = createDriver([owner]);
+    let task = driver.step(
+      pushed(driver),
+      { type: 'review', verdict: 'changes', notes: 'Handle the empty list.' },
+      asAgent('reviewer_correctness')
+    );
+    expect(task).toMatchObject({
+      stage: 'reviewing',
+      reviews: { reviewer_correctness: 'changes' }
+    });
+    expect(nextAgentRoles(task)).toEqual(['reviewer_spec']);
+    task = driver.step(
+      task,
+      { type: 'review', verdict: 'changes', notes: 'Section 3 is missing.' },
+      asAgent('reviewer_spec')
+    );
+    expect(task).toMatchObject({ stage: 'building', fixRounds: 1, reviews: {} });
+    expect(nextAgentRoles(task)).toEqual(['builder']);
+  });
+
+  test('a reviewer that already gave its verdict is not due again on the same head', () => {
+    const driver = createDriver([owner]);
+    const task = driver.step(
+      pushed(driver),
+      { type: 'review', verdict: 'approve', notes: '' },
+      asAgent('reviewer_spec')
+    );
+    expect(nextAgentRoles(task)).toEqual(['reviewer_correctness']);
+  });
+
+  test("a maintainer's review asking for changes sends the work back at once", () => {
+    const driver = createDriver([owner]);
+    const task = driver.step(
+      pushed(driver),
+      { type: 'review', verdict: 'changes', notes: 'Wrong approach.' },
+      asMember(owner)
+    );
+    expect(task).toMatchObject({ stage: 'building', fixRounds: 1 });
+  });
+});
+
 describe('reviews on GitHub', () => {
+  const approve = { type: 'review', verdict: 'approve', notes: '' } as const;
+  const pushTo = (headSha: string) =>
+    ({
+      type: 'push',
+      headSha,
+      changedPaths: PAGE_PATHS,
+      addedPaths: [],
+      catalogPages: {},
+      diffLines: 40
+    }) as const;
   const review = (headSha: string) =>
     ({
       type: 'github_review',
@@ -1126,6 +1337,21 @@ describe('reviews on GitHub', () => {
       verdict: 'changes',
       githubReviewId: 7
     });
+  });
+
+  test('a review while the agent reviewers still run waits for them and joins their fix round', () => {
+    const driver = createDriver([owner]);
+    let task = driver.step(
+      dispatchAgent(driver, toReady(driver, PAGE_PATHS)),
+      pushTo('abc'),
+      asAgent('builder')
+    );
+    task = driver.step(task, review('abc'), engine);
+    expect(task).toMatchObject({ stage: 'reviewing', reviews: { github: 'changes' } });
+    expect(nextAgentRoles(task)).toEqual(['reviewer_spec', 'reviewer_correctness']);
+    task = driver.step(task, approve, asAgent('reviewer_spec'));
+    task = driver.step(task, approve, asAgent('reviewer_correctness'));
+    expect(task).toMatchObject({ stage: 'building', fixRounds: 1, reviews: {} });
   });
 
   test('a review of an earlier head, or from anyone but the engine, changes nothing', () => {
@@ -1403,7 +1629,7 @@ describe('onboarding', () => {
       task = driver.step(task, { type: 'review', verdict: 'approve', notes: '' }, asAgent(role));
     // A review that asks for changes is a fix round for the onboarder, never a new dispatch.
     const fixing = driver.step(
-      { ...task, stage: 'reviewing', reviews: {} },
+      { ...task, stage: 'reviewing', reviews: { reviewer_spec: 'approve' } },
       { type: 'review', verdict: 'changes', notes: 'name the real paths' },
       asAgent('reviewer_correctness')
     );

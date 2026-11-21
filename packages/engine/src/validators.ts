@@ -1,4 +1,4 @@
-import type { AgentOutput } from '@officina/core';
+import type { AgentOutput, SpecShape } from '@officina/core';
 import { copilotVerdict } from '@officina/github';
 import type { RunnerRole } from '@officina/runner';
 import { MAX_INTERVIEW_QUESTIONS } from './brief';
@@ -13,10 +13,23 @@ export const interviewProblems = (asked: number) => (output: AgentOutput<RunnerR
     ? [`you have asked ${asked} questions already: complete the request now`]
     : [];
 
-/** A spec due after people picked the size check's Split must be a proposed split. */
-export const splitProblems = (asked: boolean) => (output: AgentOutput<RunnerRole>) =>
-  asked && (output as AgentOutput<'spec'>).outcome === 'specced'
-    ? ['a maintainer picked Split when the size check held the build: submit `split`, not one spec']
+const SHAPE_PROBLEMS: Readonly<Record<SpecShape, { wrong: string; problem: string }>> = {
+  split: {
+    wrong: 'specced',
+    problem:
+      'a maintainer picked Split when the size check held the build: submit `split`, not one spec'
+  },
+  whole: {
+    wrong: 'split',
+    problem:
+      'this task is built as one (a sub-task, or a split people kept whole): submit one spec, not `split`'
+  }
+};
+
+/** A spec whose shape people decided must take it: a proposed split, or one spec. */
+export const shapeProblems = (shape: SpecShape | null) => (output: AgentOutput<RunnerRole>) =>
+  shape && (output as AgentOutput<'spec'>).outcome === SHAPE_PROBLEMS[shape].wrong
+    ? [SHAPE_PROBLEMS[shape].problem]
     : [];
 
 export const planProblems =
