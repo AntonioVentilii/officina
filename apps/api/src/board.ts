@@ -233,6 +233,7 @@ const PUBLIC_FIELDS: Readonly<Record<string, readonly string[]>> = {
   blocked: ['blocked'],
   unblocked: ['answer'],
   diff_allowed: ['lines', 'lane', 'memberId'],
+  split_asked: [],
   closed: ['stage', 'reason'],
   pull_request_closed: ['pullRequest'],
   spec_status_set: ['status'],

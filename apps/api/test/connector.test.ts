@@ -1307,6 +1307,9 @@ describe.skipIf(!url)('connector for Claude', () => {
     );
 
     const held = (await tool(token, 'show_task', { number: 1 })).content[0]!.text;
+    expect(held).toContain(
+      '(a) Split the spec into smaller tasks: The task goes back to the spec agent, which proposes sub-tasks'
+    );
     expect(held).toContain('(c) Allow 2449 lines for this task: Later heads of this task pass');
     const version = Number(/pass its letter as option and (\d+) as version/.exec(held)?.[1]);
     const answered = await tool(token, 'answer_question', { number: 1, option: 'c', version });

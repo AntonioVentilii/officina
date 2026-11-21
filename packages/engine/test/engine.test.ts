@@ -31,6 +31,7 @@ import {
   linkPullRequest,
   loadTask,
   saveAgentVersion,
+  splitAskedSinceSpec,
   startRun
 } from '@officina/db';
 import { GitHubError, type RefSnapshot } from '@officina/github';
@@ -3245,6 +3246,44 @@ describe.skipIf(!url)('engine', () => {
       status: 'skipped',
       reason: 'not_due'
     });
+  });
+
+  test('after people picked Split, the spec agent is told so and one spec goes back to it', async () => {
+    const taskId = await taskInSpeccing();
+    await appendTaskEvent(pool, {
+      taskId,
+      actor: seeded.owner,
+      type: 'split_asked',
+      payload: {}
+    });
+    const split = {
+      outcome: 'split',
+      why: 'Too large for one change.',
+      userVisible: true,
+      subtasks: [
+        { title: 'Rename the title', scope: 'The copy.', paths: [COPY] },
+        { title: 'Add the page', scope: 'The page.', paths: ['src/page.svelte'], after: [1] }
+      ]
+    };
+    const agents = createFakePort(() => [
+      toolUse(RESULTS.spec),
+      idle('requires_action'),
+      toolUse(split),
+      idle('requires_action'),
+      idle('end_turn')
+    ]);
+    const deps = { pool, github: fakeGitHub().port, agents, publicUrl: PUBLIC_URL };
+    expect(await runAgentStep(deps, taskId, 'spec')).toEqual({ status: 'applied' });
+
+    const brief = (agents.sent[0]!.events[0] as { text: string }).text;
+    expect(brief).toContain('a maintainer picked Split: submit `split`');
+    expect(JSON.stringify(agents.sent)).toContain('submit `split`, not one spec');
+    expect((await loadTask(pool, taskId))?.task).toMatchObject({
+      stage: 'spec_review',
+      splitProposed: true
+    });
+    // Once a spec version is posted, the pick is spent.
+    expect(await splitAskedSinceSpec(pool, taskId)).toBe(false);
   });
 
   test('a step already running is not started twice', async () => {
