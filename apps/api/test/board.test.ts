@@ -83,6 +83,87 @@ describe('run log', () => {
     expect((entries[2] as { text: string }).text).toContain('1000 more characters');
     expect(entries[3]).toMatchObject({ outcome: 'pushed' });
   });
+
+  test("keeps what a role asks its reading worker and the answer, on the worker's thread", () => {
+    const at = new Date();
+    const entries = logEntries([
+      {
+        id: '1',
+        type: 'agent.thread_message_sent',
+        payload: {
+          to_session_thread_id: 'sthr_1',
+          to_agent_name: 'officina-reader',
+          content: [{ type: 'text', text: 'Where is `clip` defined?' }]
+        },
+        createdAt: at
+      },
+      {
+        id: '2',
+        type: 'session.thread_created',
+        payload: { session_thread_id: 'sthr_1', agent_name: 'officina-reader' },
+        createdAt: at
+      },
+      {
+        id: '3',
+        type: 'session.thread_status_running',
+        payload: { session_thread_id: 'sthr_1', agent_name: 'officina-reader' },
+        createdAt: at
+      },
+      {
+        id: '4',
+        type: 'agent.thread_message_received',
+        payload: {
+          from_session_thread_id: 'sthr_1',
+          from_agent_name: 'officina-reader',
+          content: [{ type: 'text', text: 'y'.repeat(21_000) }]
+        },
+        createdAt: at
+      },
+      {
+        id: '5',
+        type: 'session.thread_status_idle',
+        payload: { session_thread_id: 'sthr_1', agent_name: 'officina-reader' },
+        createdAt: at
+      },
+      {
+        id: '6',
+        type: 'agent.thread_message_sent',
+        payload: {
+          to_session_thread_id: 'sthr_2',
+          content: [{ type: 'text', text: 'And tests?' }]
+        },
+        createdAt: at
+      }
+    ]);
+    expect(entries).toEqual([
+      {
+        id: '1',
+        at,
+        kind: 'thread',
+        direction: 'question',
+        thread: 'sthr_1',
+        agent: 'officina-reader',
+        text: 'Where is `clip` defined?'
+      },
+      expect.objectContaining({
+        id: '4',
+        kind: 'thread',
+        direction: 'answer',
+        thread: 'sthr_1',
+        agent: 'officina-reader'
+      }),
+      {
+        id: '6',
+        at,
+        kind: 'thread',
+        direction: 'question',
+        thread: 'sthr_2',
+        agent: null,
+        text: 'And tests?'
+      }
+    ]);
+    expect((entries[1] as { text: string }).text).toContain('1000 more characters');
+  });
 });
 
 describe('agents page', () => {
