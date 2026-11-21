@@ -55,6 +55,7 @@ export type BoardAction =
   | 'hand_back'
   | 'approve'
   | 'changes'
+  | 'keep_whole'
   | 'answer'
   | 'close_merged'
   | 'cancel'

@@ -5,6 +5,7 @@ import {
   effectivePolicy,
   evaluatePolicy,
   humanBuildReason,
+  memberActor,
   mergedEarlyText,
   nextAgentRoles,
   ownerHold,
@@ -236,7 +237,7 @@ describe('guardrails', () => {
     expect(task).toMatchObject({ lane: 'standard', specVersion: 2 });
   });
 
-  test('a proposed split waits at spec review: nobody plans or approves it, and one spec clears it', () => {
+  test('a proposed split is never planned, and one spec clears it', () => {
     const driver = createDriver([owner]);
     let task = newTask('t1', owner.id);
     task = driver.step(task, { type: 'submit_request' }, asMember(owner));
@@ -253,12 +254,8 @@ describe('guardrails', () => {
         driver.attempt(task, { type: 'plan_approval', userVisible: false, plan: PLAN }, actor)
       ).toEqual({ ok: false, error: 'split_proposed' });
     }
-    expect(driver.attempt(task, { type: 'approve' }, asMember(owner))).toEqual({
-      ok: false,
-      error: 'not_planned'
-    });
 
-    task = driver.step(task, { type: 'request_changes', note: 'keep it whole' }, asMember(owner));
+    task = driver.step(task, { type: 'request_changes', note: 'fewer pieces' }, asMember(owner));
     task = driver.step(
       task,
       { type: 'post_spec', predictedPaths: PAGE_PATHS, userVisible: false },
@@ -266,6 +263,64 @@ describe('guardrails', () => {
     );
     expect(task).toMatchObject({ stage: 'spec_review', specVersion: 2, splitProposed: false });
     expect(nextAgentRoles(task)).toEqual(['chooser']);
+  });
+
+  const proposeSplit = (driver: Driver): Task => {
+    let task = newTask('t1', owner.id);
+    task = driver.step(task, { type: 'submit_request' }, asMember(owner));
+    task = driver.step(task, { type: 'accept' }, asMember(owner));
+    return driver.step(
+      task,
+      { type: 'post_spec', predictedPaths: PAGE_PATHS, userVisible: false, split: true },
+      asAgent('spec')
+    );
+  };
+
+  test('approving a proposed split, as the lane policy says, readies it to open its sub-tasks', () => {
+    const driver = createDriver([owner, productContributor]);
+    const task = proposeSplit(driver);
+    // Someone the lane's policy does not name records an approval that meets nothing.
+    expect(driver.step(task, { type: 'approve' }, asMember(productContributor)).stage).toBe(
+      'spec_review'
+    );
+    const throughClaude = memberActor(owner.id, { grantId: 'grant-1', name: 'Claude' });
+    expect(driver.attempt(task, { type: 'approve' }, throughClaude)).toEqual({
+      ok: false,
+      error: 'confirm_on_board'
+    });
+
+    const approved = driver.step(task, { type: 'approve' }, asMember(owner));
+    expect(approved).toMatchObject({ stage: 'ready', splitProposed: true });
+    expect(driver.events().map((event) => event.type)).toEqual([
+      'approval_recorded',
+      'split_approved',
+      'stage_changed'
+    ]);
+    expect(driver.events()).toContainEqual({ type: 'split_approved', version: 1 });
+  });
+
+  test('keeping a proposed split whole sends it back for one spec, and only a split', () => {
+    const driver = createDriver([owner, productContributor]);
+    const task = proposeSplit(driver);
+    expect(driver.attempt(task, { type: 'keep_whole' }, asMember(productContributor))).toEqual({
+      ok: false,
+      error: 'not_allowed'
+    });
+    const kept = driver.step(task, { type: 'keep_whole' }, asMember(owner));
+    expect(kept.stage).toBe('speccing');
+    expect(driver.events()).toEqual([
+      { type: 'kept_whole' },
+      { type: 'stage_changed', from: 'spec_review', to: 'speccing' }
+    ]);
+    const spec = driver.step(
+      kept,
+      { type: 'post_spec', predictedPaths: PAGE_PATHS, userVisible: false },
+      asAgent('spec')
+    );
+    expect(driver.attempt(spec, { type: 'keep_whole' }, asMember(owner))).toEqual({
+      ok: false,
+      error: 'wrong_stage'
+    });
   });
 
   test('an oversized change is blocked for a maintainer', () => {

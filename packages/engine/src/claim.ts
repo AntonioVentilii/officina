@@ -5,6 +5,7 @@ import {
   startRun,
   type AgentVersionRecord,
   type NewRun,
+  type StartRunRefusal,
   type StoredTaskContext
 } from '@officina/db';
 import type { RepoRef } from '@officina/github';
@@ -37,7 +38,8 @@ export interface ClaimedStep {
  * the role's agent is synced, the config is valid) and claims its run in the database, so a second
  * scheduler pass finds it taken. `isDue` is the role's own rule for when it runs; `start`, when
  * given, claims the run in its place, for a run that needs more than a free slot (a learning's
- * rewrite), and `settled` says the work is no longer due.
+ * rewrite), and `settled` says the work is no longer due. A task paused after it was read is no
+ * longer due either: the claim finds it so (`startRun`), never a run started in the pause.
  */
 export const claimStep = async (
   pool: Pool,
@@ -47,7 +49,7 @@ export const claimStep = async (
     readonly isDue: (context: StoredTaskContext) => boolean | Promise<boolean>;
     readonly start?: (
       run: NewRun
-    ) => Promise<{ ok: true; runId: string } | { ok: false; error: 'already_running' | 'settled' }>;
+    ) => Promise<{ ok: true; runId: string } | { ok: false; error: StartRunRefusal | 'settled' }>;
   }
 ): Promise<{ ok: true; step: ClaimedStep } | { ok: false; reason: SkipReason }> => {
   const context = await loadTaskContext(pool, input.taskId);
@@ -67,7 +69,7 @@ export const claimStep = async (
     runner: RUNNER
   });
   if (!claim.ok)
-    return { ok: false, reason: claim.error === 'settled' ? 'not_due' : 'already_running' };
+    return { ok: false, reason: claim.error === 'already_running' ? 'already_running' : 'not_due' };
   return {
     ok: true,
     step: {
