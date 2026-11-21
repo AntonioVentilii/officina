@@ -37,6 +37,19 @@ export interface StepInputs {
   readonly prTemplate: PrTemplate | null;
 }
 
+/** What the session needs besides the step's inputs: the task branch's head as the run starts. */
+export interface SessionInputs extends StepInputs {
+  /** Read from the refs a build run starts from; `null` when the branch does not exist yet, or for a role that does not build. */
+  readonly taskBranchHead: string | null;
+}
+
+/**
+ * Whether the session works on the task branch: a review of the head Officina took in, or a build
+ * whenever the branch already holds work, such as a head the size check held without taking it in.
+ */
+const onTaskBranch = (step: Step, inputs: SessionInputs): boolean =>
+  step.role !== 'spec' && (step.context.task.headSha !== null || inputs.taskBranchHead !== null);
+
 export const gatherInputs = async (step: Step): Promise<StepInputs> => ({
   members:
     step.role === 'chooser'
@@ -75,7 +88,7 @@ const chooserContext = async (step: Step, inputs: StepInputs): Promise<ChooserCo
   };
 };
 
-const briefFor = async (step: Step, inputs: StepInputs) => {
+const briefFor = async (step: Step, inputs: SessionInputs) => {
   const { context, config, role, taskId } = step;
   const { pool } = step.deps;
   return buildBrief({
@@ -97,7 +110,7 @@ const briefFor = async (step: Step, inputs: StepInputs) => {
         ? (await listTaskComments(pool, taskId)).map((comment) => comment.body)
         : [],
     feedback: step.builds ? await feedbackSinceLastPush(pool, taskId) : [],
-    firstRound: context.task.headSha === null,
+    firstRound: !onTaskBranch(step, inputs),
     prTitlePattern: config.pullRequest.titlePattern,
     prTemplate: inputs.prTemplate?.path ?? null,
     changedPaths: listsChangedPaths(role, gateOf(step))
@@ -147,7 +160,7 @@ const registerSession = async (step: Step, sessionId: string, live: LiveRun | un
 
 export const runSession = async (
   step: Step,
-  inputs: StepInputs,
+  inputs: SessionInputs,
   token: string,
   live: LiveRun | undefined
 ) => {
@@ -166,9 +179,7 @@ export const runSession = async (
       repository: {
         url: `https://github.com/${context.repo}`,
         token,
-        // Until the first push the task branch does not exist yet.
-        branch:
-          role === 'spec' || context.task.headSha === null ? context.defaultBranch : step.taskBranch
+        branch: onTaskBranch(step, inputs) ? step.taskBranch : context.defaultBranch
       },
       // A conversation is cheap; a lane's build budget would be far too generous for it.
       budgetCents:

@@ -926,16 +926,6 @@ const landPush = (
     ]);
   }
 
-  const tooLarge = diffHold(context.config, task, lane, head.diffLines);
-  if (tooLarge) {
-    const { blocked, details } = tooLarge;
-    return ok({ ...task, lane, blocked }, [
-      ...pushed,
-      { type: 'guardrail_tripped', guardrail: 'diff_too_large', details },
-      { type: 'blocked', blocked }
-    ]);
-  }
-
   // A new shared file nobody listed is the duplication of tomorrow: the builder lists it first.
   const unlisted = unlistedFiles(
     context.config.docs.standards.catalogs,
@@ -948,6 +938,17 @@ const landPush = (
       guardrail: 'unlisted_files',
       details: describeUnlisted(unlisted)
     });
+  }
+
+  // Last, so a head whose size a person allows has passed everything else and can go to review.
+  const tooLarge = diffHold(context.config, task, lane, head);
+  if (tooLarge) {
+    const { blocked, details } = tooLarge;
+    return ok({ ...task, lane, blocked }, [
+      ...pushed,
+      { type: 'guardrail_tripped', guardrail: 'diff_too_large', details },
+      { type: 'blocked', blocked }
+    ]);
   }
 
   const [moved, stageEvent] = moveTo(task, 'reviewing', {
@@ -971,6 +972,18 @@ export const GITHUB_REVIEWABLE: ReadonlySet<Stage> = new Set([
 
 /** Stages where the task's pull request may exist: from the first push until it is merged. */
 export const WITH_PULL_REQUEST: ReadonlySet<Stage> = new Set(['building', ...GITHUB_REVIEWABLE]);
+
+/**
+ * Allowing the size of the head the size check held takes that head in: it passed every other
+ * check first, so it goes to review as pushed instead of being built again.
+ */
+const allowedHeadIn = (task: Task, offer: AllowanceOffer | null, events: DomainEvent[]) => {
+  // Words in the answer that hold the task for the owner keep the head out too, so no pull request
+  // opens for it before the owner has looked.
+  if (task.blocked || !offer?.headSha || task.stage !== 'building') return ok(task, events);
+  const [moved, stageEvent] = moveTo(task, 'reviewing', { headSha: offer.headSha, reviews: {} });
+  return ok(moved, [...events, stageEvent]);
+};
 
 /**
  * Answers the task's question. Picking the size check's option to allow more lines also grants that
@@ -1034,11 +1047,12 @@ const unblockedBy = (
     member,
     command.text
   );
-  return ok(unblocked, [
+  const events: DomainEvent[] = [
     { type: 'unblocked', answer: command.text },
     ...(allowance ? [{ type: 'diff_allowed' as const, ...allowance }] : []),
     ...guardEvents
-  ]);
+  ];
+  return allowedHeadIn(unblocked, offer, events);
 };
 
 const ALLOWED_WHILE_HELD: ReadonlySet<Command['type']> = new Set([
