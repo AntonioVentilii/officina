@@ -1,8 +1,8 @@
 /*
- * Two looks share every component: Modernista (the default) and Tecnica, picked per member in the
+ * Three looks share every component: Fucina (the default), Modernista and Tecnica, picked per member in the
  * sidebar or per project in its config, and set as data-look on <html>. Each look has its own
  * light and dark tokens; a component that draws differently per look branches in one place.
- * Fonts load only when a look uses them, so one look never downloads the other's type.
+ * Fonts load only when a look uses them, so one look never downloads another's type.
  */
 /* Modernista: the width axis is the point, condensed for headings and numerals. */
 @import '@fontsource-variable/archivo/wdth.css';
@@ -15,6 +15,11 @@
 @import '@fontsource/ibm-plex-sans-condensed/700.css';
 @import '@fontsource/ibm-plex-mono/400.css';
 @import '@fontsource/ibm-plex-mono/500.css';
+/* Fucina: a narrow, lively grotesque for heads and figures, a friendly sans for what people wrote. */
+@import '@fontsource-variable/bricolage-grotesque/wdth.css';
+@import '@fontsource-variable/instrument-sans';
+/* Fucina's drawing of shared components, kept apart so each component stays one readable copy. */
+@import './fucina.css';
 
 :root {
   --font-sans: 'Archivo Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
@@ -161,6 +166,80 @@
     --backdrop: rgba(20, 23, 26, 0.3);
     --code-bg: #f2f4f0;
     --grid: #e2e5e0;
+  }
+}
+
+/* Fucina: the forge. Every column has a hue and its agent the same one (stages.ts, roles.ts); soft
+   corners, shadows tinted by the hue, and things move while work happens. */
+:root[data-look='fucina'] {
+  --font-sans:
+    'Instrument Sans Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-display: 'Bricolage Grotesque Variable', var(--font-sans);
+  --font-num: 'JetBrains Mono Variable', ui-monospace, 'SF Mono', Menlo, monospace;
+  --font-mono: var(--font-num);
+  --accent: #ffd400;
+  --accent-text: #15121b;
+
+  color-scheme: dark;
+  --bg: #15121b;
+  --panel: #1e1a26;
+  --tint: #272130;
+  --hover: rgba(255, 255, 255, 0.05);
+  --border: #342c40;
+  --rule: #f4f0ea;
+  --text: #f4f0ea;
+  --text-2: #b9b0c4;
+  --text-3: #91889d;
+  --on-ink: #15121b;
+  --danger: #ff4d5e;
+  --backdrop: rgba(8, 6, 12, 0.6);
+  --code-bg: #1a1621;
+  --nav-bg: #0e0c13;
+  --nav-text: #f4f0ea;
+  --nav-text-2: #a59cb2;
+  --nav-rule: #2a2433;
+  --lift: 0 12px 24px -14px rgba(0, 0, 0, 0.7);
+}
+
+:root[data-look='fucina'][data-theme='light'] {
+  color-scheme: light;
+  --bg: #f6f3f9;
+  --panel: #ffffff;
+  --tint: #eee9f4;
+  --hover: rgba(29, 24, 48, 0.04);
+  --border: #e0d9e8;
+  --rule: #1d1830;
+  --text: #1d1830;
+  --text-2: #5a5268;
+  --text-3: #6c6479;
+  --on-ink: #ffffff;
+  --danger: #d6203a;
+  --backdrop: rgba(29, 24, 48, 0.3);
+  --code-bg: #f3f0f7;
+  --nav-bg: #1d1830;
+  --nav-rule: #342c46;
+  --lift: 0 12px 24px -16px rgba(40, 20, 80, 0.4);
+}
+
+@media (prefers-color-scheme: light) {
+  :root[data-look='fucina']:not([data-theme]) {
+    color-scheme: light;
+    --bg: #f6f3f9;
+    --panel: #ffffff;
+    --tint: #eee9f4;
+    --hover: rgba(29, 24, 48, 0.04);
+    --border: #e0d9e8;
+    --rule: #1d1830;
+    --text: #1d1830;
+    --text-2: #5a5268;
+    --text-3: #6c6479;
+    --on-ink: #ffffff;
+    --danger: #d6203a;
+    --backdrop: rgba(29, 24, 48, 0.3);
+    --code-bg: #f3f0f7;
+    --nav-bg: #1d1830;
+    --nav-rule: #342c46;
+    --lift: 0 12px 24px -16px rgba(40, 20, 80, 0.4);
   }
 }
 
@@ -523,6 +602,89 @@ textarea.field {
   font-weight: 500;
   letter-spacing: 0.02em;
   font-stretch: normal;
+}
+
+/* Fucina, globally: round corners, a breathing yellow for your turn, buttons that give when pressed. */
+:root[data-look='fucina'] .caps {
+  font-size: 11px;
+  font-stretch: normal;
+  letter-spacing: 0.06em;
+}
+
+:root[data-look='fucina'] .page-title {
+  font-family: var(--font-display);
+  font-size: 48px;
+  font-stretch: 75%;
+  line-height: 0.95;
+}
+
+:root[data-look='fucina'] .you {
+  align-items: center;
+  padding: 4px 11px;
+  border-radius: 12px;
+  animation: breathe 2.6s ease-in-out infinite;
+}
+
+:root[data-look='fucina'] .btn {
+  border-width: 1.5px;
+  border-radius: 999px;
+  font-weight: 600;
+  transition:
+    background 0.15s,
+    color 0.15s,
+    transform 0.15s var(--ease);
+}
+
+:root[data-look='fucina'] .btn:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+:root[data-look='fucina'] .btn.primary:hover:not(:disabled) {
+  background: var(--text-2);
+  border-color: var(--text-2);
+}
+
+:root[data-look='fucina'] .field {
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+:root[data-look='fucina'] .field:focus {
+  padding-bottom: 8px;
+  border-bottom-width: 1.5px;
+  border-color: var(--text-2);
+  box-shadow: 0 0 0 3px var(--hover);
+}
+
+:root[data-look='fucina'] .pill {
+  padding: 1px 9px;
+  border-radius: 999px;
+  background: var(--tint);
+  font-stretch: normal;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  font-size: 12px;
+}
+
+:root[data-look='fucina'] .pill.accent {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+:root[data-look='fucina'] .pill.danger {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+  50% {
+    box-shadow:
+      0 0 0 4px color-mix(in srgb, var(--accent) 20%, transparent),
+      0 0 14px color-mix(in srgb, var(--accent) 40%, transparent);
+  }
 }
 
 /* Scrollbars */

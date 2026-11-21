@@ -386,9 +386,11 @@
     color: var(--nav-text);
   }
 
+  /* Three looks do not fit the sidebar's width on one line. */
   .looks {
     display: flex;
-    gap: 16px;
+    flex-wrap: wrap;
+    gap: 6px 16px;
     padding: 0 24px;
   }
 

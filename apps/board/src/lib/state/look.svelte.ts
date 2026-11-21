@@ -10,6 +10,7 @@ export const LOOK_KEY = 'officina.look';
  * `DEFAULT_BOARD_LOOK` does for a project whose config names none.
  */
 export const LOOKS = [
+  { id: 'fucina', label: 'Fucina' },
   { id: 'modernista', label: 'Modernista' },
   { id: 'tecnica', label: 'Tecnica' }
 ] as const satisfies readonly { readonly id: Look; readonly label: string }[];

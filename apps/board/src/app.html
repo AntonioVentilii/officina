@@ -32,6 +32,17 @@
       html[data-look='tecnica'][data-theme='light'] {
         background: #edefeb;
       }
+      html[data-look='fucina'] {
+        background: #15121b;
+      }
+      @media (prefers-color-scheme: light) {
+        html[data-look='fucina']:not([data-theme]) {
+          background: #f6f3f9;
+        }
+      }
+      html[data-look='fucina'][data-theme='light'] {
+        background: #f6f3f9;
+      }
     </style>
     %sveltekit.head%
   </head>
