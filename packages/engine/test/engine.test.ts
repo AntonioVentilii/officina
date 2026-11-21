@@ -4,6 +4,7 @@ import {
   branchForTask,
   ENGINE,
   HANDOFF_NEED_KEYS,
+  NO_USAGE,
   ownerHold,
   splitMarkdown,
   type Actor,
@@ -350,11 +351,22 @@ describe.skipIf(!url)('engine', () => {
     expect(spec.rows).toEqual([{ version: 1, body: '# Spec\nChange the settings title.' }]);
 
     const run = (
-      await pool.query('select status, external_id, list_cost_cents from runs where task_id = $1', [
-        taskId
-      ])
+      await pool.query(
+        `select status, external_id, list_cost_cents, input_tokens::int, output_tokens::int,
+           cache_read_tokens::int, cache_write_tokens::int
+         from runs where task_id = $1`,
+        [taskId]
+      )
     ).rows[0];
-    expect(run).toEqual({ status: 'succeeded', external_id: 'sesn_1', list_cost_cents: 12 });
+    expect(run).toEqual({
+      status: 'succeeded',
+      external_id: 'sesn_1',
+      list_cost_cents: 12,
+      input_tokens: 40,
+      output_tokens: 1_500,
+      cache_read_tokens: 90_000,
+      cache_write_tokens: 12_000
+    });
     expect((await pool.query('select 1 from run_events')).rowCount).toBeGreaterThan(0);
 
     expect(agents.sessions[0]!.repository).toEqual({
@@ -1557,6 +1569,40 @@ describe.skipIf(!url)('engine', () => {
     expect(github.calls.filter((call) => call.method === 'runToken')).toEqual([]);
   });
 
+  test('a build that fails after its session still records what the session used', async () => {
+    const github = fakeGitHub();
+    const taskId = await taskInBuilding(github);
+    const port = {
+      ...github.port,
+      pushFacts: async () => {
+        throw new Error('GitHub 502 on the compare');
+      }
+    };
+    await expect(
+      runAgentStep(
+        { pool, github: port, agents: createFakePort(succeed), publicUrl: PUBLIC_URL },
+        taskId,
+        'builder'
+      )
+    ).rejects.toThrow('GitHub 502 on the compare');
+    const run = await pool.query(
+      `select status, list_cost_cents, input_tokens::int, output_tokens::int,
+         cache_read_tokens::int, cache_write_tokens::int
+       from runs where task_id = $1 and agent_role = 'builder'`,
+      [taskId]
+    );
+    expect(run.rows).toEqual([
+      {
+        status: 'failed',
+        list_cost_cents: 12,
+        input_tokens: 40,
+        output_tokens: 1_500,
+        cache_read_tokens: 90_000,
+        cache_write_tokens: 12_000
+      }
+    ]);
+  });
+
   test("a token GitHub fails to revoke is tried again, and the build's result still applies", async () => {
     const github = fakeGitHub();
     const agents = createFakePort(succeed);
@@ -1942,7 +1988,7 @@ describe.skipIf(!url)('engine', () => {
       runner: 'managed_agents'
     });
     if (!earlier.ok) throw new Error(earlier.error);
-    await finishRun(pool, earlier.runId, { status: 'succeeded', costCents: null, result: {} });
+    await finishRun(pool, earlier.runId, { status: 'succeeded', usage: NO_USAGE, result: {} });
     await tick({ pool, github: github.port, agents, publicUrl: PUBLIC_URL }, seeded.projectId);
 
     expect((await loadTask(pool, taskId))?.task.blocked?.question).toContain(
