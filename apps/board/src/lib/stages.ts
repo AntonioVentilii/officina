@@ -1,3 +1,4 @@
+import { HUES } from './hues';
 import type { Stage } from './types';
 
 /** Plain words for every stage, for people who never read a pull request. */
@@ -22,6 +23,8 @@ export interface Column {
   readonly title: string;
   readonly hint: string;
   readonly stages: readonly Stage[];
+  /** Fucina draws the column, its cards and the task's track in it. */
+  readonly hue: string;
 }
 
 /** The stage groups the board's columns and the task's track share. */
@@ -30,22 +33,34 @@ const PLAN: readonly Stage[] = ['speccing', 'spec_review'];
 const BUILD: readonly Stage[] = ['ready', 'building', 'reviewing', 'choosing'];
 
 export const COLUMNS: readonly Column[] = [
-  { id: 'intake', title: 'Requests', hint: 'New ideas', stages: INTAKE },
+  { id: 'intake', title: 'Requests', hint: 'New ideas', stages: INTAKE, hue: HUES.blue },
   {
     id: 'plan',
     title: 'Plan',
     hint: 'An agent writes it, people approve it',
-    stages: PLAN
+    stages: PLAN,
+    hue: HUES.violet
   },
   {
     id: 'build',
     title: 'Building',
     hint: 'Agents build and review it',
-    stages: BUILD
+    stages: BUILD,
+    hue: HUES.orange
   },
-  { id: 'check', title: 'Check', hint: 'People try the result', stages: ['verifying', 'merging'] },
-  { id: 'done', title: 'Done', hint: 'Shipped', stages: ['done'] }
+  {
+    id: 'check',
+    title: 'Check',
+    hint: 'People try the result',
+    stages: ['verifying', 'merging'],
+    hue: HUES.teal
+  },
+  { id: 'done', title: 'Done', hint: 'Shipped', stages: ['done'], hue: HUES.green }
 ];
+
+/** The hue of the column a stage sits in. A closed task sits in none, so it has no hue. */
+export const stageHue = (stage: Stage): string | undefined =>
+  COLUMNS.find((column) => column.stages.includes(stage))?.hue;
 
 export const CLOSED: readonly Stage[] = ['declined', 'cancelled'];
 
@@ -66,3 +81,20 @@ export const TRACK: readonly { readonly label: string; readonly stages: readonly
 ];
 
 export const trackIndex = (stage: Stage) => TRACK.findIndex((step) => step.stages.includes(stage));
+
+/** What a task's move from one stage to the next stamps on it in Fucina, if anything. */
+export type Stamp = 'approved' | 'accepted' | 'shipped';
+
+export const STAMP_LABELS: Record<Stamp, string> = {
+  approved: 'Approved',
+  accepted: 'Accepted',
+  shipped: 'Shipped'
+};
+
+/** People said yes to the plan, or to the result, or the work shipped. Any other move stamps nothing. */
+export const stampFor = (from: Stage, to: Stage): Stamp | null => {
+  if (from === 'spec_review' && BUILD.includes(to)) return 'approved';
+  if (from === 'verifying' && (to === 'merging' || to === 'done')) return 'accepted';
+  if (from === 'merging' && to === 'done') return 'shipped';
+  return null;
+};

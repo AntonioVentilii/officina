@@ -16,6 +16,7 @@ import {
   type ApprovalPlan,
   type Command,
   type ConnectedApp,
+  type LinkProblem,
   type Task
 } from '@officina/core';
 import {
@@ -41,6 +42,7 @@ import {
   nameRequestedTask,
   resolveProjectId,
   resolveProjectMember,
+  setTaskLinks,
   type StoreError,
   handInUnderWay
 } from '@officina/db';
@@ -51,12 +53,15 @@ import {
   allowanceView,
   approvalState,
   askedOfLabel,
+  buildWaitLabel,
   CONFIDENTIAL,
   consoleUrl,
   describeRequirement,
   optionsFor,
   optionText,
   questionFor,
+  readyWait,
+  tasksInWords,
   type ApprovalState
 } from './board';
 import { checklistLines, checklistView, type ChosenChecklist } from './checklist-view';
@@ -80,6 +85,7 @@ const ERROR_TEXT: Record<StoreError, string> = {
   blocked: 'the task is waiting for an answer first (use task answer)',
   paused: 'the task is paused',
   awaiting_onboarding: 'the project waits for its agent docs to be merged first',
+  awaiting_tasks: 'the task waits for other tasks to be merged first; task show says which',
   already_blocked: 'the task already has an open question',
   not_blocked: 'the task has no open question',
   already_paused: 'the task is already paused',
@@ -97,6 +103,16 @@ const ERROR_TEXT: Record<StoreError, string> = {
   confirm_on_board:
     'an approval through a connected app is only a proposal; confirm it on the board',
   no_proposal: 'no approval proposed for you is waiting on this task'
+};
+
+const LINK_PROBLEM_TEXT: Record<LinkProblem, string> = {
+  self: 'a task cannot be its own parent or wait for itself',
+  task_started: 'links change only until the task is ready; this one is already past it',
+  parent_started:
+    'the parent is already past ready; a task is linked to a parent before it is built',
+  nested: 'sub-tasks go one level deep: the parent has a parent, or the task has sub-tasks itself',
+  dependency_closed: 'a task cannot wait for a task that was cancelled or declined',
+  cycle: 'these links would make the tasks wait for each other forever'
 };
 
 interface Target {
@@ -480,6 +496,47 @@ export const handIn = async (
 ): Promise<{ stage: string; pullRequest: number | null }> =>
   handInAs(pool, github, { ...input, ...(await resolve(pool, input)) });
 
+/** A task's links in one line, as `task link` prints them. */
+const linkSummary = (number: number, parent: number | undefined, after: readonly number[]) => {
+  const waited = [...new Set(after)].sort((a, b) => a - b);
+  const parts = [
+    ...(parent === undefined ? [] : [`parent task ${parent}`]),
+    ...(waited.length ? [`waits for ${tasksInWords(waited)}`] : [])
+  ];
+  return `Task #${number}: ${parts.join(', ') || 'no links'}.`;
+};
+
+/**
+ * Sets a task's parent and the tasks it waits for, replacing its earlier links; with neither, it
+ * removes them. Only who may triage links tasks, and only before they are built.
+ */
+export const linkTask = async (
+  pool: Pool,
+  input: Target & {
+    readonly number: number;
+    readonly parent?: number | undefined;
+    readonly after: readonly number[];
+  }
+): Promise<string> => {
+  const { projectId, memberId, actor } = await resolve(pool, input);
+  const member = await loadProjectMember(pool, projectId, memberId);
+  if (!member || !can(member, 'triage'))
+    throw new TaskCommandError('only maintainers and owners link tasks', 403);
+  const idOf = async (number: number) => {
+    const id = await findTaskIdByNumber(pool, projectId, number);
+    if (!id) throw new TaskCommandError(`task #${number} not found`, 404);
+    return id;
+  };
+  const taskId = await idOf(input.number);
+  const parentId = input.parent === undefined ? null : await idOf(input.parent);
+  const after = await Promise.all(input.after.map(idOf));
+  const { problem } = await inTransaction(pool, (client) =>
+    setTaskLinks(client, { projectId, taskId, parentId, after, actor })
+  );
+  if (problem) throw new TaskCommandError(LINK_PROBLEM_TEXT[problem]);
+  return linkSummary(input.number, input.parent, input.after);
+};
+
 /** What an agent wrote, set off from Officina's own words in the terminal. */
 const indent = (text: string) =>
   text
@@ -624,13 +681,16 @@ export const describeTask = async (
   const reviews = await reviewFindingsFor(pool, viewer, { ...task, id: taskId });
   if (reviews?.latest) lines.push('', ...reviewLines(reviews, indent));
 
+  const wait = await readyWait(pool, { id: taskId, stage: task.stage });
   const next = task.blocked
     ? answerHint(task.blocked, context.version)
     : task.paused
       ? 'the task is paused'
       : reviews?.sentBack
         ? SENT_BACK
-        : (NEXT_STEP[task.stage] ?? '');
+        : wait
+          ? buildWaitLabel(wait)
+          : (NEXT_STEP[task.stage] ?? '');
   lines.push('', `Next: ${next.replaceAll('{n}', String(context.number))}`);
   return lines.join('\n');
 };
