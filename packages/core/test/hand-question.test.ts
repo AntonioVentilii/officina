@@ -56,6 +56,25 @@ describe('handing a waiting question to a member', () => {
     expect(answered.blocked).toBeNull();
   });
 
+  test('handing it to someone already asked of it by role records nothing', () => {
+    const driver = createDriver([owner, maintainer, tim]);
+    const held = driver.step(
+      newTask('t3', owner.id),
+      handoffCommand({
+        outcome: 'needs_person',
+        needs: ['tooling'],
+        why: 'The tools cannot do it.',
+        asks: ['Run the migration by hand']
+      }),
+      asAgent('interviewer')
+    );
+    expect(held.blocked?.askedOf).toEqual({ role: 'maintainer' });
+    expect(
+      driver.step(held, { type: 'hand_question', memberId: maintainer.id }, asMember(owner))
+    ).toEqual(held);
+    expect(driver.events()).toEqual([]);
+  });
+
   test('only an owner hands a question on', () => {
     const driver = createDriver([owner, maintainer, tim]);
     const held = handedOff(driver);
