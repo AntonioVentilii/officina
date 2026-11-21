@@ -144,6 +144,8 @@ const actionSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('approve') }),
   // The member withdraws an approval Claude proposed for them; approving confirms it instead.
   z.strictObject({ type: z.literal('discard_proposal') }),
+  // A proposed split, sent back to be specced as one task.
+  z.strictObject({ type: z.literal('keep_whole') }),
   z.strictObject({
     type: z.literal('changes'),
     note: z.string().trim().min(1).max(INPUT_LIMITS.note)
@@ -157,7 +159,9 @@ const actionSchema = z.discriminatedUnion('type', [
     version: z.number().int().positive().optional()
   }),
   z.strictObject({ type: z.literal('decline'), reason }),
-  z.strictObject({ type: z.literal('cancel'), reason })
+  z.strictObject({ type: z.literal('cancel'), reason }),
+  // A task whose pull request merged before it was verified is closed as done, with why.
+  z.strictObject({ type: z.literal('close_merged'), reason })
 ]);
 
 const handInSchema = z.strictObject({

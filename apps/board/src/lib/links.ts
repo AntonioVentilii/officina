@@ -16,9 +16,10 @@ const linked = (payload: Payload): string => {
   return parts.length ? `linked it: ${parts.join(', ')}` : 'removed its links';
 };
 
-/** The timeline's sentence for a change to a task's links, and for a parent its sub-tasks closed. */
+/** The timeline's sentence for a change to a task's links, and for a parent's sub-tasks opened or closed. */
 export const LINK_SENTENCES: Readonly<Record<string, (payload: Payload) => string>> = {
   links_changed: linked,
   subtasks_merged: (payload) =>
-    `closed it: no sub-task left open, ${tasks(payload.subtasks)} merged`
+    `closed it: no sub-task left open, ${tasks(payload.subtasks)} merged`,
+  subtasks_opened: (payload) => `opened its sub-tasks from the split: ${tasks(payload.subtasks)}`
 };

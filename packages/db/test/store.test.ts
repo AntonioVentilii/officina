@@ -93,7 +93,7 @@ describe.skipIf(!url)('task store', () => {
     );
     await apply(id, { type: 'choose', userVisible: true, plan: PLAN }, agent('chooser'));
     await apply(id, { type: 'approve' }, antonio);
-    const last = await apply(id, { type: 'merged' }, engine);
+    const last = await apply(id, { type: 'merged', pullRequest: 42, by: null, at: null }, engine);
 
     expect(last.task.stage).toBe('done');
     expect(last.version).toBe(12);
@@ -134,7 +134,7 @@ describe.skipIf(!url)('task store', () => {
     const { task } = await createTask(pool, { projectId, title: 'Nope', requesterId: antonioId });
     const result = await applyCommand(pool, {
       taskId: task.id,
-      command: { type: 'merged' },
+      command: { type: 'merged', pullRequest: 42, by: null, at: null },
       actor: { kind: 'engine' }
     });
     expect(result).toEqual({ ok: false, error: 'wrong_stage' });

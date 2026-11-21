@@ -4,6 +4,7 @@ import {
   guardsAddedBy,
   guardsInRequest,
   interviewsRequest,
+  mergedEarlyText,
   ownerHold,
   readsTask,
   type Blocked,
@@ -24,6 +25,8 @@ import {
   addComment,
   applyCommand,
   applyCommandIn,
+  lockTaskLinks,
+  openSplitSubtasks,
   buildRunInProgress,
   findRequestedTask,
   findTaskIdByNumber,
@@ -104,7 +107,8 @@ const ERROR_TEXT: Record<StoreError, string> = {
   invalid_config: "the project's config is invalid",
   confirm_on_board:
     'an approval through a connected app is only a proposal; confirm it on the board',
-  no_proposal: 'no approval proposed for you is waiting on this task'
+  no_proposal: 'no approval proposed for you is waiting on this task',
+  merged_early: 'its pull request was already merged on GitHub; close the task as done or cancel it'
 };
 
 const LINK_PROBLEM_TEXT: Record<LinkProblem, string> = {
@@ -311,6 +315,7 @@ export type TaskAction =
   | { readonly type: 'pause' }
   | { readonly type: 'resume' }
   | { readonly type: 'changes'; readonly note: string }
+  | { readonly type: 'keep_whole' }
   /**
    * With `option`, the letter of an option the question offers, `version` the task version the
    * question was read at, and `text` an optional note.
@@ -322,7 +327,8 @@ export type TaskAction =
       readonly version?: number | undefined;
     }
   | { readonly type: 'cancel'; readonly reason: string }
-  | { readonly type: 'decline'; readonly reason: string };
+  | { readonly type: 'decline'; readonly reason: string }
+  | { readonly type: 'close_merged'; readonly reason: string };
 
 const toCommand = (action: TaskAction): Command => {
   switch (action.type) {
@@ -338,6 +344,7 @@ const toCommand = (action: TaskAction): Command => {
       };
     case 'cancel':
     case 'decline':
+    case 'close_merged':
       return { type: action.type, reason: action.reason };
     // The rest carry nothing but the command they name.
     default:
@@ -432,18 +439,26 @@ export const actOnTaskAs = async (
   const taskId = await findTaskIdByNumber(pool, projectId, input.number);
   if (!taskId) throw new TaskCommandError(`task #${input.number} not found`);
   const { action, expectedVersion } = await resolveAnswer(pool, taskId, input.action);
-  const result = await applyCommand(pool, {
-    taskId,
-    command: toCommand(action),
-    actor,
-    ...(expectedVersion === undefined ? {} : { expectedVersion }),
-    // In the same transaction as the decision: someone not allowed to answer leaves no comment, and
-    // a build is not handed back while an agent's run on it is still being stopped.
-    onApplied: async (client) => {
-      await refuseWhileHandingIn(client, taskId);
-      if (action.type === 'release') await refuseWhileAgentRuns(client, taskId);
-      if (action.type === 'answer') await addComment(client, taskId, actor, action.text);
-    }
+  const result = await inTransaction(pool, async (client) => {
+    // Approving a split links its sub-tasks under the task's row lock, so the project's link
+    // lock comes first, in the order every link change takes them.
+    if (action.type === 'approve') await lockTaskLinks(client, projectId);
+    return applyCommandIn(client, {
+      taskId,
+      command: toCommand(action),
+      actor,
+      ...(expectedVersion === undefined ? {} : { expectedVersion }),
+      // In the same transaction as the decision: someone not allowed to answer leaves no comment, and
+      // a build is not handed back while an agent's run on it is still being stopped.
+      onApplied: async (client, after) => {
+        await refuseWhileHandingIn(client, taskId);
+        if (action.type === 'release') await refuseWhileAgentRuns(client, taskId);
+        if (action.type === 'answer') await addComment(client, taskId, actor, action.text);
+        // An approval that moves a proposed split on approved the split: its sub-tasks open with it.
+        if (action.type === 'approve' && after.stage === 'ready' && after.splitProposed)
+          await openSplitSubtasks(client, { taskId, actor });
+      }
+    });
   });
   if (!result.ok) throw new TaskCommandError(ERROR_TEXT[result.error]);
   const recorded = result.events.find((event) => event.type === 'approval_recorded');
@@ -564,6 +579,8 @@ const NEXT_STEP: Partial<Record<string, string>> = {
   speccing: 'an agent is writing the spec; check back with task show',
   spec_review:
     'read the spec, then: task approve --number {n}   (or: task changes --number {n} --note "...")',
+  split_review:
+    'read the proposed split, then: task approve --number {n} to open its sub-tasks   (or: task changes --number {n} --note "..."; to keep it as one task, use the board or Claude)',
   ready: 'waiting for a free build slot; the engine dispatches it automatically',
   building: 'an agent is building it; check back with task show',
   reviewing: 'two agents are reviewing it; check back with task show',
@@ -584,8 +601,17 @@ const approvalLines = (
   /** The task's words as this viewer may read them (a confidential task hides them). */
   shown: (text: string) => string
 ): string[] => {
-  if (!approval.planned || !plan)
-    return ['', 'Waiting for the approval chooser to decide who approves.'];
+  if (!approval.planned) return ['', 'Waiting for the approval chooser to decide who approves.'];
+  const needed = [
+    `Approval needed from: ${approval.pending.map(describeRequirement).join(', ') || 'nobody (satisfied)'}`,
+    ...(approval.waived.length
+      ? [
+          `Waived (nobody holds the role yet): ${approval.waived.map(describeRequirement).join(', ')}`
+        ]
+      : [])
+  ];
+  // A proposed split has no approval plan: the lane's policy says who decides on it.
+  if (!plan) return ['', 'A proposed split: approving it opens its sub-tasks.', ...needed];
   return [
     '',
     `Approval plan: check depth ${plan.depth}. ${shown(plan.rationale)}`,
@@ -597,12 +623,7 @@ const approvalLines = (
         `  asks ${names.get(verifier.memberId) ?? 'a former member'} to verify: ${shown(verifier.reason)}`
     ),
     '',
-    `Approval needed from: ${approval.pending.map(describeRequirement).join(', ') || 'nobody (satisfied)'}`,
-    ...(approval.waived.length
-      ? [
-          `Waived (nobody holds the role yet): ${approval.waived.map(describeRequirement).join(', ')}`
-        ]
-      : [])
+    ...needed
   ];
 };
 
@@ -624,6 +645,9 @@ const answerHint = (blocked: Blocked, version: number): string =>
   blocked.options?.length
     ? `task answer --number {n} --option <letter> --version ${version}   (or: task answer --number {n} --text "...")`
     : 'task answer --number {n} --text "..."';
+
+/** What a task whose pull request merged early waits for, which no CLI command does. */
+const CLOSE_MERGED_HINT = 'close the task as done with a reason on the board, or cancel it';
 
 /** A human-readable status of one task: where it is, what it waits for, and what to do next. */
 export const describeTask = async (
@@ -648,6 +672,7 @@ export const describeTask = async (
   const names = new Map(
     (await listProjectMemberProfiles(pool, projectId)).map((member) => [member.id, member.name])
   );
+  if (task.mergedEarly) lines.push('', shown(mergedEarlyText(task.mergedEarly)));
   if (task.blocked) lines.push(...blockedLines(task.blocked, viewer, names, reads));
   const allowance = allowanceView(task, await listTaskEvents(pool, taskId), names);
   if (allowance) lines.push('', allowanceText(allowance));
@@ -693,15 +718,20 @@ export const describeTask = async (
   if (reviews?.latest) lines.push('', ...reviewLines(reviews, indent));
 
   const wait = await readyWait(pool, { id: taskId, stage: task.stage });
-  const next = task.blocked
-    ? answerHint(task.blocked, context.version)
-    : task.paused
-      ? 'the task is paused'
-      : reviews?.sentBack
-        ? SENT_BACK
-        : wait
-          ? buildWaitLabel(wait)
-          : (NEXT_STEP[task.stage] ?? '');
+  const next =
+    task.mergedEarly && task.blocked
+      ? CLOSE_MERGED_HINT
+      : task.blocked
+        ? answerHint(task.blocked, context.version)
+        : task.paused
+          ? 'the task is paused'
+          : reviews?.sentBack
+            ? SENT_BACK
+            : wait
+              ? buildWaitLabel(wait)
+              : (NEXT_STEP[
+                  task.splitProposed && task.stage === 'spec_review' ? 'split_review' : task.stage
+                ] ?? '');
   lines.push('', `Next: ${next.replaceAll('{n}', String(context.number))}`);
   return lines.join('\n');
 };

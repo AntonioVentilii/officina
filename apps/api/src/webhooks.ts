@@ -299,8 +299,10 @@ export const handleWebhookAction = async (
   // A merged learning pull request is not a task; it marks its learning applied.
   await markLearningsApplied(pool, action.repo, action.prNumber);
   const outcomes: WebhookOutcome[] = [];
+  const { prNumber: pullRequest, by, at } = action;
   for (const taskId of await findTasksByPullRequest(pool, action.repo, action.prNumber)) {
-    const result = await applyCommand(pool, { taskId, command: { type: 'merged' }, actor: ENGINE });
+    const command = { type: 'merged', pullRequest, by, at } as const;
+    const result = await applyCommand(pool, { taskId, command, actor: ENGINE });
     outcomes.push(result.ok ? { taskId, ok: true } : { taskId, ok: false, error: result.error });
   }
   return outcomes;

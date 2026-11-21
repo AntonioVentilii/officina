@@ -24,6 +24,7 @@ export interface TaskRow {
   approval_plans: Task['approvalPlans'];
   guards: Task['guards'];
   diff_allowance: Task['diffAllowance'];
+  merged_early: Task['mergedEarly'];
   split_proposed: boolean;
   version: number;
 }
@@ -47,6 +48,7 @@ export const toStored = (row: TaskRow): StoredTask => ({
     approvalPlans: row.approval_plans,
     guards: row.guards,
     diffAllowance: row.diff_allowance,
+    mergedEarly: row.merged_early,
     splitProposed: row.split_proposed
   }
 });

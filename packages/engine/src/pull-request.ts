@@ -155,7 +155,7 @@ export const openTaskPullRequest = async (
  */
 export const openMissingPullRequests = async (
   pool: Pool,
-  github: PullRequestPort,
+  github: PullRequestPort & Pick<GitHubClient, 'failedChecks'>,
   taskIds: readonly string[],
   publicUrl: string
 ): Promise<TaskFailure[]> =>
@@ -164,7 +164,21 @@ export const openMissingPullRequests = async (
     // A step still running opens its own pull request.
     const built = recordedPush(await latestBuild(pool, taskId, BUILD_ROLES));
     if (!built) return;
-    await openTaskPullRequest(pool, github, { taskId, publicUrl, built });
+    if (!(await openTaskPullRequest(pool, github, { taskId, publicUrl, built }))) return;
+    // No build round read the checks of a head that reached review this way (a size a person
+    // allowed, a build whose pull request failed to open), and GitHub will not report them again.
+    const context = await loadTaskContext(pool, taskId);
+    if (!context || context.installationId === null) return;
+    await sendBackRedChecks(
+      pool,
+      github,
+      {
+        taskId,
+        ref: { installationId: context.installationId, repo: context.repo },
+        branch: branchForTask(context.number)
+      },
+      context.task
+    );
   });
 
 /** A task whose open pull request holds a head Officina took in, which someone else may move. */

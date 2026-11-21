@@ -55,7 +55,9 @@ export type BoardAction =
   | 'hand_back'
   | 'approve'
   | 'changes'
+  | 'keep_whole'
   | 'answer'
+  | 'close_merged'
   | 'cancel'
   | 'comment';
 
@@ -237,6 +239,12 @@ export interface TaskDetail extends Card {
   readonly branch: string;
   readonly pullRequestUrl: string | null;
   readonly headSha: string | null;
+  /**
+   * Its pull request merged on GitHub before people verified it, in the words that say who merged
+   * it and when. The API also sends `by`, `at`, `stage` and `pullRequest`, which the board does not
+   * draw apart from these words.
+   */
+  readonly mergedEarly: { readonly text: string } | null;
   /** More lines than its lane allows, granted for this task alone; `null` when none was. */
   readonly allowance: Readonly<{ lines: number; lane: Lane; by: string; at: string | null }> | null;
   readonly request: Pick<Comment, 'author' | 'via' | 'body' | 'at'> | null;

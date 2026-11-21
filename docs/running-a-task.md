@@ -132,6 +132,10 @@ back another person's build the same way.
    ```
 
 8. **Merge on GitHub.** Approve and merge the pull request as usual; the webhook closes the task.
+   A pull request merged before the task reached this step (while it was still built, reviewed or
+   verified) is not undone: the task stops there, says who merged it and when, and waits for a
+   maintainer (or the owner, when the result's check asks for them) to close it as done on the board with a
+   reason, which records that it skipped verification, or to cancel it.
 
 To stop a task at any time: `scripts/officina task cancel --number 1 --reason "Why"`.
 
@@ -183,6 +187,9 @@ sub-tasks have merged.
 
 - **An agent run failed or ran out of budget:** the task shows `BLOCKED` with the reason. Answer it
   to let the step run again, or cancel the task.
+- **The task's agent runs cost $20 since it was last held for its spend:** the task shows `BLOCKED`
+  with what they cost. Look at its runs first: agents that keep doing the same work need a person,
+  not more budget. Answer it to let them spend $20 more, or cancel the task.
 - **`the task changed meanwhile`:** someone or something acted first. Run `task show` and retry.
 - **A red-lane task stops after the spec:** that is by design. Agents never build in the red lane; a
   person implements the approved spec.

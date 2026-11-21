@@ -199,7 +199,12 @@ describe.skipIf(!url)('onboarding', () => {
     );
     await applyOrThrow(pool, onboardingId, { type: 'approve' }, seeded.owner);
     expect((await collectDueSteps({ pool }, seeded.projectId)).dispatched).toEqual([]);
-    await applyOrThrow(pool, onboardingId, { type: 'merged' }, engine);
+    await applyOrThrow(
+      pool,
+      onboardingId,
+      { type: 'merged', pullRequest: 42, by: null, at: null },
+      engine
+    );
     const released = await collectDueSteps({ pool }, seeded.projectId);
     expect(released.dispatched).toEqual([requestId]);
   });

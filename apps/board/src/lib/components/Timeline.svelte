@@ -1,5 +1,6 @@
 <script lang="ts">
   import { ago, dateTime } from '#lib/format.ts';
+  import { CLOSING_SENTENCES } from '#lib/closing.ts';
   import { LINK_SENTENCES } from '#lib/links.ts';
   import { STAGE_LABELS } from '#lib/stages.ts';
   import { eventDetail } from '#lib/timeline.ts';
@@ -19,6 +20,7 @@
 
   const stage = (value: unknown) => STAGE_LABELS[value as Stage] ?? String(value);
   const GATES: Record<string, string> = { spec_review: 'the spec', verifying: 'the result' };
+  const SENTENCES = { ...LINK_SENTENCES, ...CLOSING_SENTENCES };
 
   const sentence = (event: TaskEvent): string | null => {
     const p = event.payload;
@@ -83,12 +85,14 @@
         return `allowed this task up to ${p.lines} lines, over the ${p.lane} lane limit`;
       case 'split_asked':
         return 'sent it back to be split into smaller tasks';
+      case 'split_approved':
+        return `approved the split of spec version ${p.version}`;
+      case 'kept_whole':
+        return 'kept it as one task: the next plan is one spec';
       case 'paused':
         return 'paused it';
       case 'resumed':
         return 'resumed it';
-      case 'closed':
-        return `${p.stage === 'declined' ? 'declined' : 'cancelled'} it: ${p.reason}`;
       case 'spec_status_set':
         return `set the spec status to ${p.status}`;
       case 'github_approved':
@@ -127,7 +131,7 @@
       case 'checklist_checked':
         return `checked item ${Number(p.item) + 1} of the checklist: ${p.outcome}`;
       default:
-        return LINK_SENTENCES[event.type]?.(p) ?? event.type.replaceAll('_', ' ');
+        return SENTENCES[event.type]?.(p) ?? event.type.replaceAll('_', ' ');
     }
   };
 

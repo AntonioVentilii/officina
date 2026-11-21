@@ -65,10 +65,12 @@ const TASK_WORK = {
   claim: { label: 'Claiming', detail: 'the build for you' },
   release: { label: 'Handing back', detail: 'the build, to be built again' },
   changes: { label: 'Sending back', detail: 'with your notes' },
+  keep_whole: { label: 'Sending back', detail: 'to be planned as one task' },
   approve: { label: 'Approving', detail: 'recording your approval' },
   submit: { label: 'Submitting', detail: 'to triage as it is' },
   answer: { label: 'Answering', detail: 'the step runs again next' },
   cancel: { label: 'Cancelling', detail: 'the task' },
+  close_merged: { label: 'Closing', detail: 'as done, with your reason' },
   discard_proposal: { label: 'Discarding', detail: 'the approval Claude proposed' },
   hand_in: {
     label: 'Handing in',
