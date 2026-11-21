@@ -1,25 +1,6 @@
-export type LiveEvent =
-  | { readonly kind: 'task'; readonly projectId: string; readonly number: number }
-  | {
-      readonly kind: 'run';
-      readonly projectId: string;
-      readonly number: number;
-      readonly runId: string;
-    }
-  /** Something about the project's members changed, such as a name, which any view may show. */
-  | { readonly kind: 'members'; readonly projectId: string };
+import { EVERY_PROJECT, type LiveEvent } from '#lib/live-events.ts';
 
 type Listener = (event: LiveEvent) => void;
-
-/** The project id of the event sent after a reconnect, which every view and run log refreshes on. */
-const EVERY_PROJECT = '*';
-
-/** Whether the event asks every view to refresh, whatever it shows: the stream reconnected. */
-export const refreshesAll = (event: LiveEvent) => event.projectId === EVERY_PROJECT;
-
-/** Whether the event asks every view of one project to refresh: a member's name, say, changed. */
-export const refreshesProject = (event: LiveEvent, projectId: string | null) =>
-  refreshesAll(event) || (event.kind === 'members' && event.projectId === projectId);
 
 /** How long to wait before opening the stream again after the server closed it. */
 const RECONNECT_MS = 5000;
@@ -90,15 +71,3 @@ class Live {
 }
 
 export const live = new Live();
-
-/** Runs `fn` at most once per `ms`, trailing, so bursts of events cost one request. */
-export const coalesce = (fn: () => void, ms: number) => {
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  return () => {
-    if (timer) return;
-    timer = setTimeout(() => {
-      timer = null;
-      fn();
-    }, ms);
-  };
-};

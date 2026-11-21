@@ -38,6 +38,7 @@
   <div class="tabs" role="group" aria-label="Status">
     {#each FILTERS as item (item.id)}
       <button
+        class="tab"
         class:on={filter === item.id}
         aria-pressed={filter === item.id}
         onclick={() => (filter = item.id)}
@@ -107,21 +108,6 @@
     gap: 6px;
     padding: 4px 0 8px;
     margin-bottom: -1px;
-    border: 0;
-    border-bottom: 3px solid transparent;
-    background: none;
-    color: var(--text-2);
-    font-size: 14px;
-    font-weight: 600;
-  }
-
-  .tabs button:hover {
-    color: var(--text);
-  }
-
-  .tabs button.on {
-    color: var(--text);
-    border-bottom-color: var(--rule);
   }
 
   .count {

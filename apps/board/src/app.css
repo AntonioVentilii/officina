@@ -296,11 +296,12 @@ button {
     color 0.15s;
 }
 
-.btn:hover {
+.btn:hover:not(:disabled) {
   background: var(--hover);
 }
 
-.btn:disabled {
+.btn:disabled,
+.link-button:disabled {
   opacity: 0.45;
   cursor: default;
 }
@@ -320,7 +321,7 @@ button {
   color: var(--text-2);
 }
 
-.btn.ghost:hover {
+.btn.ghost:hover:not(:disabled) {
   color: var(--text);
 }
 
@@ -345,6 +346,21 @@ button {
   width: 28px;
 }
 
+/* A button that reads as a link: in a sentence, or as a row's small action. */
+.link-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.link-button:hover:not(:disabled) {
+  text-decoration-thickness: 2px;
+}
+
 /* Fields: a rule underneath, as on a printed form. */
 .field {
   width: 100%;
@@ -366,6 +382,26 @@ textarea.field {
   resize: vertical;
   min-height: 84px;
   line-height: 1.5;
+}
+
+/* A tab: one of a row of choices, the chosen one ruled underneath. A component sets its size. */
+.tab {
+  padding: 4px 0;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: none;
+  color: var(--text-2);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.tab:hover:not(:disabled),
+.tab.on {
+  color: var(--text);
+}
+
+.tab.on {
+  border-bottom-color: var(--rule);
 }
 
 /* Status words: narrow capitals, never a coloured lozenge. */
