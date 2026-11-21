@@ -4,6 +4,7 @@ import { executeRun, type RunReport, type RunnerRole } from '@officina/runner';
 import type { ClaimedStep } from './claim';
 import { runBudgetCents } from './spend';
 import type { EngineDependencies, StepResult } from './step';
+import { roleModel } from './step-model';
 
 /** Runs the learner in one session on a read-only token, with a brief and the checks its result must pass. */
 const runLearner = async (
@@ -20,6 +21,7 @@ const runLearner = async (
     session: {
       agentId: agent.externalAgentId,
       agentVersion: agent.version,
+      model: await roleModel(deps, step, 'learner'),
       environmentId,
       title: `Officina #${context.number} learner`,
       metadata: { task_id: context.task.id, run_id: runId, role: 'learner' },

@@ -10,6 +10,7 @@ import {
   insertLearnings,
   listLearnings,
   lockTaskLinks,
+  recordRunModel,
   renameMember,
   specShapeFor,
   startRun
@@ -94,6 +95,7 @@ describe('agents page', () => {
     agentVersion: 1,
     stage: 'building',
     status,
+    model: null,
     costCents,
     // In proportion to the cost, so each role's totals are easy to read off.
     tokens:
@@ -1782,6 +1784,31 @@ describe.skipIf(!url)('board api', () => {
     const task = await json(await call(owner, `/api/projects/${seeded.projectId}/tasks/1`));
     expect(task.learningPullRequests).toMatchObject([{ number: 1498, state: 'merged' }]);
     expect(task.waitingOn.kind).toBe('nobody');
+  });
+
+  test('a run shows the model its session ran at, the effort and why', async () => {
+    const owner = await signIn(await loginLink(pool, { publicUrl: PUBLIC_URL }));
+    await createRequest(pool, {
+      title: 'Rename settings',
+      request: 'Call it Preferences.',
+      skipInterview: true
+    });
+    const taskId = (await findTaskIdByNumber(pool, seeded.projectId, 1))!;
+    const run = await startRun(pool, {
+      taskId,
+      stage: 'speccing',
+      role: 'spec',
+      agentVersion: 1,
+      runner: 'managed_agents'
+    });
+    if (!run.ok) throw new Error('run not started');
+    await recordRunModel(pool, run.runId, {
+      model: 'claude-opus-5-5',
+      effort: 'high',
+      reason: 'red lane'
+    });
+    const { runs } = await json(await call(owner, `/api/projects/${seeded.projectId}/runs`));
+    expect(runs[0].model).toEqual({ id: 'claude-opus-5-5', effort: 'high', reason: 'red lane' });
   });
 
   test('contributors get the decisions and the trail, not agent runs, costs or learnings', async () => {

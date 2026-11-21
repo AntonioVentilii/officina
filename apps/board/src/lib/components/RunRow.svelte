@@ -36,8 +36,9 @@
         {#if showTask}<span class="faint">on</span>
           <span class="task">#{run.taskNumber} {run.taskTitle}</span>{/if}
       </span>
-      <span class="sub caps">
+      <span class="sub caps" title={run.model?.reason}>
         {STAGE_LABELS[run.stage as Stage] ?? run.stage} · v{run.agentVersion}
+        {#if run.model}· {run.model.id} {run.model.effort}{/if}
       </span>
     </span>
     <span class="pill {STATUS[run.status].tone}">

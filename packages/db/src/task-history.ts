@@ -42,6 +42,16 @@ export const saveSpecVersion = async (
   );
 };
 
+/** The paths the task's current spec predicts the change touches; none before a spec. */
+export const predictedPaths = async (db: Queryable, taskId: string): Promise<string[]> =>
+  (
+    await db.query<{ paths: string[] }>(
+      `select v.predicted_paths as paths from spec_versions v
+       join tasks t on t.id = v.task_id and t.spec_version = v.version where v.task_id = $1`,
+      [taskId]
+    )
+  ).rows[0]?.paths ?? [];
+
 /**
  * The shape the spec now due must take, or `null` when the spec agent judges it: one spec for a
  * sub-task, since links go one level deep, or for a split people kept whole; a split when people

@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { PINNED_MODELS, createModelResolver, newestModel, type ListedModel } from '../src';
+import {
+  PINNED_MODELS,
+  createModelResolver,
+  newestModel,
+  resolveTiers,
+  type ListedModel
+} from '../src';
 
 const LISTED: ListedModel[] = [
   { id: 'claude-opus-5', createdAt: '2026-04-10T00:00:00Z' },
@@ -95,6 +101,25 @@ describe('createModelResolver', () => {
     });
     expect(await resolver.resolve('opus')).toEqual({ id: 'claude-opus-5', source: 'env' });
     expect(called).toBe(false);
+  });
+
+  test('every tier resolves to the newest of its own family, and each has its own override', async () => {
+    const listed: ListedModel[] = [
+      ...LISTED,
+      { id: 'claude-haiku-5-5', createdAt: '2026-08-15T00:00:00Z' },
+      { id: 'claude-haiku-4-5', createdAt: '2025-10-01T00:00:00Z' }
+    ];
+    expect(await resolveTiers(createModelResolver({ listModels: async () => listed }))).toEqual({
+      haiku: 'claude-haiku-5-5',
+      sonnet: 'claude-sonnet-6',
+      opus: 'claude-opus-6'
+    });
+    const held = createModelResolver({
+      listModels: async () => listed,
+      env: { ANTHROPIC_SONNET_MODEL: 'claude-sonnet-5-5' }
+    });
+    expect(await held.resolve('sonnet')).toEqual({ id: 'claude-sonnet-5-5', source: 'env' });
+    expect(await held.resolve('opus')).toEqual({ id: 'claude-opus-6', source: 'models_api' });
   });
 
   test('resolves haiku on its own: the newest listed haiku, its own override, its own pin', async () => {

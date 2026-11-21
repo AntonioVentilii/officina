@@ -16,6 +16,7 @@ import { runBudgetCents } from './spend';
 import type { LiveRun } from './live-runs';
 import { bodyProblems, readPrTemplate, type PrTemplate } from './pr-template';
 import type { Step } from './step';
+import { modelForStep } from './step-model';
 import {
   interviewProblems,
   planProblems,
@@ -172,6 +173,7 @@ export const runSession = async (
     session: {
       agentId: agent.externalAgentId,
       agentVersion: agent.version,
+      model: await modelForStep(step),
       environmentId: step.environmentId,
       title: `Officina #${context.number} ${role}`,
       metadata: { task_id: step.taskId, run_id: runId, role },
