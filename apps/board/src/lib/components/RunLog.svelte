@@ -3,7 +3,9 @@
   import { ChevronRight, CircleAlert, CircleCheck, GitPullRequest, Undo2 } from '@lucide/svelte';
   import { tick } from 'svelte';
   import { get } from '#lib/api.ts';
-  import { coalesce, live, refreshesAll } from '#lib/state/live.svelte.ts';
+  import { coalesce } from '#lib/coalesce.ts';
+  import { refreshesAll } from '#lib/live-events.ts';
+  import { live } from '#lib/state/live.svelte.ts';
   import type { LogEntry, Run } from '#lib/types.ts';
   import AgentAvatar from './AgentAvatar.svelte';
   import Markdown from './Markdown.svelte';
@@ -122,7 +124,7 @@
     }
   };
 
-  const loadSoon = coalesce(() => void load(), 300);
+  const loadSoon = coalesce(() => load(), 300);
 
   $effect(() => {
     void load();
