@@ -19,6 +19,7 @@ import { redactDeep } from './guards';
 import { CHECKLIST_LIMITS, pushedFields } from './limits';
 import { questionOptionsSchema } from './questions';
 import { APPROVER_ROLES } from './roles';
+import { postSpecCommand, splitOutputSchema } from './split';
 
 /*
  * What each agent role must return. Agent output is untrusted: it is validated here, and anything
@@ -69,6 +70,7 @@ export const specOutputSchema = z.discriminatedUnion('outcome', [
     predictedPaths: z.array(text.max(300)).min(1).max(200),
     userVisible: z.boolean()
   }),
+  splitOutputSchema,
   // A spec question is a decision people make, so it may offer options; a builder's is not.
   blockedSchema.extend({ options: questionOptionsSchema }),
   needsPersonSchema
@@ -315,14 +317,7 @@ export const commandForOutput = (task: Task, result: RoleOutput): CommandResult 
         };
       }
       if (output.outcome === 'needs_person') return { ok: true, command: handoffCommand(output) };
-      return {
-        ok: true,
-        command: {
-          type: 'post_spec',
-          predictedPaths: output.predictedPaths,
-          userVisible: output.userVisible
-        }
-      };
+      return { ok: true, command: postSpecCommand(output) };
     }
     case 'builder':
     case 'onboarder': {

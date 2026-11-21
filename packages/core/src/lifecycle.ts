@@ -221,6 +221,11 @@ export interface Task {
   readonly guards: readonly Guard[];
   /** More lines than its lane allows, granted for this task alone; `null` when none was. */
   readonly diffAllowance: DiffAllowance | null;
+  /**
+   * Its current spec version proposes a split into sub-tasks instead of one spec: it is never
+   * planned, approved or built as a spec, and people decide on the split instead.
+   */
+  readonly splitProposed: boolean;
 }
 
 /** How closely people should check: a read, a hands-on test, or a test on a real device. */
@@ -283,6 +288,8 @@ export type Command =
       readonly type: 'post_spec';
       readonly predictedPaths: readonly string[];
       readonly userVisible: boolean;
+      /** The spec proposes sub-tasks instead of one change; the paths are all of theirs. */
+      readonly split?: boolean;
     }
   | { readonly type: 'approve' }
   /**
@@ -1069,7 +1076,8 @@ export const decide = (
         lane,
         specVersion,
         userVisible,
-        guards
+        guards,
+        splitProposed: command.split === true
       });
       const events: DomainEvent[] = [{ type: 'spec_versioned', version: specVersion }];
       if (lane !== task.lane) events.push({ type: 'lane_changed', from: task.lane, to: lane });

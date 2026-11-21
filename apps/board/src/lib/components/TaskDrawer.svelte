@@ -110,7 +110,11 @@
     task
       ? [
           ['overview', 'Summary', null],
-          ['spec', 'Plan', task.specs.length > 1 ? `v${task.specs.at(-1)?.version}` : null],
+          [
+            'spec',
+            task.specs.at(-1)?.split ? 'Proposed split' : 'Plan',
+            task.specs.length > 1 ? `v${task.specs.at(-1)?.version}` : null
+          ],
           ['activity', 'Activity', task.comments.length || null],
           ...(session.technical
             ? ([['agents', 'Agent runs', task.runs.length || null]] as const)

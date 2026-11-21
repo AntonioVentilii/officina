@@ -2,6 +2,8 @@ import {
   commandForOutput,
   errorText,
   questionMarkdown,
+  splitMarkdown,
+  splitPaths,
   type AgentOutput,
   type RoleOutput,
   type Task
@@ -79,17 +81,35 @@ const recordAlongside =
         await setTaskTitle(client, step.taskId, interview.title);
       }
     }
-    if (step.role === 'spec' && (output as AgentOutput<'spec'>).outcome === 'specced') {
-      const specced = output as Extract<AgentOutput<'spec'>, { outcome: 'specced' }>;
-      await saveSpecVersion(client, {
-        taskId: step.taskId,
-        version: task.specVersion,
-        body: specced.spec,
-        createdBy: step.actor,
-        predictedPaths: specced.predictedPaths
-      });
-    }
+    if (step.role === 'spec')
+      await saveSpecOutput(client, step, task, output as AgentOutput<'spec'>);
   };
+
+/** A spec, or a proposed split as the version people read, with its sub-tasks kept beside it. */
+const saveSpecOutput = async (
+  client: PoolClient,
+  step: Step,
+  task: Task,
+  output: AgentOutput<'spec'>
+): Promise<void> => {
+  const version = { taskId: step.taskId, version: task.specVersion, createdBy: step.actor };
+  if (output.outcome === 'specced') {
+    await saveSpecVersion(client, {
+      ...version,
+      body: output.spec,
+      predictedPaths: output.predictedPaths
+    });
+  }
+  if (output.outcome === 'split') {
+    const split = { why: output.why, subtasks: output.subtasks };
+    await saveSpecVersion(client, {
+      ...version,
+      body: splitMarkdown(split),
+      predictedPaths: splitPaths(split),
+      split
+    });
+  }
+};
 
 /**
  * A GitHub write after the round is applied: a failure is recorded on the run and never thrown, so

@@ -235,6 +235,33 @@ describe('guardrails', () => {
     expect(task).toMatchObject({ lane: 'standard', specVersion: 2 });
   });
 
+  test('a proposed split waits at spec review: nobody plans or approves it, and one spec clears it', () => {
+    const driver = createDriver([owner]);
+    let task = newTask('t1', owner.id);
+    task = driver.step(task, { type: 'submit_request' }, asMember(owner));
+    task = driver.step(task, { type: 'accept' }, asMember(owner));
+    task = driver.step(
+      task,
+      { type: 'post_spec', predictedPaths: PAGE_PATHS, userVisible: false, split: true },
+      asAgent('spec')
+    );
+    expect(task).toMatchObject({ stage: 'spec_review', specVersion: 1, splitProposed: true });
+    expect(nextAgentRoles(task)).toEqual([]);
+    expect(driver.attempt(task, { type: 'approve' }, asMember(owner))).toEqual({
+      ok: false,
+      error: 'not_planned'
+    });
+
+    task = driver.step(task, { type: 'request_changes', note: 'keep it whole' }, asMember(owner));
+    task = driver.step(
+      task,
+      { type: 'post_spec', predictedPaths: PAGE_PATHS, userVisible: false },
+      asAgent('spec')
+    );
+    expect(task).toMatchObject({ stage: 'spec_review', specVersion: 2, splitProposed: false });
+    expect(nextAgentRoles(task)).toEqual(['chooser']);
+  });
+
   test('an oversized change is blocked for a maintainer', () => {
     const driver = createDriver([owner]);
     let task = dispatchAgent(driver, toReady(driver, PAGE_PATHS));

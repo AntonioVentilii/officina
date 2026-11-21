@@ -1,4 +1,4 @@
-import type { Actor, DomainEvent, Task } from '@officina/core';
+import type { Actor, DomainEvent, ProposedSplit, Task } from '@officina/core';
 import type { Pool, PoolClient } from 'pg';
 import { autoMergeIsOn, wasAutoVerified } from './github';
 import { HAND_IN_CLAIM_LIVE } from './hand-in-claims';
@@ -28,6 +28,7 @@ export interface BoardTaskRow {
   readonly approvalPlans: Task['approvalPlans'];
   readonly guards: Task['guards'];
   readonly diffAllowance: Task['diffAllowance'];
+  readonly splitProposed: boolean;
   readonly pullRequest: number | null;
   readonly costCents: number;
   readonly runningRoles: readonly string[];
@@ -51,7 +52,7 @@ const BOARD_COLUMNS = `
   t.user_visible as "userVisible", t.assignee, t.requester_id as "requesterId",
   m.display_name as "requesterName", t.spec_version as "specVersion", t.head_sha as "headSha",
   t.fix_rounds as "fixRounds", t.approval_plans as "approvalPlans", t.guards,
-  t.diff_allowance as "diffAllowance",
+  t.diff_allowance as "diffAllowance", t.split_proposed as "splitProposed",
   t.github_pr as "pullRequest",
   coalesce((select sum(r.list_cost_cents) from runs r where r.task_id = t.id), 0)::int as "costCents",
   coalesce(
@@ -140,6 +141,8 @@ export const listTaskComments = async (db: Queryable, taskId: string): Promise<C
 export interface SpecVersionRow {
   readonly version: number;
   readonly body: string;
+  /** The sub-tasks it proposes, when it is a proposed split rather than one spec. */
+  readonly split: ProposedSplit | null;
   readonly createdBy: Actor;
   readonly createdAt: Date;
 }
@@ -147,7 +150,7 @@ export interface SpecVersionRow {
 export const listSpecVersions = async (db: Queryable, taskId: string): Promise<SpecVersionRow[]> =>
   (
     await db.query<SpecVersionRow>(
-      `select version, body, created_by as "createdBy", created_at as "createdAt"
+      `select version, body, split, created_by as "createdBy", created_at as "createdAt"
        from spec_versions where task_id = $1 order by version`,
       [taskId]
     )
