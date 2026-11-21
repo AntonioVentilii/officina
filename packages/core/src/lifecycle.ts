@@ -451,6 +451,7 @@ export type DecisionError =
   | 'stale_head'
   | 'awaiting_onboarding'
   | 'awaiting_tasks'
+  | 'split_proposed'
   | 'confirm_on_board'
   | 'no_proposal';
 
@@ -1276,6 +1277,8 @@ export const decide = (
       const allowed =
         (actor.kind === 'agent' && actor.role === 'chooser') || actor.kind === 'engine';
       if (!allowed) return fail('not_allowed');
+      // A proposed split is decided as a split, never planned and approved as a spec.
+      if (task.splitProposed) return fail('split_proposed');
       const subject = gateSubject(task, 'spec_review');
       if (subject === null) return fail('no_head');
       const userVisible = task.userVisible || command.userVisible;

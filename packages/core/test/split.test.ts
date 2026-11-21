@@ -71,6 +71,22 @@ describe('a proposed split', () => {
     ).toBe(false);
   });
 
+  test('reads in no more than a spec may: too many files across its sub-tasks are refused', () => {
+    const manyFiles = Array.from(
+      { length: 100 },
+      (_, index) => `src/${'a'.repeat(280)}-${index}.ts`
+    );
+    const parsed = parseAgentOutput('spec', {
+      ...proposal,
+      subtasks: [subtask('First', manyFiles), subtask('Second', manyFiles, [1])]
+    });
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) return;
+    expect(parsed.errors).toEqual([
+      '(root): the proposal must read in at most 40000 characters, like a spec: fewer files or shorter scopes'
+    ]);
+  });
+
   test('reads as a numbered list with each sub-task scope, files and what it waits for', () => {
     const parsed = parseAgentOutput('spec', proposal);
     if (!parsed.ok || parsed.output.outcome !== 'split') throw new Error('not a split');

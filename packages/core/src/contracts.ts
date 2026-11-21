@@ -16,7 +16,7 @@ import {
   type Task
 } from './lifecycle';
 import { redactDeep } from './guards';
-import { CHECKLIST_LIMITS, pushedFields } from './limits';
+import { CHECKLIST_LIMITS, SPEC_BODY_MAX, pushedFields } from './limits';
 import { questionOptionsSchema } from './questions';
 import { APPROVER_ROLES } from './roles';
 import { postSpecCommand, splitOutputSchema } from './split';
@@ -66,7 +66,7 @@ export const interviewerOutputSchema = z.discriminatedUnion('outcome', [
 export const specOutputSchema = z.discriminatedUnion('outcome', [
   z.strictObject({
     outcome: z.literal('specced'),
-    spec: text.max(40_000),
+    spec: text.max(SPEC_BODY_MAX),
     predictedPaths: z.array(text.max(300)).min(1).max(200),
     userVisible: z.boolean()
   }),

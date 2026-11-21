@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { Command } from './lifecycle';
+import { SPEC_BODY_MAX } from './limits';
 
 /*
  * A request too large or too mixed for one change comes back from the spec agent as a proposed
@@ -37,31 +38,39 @@ const proposedSubtaskSchema = z.strictObject({
 
 export type ProposedSubtask = z.infer<typeof proposedSubtaskSchema>;
 
+/** What a proposal holds besides its outcome: why, and the sub-tasks in order. */
+export interface ProposedSplit {
+  readonly why: string;
+  readonly subtasks: readonly ProposedSubtask[];
+}
+
 /** Every sub-task waits only for sub-tasks listed before it, so the order holds and has no cycle. */
 const waitsOnlyForEarlier = (subtasks: readonly ProposedSubtask[]): boolean =>
   subtasks.every((subtask, index) => subtask.after.every((position) => position <= index));
 
-export const splitOutputSchema = z.strictObject({
-  outcome: z.literal('split'),
-  why: text
-    .max(2000)
-    .describe(
-      "Why one spec would not do: the separate purposes the request holds, or the size you estimate for it against the lane's limit."
-    ),
-  subtasks: z
-    .array(proposedSubtaskSchema)
-    .min(2)
-    .max(MAX_SUBTASKS)
-    .refine(waitsOnlyForEarlier, 'a sub-task may only wait for sub-tasks listed before it')
-    .describe(
-      'The sub-tasks in dependency order, from the one the others need to the last; sub-tasks that touch the same files follow one another.'
-    ),
-  userVisible: z.boolean()
-});
+export const splitOutputSchema = z
+  .strictObject({
+    outcome: z.literal('split'),
+    why: text
+      .max(2000)
+      .describe(
+        "Why one spec would not do: the separate purposes the request holds, or the size you estimate for it against the lane's limit."
+      ),
+    subtasks: z
+      .array(proposedSubtaskSchema)
+      .min(2)
+      .max(MAX_SUBTASKS)
+      .refine(waitsOnlyForEarlier, 'a sub-task may only wait for sub-tasks listed before it')
+      .describe(
+        'The sub-tasks in dependency order, from the one the others need to the last; sub-tasks that touch the same files follow one another.'
+      ),
+    userVisible: z.boolean()
+  })
+  .refine((split) => splitMarkdown(split).length <= SPEC_BODY_MAX, {
+    message: `the proposal must read in at most ${SPEC_BODY_MAX} characters, like a spec: fewer files or shorter scopes`
+  });
 
 type SplitOutput = z.infer<typeof splitOutputSchema>;
-
-export type ProposedSplit = Pick<SplitOutput, 'why' | 'subtasks'>;
 
 /** Every file the sub-tasks touch, once each: what the lane and the guards of the whole read. */
 export const splitPaths = (split: ProposedSplit): string[] =>

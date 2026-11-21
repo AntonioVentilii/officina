@@ -247,6 +247,11 @@ describe('guardrails', () => {
     );
     expect(task).toMatchObject({ stage: 'spec_review', specVersion: 1, splitProposed: true });
     expect(nextAgentRoles(task)).toEqual([]);
+    for (const actor of [asAgent('chooser'), engine]) {
+      expect(
+        driver.attempt(task, { type: 'plan_approval', userVisible: false, plan: PLAN }, actor)
+      ).toEqual({ ok: false, error: 'split_proposed' });
+    }
     expect(driver.attempt(task, { type: 'approve' }, asMember(owner))).toEqual({
       ok: false,
       error: 'not_planned'
