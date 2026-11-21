@@ -944,7 +944,9 @@ export const WITH_PULL_REQUEST: ReadonlySet<Stage> = new Set(['building', ...GIT
  * check first, so it goes to review as pushed instead of being built again.
  */
 const allowedHeadIn = (task: Task, offer: AllowanceOffer | null, events: DomainEvent[]) => {
-  if (!offer?.headSha || task.stage !== 'building') return ok(task, events);
+  // Words in the answer that hold the task for the owner keep the head out too, so no pull request
+  // opens for it before the owner has looked.
+  if (task.blocked || !offer?.headSha || task.stage !== 'building') return ok(task, events);
   const [moved, stageEvent] = moveTo(task, 'reviewing', { headSha: offer.headSha, reviews: {} });
   return ok(moved, [...events, stageEvent]);
 };
@@ -968,12 +970,18 @@ const answered = (
   const allowance: DiffAllowance | null = offer
     ? { lines: offer.lines, lane: offer.lane, memberId: member.id }
     : null;
-  const unblocked = { ...task, blocked: null, ...(allowance ? { diffAllowance: allowance } : {}) };
+  const [unblocked, guardEvents] = guardedByWords(
+    { ...task, blocked: null, ...(allowance ? { diffAllowance: allowance } : {}) },
+    context,
+    member,
+    command.text
+  );
   const events: DomainEvent[] = [
     { type: 'unblocked', answer: command.text },
-    ...(allowance ? [{ type: 'diff_allowed' as const, ...allowance }] : [])
+    ...(allowance ? [{ type: 'diff_allowed' as const, ...allowance }] : []),
+    ...guardEvents
   ];
-  return withWordsOf(allowedHeadIn(unblocked, offer, events), context, member, command.text);
+  return allowedHeadIn(unblocked, offer, events);
 };
 
 const ALLOWED_WHILE_HELD: ReadonlySet<Command['type']> = new Set([

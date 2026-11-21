@@ -469,6 +469,8 @@ describe.skipIf(!url)('engine', () => {
     expect(github.calls.some((call) => call.method === 'failedChecks')).toBe(false);
     await openMissingPullRequests(pool, github.port, [taskId], PUBLIC_URL);
     expect(await linkedPullRequest(taskId)).toBe(42);
+    // Once its pull request is open, the catch-up reads the checks no build round read.
+    expect((await loadTask(pool, taskId))?.task.stage).toBe('building');
   });
 
   test('ticks carry a ready task through build, parallel reviews and choosing', async () => {

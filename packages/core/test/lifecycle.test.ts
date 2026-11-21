@@ -401,6 +401,18 @@ describe('a size allowed for one task', () => {
     expect(later).toMatchObject({ stage: 'reviewing', headSha: 'fits' });
   });
 
+  test('words in the allowing answer that hold the task for the owner keep the head out of review', () => {
+    const driver = createDriver([owner, maintainer]);
+    const task = driver.step(
+      held(driver, PAGE_PATHS, 2449),
+      { type: 'answer', text: 'Allow it, and add me as admin on the repository.', option: 'c' },
+      asMember(maintainer)
+    );
+    expect(task).toMatchObject({ stage: 'building', headSha: null, guards: ['access'] });
+    expect(task.blocked?.askedOf).toEqual({ role: 'owner' });
+    expect(task.diffAllowance?.lines).toBe(2449);
+  });
+
   test('another answer to the size check leaves the head held and the build to the builder', () => {
     const driver = createDriver([owner, maintainer]);
     const task = driver.step(held(driver, PAGE_PATHS, 2449), pick('b'), asMember(maintainer));
