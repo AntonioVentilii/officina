@@ -567,7 +567,7 @@ describe.skipIf(!url)('engine', () => {
     expect((await loadTask(pool, taskId))?.task.stage).toBe('building');
   });
 
-  test('ticks carry a ready task through build, parallel reviews and choosing', async () => {
+  test('ticks carry a ready task through build, the reviews one after the other, and choosing', async () => {
     const github = fakeGitHub();
     const agents = createFakePort(succeed);
     const deps = { pool, github: github.port, agents, publicUrl: PUBLIC_URL };
@@ -605,10 +605,10 @@ describe.skipIf(!url)('engine', () => {
     });
 
     const second = await tick(deps, seeded.projectId);
-    expect(second.steps.map((step) => step.role).sort()).toEqual([
-      'reviewer_correctness',
-      'reviewer_spec'
-    ]);
+    expect(second.steps.map((step) => step.role)).toEqual(['reviewer_spec']);
+    expect((await loadTask(pool, taskId))?.task.stage).toBe('reviewing');
+    const third = await tick(deps, seeded.projectId);
+    expect(third.steps.map((step) => step.role)).toEqual(['reviewer_correctness']);
     expect((await loadTask(pool, taskId))?.task.stage).toBe('choosing');
 
     await tick(deps, seeded.projectId);
@@ -636,8 +636,7 @@ describe.skipIf(!url)('engine', () => {
     const agents = createFakePort(succeed);
     const deps = { pool, github: github.port, agents, publicUrl: PUBLIC_URL };
     await taskInReady(github, agents);
-    await tick(deps, seeded.projectId);
-    await tick(deps, seeded.projectId);
+    for (let pass = 0; pass < 3; pass++) await tick(deps, seeded.projectId);
     const budgets = Object.fromEntries(
       agents.sessions.map((session) => [session.metadata.role, session.budgetCents])
     );
@@ -737,9 +736,7 @@ describe.skipIf(!url)('engine', () => {
     };
     const deps = { pool, github: port, agents, publicUrl: PUBLIC_URL };
     const taskId = await taskInReady(github, agents);
-    await tick(deps, seeded.projectId);
-    await tick(deps, seeded.projectId);
-    await tick(deps, seeded.projectId);
+    for (let pass = 0; pass < 4; pass++) await tick(deps, seeded.projectId);
 
     const stored = await loadTask(pool, taskId);
     expect(stored?.task).toMatchObject({ stage: 'verifying', blocked: null });

@@ -367,13 +367,9 @@ const seed = async (
       await linkPullRequest(demo.pool, task.id, 1300 + Math.floor(Math.random() * 60));
     },
     review: async (running = false) => {
-      if (running) {
-        await run(demo, task.id, 'reviewing', 'reviewer_spec', { events: 4, running: true });
-        return run(demo, task.id, 'reviewing', 'reviewer_correctness', {
-          events: 7,
-          running: true
-        });
-      }
+      // The reviewers take turns, so a review in progress is the spec reviewer's.
+      if (running)
+        return run(demo, task.id, 'reviewing', 'reviewer_spec', { events: 4, running: true });
       for (const role of REVIEWER_ROLES) {
         await run(demo, task.id, 'reviewing', role, { cost: 95, result: { outcome: 'approve' } });
         await apply(

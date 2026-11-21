@@ -20,14 +20,14 @@ describe('next agent roles', () => {
     ).toEqual([]);
   });
 
-  test('reviewing asks only the reviewers that have not approved yet', () => {
-    expect(nextAgentRoles(at({ stage: 'reviewing' }))).toEqual([
-      'reviewer_spec',
-      'reviewer_correctness'
-    ]);
+  test('reviewing asks the spec reviewer first, and the correctness reviewer once it approved', () => {
+    expect(nextAgentRoles(at({ stage: 'reviewing' }))).toEqual(['reviewer_spec']);
     expect(
       nextAgentRoles(at({ stage: 'reviewing', reviews: { reviewer_spec: 'approve' } }))
     ).toEqual(['reviewer_correctness']);
+    expect(
+      nextAgentRoles(at({ stage: 'reviewing', reviews: { reviewer_spec: 'changes' } }))
+    ).toEqual([]);
   });
 
   test('spec review waits on the chooser once per version, and never for a proposed split', () => {

@@ -1,7 +1,7 @@
 import {
-  REVIEWER_ROLES,
   TERMINAL_STAGES,
   gateSubject,
+  reviewerAtWork,
   type AgentRole,
   type Task
 } from './lifecycle';
@@ -23,8 +23,10 @@ export const nextAgentRoles = (task: Task): AgentRole[] => {
         : ['chooser'];
     case 'building':
       return task.assignee?.kind === 'agent' ? [task.assignee.role] : [];
-    case 'reviewing':
-      return REVIEWER_ROLES.filter((role) => task.reviews[role] === undefined);
+    case 'reviewing': {
+      const reviewer = reviewerAtWork(task.reviews);
+      return reviewer ? [reviewer] : [];
+    }
     case 'choosing':
       return ['chooser'];
     default:

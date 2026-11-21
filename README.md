@@ -31,7 +31,7 @@ Anyone on the team describes what they need. Agents **interview, spec, build and
 
 Coding agents can write more code than any team can safely read. Officina is built around the other side of that equation: **human minutes per merged change**.
 
-A request goes in as a sentence. An interviewer agent asks the follow-up questions a developer would. A spec agent writes the plan, people approve it, a builder implements it on its own branch, two independent reviewers check it, and a chooser decides **who** needs to look at the result and **what exactly** they should check. Nobody reads a diff they do not need to read, and nothing ships that the right people did not say yes to.
+A request goes in as a sentence. An interviewer agent asks the follow-up questions a developer would. A spec agent writes the plan, people approve it, a builder implements it on its own branch, two independent reviewers check it, one after the other, and a chooser decides **who** needs to look at the result and **what exactly** they should check. Nobody reads a diff they do not need to read, and nothing ships that the right people did not say yes to.
 
 > Like a kanban where the cards spec, build and review themselves, but every gate that matters belongs to a person.
 

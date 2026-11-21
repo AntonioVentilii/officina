@@ -47,7 +47,7 @@ To stop it, remove the connector in Claude.
 | `task accept`                      | The spec agent starts within about 15 seconds.                                                                                                                 |
 | (wait)                             | The spec agent writes a spec, or stops with a question.                                                                                                        |
 | `task approve` (or `task changes`) | Approval sends it to build; changes send it back to the spec agent.                                                                                            |
-| (wait)                             | The builder pushes `officina/task-<n>`, Officina opens the pull request, two reviewers check it, the chooser writes a checklist.                               |
+| (wait)                             | The builder pushes `officina/task-<n>`, Officina opens the pull request, two reviewers check it in turn, the chooser writes a checklist.                       |
 | `task approve` (or `task changes`) | Your verification of the result. Low-risk changes in a project that allows it skip this step (below).                                                          |
 | Approve and merge on GitHub        | As with any pull request. The task closes itself.                                                                                                              |
 

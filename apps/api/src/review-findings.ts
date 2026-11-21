@@ -123,7 +123,7 @@ const reviewOf = (run: ReviewRun): Review => {
 
 /**
  * The reviewer runs grouped by the build they looked at: a run belongs to the last build started
- * before it, so a round holds both reviewers of one build, and a build sent back while the task
+ * before it, so a round holds every review of one build, and a build sent back while the task
  * still builds is the one to fix.
  */
 export const reviewRounds = (
