@@ -16,6 +16,7 @@ import {
   PLAN,
   applyOrThrow,
   createAutoVerifiedTask,
+  createTaskWithSplit,
   createDoneTaskWithLearningPullRequest,
   createTaskInVerifying,
   recordChooserChecklist,
@@ -771,6 +772,18 @@ describe.skipIf(!url)('connector for Claude', () => {
     );
     const inbox = (await tool(token, 'whats_waiting_on_me')).content[0]!.text;
     expect(inbox).toContain('Now: Merge the learning pull request #1498 on GitHub.');
+  });
+
+  test('show_task shows a proposed split as such, with its sub-tasks in order', async () => {
+    const token = (await connect()).tokens.access_token as string;
+    await createTaskWithSplit(pool, seeded);
+
+    const shown = (await tool(token, 'show_task', { number: 1 })).content[0]!.text;
+    expect(shown).toContain('Now: A maintainer decides on the proposed split.');
+    expect(shown).toContain('Proposed split, version 1:');
+    expect(shown).toContain(
+      '2. **Add the settings page**: The page.\n    - Files: `src/b.svelte`\n    - After: 1'
+    );
   });
 
   test('show_task says a result was auto-verified instead of naming approvers for it', async () => {

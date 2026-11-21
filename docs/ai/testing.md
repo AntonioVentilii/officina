@@ -13,7 +13,7 @@ What the board shows is decided and tested in the API views (`apps/api/test/boar
 ## Where a test goes
 
 - **A lifecycle rule:** `packages/core/test/lifecycle.test.ts`, driving commands through `createDriver` from `packages/core/test/fixtures.ts`, as people and agents would. Test the outcome (stage, events, error), not the internals.
-- **A contract or a config key:** `contracts.test.ts` or `config.test.ts` in `packages/core/test`.
+- **A contract or a config key:** `contracts.test.ts` or `config.test.ts` in `packages/core/test`, and a proposed split in `split.test.ts`.
 - **A GitHub call:** `packages/github/test/client.test.ts`, with the fake `fetch` there, and `http.test.ts` for the request every call shares; never the network.
 - **A runner behaviour:** `packages/runner/test`, with `createFakePort` from `fake-port.ts`; never the Managed Agents API. The SDK adapter itself (`src/sdk.ts`) is tested in `sdk.test.ts` through a real `Anthropic` client given a fake `fetch`, which records each request, as the GitHub client's tests do.
 - **A query, a step, a tick, an API route:** the database suites, starting from `resetAndSeed` (`packages/db/test/seed.ts`), which recreates the schema for each test. Suites skip themselves when `TEST_DATABASE_URL` is unset (`describe.skipIf(!url)`), so `bun run test` stays fast.
