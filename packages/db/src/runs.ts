@@ -19,25 +19,42 @@ export interface NewRun {
   readonly learningId?: string;
 }
 
+/** Why no run started: a run of the role is already in progress on the task, or the task is paused. */
+export type StartRunRefusal = 'already_running' | 'paused';
+
+/**
+ * Claims a run, unless the task is paused. The insert reads the task row `for share`, so a pause
+ * holding the row (`applyCommandIn` locks it `for update`) is waited for and its `paused` read;
+ * a claim that inserts first holds the pause back until it commits, so the pause sees its run.
+ * A claim made on a closed task (`stage`, as the claim read it) is exempt: only the learner looks
+ * back at one, nothing can pause or resume it any more, and a flag left on it (a parent closed
+ * while paused) would keep the learner off it for good. A claim that read an open task gets no
+ * run once that task is paused, even if it was closed since.
+ */
 export const startRun = async (
   db: Pool | PoolClient,
   input: NewRun
-): Promise<{ ok: true; runId: string } | { ok: false; error: 'already_running' }> => {
+): Promise<{ ok: true; runId: string } | { ok: false; error: StartRunRefusal }> => {
   try {
     const { rows } = await db.query<{ id: string }>(
       `insert into runs (task_id, stage, runner, agent_role, agent_version, status, started_at,
          learning_id)
-       values ($1, $2, $3, $4, $5, 'running', now(), $6) returning id`,
+       select t.id, $2, $3, $4, $5, 'running', now(), $6 from tasks t
+       where t.id = $1 and (not t.paused or $2::text = any($7::text[]))
+       for share of t
+       returning id`,
       [
         input.taskId,
         input.stage,
         input.runner,
         input.role,
         input.agentVersion,
-        input.learningId ?? null
+        input.learningId ?? null,
+        [...TERMINAL_STAGES]
       ]
     );
-    return { ok: true, runId: rows[0]!.id };
+    if (!rows[0]) return { ok: false, error: 'paused' };
+    return { ok: true, runId: rows[0].id };
   } catch (error) {
     if ((error as { code?: string }).code === UNIQUE_VIOLATION) {
       return { ok: false, error: 'already_running' };
