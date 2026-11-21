@@ -1,6 +1,13 @@
 <script lang="ts">
   import { isActive } from '#lib/runs.ts';
-  import { ChevronRight, CircleAlert, CircleCheck, GitPullRequest, Undo2 } from '@lucide/svelte';
+  import {
+    ChevronRight,
+    CircleAlert,
+    CircleCheck,
+    GitPullRequest,
+    MessagesSquare,
+    Undo2
+  } from '@lucide/svelte';
   import { tick } from 'svelte';
   import { get } from '#lib/api.ts';
   import { coalesce } from '#lib/coalesce.ts';
@@ -38,10 +45,19 @@
         summary: string;
         result: { text: string; isError: boolean } | null;
       }
+    | {
+        kind: 'thread';
+        id: string;
+        thread: string;
+        agent: string | null;
+        question: string | null;
+        answer: string | null;
+      }
     | { kind: 'submitted'; id: string; outcome: string }
     | { kind: 'officina'; id: string; type: string; payload: unknown };
 
-  // Tool calls absorb the result that follows them, and runs of thinking collapse into one row.
+  // Tool calls absorb the result that follows them, a question to a worker absorbs the first answer
+  // its thread sends back, and runs of thinking collapse into one row.
   const blocks = $derived.by(() => {
     const out: Block[] = [];
     for (const entry of entries) {
@@ -63,6 +79,29 @@
         case 'tool_result': {
           const open = [...out].reverse().find((block) => block.kind === 'tool' && !block.result);
           if (open?.kind === 'tool') open.result = { text: entry.text, isError: entry.isError };
+          break;
+        }
+        case 'thread': {
+          const open =
+            entry.direction === 'answer'
+              ? out.find(
+                  (block) =>
+                    block.kind === 'thread' &&
+                    block.thread === entry.thread &&
+                    block.question !== null &&
+                    block.answer === null
+                )
+              : undefined;
+          if (open?.kind === 'thread') open.answer = entry.text;
+          else
+            out.push({
+              kind: 'thread',
+              id: entry.id,
+              thread: entry.thread,
+              agent: entry.agent,
+              question: entry.direction === 'question' ? entry.text : null,
+              answer: entry.direction === 'answer' ? entry.text : null
+            });
           break;
         }
         case 'status':
@@ -183,6 +222,34 @@
         </summary>
         {#if block.result}
           <pre class="output">{block.result.text || '(no output)'}</pre>
+        {/if}
+      </details>
+    {:else if block.kind === 'thread'}
+      <details class="tool thread">
+        <summary>
+          <ChevronRight size={13} class="chev" />
+          <MessagesSquare size={13} class="said" />
+          <span class="name mono">{block.agent ?? 'worker'}</span>
+          <span class="summary">{block.question ?? block.answer}</span>
+          {#if block.answer === null}
+            {#if running}
+              <span class="spinner" role="img" aria-label="Waiting for the answer"></span>
+            {:else}
+              <span class="faint unanswered">No answer</span>
+            {/if}
+          {/if}
+        </summary>
+        {#if block.question !== null}
+          <div class="turn">
+            <span class="who faint">{run.label} asked</span>
+            <Markdown source={block.question} />
+          </div>
+        {/if}
+        {#if block.answer !== null}
+          <div class="turn">
+            <span class="who faint">{block.agent ?? 'The worker'} answered</span>
+            <Markdown source={block.answer} />
+          </div>
         {/if}
       </details>
     {:else if block.kind === 'submitted'}
@@ -337,6 +404,32 @@
   .tool.error .output {
     color: var(--danger);
     border-left-color: var(--danger);
+  }
+
+  .thread :global(.said) {
+    flex: none;
+    color: var(--text-2);
+  }
+
+  .unanswered {
+    flex: none;
+    font-size: 11.5px;
+  }
+
+  .turn {
+    margin: 6px 0 2px 20px;
+    padding: 6px 12px;
+    background: var(--panel);
+    border-left: 2px solid var(--rule);
+  }
+
+  .turn .who {
+    display: block;
+    font-size: 11.5px;
+  }
+
+  .turn :global(.md) {
+    font-size: 13px;
   }
 
   .spinner {

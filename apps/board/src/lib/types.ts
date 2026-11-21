@@ -2,6 +2,7 @@ import type { ChecklistView } from './checklist';
 import type { LearningPullRequest } from './learning-types';
 
 export type * from './learning-types';
+export type * from './log-types';
 
 export type Stage =
   | 'request'
@@ -298,17 +299,6 @@ export interface TaskDetail extends Card {
   /** Your approval Claude proposed, by the app's own name: it counts once you approve here. */
   readonly proposal: { readonly gate: 'spec_review' | 'verifying'; readonly via: Via } | null;
 }
-
-export type LogEntry = { readonly id: string; readonly at: string } & (
-  | { readonly kind: 'message' | 'brief'; readonly text: string }
-  | { readonly kind: 'thinking' }
-  | { readonly kind: 'tool'; readonly name: string; readonly summary: string }
-  | { readonly kind: 'tool_result'; readonly text: string; readonly isError: boolean }
-  | { readonly kind: 'submitted'; readonly outcome: string }
-  | { readonly kind: 'feedback' | 'error'; readonly text: string }
-  | { readonly kind: 'status'; readonly status: string }
-  | { readonly kind: 'officina'; readonly type: string; readonly payload: unknown }
-);
 
 export interface MemberActivity {
   readonly id: string;

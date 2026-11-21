@@ -29,7 +29,7 @@ import {
   upsertProject,
   upsertWorkspace
 } from '@officina/db';
-import { RUNNER } from '@officina/runner';
+import { READER_NAME, READER_ROLES, RUNNER } from '@officina/runner';
 import { Pool } from 'pg';
 import { createApp } from './app';
 import { startRealtime } from './realtime';
@@ -142,6 +142,38 @@ const SCRIPT: [string, unknown][] = [
   ['agent.tool_result', text('svelte-check found 0 errors and 0 warnings')]
 ];
 
+const READER_THREAD = 'sthr_demo_reader';
+
+/** What a role with the reader asks it and hears back, in the session's own events. */
+const READER_EXCHANGE: [string, unknown][] = [
+  [
+    'agent.thread_message_sent',
+    {
+      to_session_thread_id: READER_THREAD,
+      to_agent_name: READER_NAME,
+      ...text('Where is `battle.detail.wager` read, and which locale catalogs define it?')
+    }
+  ],
+  ['session.thread_created', { session_thread_id: READER_THREAD, agent_name: READER_NAME }],
+  [
+    'agent.thread_message_received',
+    {
+      from_session_thread_id: READER_THREAD,
+      from_agent_name: READER_NAME,
+      ...text(
+        'Read in `src/lib/components/Card.svelte:42` and `src/routes/battle/+page.svelte:118`. Defined at line 412 of `src/lib/i18n/en.ts`, `it.ts` and `de.ts`; no other catalog has it.'
+      )
+    }
+  ],
+  ['session.thread_status_idle', { session_thread_id: READER_THREAD, agent_name: READER_NAME }]
+];
+
+/** The demo script of a role: the roles with the reader hand it a question after the entry doc. */
+const scriptFor = (role: string): [string, unknown][] =>
+  READER_ROLES.some((reader) => reader === role)
+    ? [...SCRIPT.slice(0, 3), ...READER_EXCHANGE, ...SCRIPT.slice(3)]
+    : SCRIPT;
+
 interface Demo {
   pool: Pool;
   projectId: string;
@@ -194,7 +226,8 @@ const run = async (
     'user.message',
     text(`# Officina task, role: ${role}\n\nRead AGENTS.md first...`)
   );
-  for (const [type, payload] of SCRIPT.slice(0, options.events ?? SCRIPT.length)) {
+  const script = scriptFor(role);
+  for (const [type, payload] of script.slice(0, options.events ?? script.length)) {
     await appendRunEvent(demo.pool, claim.runId, type, payload);
   }
   if (options.running) return claim.runId;

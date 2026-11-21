@@ -18,7 +18,7 @@ board (separate app: talks to api over HTTP only)
 - `packages/github` imports one `core` type (`PushFacts`); only it calls the GitHub REST and GraphQL APIs, every call through `githubRequest` (`src/http.ts`).
 - `packages/engine` composes `core`, `db`, `runner` and `github` through ports (`GitHubPort`, `ManagedAgentsPort`), never their concrete clients.
 - `apps/api` is the only place that wires real clients, reads the environment and starts the scheduler.
-- `apps/board` never imports a workspace package; it reads `/api/*`. Its types in `src/lib/types.ts` (with the learnings' in `src/lib/learning-types.ts`, which it re-exports) mirror what the API returns.
+- `apps/board` never imports a workspace package; it reads `/api/*`. Its types in `src/lib/types.ts` (with the learnings' in `src/lib/learning-types.ts` and a run log's entries in `src/lib/log-types.ts`, which it re-exports) mirror what the API returns.
 
 `eslint.config.js` enforces these directions (`no-restricted-imports`), including that only `packages/runner/src/sdk.ts`, `credentials.ts` and `definitions.ts` import `@anthropic-ai/sdk`.
 

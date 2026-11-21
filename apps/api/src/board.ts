@@ -1172,12 +1172,24 @@ export type LogEntry = LogBase &
     | { readonly kind: 'submitted'; readonly outcome: string }
     | { readonly kind: 'feedback' | 'error'; readonly text: string }
     | { readonly kind: 'status'; readonly status: string }
+    | {
+        readonly kind: 'thread';
+        readonly direction: 'question' | 'answer';
+        readonly thread: string;
+        readonly agent: string | null;
+        readonly text: string;
+      }
     | { readonly kind: 'officina'; readonly type: string; readonly payload: unknown }
   );
 
+const agentName = (value: unknown): string | null => (typeof value === 'string' ? value : null);
+
 /**
  * A run's session events as a readable log. Model spans and usage are dropped; tool output is
- * truncated, since the full session stays one click away in the Console.
+ * truncated, since the full session stays one click away in the Console. What the role asks a
+ * worker in another thread of the session (the reader) and what it answers are kept, keyed by the
+ * thread so the board can pair them; the threads' own status changes are dropped, since a question
+ * left without an answer already says a worker stopped.
  */
 export const logEntries = (events: readonly RunEventRow[]): LogEntry[] =>
   events.flatMap((event): LogEntry[] => {
@@ -1213,6 +1225,28 @@ export const logEntries = (events: readonly RunEventRow[]): LogEntry[] =>
               (payload.input as { result?: { outcome?: string } } | undefined)?.result?.outcome ??
                 'result'
             )
+          }
+        ];
+      case 'agent.thread_message_sent':
+        return [
+          {
+            ...base,
+            kind: 'thread' as const,
+            direction: 'question' as const,
+            thread: String(payload.to_session_thread_id ?? ''),
+            agent: agentName(payload.to_agent_name),
+            text: text(payload.content, 20_000)
+          }
+        ];
+      case 'agent.thread_message_received':
+        return [
+          {
+            ...base,
+            kind: 'thread' as const,
+            direction: 'answer' as const,
+            thread: String(payload.from_session_thread_id ?? ''),
+            agent: agentName(payload.from_agent_name),
+            text: text(payload.content, 20_000)
           }
         ];
       case 'user.message':
